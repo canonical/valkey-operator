@@ -26,8 +26,11 @@ When filing an issue, please include:
 
 ## Useful links
 
+More resources:
+
 - [Canonical Data Fabric](https://ubuntu.com/data/)
 - [Git sources](https://github.com/canonical/charmed-valkey-operator/)
 - [Canonical Data on Launchpad](https://launchpad.net/~data-platform)
 - [Canonical Data on Matrix](https://matrix.to/#/#charmhub-data-platform:ubuntu.com)
+
 <!-- Charmed Valkey - add link to charmhub.io -->
