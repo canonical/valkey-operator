@@ -20,4 +20,4 @@ class EtcdOperatorCharm(ops.CharmBase):
         super().__init__(*args)
 
         # --- EVENT HANDLERS ---
-        self.base_events = common.common.events.base_events
+        # self.base_events = common.common.events.base_events
