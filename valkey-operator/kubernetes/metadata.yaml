@@ -1,0 +1,18 @@
+# Copyright 2025 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+# This file is still required due to data-platform-workflows not supporting unified
+# charmcraft.yaml syntax. Details see:
+# https://github.com/canonical/data-platform-workflows/issues/169
+name: valkey
+title: Valkey K8s operator
+summary: Operator for Valkey databases in Kubernetes environments.
+description: |
+  Valkey is a flexible distributed key-value database that is optimized 
+  for caching and other realtime workloads. This charmed operator deploys 
+  and operates Valkey in Kubernetes environments.
+docs: charmhub.io # to be updated
+
+peers:
+  status-peers:
+    interface: status_peers
