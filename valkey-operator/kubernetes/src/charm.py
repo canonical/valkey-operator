@@ -6,7 +6,7 @@
 
 import logging
 
-import common.common.events.base_events as base_events
+import common.events.base_events as base_events
 import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 

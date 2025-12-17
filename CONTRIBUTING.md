@@ -29,6 +29,11 @@ Library charms.data_platform_libs.v1.data_interfaces was already up to date in v
 
 This workaround needs to be applied every time when adding or updating a charmlib that is part of the shared code.
 
+### Resolving the imports of `common`
+
+It might be required to add the `common` directory to your PYTHONPATH or your IDE's equivalent. For instance, in Pycharm
+the `common` directory needs to be marked as "sources root" for Pycharm to be able to resolve imports correctly.
+
 ## Build the charm
 
 Building the charms relies on copying the shared code to the charm's root directory, because charmcraft cannot handle code

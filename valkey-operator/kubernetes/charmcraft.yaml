@@ -80,7 +80,6 @@ parts:
       # search pyproject.toml for local Python dependencies
       # call Poetry to update pyproject.toml and poetry.lock to reference the copied package(s)
       # see: https://github.com/canonical/charmcraftlocal#step-3-call-charmcraftlocal-in-charmcraftyaml
-      ls -la $CRAFT_PART_BUILD
       "$HOME/.local/bin/charmcraftlocal" update-lock -v
 
       craftctl default
