@@ -6,7 +6,7 @@
 
 import logging
 
-import common.common.events.base_events
+import common.common.events.base_events as base_events
 import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
@@ -20,4 +20,4 @@ class EtcdOperatorCharm(ops.CharmBase):
         super().__init__(*args)
 
         # --- EVENT HANDLERS ---
-        # self.base_events = common.common.events.base_events
+        self.base_events = base_events

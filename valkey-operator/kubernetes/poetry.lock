@@ -44,6 +44,23 @@ files = [
 ]
 
 [[package]]
+name = "common"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = ">=3.12"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+ops = ">=3.4.0"
+
+[package.source]
+type = "directory"
+url = "common"
+
+[[package]]
 name = "coverage"
 version = "7.13.0"
 description = "Code coverage measurement for Python"
@@ -781,4 +798,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "f741cb1162e2ac940525927313a458b0cf673840f418018d87f3ad25fb18150c"
+content-hash = "d328dd04ff547c6bcbdd47485f27ff671d56a173edaeaa26bdf679396c46845b"
