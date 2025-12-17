@@ -4,7 +4,7 @@
 # This file is still required due to data-platform-workflows not supporting unified
 # charmcraft.yaml syntax. Details see:
 # https://github.com/canonical/data-platform-workflows/issues/169
-name: valkey
+name: valkey-k8s
 title: Valkey K8s operator
 summary: Operator for Valkey databases in Kubernetes environments.
 description: |
