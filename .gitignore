@@ -1,4 +1,5 @@
 .venv/
 *.charm
 .vscode/
+.idea
 .env
