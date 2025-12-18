@@ -28,7 +28,7 @@ class ClusterManager(ManagerStatusProtocol):
         self.workload = workload
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
-        """Compute the Valkey manager's statuses."""
+        """Compute the cluster manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(
             scope=scope, component=self.name, running_status_only=True, running_status_type="async"
         ).root

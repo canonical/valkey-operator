@@ -55,4 +55,26 @@ dependency with the adjusted path as part of the charm's root, making it availab
 ***Make sure to always use `ccl pack`. Using `charmcraft pack` directly will fail, because it does not copy the shared
 code to the charm's root directory.***
 
-For more information on the workflow, please refer to the documentation of https://pypi.org/project/charmcraftlocal/. 
+For more information on the workflow, please refer to the documentation of https://pypi.org/project/charmcraftlocal/.
+
+## Run the charm
+
+Make sure you have prepared an environment for deploying the charm code, e.g. a `microk8s` cloud + controller bootstrapped
+in Juju. For details, see [development setup](https://documentation.ubuntu.com/juju/3.6/howto/manage-your-juju-deployment/set-up-your-juju-deployment-local-testing-and-development/#set-things-up).
+
+In our case, we want to deploy `valkey-k8s` to a model `test`. Use the `upstream-source` from `metadata.yaml`:
+```shell
+$ juju deploy ./valkey-k8s_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey@sha256:3f884d584eac51f3794d3538861f84e5f9e866b890ae0869deb7e4df6fc8eb21
+
+$ juju status
+Model  Controller      Cloud/Region        Version  SLA          Timestamp
+test   k8s-controller  microk8s/localhost  3.6.12   unsupported  16:12:56Z 
+
+App         Version  Status   Scale  Charm       Channel  Rev  Address        Exposed  Message
+valkey-k8s           active       3  valkey-k8s             1  10.152.183.39  no       
+
+Unit           Workload  Agent  Address      Ports  Message
+valkey-k8s/0*  active    idle   10.1.142.30             
+valkey-k8s/1   blocked   idle   10.1.142.32         Scaling Valkey is not implemented yet, service not started
+valkey-k8s/2   blocked   idle   10.1.142.31         Scaling Valkey is not implemented yet, service not started
+```
