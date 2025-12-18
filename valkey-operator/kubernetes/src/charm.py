@@ -6,18 +6,60 @@
 
 import logging
 
-import common.events.base_events as base_events
 import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
+
+from common.core.cluster_state import ClusterState
+from common.events.base_events import BaseEvents
+from common.managers.cluster import ClusterManager
+from common.statuses import CharmStatuses
+from literals import CONTAINER
+from workload import ValkeyK8sWorkload
 
 logger = logging.getLogger(__name__)
 
 
-class EtcdOperatorCharm(ops.CharmBase):
-    """Charm the application."""
+class ValkeyK8sCharm(ops.CharmBase):
+    """Charmed Operator for Valkey K8s."""
 
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         super().__init__(*args)
+        self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
+        self.state = ClusterState(self)
+
+        # --- MANAGERS ---
+        self.cluster_manager = ClusterManager(state=self.state, workload=self.workload)
+
+        # --- STATUS HANDLER ---
+        self.status = StatusHandler(self, self.cluster_manager)
 
         # --- EVENT HANDLERS ---
-        self.base_events = base_events
+        self.base_events = BaseEvents(self)
+
+        # --- Observers
+        self.framework.observe(self.on.valkey_pebble_ready, self._on_pebble_ready)
+
+    def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
+        """Handle the `pebble-ready` event."""
+        if not self.workload.can_connect:
+            logger.warning("Container not ready yet")
+            event.defer()
+            return
+
+        # todo: remove when scale-up is implemented
+        if not self.unit.is_leader():
+            logger.warning("Scaling Valkey is not implemented yet")
+            self.status.set_running_status(
+                CharmStatuses.SCALING_NOT_IMPLEMENTED.value,
+                scope="unit",
+                component_name=self.cluster_manager.name,
+                statuses_state=self.state.statuses,
+            )
+            return
+
+        self.workload.start()
+        logger.info("Services started")
+
+
+if __name__ == "__main__":
+    ops.main(ValkeyK8sCharm)

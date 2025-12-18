@@ -7,7 +7,7 @@
 import logging
 
 import ops
-from ..literals import PEER_RELATION
+from common.literals import PEER_RELATION
 
 logger = logging.getLogger(__name__)
 

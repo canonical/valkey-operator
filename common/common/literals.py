@@ -5,3 +5,4 @@
 """Collection of global literals for the Valkey charms."""
 
 PEER_RELATION = "valkey-peers"
+STATUS_PEERS_RELATION = "status-peers"

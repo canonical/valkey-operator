@@ -12,7 +12,28 @@ description: |
   for caching and other realtime workloads. This charmed operator deploys 
   and operates Valkey in Kubernetes environments.
 docs: charmhub.io # to be updated
+source: https://github.com/canonical/charmed-valkey-operator
+issues: https://github.com/canonical/charmed-valkey-operator/issues
+website:
+  - https://charmhub.io/valkey-k8s
+  - https://github.com/canonical/charmed-valkey-operator
+  - https://matrix.to/#/%23charmhub-data-platform%3Aubuntu.com
+
+assumes:
+  - k8s-api
+
+containers:
+  valkey:
+    resource: valkey-image
+
+resources:
+  valkey-image:
+    type: oci-image
+    description: OCI Image for Valkey
+    upstream-source: ghcr.io/canonical/valkey@sha256:3f884d584eac51f3794d3538861f84e5f9e866b890ae0869deb7e4df6fc8eb21
 
 peers:
+  valkey-peers:
+    interface: valkey_peers
   status-peers:
     interface: status_peers
