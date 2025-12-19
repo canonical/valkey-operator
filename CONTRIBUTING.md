@@ -34,6 +34,71 @@ This workaround needs to be applied every time when adding or updating a charmli
 It might be required to add the `common` directory to your PYTHONPATH or your IDE's equivalent. For instance, in Pycharm
 the `common` directory needs to be marked as "sources root" for Pycharm to be able to resolve imports correctly.
 
+### Testing
+
+We use `tox` for linting and testing. 
+
+Linting is separate for each charm's code and the common code. Run `tox -e lint` in these directories:
+
+```shell
+charmed-valkey-operator/common
+charmed-valkey-operator/valkey-operator/kubernetes
+```
+
+To execute unit tests, navigate to the charm's directory and run `tox -e unit`. This will run the charm's specific unit
+tests as well as the unit tests defined in the common code, as you can see:
+
+```shell
+charmed-valkey-operator/valkey-operator/kubernetes$ tox -e unit
+unit: commands_pre[0]> poetry install --only main,charm-libs,unit
+Installing dependencies from lock file
+
+No dependencies to install or update
+unit: commands[0]> poetry run coverage run --source=/home/rene/repos/charmed-valkey-operator/valkey-operator/kubernetes/src,/home/rene/repos/charmed-valkey-operator/valkey-operator/kubernetes/../../common '--omit=*/lib/charms/*' -m pytest -v --tb native -s /home/rene/repos/charmed-valkey-operator/valkey-operator/kubernetes/tests/unit
+======================================================================================================================== test session starts =========================================================================================================================
+platform linux -- Python 3.12.12, pytest-9.0.2, pluggy-1.6.0 -- /home/rene/repos/charmed-valkey-operator/valkey-operator/kubernetes/.tox/unit/bin/python
+cachedir: .tox/unit/.pytest_cache
+rootdir: /home/rene/repos/charmed-valkey-operator/valkey-operator/kubernetes
+configfile: pyproject.toml
+plugins: mock-3.15.1, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 3 items                                                                                                                                                                                                                                                    
+
+tests/unit/test_charm.py::test_pebble_ready_leader_unit PASSED
+tests/unit/test_charm.py::test_pebble_ready_non_leader_unit PASSED
+tests/unit/test_charm.py::test_base_events PASSED
+
+========================================================================================================================== warnings summary ==========================================================================================================================
+../../common/common/tests/unit/test_base_events.py:18
+  /home/rene/repos/charmed-valkey-operator/common/common/tests/unit/test_base_events.py:18: PytestCollectionWarning: cannot collect test class 'TestBaseEvents' because it has a __init__ constructor (from: tests/unit/test_charm.py)
+    class TestBaseEvents():
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================================================================================================== 3 passed, 1 warning in 1.11s ====================================================================================================================
+unit: commands[1]> poetry run coverage report
+Name                                                                                    Stmts   Miss Branch BrPart  Cover   Missing
+-----------------------------------------------------------------------------------------------------------------------------------
+/home/rene/repos/charmed-valkey-operator/common/common/__init__.py                          0      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/core/base_workload.py                8      2      0      0    75%   16, 21
+/home/rene/repos/charmed-valkey-operator/common/common/core/cluster_state.py               40     11      6      0    63%   50-53, 75, 88-102
+/home/rene/repos/charmed-valkey-operator/common/common/core/models.py                      53      9      6      2    81%   50-53, 63, 91, 96, 114-116, 121
+/home/rene/repos/charmed-valkey-operator/common/common/events/base_events.py               20      2      6      0    85%   31-32
+/home/rene/repos/charmed-valkey-operator/common/common/literals.py                          2      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/managers/cluster.py                 19      0      2      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/statuses.py                          6      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/tests/unit/helpers.py                7      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/tests/unit/test_base_events.py      28      0      0      0   100%
+src/charm.py                                                                               33      1      6      1    95%   66
+src/literals.py                                                                             3      0      0      0   100%
+src/workload.py                                                                            25      1      2      1    93%   23
+-----------------------------------------------------------------------------------------------------------------------------------
+TOTAL                                                                                     244     26     28      4    86%
+unit: commands[2]> poetry run coverage xml
+Wrote XML report to coverage.xml
+  unit: OK (4.26=setup[0.04]+cmd[0.84,2.21,0.59,0.59] seconds)
+  congratulations :) (4.32 seconds)
+```
+
 ## Build the charm
 
 Building the charms relies on copying the shared code to the charm's root directory, because charmcraft cannot handle code
