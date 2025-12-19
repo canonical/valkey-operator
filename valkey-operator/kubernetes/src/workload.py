@@ -9,6 +9,7 @@ from typing import override
 
 import ops
 from common.core.base_workload import WorkloadBase
+
 from literals import CHARM, CHARM_USER
 
 logger = logging.getLogger(__name__)

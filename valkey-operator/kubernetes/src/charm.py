@@ -7,12 +7,12 @@
 import logging
 
 import ops
-from data_platform_helpers.advanced_statuses.handler import StatusHandler
-
 from common.core.cluster_state import ClusterState
 from common.events.base_events import BaseEvents
 from common.managers.cluster import ClusterManager
 from common.statuses import CharmStatuses
+from data_platform_helpers.advanced_statuses.handler import StatusHandler
+
 from literals import CONTAINER
 from workload import ValkeyK8sWorkload
 
