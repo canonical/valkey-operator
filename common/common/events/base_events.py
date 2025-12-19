@@ -32,6 +32,9 @@ class BaseEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
+        if not self.charm.state.unit_server.is_started:
+            logger.warning("Service not started")
+
         # todo: remove when scale-up is implemented
         if not self.charm.unit.is_leader():
             logger.warning("Scaling Valkey is not implemented yet")

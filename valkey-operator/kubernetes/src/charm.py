@@ -59,6 +59,7 @@ class ValkeyK8sCharm(ops.CharmBase):
 
         self.workload.start()
         logger.info("Services started")
+        self.state.unit_server.update({"started": True})
 
 
 if __name__ == "__main__":
