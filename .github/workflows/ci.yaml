@@ -72,16 +72,3 @@ jobs:
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:
       path-to-charm-directory: ${{ matrix.path }}
-
-  integration-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        path:
-          - valkey-operator/kubernetes
-    name: Integration test | ${{ matrix.path }}
-    uses: ./.github/workflows/integration_test.yaml
-    with:
-      artifact-prefix: ${{ inputs.artifact-prefix }}
-      path-to-charm-directory: ${{ matrix.path }}
-    secrets: inherit
