@@ -26,7 +26,7 @@ class PeerAppModel(PeerModel):
 
 class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
-    started: str | None = Field(default=None)
+    started: bool | None = Field(default=None)
 
 
 class RelationState:
@@ -98,7 +98,7 @@ class ValkeyServer(RelationState):
     @property
     def is_started(self) -> bool:
         """Check if the unit has started."""
-        return self.model.started == "True" if self.model else False
+        return self.model.started if self.model else False
 
 
 @final
