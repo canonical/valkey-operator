@@ -1,0 +1,62 @@
+# Copyright 2025 Canonical Ltd.
+# See LICENSE file for licensing details.
+name: Tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+  schedule:
+    - cron: '53 0 * * *'  # Daily at 00:53 UTC
+  # Triggered on push to branch "dpe" by .github/workflows/release.yaml
+  workflow_call:
+    outputs:
+      artifact-prefix:
+        description: build_charm.yaml `artifact-prefix` output
+        value: ${{ jobs.build.outputs.artifact-prefix }}
+
+jobs:
+  lint:
+    strategy:
+      matrix:
+        path:
+          - valkey-operator/kubernetes
+          - common
+    name: Lint | ${{ matrix.path }}
+    uses: canonical/data-platform-workflows/.github/workflows/lint.yaml@v40.0.2
+
+  unit-test:
+    strategy:
+      matrix:
+        path:
+          - valkey-operator/kubernetes
+    name: Unit test | ${{ matrix.path }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install tox & poetry
+        run: |
+          pipx install tox
+          pipx install poetry
+      - name: Run tests
+        working-directory: ${{ matrix.path }}
+        run: tox run -e unit
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v4
+
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        path:
+          - valkey-operator/kubernetes
+    name: Build charm | ${{ matrix.path }}
+    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
+    with:
+      path-to-charm-directory: ${{ matrix.path }}
