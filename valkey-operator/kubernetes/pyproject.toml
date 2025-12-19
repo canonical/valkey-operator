@@ -39,10 +39,10 @@ pytest-mock = "*"
 coverage = { extras = ["toml"], version = "*" }
 parameterized = "*"
 ops-scenario = "*"
-ops = "^3.1.0"
+ops = "^3.5.0"
 
 [tool.poetry.group.integration.dependencies]
-ops = "^3.1.0"
+ops = "^3.5.0"
 pytest = "*"
 data-platform-helpers = ">=0.1.7"
 
@@ -77,7 +77,7 @@ lint.extend-ignore = [
     "D413",
 ]
 lint.ignore = ["E501", "D107"]
-extend-exclude = ["__pycache__", "*.egg_info"]
+extend-exclude = ["__pycache__", "*.egg_info", "../../common/common/lib/charms/**"]
 lint.per-file-ignores = { "tests/*" = ["D100", "D101", "D102", "D103", "D104"] }
 
 [tool.ruff.lint.mccabe]

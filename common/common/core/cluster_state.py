@@ -8,14 +8,15 @@ import logging
 from typing import Dict, Set
 
 import ops
-from common.core.models import ValkeyServer, ValkeyCluster, PeerAppModel, PeerUnitModel
+from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
+
+from common.core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from common.lib.charms.data_platform_libs.v1.data_interfaces import (
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
 )
 from common.literals import PEER_RELATION, STATUS_PEERS_RELATION
-from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
     @property
     def peer_units_data_interfaces(
-            self,
+        self,
     ) -> Dict[ops.model.Unit, OpsOtherPeerUnitRepositoryInterface[PeerUnitModel]]:
         """Get unit data interface of all peer units from the Valkey peer relation."""
         if not self.peer_relation or not self.peer_relation.units:
@@ -99,4 +100,3 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         servers.add(self.unit_server)
 
         return servers
-

@@ -5,10 +5,31 @@ requires-python = ">=3.12" # switch to 3.14 once charm base is 26.04
 dependencies = [
     "ops>=3.5.0",
 ]
+exclude = [
+    "tests"
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.charm-libs.dependencies]
+# data_platform_libs/v0/data_interfaces.py
+ops = ">=2.0.0"
+
+[tool.poetry.group.format]
+optional = true
+
+[tool.poetry.group.format.dependencies]
+ruff = "*"
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.lint.dependencies]
+ruff = "*"
+codespell = "*"
+shellcheck-py = "*"
 
 # Linting tools configuration
 [tool.ruff]

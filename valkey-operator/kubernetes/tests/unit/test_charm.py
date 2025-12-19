@@ -2,14 +2,13 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from pathlib import Path
-
 import ops
+from common.literals import PEER_RELATION, STATUS_PEERS_RELATION
+from common.statuses import CharmStatuses
+from common.tests.unit.test_base_events import TestBaseEvents
 from ops import testing
 
 from charm import ValkeyK8sCharm
-from common.literals import PEER_RELATION, STATUS_PEERS_RELATION
-from common.statuses import CharmStatuses
 
 from .helpers import status_is
 
@@ -23,6 +22,8 @@ def test_pebble_ready_leader_unit():
     ctx = testing.Context(ValkeyK8sCharm)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+
+    # happy path
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         leader=True,
@@ -58,16 +59,29 @@ def test_pebble_ready_leader_unit():
         == ops.pebble.ServiceStatus.ACTIVE
     )
     assert (
-            state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
-            == ops.pebble.ServiceStatus.ACTIVE
+        state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
+        == ops.pebble.ServiceStatus.ACTIVE
     )
     assert state_out.unit_status == ops.ActiveStatus()
+
+    # container not ready
+    container = testing.Container(name=CONTAINER, can_connect=False)
+    state_in = testing.State(
+        leader=True,
+        relations={relation, status_peer_relation},
+        containers={container},
+    )
+
+    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
 
 
 def test_pebble_ready_non_leader_unit():
     ctx = testing.Context(ValkeyK8sCharm)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+
+    # happy path
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         leader=False,
@@ -77,5 +91,24 @@ def test_pebble_ready_non_leader_unit():
 
     state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
     assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
-    assert not state_out.get_container(container.name).service_statuses.get(SERVICE_METRIC_EXPORTER)
+    assert not state_out.get_container(container.name).service_statuses.get(
+        SERVICE_METRIC_EXPORTER
+    )
     assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+
+    # container not ready
+    container = testing.Container(name=CONTAINER, can_connect=False)
+    state_in = testing.State(
+        leader=True,
+        relations={relation, status_peer_relation},
+        containers={container},
+    )
+
+    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+
+
+def test_base_events():
+    base_events_test = TestBaseEvents(ValkeyK8sCharm)
+    base_events_test.test_update_status_leader_unit()
+    base_events_test.test_update_status_non_leader_unit()

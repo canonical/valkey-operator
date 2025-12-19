@@ -5,8 +5,10 @@
 """Collection of state objects for the Valkey relations, apps and units."""
 
 import logging
-
 from typing import Any, final
+
+import ops
+from pydantic import Field
 
 from common.lib.charms.data_platform_libs.v1.data_interfaces import (
     OpsOtherPeerUnitRepositoryInterface,
@@ -14,8 +16,6 @@ from common.lib.charms.data_platform_libs.v1.data_interfaces import (
     OpsPeerUnitRepositoryInterface,
     PeerModel,
 )
-import ops
-from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class PeerAppModel(PeerModel):
 
 class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
+
     started: bool | None = Field(default=None)
 
 
