@@ -9,7 +9,6 @@ import logging
 import ops
 
 from common.literals import PEER_RELATION
-from common.statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
 

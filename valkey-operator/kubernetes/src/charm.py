@@ -10,6 +10,7 @@ import ops
 from common.core.cluster_state import ClusterState
 from common.events.base_events import BaseEvents
 from common.managers.cluster import ClusterManager
+from common.managers.config import ConfigManager
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from literals import CONTAINER
@@ -28,9 +29,14 @@ class ValkeyK8sCharm(ops.CharmBase):
 
         # --- MANAGERS ---
         self.cluster_manager = ClusterManager(state=self.state, workload=self.workload)
+        self.config_manager = ConfigManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
-        self.status = StatusHandler(self, self.cluster_manager)
+        self.status = StatusHandler(
+            self,
+            self.cluster_manager,
+            self.config_manager,
+        )
 
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)

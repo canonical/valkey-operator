@@ -63,6 +63,7 @@ def test_pebble_ready_leader_unit():
         == ops.pebble.ServiceStatus.ACTIVE
     )
     assert state_out.unit_status == ops.ActiveStatus()
+    assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value, is_app=True)
 
     # container not ready
     container = testing.Container(name=CONTAINER, can_connect=False)
@@ -74,6 +75,7 @@ def test_pebble_ready_leader_unit():
 
     state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
 def test_pebble_ready_non_leader_unit():
