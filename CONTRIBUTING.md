@@ -76,27 +76,40 @@ tests/unit/test_charm.py::test_base_events PASSED
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 ==================================================================================================================== 3 passed, 1 warning in 1.11s ====================================================================================================================
 unit: commands[1]> poetry run coverage report
-Name                                                                                    Stmts   Miss Branch BrPart  Cover   Missing
------------------------------------------------------------------------------------------------------------------------------------
-/home/rene/repos/charmed-valkey-operator/common/common/__init__.py                          0      0      0      0   100%
-/home/rene/repos/charmed-valkey-operator/common/common/core/base_workload.py                8      2      0      0    75%   16, 21
-/home/rene/repos/charmed-valkey-operator/common/common/core/cluster_state.py               40     11      6      0    63%   50-53, 75, 88-102
-/home/rene/repos/charmed-valkey-operator/common/common/core/models.py                      53      9      6      2    81%   50-53, 63, 91, 96, 114-116, 121
-/home/rene/repos/charmed-valkey-operator/common/common/events/base_events.py               20      2      6      0    85%   31-32
-/home/rene/repos/charmed-valkey-operator/common/common/literals.py                          2      0      0      0   100%
-/home/rene/repos/charmed-valkey-operator/common/common/managers/cluster.py                 19      0      2      0   100%
-/home/rene/repos/charmed-valkey-operator/common/common/statuses.py                          6      0      0      0   100%
-/home/rene/repos/charmed-valkey-operator/common/common/tests/unit/helpers.py                7      0      0      0   100%
-/home/rene/repos/charmed-valkey-operator/common/common/tests/unit/test_base_events.py      28      0      0      0   100%
-src/charm.py                                                                               33      1      6      1    95%   66
-src/literals.py                                                                             3      0      0      0   100%
-src/workload.py                                                                            25      1      2      1    93%   23
------------------------------------------------------------------------------------------------------------------------------------
-TOTAL                                                                                     244     26     28      4    86%
+Name                                                                           Stmts   Miss Branch BrPart  Cover   Missing
+--------------------------------------------------------------------------------------------------------------------------
+/home/rene/repos/charmed-valkey-operator/common/common/__init__.py                 0      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/core/base_workload.py       8      2      0      0    75%   16, 21
+/home/rene/repos/charmed-valkey-operator/common/common/core/cluster_state.py      40     11      6      0    63%   50-53, 75, 88-102
+/home/rene/repos/charmed-valkey-operator/common/common/core/models.py             53      9      6      2    81%   51-54, 64, 92, 97, 115-117, 122
+/home/rene/repos/charmed-valkey-operator/common/common/events/base_events.py      20      2      6      0    85%   31-32
+/home/rene/repos/charmed-valkey-operator/common/common/literals.py                 2      0      0      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/managers/cluster.py        19      0      2      0   100%
+/home/rene/repos/charmed-valkey-operator/common/common/statuses.py                 6      0      0      0   100%
+src/charm.py                                                                      33      1      6      1    95%   66
+src/literals.py                                                                    3      0      0      0   100%
+src/workload.py                                                                   25      1      2      1    93%   23
+--------------------------------------------------------------------------------------------------------------------------
+TOTAL                                                                            209     26     28      4    84%
 unit: commands[2]> poetry run coverage xml
 Wrote XML report to coverage.xml
-  unit: OK (4.26=setup[0.04]+cmd[0.84,2.21,0.59,0.59] seconds)
-  congratulations :) (4.32 seconds)
+  unit: OK (4.23=setup[0.04]+cmd[0.81,2.13,0.56,0.69] seconds)
+  congratulations :) (4.29 seconds)
+```
+
+Unit tests for charm-specific functionality should be added to the charm itself, while unit test coverage for the shared
+code should be added to `common/tests/unit`. The shared unit tests are added as methods to a class, for example 
+`test_update_status_leader_unit()` in `TestBaseEvents()`. Each test class should have a `run_all_tests()` method that
+executes all unit tests of that class. Per charm, we only need to construct the class by passing the charm and then run
+all tests like this:
+
+```python
+from common.tests.unit.test_base_events import TestBaseEvents
+from charm import ValkeyK8sCharm
+
+def test_base_events():
+    base_events_test = TestBaseEvents(ValkeyK8sCharm)
+    base_events_test.run_all_tests()
 ```
 
 ## Build the charm

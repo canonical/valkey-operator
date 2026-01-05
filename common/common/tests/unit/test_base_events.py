@@ -20,6 +20,10 @@ class TestBaseEvents():
     def __init__(self, charm: ops.CharmBase):
         self.charm = charm
 
+    def run_all_tests(self):
+        self.test_update_status_leader_unit()
+        self.test_update_status_non_leader_unit()
+
     def test_update_status_leader_unit(self):
         ctx = testing.Context(self.charm)
         relation = testing.PeerRelation(

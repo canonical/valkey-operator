@@ -110,5 +110,4 @@ def test_pebble_ready_non_leader_unit():
 
 def test_base_events():
     base_events_test = TestBaseEvents(ValkeyK8sCharm)
-    base_events_test.test_update_status_leader_unit()
-    base_events_test.test_update_status_non_leader_unit()
+    base_events_test.run_all_tests()
