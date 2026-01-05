@@ -80,6 +80,10 @@ jobs:
         path:
           - valkey-operator/kubernetes
     name: Integration test | ${{ matrix.path }}
+    needs:
+      - lint
+      - unit-test
+      - build
     uses: ./.github/workflows/integration_test.yaml
     with:
       artifact-prefix: ${{ inputs.artifact-prefix }}
