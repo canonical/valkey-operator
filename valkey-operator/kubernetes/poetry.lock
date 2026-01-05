@@ -223,6 +223,21 @@ files = [
 ]
 
 [[package]]
+name = "jubilant"
+version = "1.6.2"
+description = "Juju CLI wrapper, primarily for charm integration testing"
+optional = false
+python-versions = ">=3.8"
+groups = ["integration"]
+files = [
+    {file = "jubilant-1.6.2-py3-none-any.whl", hash = "sha256:fa81995b64e0519fa59407beabbbc2aae097437895addcb3df54f33ab207fbfb"},
+    {file = "jubilant-1.6.2.tar.gz", hash = "sha256:d841610fd86f7d77419da8be08e6c936412e581652f55faa23c6c19536b87a8f"},
+]
+
+[package.dependencies]
+PyYAML = "==6.*"
+
+[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
@@ -799,4 +814,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "9ebe08f08a28acea0b4cb8af9fc5eeb3dc2971981c8f276908a81809834c239a"
+content-hash = "743356808ccedd85f7b123fd3e5d1909b965152c6ca297044a3228988bb3dbd4"
