@@ -45,6 +45,7 @@ ops = "^3.5.0"
 ops = "^3.5.0"
 pytest = "*"
 data-platform-helpers = ">=0.1.7"
+jubilant = "^1.6.0"
 
 [tool.coverage.run]
 branch = true
