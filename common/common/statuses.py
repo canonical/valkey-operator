@@ -17,7 +17,6 @@ class CharmStatuses(Enum):
     ACTIVE_IDLE = StatusObject(status="active", message="")
     SCALING_NOT_IMPLEMENTED = StatusObject(
         status="blocked",
-        message="Scaling Valkey is not implemented yet, service not started",
-        running="async",
+        message="Scaling Valkey is not implemented yet",
     )
     SERVICE_NOT_STARTED = StatusObject(status="blocked", message="Service not started")

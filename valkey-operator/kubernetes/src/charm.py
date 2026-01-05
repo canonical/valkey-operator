@@ -10,7 +10,6 @@ import ops
 from common.core.cluster_state import ClusterState
 from common.events.base_events import BaseEvents
 from common.managers.cluster import ClusterManager
-from common.statuses import CharmStatuses
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from literals import CONTAINER
@@ -46,15 +45,8 @@ class ValkeyK8sCharm(ops.CharmBase):
             event.defer()
             return
 
-        # todo: remove when scale-up is implemented
         if not self.unit.is_leader():
-            logger.warning("Scaling Valkey is not implemented yet")
-            self.status.set_running_status(
-                CharmStatuses.SCALING_NOT_IMPLEMENTED.value,
-                scope="unit",
-                component_name=self.cluster_manager.name,
-                statuses_state=self.state.statuses,
-            )
+            logger.warning("Scaling not implemented yet, services not started")
             return
 
         self.workload.start()

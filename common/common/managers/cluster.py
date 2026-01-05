@@ -36,4 +36,7 @@ class ClusterManager(ManagerStatusProtocol):
         if not self.workload.can_connect:
             status_list.append(CharmStatuses.SERVICE_NOT_STARTED.value)
 
+        if not self.state.unit_server.is_started:
+            status_list.append(CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
