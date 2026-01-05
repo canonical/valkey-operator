@@ -42,14 +42,11 @@ ops-scenario = "*"
 ops = "^3.5.0"
 
 [tool.poetry.group.integration.dependencies]
-ops = "^3.5.0"
 pytest = "*"
 pytest-asyncio = "*"
 allure-pytest = "*"
 allure-pytest-default-results = "^0.1.2"
-data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
-common = {path = "../../common", develop = true}
 
 [tool.coverage.run]
 branch = true
