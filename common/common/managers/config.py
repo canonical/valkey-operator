@@ -5,6 +5,7 @@
 """Manager for all config related tasks."""
 
 import logging
+from pathlib import Path
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
@@ -16,6 +17,8 @@ from common.statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
 
+WORKING_DIR = Path(__file__).absolute().parent
+
 
 class ConfigManager(ManagerStatusProtocol):
     """Manage cluster members, authorization and other server related tasks."""
@@ -26,6 +29,38 @@ class ConfigManager(ManagerStatusProtocol):
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
+
+    @property
+    def config_properties(self) -> dict[str, str]:
+        """Assemble the config properties.
+
+        Returns:
+            Dictionary of properties to be written to the config file.
+        """
+        config_properties = {}
+
+        # load the config properties provided from the template in this repo
+        # it does NOT load the file from disk in the charm unit in order to avoid config drift
+        with open(f"{WORKING_DIR}/config-template/valkey.conf") as config:
+            # The valkey.conf file contains a number of directives that have a very simple format:
+            # keyword argument1 argument2 ... argumentN
+            for line in config:
+                if not line or line.startswith("#"):
+                    # ignore comments and empty lines
+                    continue
+                try:
+                    key, value = line.split(" ", 1)
+                except ValueError:
+                    key = line.strip()
+                    value = ""
+                config_properties[key.strip()] = value.strip()
+
+        return config_properties
+
+    def set_config_properties(self) -> None:
+        """Write the config properties to the config file."""
+        logger.debug("Writing configuration")
+        self.workload.write_config_file(config=self.config_properties)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""

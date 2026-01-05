@@ -36,7 +36,7 @@ def test_pebble_ready_leader_unit():
             SERVICE_VALKEY: {
                 "override": "replace",
                 "summary": "Valkey service",
-                "command": "valkey-server",
+                "command": "valkey-server /var/lib/valkey/valkey.conf",
                 "user": CHARM_USER,
                 "group": CHARM_USER,
                 "startup": "enabled",

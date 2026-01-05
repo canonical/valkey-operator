@@ -55,6 +55,7 @@ class ValkeyK8sCharm(ops.CharmBase):
             logger.warning("Scaling not implemented yet, services not started")
             return
 
+        self.config_manager.set_config_properties()
         self.workload.start()
         logger.info("Services started")
         self.state.unit_server.update({"started": True})

@@ -73,6 +73,21 @@ files = [
 ]
 
 [[package]]
+name = "charmlibs-pathops"
+version = "1.2.0.post0"
+description = "A pathlib-like interface for Juju K8s charms to interact with files in their workload container."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "charmlibs_pathops-1.2.0.post0-py3-none-any.whl", hash = "sha256:4c9dac4d37c248ec587759e1b5aafa3ba1a6a8818cbbcf38d7c44c2af84deaac"},
+    {file = "charmlibs_pathops-1.2.0.post0.tar.gz", hash = "sha256:692c38688bbd54c00009c0a9562750cd39fa24a80d04be013554f6d9aabd35b8"},
+]
+
+[package.dependencies]
+ops = ">=2.19,<4"
+
+[[package]]
 name = "codespell"
 version = "2.4.1"
 description = "Fix common misspellings in text files"
@@ -875,4 +890,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "047d2a8ca1f7b5a8993761e2c8a6b0a05a0fb1e6cb8b6eed90150b9b37d08c67"
+content-hash = "bdccf58ad620c1129f166b1b8928a0bfdad30a0fbffa420082ec76d42d4c770f"

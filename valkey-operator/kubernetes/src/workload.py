@@ -8,9 +8,10 @@ import logging
 from typing import override
 
 import ops
+from charmlibs import pathops
 from common.core.base_workload import WorkloadBase
 
-from literals import CHARM, CHARM_USER
+from literals import CHARM, CHARM_USER, CONFIG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise AttributeError("Container is required.")
 
         self.container = container
+        self.config_file = pathops.ContainerPath(CONFIG_FILE, container=container)
         self.valkey_service = "valkey"
         self.metric_service = "metric_exporter"
 
@@ -41,7 +43,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 self.valkey_service: {
                     "override": "replace",
                     "summary": "Valkey service",
-                    "command": "valkey-server",
+                    "command": f"valkey-server {self.config_file}",
                     "user": CHARM_USER,
                     "group": CHARM_USER,
                     "startup": "enabled",
@@ -62,3 +64,10 @@ class ValkeyK8sWorkload(WorkloadBase):
     def start(self) -> None:
         self.container.add_layer(CHARM, self.pebble_layer, combine=True)
         self.container.restart(self.valkey_service, self.metric_service)
+
+    @override
+    def write_config_file(self, config: dict[str, str]) -> None:
+        config_string = "\n".join(f"{str(key)}{' '}{str(value)}" for key, value in config.items())
+
+        path = self.config_file
+        path.write_text(config_string)

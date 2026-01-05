@@ -19,3 +19,12 @@ class WorkloadBase(ABC):
     def start(self) -> None:
         """Start the workload service."""
         pass
+
+    @abstractmethod
+    def write_config_file(self, config: dict[str, str]) -> None:
+        """Write config properties to the config file on disk.
+
+        Args:
+            config (dict): The config properties to be written.
+        """
+        pass

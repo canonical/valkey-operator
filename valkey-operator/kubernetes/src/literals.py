@@ -7,3 +7,5 @@
 CHARM = "valkey-k8s"
 CHARM_USER = "valkey"
 CONTAINER = "valkey"
+
+CONFIG_FILE = "/var/lib/valkey/valkey.conf"
