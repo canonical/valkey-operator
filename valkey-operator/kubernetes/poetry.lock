@@ -109,7 +109,7 @@ version = "0.1.0"
 description = ""
 optional = false
 python-versions = ">=3.12"
-groups = ["main"]
+groups = ["main", "integration"]
 files = []
 develop = true
 
@@ -874,4 +874,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "adbe1991aab3e6636e141a943030d3d3a71459d9b6c6d5c28a7d385f87d5f42b"
+content-hash = "7de76ab0958c9891d8daa0041dbcea51f04bbe3577ffbdaac7bdc565049fee68"
