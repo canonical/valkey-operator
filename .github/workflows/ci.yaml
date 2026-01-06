@@ -86,6 +86,6 @@ jobs:
       - build
     uses: ./.github/workflows/integration_test.yaml
     with:
-      artifact-prefix: ${{ inputs.artifact-prefix }}
+      artifact-prefix: ${{ needs.build.outputs.artifact-prefix }}
       path-to-charm-directory: ${{ matrix.path }}
     secrets: inherit
