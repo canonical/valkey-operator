@@ -47,6 +47,7 @@ pytest-asyncio = "*"
 allure-pytest = "*"
 allure-pytest-default-results = "^0.1.2"
 jubilant = "^1.6.0"
+common = {path = "../../common", develop = true}
 
 [tool.coverage.run]
 branch = true
