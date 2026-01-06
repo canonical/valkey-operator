@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 
 import logging
+from enum import Enum
 from pathlib import Path
 from typing import List
 
@@ -17,6 +18,15 @@ logger = logging.getLogger(__name__)
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
+
+
+class CharmStatuses(Enum):
+    """List all StatusObjects here that are checked against in the integration tests."""
+
+    SCALING_NOT_IMPLEMENTED = StatusObject(
+        status="blocked",
+        message="Scaling Valkey is not implemented yet",
+    )
 
 
 def does_status_match(

@@ -6,8 +6,7 @@ import logging
 import jubilant
 import pytest
 
-from .common_statuses import CharmStatuses
-from .helpers import APP_NAME, IMAGE_RESOURCE, does_status_match
+from .helpers import APP_NAME, IMAGE_RESOURCE, CharmStatuses, does_status_match
 
 logger = logging.getLogger(__name__)
 
