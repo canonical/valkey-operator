@@ -31,7 +31,8 @@ def charm(arch: str) -> str:
 
 @pytest.fixture(scope="module")
 def juju(arch: str):
-    with jubilant.temp_model() as juju:
-        juju.wait_timeout = 1000
-        juju.cli("set-model-constraints", f"arch={arch}")
-        yield juju
+    # `testing` is the default model created by concierge
+    juju = jubilant.Juju(model="testing")
+    juju.wait_timeout = 1000
+    juju.cli("set-model-constraints", f"arch={arch}")
+    yield juju
