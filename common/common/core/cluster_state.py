@@ -5,7 +5,6 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
-from typing import Dict, Set
 
 import ops
 from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
@@ -45,7 +44,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def peer_units_data_interfaces(
         self,
-    ) -> Dict[ops.model.Unit, OpsOtherPeerUnitRepositoryInterface[PeerUnitModel]]:
+    ) -> dict[ops.model.Unit, OpsOtherPeerUnitRepositoryInterface[PeerUnitModel]]:
         """Get unit data interface of all peer units from the Valkey peer relation."""
         if not self.peer_relation or not self.peer_relation.units:
             return {}
@@ -79,7 +78,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         )
 
     @property
-    def servers(self) -> Set[ValkeyServer]:
+    def servers(self) -> set[ValkeyServer]:
         """Get all servers/units in the current peer relation, including this unit itself.
 
         Returns:
