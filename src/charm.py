@@ -14,13 +14,13 @@ from events.base_events import BaseEvents
 from literals import CONTAINER
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
-from workload import ValkeyK8sWorkload
+from workload_k8s import ValkeyK8sWorkload
 
 logger = logging.getLogger(__name__)
 
 
 class ValkeyCharm(ops.CharmBase):
-    """Charmed Operator for Valkey K8s."""
+    """Charmed Operator for Valkey."""
 
     def __init__(self, *args) -> None:
         super().__init__(*args)

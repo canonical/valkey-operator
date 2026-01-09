@@ -8,7 +8,7 @@ from ops import testing
 
 @pytest.fixture(autouse=True)
 def mock_write_config_file(mocker):
-    mocker.patch("workload.ValkeyK8sWorkload.write_config_file")
+    mocker.patch("workload_k8s.ValkeyK8sWorkload.write_config_file")
 
 
 @pytest.fixture(autouse=True)
