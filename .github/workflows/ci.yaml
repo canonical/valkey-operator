@@ -70,6 +70,8 @@ jobs:
     name: Build charm
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:
+      # enable ccc later (currently blocked)
+      cache: false
       path-to-charm-directory: ${{ matrix.path }}
 
   integration-test:

@@ -58,17 +58,17 @@ in Juju. For details, see [development setup](https://documentation.ubuntu.com/j
 
 In our case, we want to deploy `valkey` to a model `test`. Use the `upstream-source` from `metadata.yaml`:
 ```shell
-$ juju deploy ./valkey-k8s_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge
+$ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge
 
 $ juju status
-Model  Controller      Cloud/Region        Version  SLA          Timestamp
-test   k8s-controller  microk8s/localhost  3.6.12   unsupported  16:12:56Z 
+Model    Controller      Cloud/Region        Version  SLA          Timestamp
+testing  k8s-controller  microk8s/localhost  3.6.12   unsupported  08:39:26Z
 
-App         Version  Status   Scale  Charm       Channel  Rev  Address        Exposed  Message
-valkey-k8s           active       3  valkey-k8s             1  10.152.183.39  no       
+App     Version  Status   Scale  Charm   Channel  Rev  Address        Exposed  Message
+valkey           blocked      3  valkey             4  10.152.183.51  no       Scaling Valkey is not implemented yet
 
-Unit           Workload  Agent  Address      Ports  Message
-valkey-k8s/0*  active    idle   10.1.142.30             
-valkey-k8s/1   blocked   idle   10.1.142.32         Scaling Valkey is not implemented yet, service not started
-valkey-k8s/2   blocked   idle   10.1.142.31         Scaling Valkey is not implemented yet, service not started
+Unit       Workload  Agent  Address      Ports  Message
+valkey/0*  active    idle   10.1.127.21         
+valkey/1   blocked   idle   10.1.127.20         Scaling Valkey is not implemented yet
+valkey/2   blocked   idle   10.1.127.22         Scaling Valkey is not implemented yet
 ```
