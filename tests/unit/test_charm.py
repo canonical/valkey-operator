@@ -4,7 +4,7 @@
 
 from ops import ActiveStatus, pebble, testing
 
-from src.charm import ValkeyK8sCharm
+from src.charm import ValkeyCharm
 from src.literals import PEER_RELATION, STATUS_PEERS_RELATION
 from src.statuses import CharmStatuses
 
@@ -17,7 +17,7 @@ SERVICE_METRIC_EXPORTER = "metric_exporter"
 
 
 def test_pebble_ready_leader_unit(cloud_spec):
-    ctx = testing.Context(ValkeyK8sCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
 
@@ -79,7 +79,7 @@ def test_pebble_ready_leader_unit(cloud_spec):
 
 
 def test_pebble_ready_non_leader_unit(cloud_spec):
-    ctx = testing.Context(ValkeyK8sCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
 
@@ -113,7 +113,7 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
 
 
 def test_update_status_leader_unit(cloud_spec):
-    ctx = testing.Context(ValkeyK8sCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
@@ -135,7 +135,7 @@ def test_update_status_leader_unit(cloud_spec):
 
 
 def test_update_status_non_leader_unit(cloud_spec):
-    ctx = testing.Context(ValkeyK8sCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
 

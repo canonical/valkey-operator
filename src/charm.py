@@ -19,7 +19,7 @@ from workload import ValkeyK8sWorkload
 logger = logging.getLogger(__name__)
 
 
-class ValkeyK8sCharm(ops.CharmBase):
+class ValkeyCharm(ops.CharmBase):
     """Charmed Operator for Valkey K8s."""
 
     def __init__(self, *args) -> None:
@@ -62,4 +62,4 @@ class ValkeyK8sCharm(ops.CharmBase):
 
 
 if __name__ == "__main__":
-    ops.main(ValkeyK8sCharm)
+    ops.main(ValkeyCharm)
