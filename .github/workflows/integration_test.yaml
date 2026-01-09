@@ -29,7 +29,6 @@ jobs:
           pipx install tox poetry
       - name: Collect spread jobs
         id: collect-jobs
-        working-directory: ${{ inputs.path-to-charm-directory }}
         shell: python
         run: |
           import json
@@ -73,7 +72,6 @@ jobs:
               file.write(output)
       - name: Generate Allure default test results
         if: ${{ github.event_name == 'schedule' && github.run_attempt == '1' }}
-        working-directory: ${{ inputs.path-to-charm-directory }}
         run: tox run -e integration -- tests/integration --allure-default-dir=allure-default-results
       - name: Upload Allure default results
         # Default test results in case the integration tests time out or runner set up fails
@@ -81,8 +79,8 @@ jobs:
         if: ${{ github.event_name == 'schedule' && github.run_attempt == '1' }}
         uses: actions/upload-artifact@v5
         with:
-          name: allure-default-results-integration-test-${{ inputs.path-to-charm-directory }}
-          path: ${{ inputs.path-to-charm-directory }}/allure-default-results/
+          name: allure-default-results-integration-test
+          path: allure-default-results/
           if-no-files-found: error
     outputs:
       jobs: ${{ steps.collect-jobs.outputs.jobs }}
@@ -119,7 +117,6 @@ jobs:
       - name: Run spread job
         timeout-minutes: 180
         id: spread
-        working-directory: ${{ inputs.path-to-charm-directory }}
         run: ~/go/bin/spread -vv -artifacts=artifacts '${{ matrix.job.spread_job }}'
       - name: Upload Allure results
         timeout-minutes: 3
@@ -129,24 +126,19 @@ jobs:
         if: ${{ (success() || (failure() && steps.spread.outcome == 'failure')) && startsWith(matrix.job.spread_job, 'github-ci:ubuntu-24.04:') && endsWith(matrix.job.spread_job, ':juju36') && github.event_name == 'schedule' && github.run_attempt == '1' }}
         uses: actions/upload-artifact@v5
         with:
-          name: allure-results-integration-test-${{ inputs.path-to-charm-directory }}-${{ matrix.job.name_in_artifact }}
-          path: ${{ inputs.path-to-charm-directory }}/artifacts/${{ matrix.job.spread_job }}/allure-results/
+          name: allure-results-integration-test-${{ matrix.job.name_in_artifact }}
+          path: artifacts/${{ matrix.job.spread_job }}/allure-results/
           if-no-files-found: error
       - timeout-minutes: 1
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         run: snap list
-      - name: lxc image list
-        timeout-minutes: 1
-        if: ${{ (success() || (failure() && steps.spread.outcome == 'failure')) && inputs.path-to-charm-directory == 'machines' }}
-        # sudo needed since spread runs scripts as root
-        run: sudo lxc image list
       - name: Select model
         timeout-minutes: 1
         # `!contains(matrix.job.spread_job, 'juju29')` workaround for juju 2 error:
         # "ERROR cannot acquire lock file to read controller concierge-microk8s: unable to open
         # /tmp/juju-store-lock-3635383939333230: permission denied"
         # Unable to workaround error with `sudo rm /tmp/juju-*`
-        if: ${{ !contains(matrix.job.spread_job, 'juju29') && (success() || (failure() && steps.spread.outcome == 'failure')) }}
+        if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         id: juju-switch
         run: |
           # sudo needed since spread runs scripts as root
