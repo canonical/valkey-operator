@@ -5,10 +5,14 @@
 """Valkey base event handlers."""
 
 import logging
+from typing import TYPE_CHECKING
 
 import ops
 
 from literals import PEER_RELATION
+
+if TYPE_CHECKING:
+    from charm import ValkeyCharm
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BaseEvents(ops.Object):
     """Handle all base events."""
 
-    def __init__(self, charm: ops.CharmBase):
+    def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="base_events")
         self.charm = charm
 

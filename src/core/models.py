@@ -26,7 +26,7 @@ class PeerAppModel(PeerModel):
 class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
 
-    started: bool | None = Field(default=None)
+    started: bool = Field(default=False)
 
 
 class RelationState:

@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
 
+    @property
     @abstractmethod
     def can_connect(self) -> bool:
         """Check if the workload service can be reached."""

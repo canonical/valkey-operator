@@ -28,8 +28,8 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.valkey_service = "valkey"
         self.metric_service = "metric_exporter"
 
-    @override
     @property
+    @override
     def can_connect(self) -> bool:
         return self.container.can_connect()
 
