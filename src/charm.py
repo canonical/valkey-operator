@@ -24,6 +24,9 @@ class ValkeyCharm(ops.CharmBase):
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
+        cloud_spec = self.model.get_cloud_spec()
+        logger.info("cloud spec: %s", cloud_spec)
+
         self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
         self.state = ClusterState(self)
 

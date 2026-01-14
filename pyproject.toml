@@ -10,6 +10,7 @@ python = "^3.12" # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 data-platform-helpers = ">=0.1.7"
+valkey-glide = "^2.2.5"
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"
@@ -47,6 +48,7 @@ allure-pytest = "*"
 allure-pytest-default-results = "^0.1.2"
 data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
+valkey-glide = "^2.2.5"
 
 [tool.coverage.run]
 branch = true
