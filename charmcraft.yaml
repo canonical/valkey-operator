@@ -76,6 +76,10 @@ parts:
       # Ubuntu 22.04 archive. Install rustc and cargo using rustup instead of the Ubuntu archive
       rustup set profile minimal
       rustup default 1.90.0  # renovate: charmcraft-rust-latest
+      
+      # valkey-glide requires Protobuf compiler
+      snap install protobuf --classic
+      protoc --version
 
       craftctl default
       # Include requirements.txt in *.charm artifact for easier debugging
