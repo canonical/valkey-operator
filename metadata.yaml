@@ -11,11 +11,11 @@ description: |
   Valkey is a flexible distributed key-value database that is optimized 
   for caching and other realtime workloads. This charmed operator deploys 
   and operates Valkey in Kubernetes and VM environments.
-docs: charmhub.io # to be updated
+docs: https://charmhub.io/valkey # to be updated
 source: https://github.com/canonical/charmed-valkey-operator
 issues: https://github.com/canonical/charmed-valkey-operator/issues
 website:
-  - https://charmhub.io/valkey-k8s
+  - https://charmhub.io/valkey
   - https://github.com/canonical/charmed-valkey-operator
   - https://matrix.to/#/%23charmhub-data-platform%3Aubuntu.com
 
