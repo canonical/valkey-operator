@@ -1,0 +1,7 @@
+.venv/
+*.charm
+.vscode/
+.idea
+.env
+valkey-operator/kubernetes/*coverage*
+common/poetry.lock
