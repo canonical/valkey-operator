@@ -37,8 +37,6 @@ parts:
       "$HOME/.local/bin/uv" tool install --no-python-downloads --python '>=3.9' poetry==2.2.1 --with poetry-plugin-export==1.9.0  # renovate: charmcraft-poetry-latest
 
       ln -sf "$HOME/.local/bin/poetry" /usr/local/bin/poetry
-
-      "$HOME/.local/bin/uv" tool install --no-python-downloads charmcraftlocal
   # "charm-poetry" part name is arbitrary; use for consistency
   # Avoid using "charm" part name since that has special meaning to charmcraft
   charm-poetry:
@@ -57,6 +55,8 @@ parts:
       - libffi-dev  # Needed to build Python dependencies with Rust from source
       - libssl-dev  # Needed to build Python dependencies with Rust from source
       - pkg-config  # Needed to build Python dependencies with Rust from source
+      - libprotobuf-dev # Needed to build Valkey-glide
+      - protobuf-compiler # Needed to build Valkey-glide
     override-build: |
       # Workaround for https://github.com/canonical/charmcraft/issues/2068
       # rustup used to install rustc and cargo, which are needed to build Python dependencies with Rust from source
@@ -77,10 +77,6 @@ parts:
       rustup set profile minimal
       rustup default 1.90.0  # renovate: charmcraft-rust-latest
       
-      # valkey-glide requires Protobuf compiler
-      snap install protobuf --classic
-      protoc --version
-
       craftctl default
       # Include requirements.txt in *.charm artifact for easier debugging
       cp requirements.txt "$CRAFT_PART_INSTALL/requirements.txt"
