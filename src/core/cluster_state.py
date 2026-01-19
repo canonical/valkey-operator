@@ -99,3 +99,22 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         servers.add(self.unit_server)
 
         return servers
+
+    def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
+        """Resolve the given id of a Juju secret and return the content as a dict.
+
+        Args:
+            model (Model): Model object.
+            secret_id (str): The id of the secret.
+
+        Returns:
+            dict: The content of the secret.
+        """
+        try:
+            secret_content = self.charm.model.get_secret(id=secret_id).get_content(refresh=True)
+        except ops.SecretNotFoundError:
+            raise ops.SecretNotFoundError(f"The secret '{secret_id}' does not exist.")
+        except ops.ModelError:
+            raise
+
+        return secret_content

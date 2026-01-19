@@ -29,3 +29,13 @@ class WorkloadBase(ABC):
             config (dict): The config properties to be written.
         """
         pass
+
+    @abstractmethod
+    def write_file(self, content: str, path: str) -> None:
+        """Write content to a file on disk.
+
+        Args:
+            content (str): The content to be written.
+            path (str): The file path where the content should be written.
+        """
+        pass

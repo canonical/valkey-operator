@@ -4,7 +4,10 @@
 
 """Manager for all config related tasks."""
 
+import hashlib
 import logging
+import secrets
+import string
 from pathlib import Path
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -13,6 +16,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from literals import ACL_FILE, INTERNAL_USER
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -55,12 +59,39 @@ class ConfigManager(ManagerStatusProtocol):
                     value = ""
                 config_properties[key.strip()] = value.strip()
 
+        # Adjust default values
+        # Use the ACL file
+        config_properties["aclfile"] = str(ACL_FILE)
+
         return config_properties
 
     def set_config_properties(self) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
         self.workload.write_config_file(config=self.config_properties)
+
+    def set_acl_file(self) -> None:
+        """Write the ACL file with appropriate user permissions."""
+        logger.debug("Writing ACL configuration")
+        charmed_operator_password = self.state.cluster.internal_user_credentials.get(
+            INTERNAL_USER, ""
+        )
+        # sha256 hash the password
+        charmed_operator_password_hash = hashlib.sha256(
+            charmed_operator_password.encode("utf-8")
+        ).hexdigest()
+        # write the ACL file
+        acl_content = "user default off\n"
+        acl_content += f"user {INTERNAL_USER} on #{charmed_operator_password_hash} ~* +@all\n"
+        self.workload.write_file(acl_content, ACL_FILE)
+
+    def generate_password(self) -> str:
+        """Create randomized string for use as app passwords.
+
+        Returns:
+            str: String of 32 randomized letter+digit characters
+        """
+        return "".join([secrets.choice(string.ascii_letters + string.digits) for _ in range(32)])
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""

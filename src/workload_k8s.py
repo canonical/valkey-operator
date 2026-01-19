@@ -71,3 +71,14 @@ class ValkeyK8sWorkload(WorkloadBase):
 
         path = self.config_file
         path.write_text(config_string)
+
+    @override
+    def write_file(self, content: str, path: str) -> None:
+        """Write content to a file on disk.
+
+        Args:
+            content (str): The content to be written.
+            path (str): The file path where the content should be written.
+        """
+        file_path = pathops.ContainerPath(path, container=self.container)
+        file_path.write_text(content)
