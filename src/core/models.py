@@ -32,6 +32,7 @@ class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
 
     started: bool = Field(default=False)
+    hostname: str = Field(default="")
 
 
 class RelationState:

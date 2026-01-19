@@ -11,6 +11,7 @@ ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 data-platform-helpers = ">=0.1.7"
 valkey-glide = "^2.2.5"
+valkey = "^6.1.1"
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"

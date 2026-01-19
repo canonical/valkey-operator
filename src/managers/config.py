@@ -16,7 +16,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import ACL_FILE, INTERNAL_USER
+from literals import ACL_FILE, CLIENT_PORT, INTERNAL_USER
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,9 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
+        # port
+        config_properties["port"] = str(CLIENT_PORT)
+
         # Use the ACL file
         config_properties["aclfile"] = str(ACL_FILE)
 

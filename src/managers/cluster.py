@@ -10,8 +10,11 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
+from common.client import ValkeyClient
+from common.exceptions import ValkeyUserManagementError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from literals import INTERNAL_USER
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,26 @@ class ClusterManager(ManagerStatusProtocol):
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
+        self.admin_user = INTERNAL_USER
+        self.admin_password = self.state.cluster.internal_user_credentials.get(INTERNAL_USER, "")
+        self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
+
+    def update_credentials(self, username: str, password: str) -> None:
+        """Update a user's password.
+
+        Args:
+            username (str): The username to update.
+            password (str): The new password.
+        """
+        try:
+            client = ValkeyClient(
+                username=self.admin_user,
+                password=self.admin_password,
+                host=self.state.unit_server.model.hostname,
+            )
+            client.update_password(username=username, new_password=password)
+        except ValkeyUserManagementError:
+            raise
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

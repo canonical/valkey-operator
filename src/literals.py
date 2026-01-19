@@ -16,3 +16,5 @@ STATUS_PEERS_RELATION = "status-peers"
 
 INTERNAL_USER = "charmed-operator"
 INTERNAL_USER_PASSWORD_CONFIG = "system-users"
+
+CLIENT_PORT = 6379
