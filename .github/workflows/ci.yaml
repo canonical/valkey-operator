@@ -38,7 +38,7 @@ jobs:
       # to build Valkey-glide during tests
       - name: Install dependencies
         run: |
-          apt install libprotobuf-dev protobuf-compiler
+          sudo apt install libprotobuf-dev protobuf-compiler
       - name: Run tests
         run: tox run -e unit
       - name: Upload Coverage to Codecov
