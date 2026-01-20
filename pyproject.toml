@@ -48,6 +48,7 @@ allure-pytest = "*"
 allure-pytest-default-results = "^0.1.2"
 data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
+valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs" }
 
 [tool.coverage.run]
 branch = true

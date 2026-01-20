@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+from typing import Any
 
 from glide import (
     GlideClient,
@@ -44,8 +45,30 @@ class ValkeyClient:
         client_config = GlideClientConfiguration(
             addresses,
             credentials=credentials,
+            request_timeout=1000,  # in milliseconds
         )
         return await GlideClient.create(client_config)
+
+    async def _run_custom_command(self, command: list[str]) -> Any:
+        """Run a custom command on the Valkey client.
+
+        Args:
+            command (list[str]): The command to run as a list of strings.
+
+        Returns:
+            Any result from the command.
+        """
+        client = None
+        try:
+            client = await self.create_client()
+            result = await asyncio.wait_for(client.custom_command(command), timeout=5)
+            return result
+        except Exception as e:
+            logger.error(f"Error running command {' '.join(command)}: {e}")
+            raise ValkeyUserManagementError(f"Could not run command {' '.join(command)}: {e}")
+        finally:
+            if client:
+                await client.close()
 
     def update_password(self, username: str, new_password: str) -> None:
         """Update a user's password.
@@ -54,11 +77,9 @@ class ValkeyClient:
             username (str): The username to update.
             new_password (str): The new password.
         """
-        client = None
         try:
-            client = asyncio.run(self.create_client())
             result = asyncio.run(
-                client.custom_command(
+                self._run_custom_command(
                     [
                         "ACL",
                         "SETUSER",
@@ -68,10 +89,8 @@ class ValkeyClient:
                     ]
                 )
             )
+
             logger.debug(f"Password update result: {result}")
         except Exception as e:
             logger.error(f"Error updating password for user {username}: {e}")
             raise ValkeyUserManagementError(f"Could not update password for user {username}: {e}")
-        finally:
-            if client:
-                asyncio.run(client.close())
