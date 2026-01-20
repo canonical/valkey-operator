@@ -5,3 +5,6 @@
 .env
 valkey-operator/kubernetes/*coverage*
 common/poetry.lock
+__pycache__
+coverage.xml
+.coverage
