@@ -6,12 +6,11 @@ package-mode = false
 requires-poetry = ">=2.0.0"
 
 [tool.poetry.dependencies]
-python = "^3.12" # switch to 3.14 once charm base is 26.04
+python = "^3.12"                                                                                                                 # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 data-platform-helpers = ">=0.1.7"
-valkey-glide = "^2.2.5"
-valkey = "^6.1.1"
+valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs" }
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"
@@ -49,7 +48,6 @@ allure-pytest = "*"
 allure-pytest-default-results = "^0.1.2"
 data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
-valkey-glide = "^2.2.5"
 
 [tool.coverage.run]
 branch = true
@@ -82,7 +80,11 @@ lint.extend-ignore = [
     "D413",
 ]
 lint.ignore = ["E501", "D107"]
-extend-exclude = ["__pycache__", "*.egg_info", "../../common/common/lib/charms/**"]
+extend-exclude = [
+    "__pycache__",
+    "*.egg_info",
+    "../../common/common/lib/charms/**",
+]
 lint.per-file-ignores = { "tests/*" = ["D100", "D101", "D102", "D103", "D104"] }
 
 [tool.ruff.lint.mccabe]

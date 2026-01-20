@@ -44,7 +44,7 @@ class ClusterManager(ManagerStatusProtocol):
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
-                host=self.state.unit_server.model.hostname,
+                hosts=self.cluster_hostnames,
             )
             client.update_password(username=username, new_password=password)
         except ValkeyUserManagementError:
