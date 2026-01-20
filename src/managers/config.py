@@ -63,6 +63,9 @@ class ConfigManager(ManagerStatusProtocol):
         # port
         config_properties["port"] = str(CLIENT_PORT)
 
+        # bind to all interfaces
+        config_properties["bind"] = "0.0.0.0 -::1"
+
         # Use the ACL file
         config_properties["aclfile"] = str(ACL_FILE)
 
