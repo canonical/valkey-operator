@@ -109,7 +109,7 @@ jobs:
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
           # to build Valkey-glide during tests
-          sudo apt install libprotobuf-dev protobuf-compiler
+          sudo apt install libprotobuf-dev protobuf-compiler -y
       - name: Download packed charm(s)
         timeout-minutes: 5
         uses: actions/download-artifact@v6
