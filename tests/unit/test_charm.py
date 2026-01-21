@@ -289,11 +289,13 @@ def test_config_changed_leader_unit():
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("common.client.ValkeyClient.update_password") as mock_update_password,
+        patch("common.client.ValkeyClient.save_acl") as mock_save_acl,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_update_password.assert_called_once_with(
             username=INTERNAL_USER, new_password="secure-password"
         )
+        mock_save_acl.assert_called_once()
         secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
         assert secret_out.latest_content.get(f"{INTERNAL_USER}-password") == "secure-password"
 

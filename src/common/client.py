@@ -94,3 +94,16 @@ class ValkeyClient:
         except Exception as e:
             logger.error(f"Error updating password for user {username}: {e}")
             raise ValkeyUserManagementError(f"Could not update password for user {username}: {e}")
+
+    def save_acl(self) -> None:
+        """Save ACL content to the Valkey server.
+
+        Args:
+            acl_content (str): The ACL content to save.
+        """
+        try:
+            result = asyncio.run(self._run_custom_command(["ACL", "SAVE"]))
+            logger.debug(f"ACL save result: {result}")
+        except Exception as e:
+            logger.error(f"Error saving ACL: {e}")
+            raise ValkeyUserManagementError(f"Could not save ACL: {e}")

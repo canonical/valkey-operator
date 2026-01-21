@@ -47,6 +47,8 @@ class ClusterManager(ManagerStatusProtocol):
                 hosts=self.cluster_hostnames,
             )
             client.update_password(username=username, new_password=password)
+            client.password = password
+            client.save_acl()
         except ValkeyUserManagementError:
             raise
 
