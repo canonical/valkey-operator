@@ -110,6 +110,9 @@ jobs:
           go install github.com/snapcore/spread/cmd/spread@latest
           # to build Valkey-glide during tests
           sudo apt install libprotobuf-dev protobuf-compiler -y
+          apt-get install rustup -y
+          rustup set profile minimal
+          rustup default 1.90.0
       - name: Download packed charm(s)
         timeout-minutes: 5
         uses: actions/download-artifact@v6
