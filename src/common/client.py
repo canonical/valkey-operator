@@ -64,8 +64,8 @@ class ValkeyClient:
             result = await asyncio.wait_for(client.custom_command(command), timeout=5)
             return result
         except Exception as e:
-            logger.error(f"Error running command {' '.join(command)}: {e}")
-            raise ValkeyUserManagementError(f"Could not run command {' '.join(command)}: {e}")
+            logger.error("Error running custom command: %s", e)
+            raise ValkeyUserManagementError(f"Could not run custom command: {e}")
         finally:
             if client:
                 await client.close()

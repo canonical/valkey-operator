@@ -233,12 +233,16 @@ def test_config_changed_non_leader_unit():
     ctx = testing.Context(ValkeyCharm)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
+    password_secret = testing.Secret(
+        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+    )
 
     state_in = testing.State(
         leader=False,
         relations={relation},
         containers={container},
-        config={INTERNAL_USER_PASSWORD_CONFIG: "secret:1tf1wk0tmfrodp8ofwxn"},
+        secrets={password_secret},
+        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
     )
     with (
         patch("events.base_events.BaseEvents.update_admin_password") as mock_update,
@@ -313,28 +317,6 @@ def test_config_changed_leader_unit_wrong_username():
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
-    )
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("common.client.ValkeyClient.update_password") as mock_update_password,
-    ):
-        ctx.run(ctx.on.config_changed(), state_in)
-        mock_update_password.assert_not_called()
-
-
-def test_config_changed_leader_unit_wrong_secret():
-    ctx = testing.Context(ValkeyCharm)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    password_secret = testing.Secret(
-        tracked_content={"wrong-username": "secure-password"}, remote_grants=APP_NAME
-    )
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
         config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
     )
     with (
