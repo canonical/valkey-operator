@@ -37,11 +37,6 @@ class ValkeyClient:
         """Initialize the Valkey client."""
         addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in self.hosts]
         credentials = ServerCredentials(username=self.user, password=self.password)
-        # TODO add back when we enable cluster mode
-        # client_config = GlideClusterClientConfiguration(
-        #     addresses,
-        #     credentials=credentials,
-        # )
         client_config = GlideClientConfiguration(
             addresses,
             credentials=credentials,
@@ -70,40 +65,11 @@ class ValkeyClient:
             if client:
                 await client.close()
 
-    def update_password(self, username: str, new_password: str) -> None:
-        """Update a user's password.
-
-        Args:
-            username (str): The username to update.
-            new_password (str): The new password.
-        """
+    def load_acl(self) -> None:
+        """Load ACL content to the Valkey server."""
         try:
-            result = asyncio.run(
-                self._run_custom_command(
-                    [
-                        "ACL",
-                        "SETUSER",
-                        username,
-                        "resetpass",
-                        f">{new_password}",
-                    ]
-                )
-            )
-
-            logger.debug(f"Password update result: {result}")
+            result = asyncio.run(self._run_custom_command(["ACL", "LOAD"]))
+            logger.debug(f"ACL load result: {result}")
         except Exception as e:
-            logger.error(f"Error updating password for user {username}: {e}")
-            raise ValkeyUserManagementError(f"Could not update password for user {username}: {e}")
-
-    def save_acl(self) -> None:
-        """Save ACL content to the Valkey server.
-
-        Args:
-            acl_content (str): The ACL content to save.
-        """
-        try:
-            result = asyncio.run(self._run_custom_command(["ACL", "SAVE"]))
-            logger.debug(f"ACL save result: {result}")
-        except Exception as e:
-            logger.error(f"Error saving ACL: {e}")
-            raise ValkeyUserManagementError(f"Could not save ACL: {e}")
+            logger.error(f"Error loading ACL: {e}")
+            raise ValkeyUserManagementError(f"Could not load ACL: {e}")

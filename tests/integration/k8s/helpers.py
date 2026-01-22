@@ -193,11 +193,6 @@ async def create_valkey_client(
     credentials = None
     if username or password:
         credentials = ServerCredentials(username=username, password=password)
-    # TODO add back when we enable cluster mode
-    # client_config = GlideClusterClientConfiguration(
-    #     addresses,
-    #     credentials=credentials,
-    # )
     client_config = GlideClientConfiguration(
         addresses,
         credentials=credentials,

@@ -82,6 +82,8 @@ class BaseEvents(ops.Object):
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
+        # TODO For a multi-node cluster the units should independently update their passwords.
+        # If they fail the event should be deferred and retried.
         if not self.charm.unit.is_leader():
             return
 
@@ -105,9 +107,8 @@ class BaseEvents(ops.Object):
                 ):
                     logger.debug(f"{INTERNAL_USER_PASSWORD_CONFIG} have changed.")
                     try:
-                        self.charm.cluster_manager.update_credentials(
-                            username=INTERNAL_USER, password=new_password
-                        )
+                        self.charm.config_manager.set_acl_file(new_password)
+                        self.charm.cluster_manager.load_acl_file()
                         self.charm.state.cluster.update(
                             {"charmed_operator_password": new_password}
                         )

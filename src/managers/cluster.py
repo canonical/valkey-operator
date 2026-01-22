@@ -33,22 +33,15 @@ class ClusterManager(ManagerStatusProtocol):
         self.admin_password = self.state.cluster.internal_user_credentials.get(INTERNAL_USER, "")
         self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
 
-    def update_credentials(self, username: str, password: str) -> None:
-        """Update a user's password.
-
-        Args:
-            username (str): The username to update.
-            password (str): The new password.
-        """
+    def load_acl_file(self) -> None:
+        """Load the ACL file into the cluster."""
         try:
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
                 hosts=self.cluster_hostnames,
             )
-            client.update_password(username=username, new_password=password)
-            client.password = password
-            client.save_acl()
+            client.load_acl()
         except ValkeyUserManagementError:
             raise
 

@@ -76,12 +76,18 @@ class ConfigManager(ManagerStatusProtocol):
         logger.debug("Writing configuration")
         self.workload.write_config_file(config=self.config_properties)
 
-    def set_acl_file(self) -> None:
-        """Write the ACL file with appropriate user permissions."""
+    def set_acl_file(self, charmed_operator_password: str = "") -> None:
+        """Write the ACL file with appropriate user permissions.
+
+        Args:
+            charmed_operator_password (str): Password for the charmed-operator user. If not provided,
+                the password from the cluster state will be used.
+        """
         logger.debug("Writing ACL configuration")
-        charmed_operator_password = self.state.cluster.internal_user_credentials.get(
-            INTERNAL_USER, ""
-        )
+        if not charmed_operator_password:
+            charmed_operator_password = self.state.cluster.internal_user_credentials.get(
+                INTERNAL_USER, ""
+            )
         # sha256 hash the password
         charmed_operator_password_hash = hashlib.sha256(
             charmed_operator_password.encode("utf-8")
