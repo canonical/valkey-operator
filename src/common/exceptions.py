@@ -4,5 +4,13 @@
 """Charm-specific exceptions."""
 
 
-class ValkeyUserManagementError(Exception):
+class ValkeyClientError(Exception):
     """Custom Exception if user could not be added or updated in valkey cluster."""
+
+
+class ValkeyCustomCommandError(ValkeyClientError):
+    """Custom Exception if a custom command fails on valkey cluster."""
+
+
+class ValkeyACLLoadError(ValkeyClientError):
+    """Custom Exception if ACL file could not be loaded in valkey cluster."""

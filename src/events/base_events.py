@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyUserManagementError
+from common.exceptions import ValkeyClientError
 from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
 from statuses import CharmStatuses, ClusterStatuses
 
@@ -57,6 +57,7 @@ class BaseEvents(ops.Object):
                     password = self.charm.state.get_secret_from_id(str(admin_secret_id)).get(
                         INTERNAL_USER
                     )
+                # TODO consider deferring and blocking the charm
                 except (ops.ModelError, ops.SecretNotFoundError) as e:
                     logger.error(f"Could not access secret {admin_secret_id}: {e}")
                     raise
@@ -112,7 +113,7 @@ class BaseEvents(ops.Object):
                         self.charm.state.cluster.update(
                             {"charmed_operator_password": new_password}
                         )
-                    except ValkeyUserManagementError as e:
+                    except ValkeyClientError as e:
                         logger.error(e)
                         self.charm.status.set_running_status(
                             ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

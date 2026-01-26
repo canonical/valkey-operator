@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyUserManagementError
+from common.exceptions import ValkeyACLLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import INTERNAL_USER
@@ -42,7 +42,7 @@ class ClusterManager(ManagerStatusProtocol):
                 hosts=self.cluster_hostnames,
             )
             client.load_acl()
-        except ValkeyUserManagementError:
+        except ValkeyACLLoadError:
             raise
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:

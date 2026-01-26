@@ -14,7 +14,10 @@ from glide import (
     ServerCredentials,
 )
 
-from common.exceptions import ValkeyUserManagementError
+from common.exceptions import (
+    ValkeyACLLoadError,
+    ValkeyCustomCommandError,
+)
 from literals import CLIENT_PORT
 
 logger = logging.getLogger(__name__)
@@ -60,7 +63,7 @@ class ValkeyClient:
             return result
         except Exception as e:
             logger.error("Error running custom command: %s", e)
-            raise ValkeyUserManagementError(f"Could not run custom command: {e}")
+            raise ValkeyCustomCommandError(f"Could not run custom command: {e}")
         finally:
             if client:
                 await client.close()
@@ -70,6 +73,6 @@ class ValkeyClient:
         try:
             result = asyncio.run(self._run_custom_command(["ACL", "LOAD"]))
             logger.debug(f"ACL load result: {result}")
-        except Exception as e:
+        except ValkeyCustomCommandError as e:
             logger.error(f"Error loading ACL: {e}")
-            raise ValkeyUserManagementError(f"Could not load ACL: {e}")
+            raise ValkeyACLLoadError(f"Could not load ACL: {e}")
