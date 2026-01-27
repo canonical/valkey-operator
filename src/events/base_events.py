@@ -109,7 +109,7 @@ class BaseEvents(ops.Object):
                     logger.debug(f"{INTERNAL_USER_PASSWORD_CONFIG} have changed.")
                     try:
                         self.charm.config_manager.set_acl_file(new_password)
-                        self.charm.cluster_manager.load_acl_file()
+                        self.charm.cluster_manager.reload_acl_file()
                         self.charm.state.cluster.update(
                             {"charmed_operator_password": new_password}
                         )

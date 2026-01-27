@@ -61,6 +61,7 @@ class ValkeyClient:
             client = await self.create_client()
             result = await asyncio.wait_for(client.custom_command(command), timeout=5)
             return result
+        # TODO refine exception handling
         except Exception as e:
             logger.error("Error running custom command: %s", e)
             raise ValkeyCustomCommandError(f"Could not run custom command: {e}")
@@ -68,7 +69,7 @@ class ValkeyClient:
             if client:
                 await client.close()
 
-    def load_acl(self) -> None:
+    def reload_acl(self) -> None:
         """Load ACL content to the Valkey server."""
         try:
             result = asyncio.run(self._run_custom_command(["ACL", "LOAD"]))
