@@ -7,7 +7,11 @@ from time import sleep
 import jubilant
 import pytest
 
-from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
+from literals import (
+    INTERNAL_USERS_PASSWORD_CONFIG,
+    PEER_RELATION,
+    CharmUsers,
+)
 
 from .helpers import (
     APP_NAME,
@@ -59,7 +63,7 @@ async def test_authentication(juju: jubilant.Juju) -> None:
 
     # Authenticate with internal user
     secret = get_secret_by_label(juju, label=f"{PEER_RELATION}.{APP_NAME}.app")
-    password = secret.get(f"{INTERNAL_USER}-password")
+    password = secret.get(f"{CharmUsers.VALKEY_ADMIN}-password")
     assert password is not None, "Admin password secret not found"
 
     client = await create_valkey_client(hostnames=hostnames, password=password)
@@ -82,7 +86,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     # perform read operation with the updated password
     result = await set_key(
         hostnames=hostnames,
-        username=INTERNAL_USER,
+        username=CharmUsers.VALKEY_ADMIN,
         password=new_password,
         key=TEST_KEY,
         value=TEST_VALUE,
@@ -90,14 +94,14 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data after admin password update"
 
     # update the config again and remove the option `admin-password`
-    juju.config(app=APP_NAME, reset=[INTERNAL_USER_PASSWORD_CONFIG])
+    juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
 
     # wait for config-changed hook to finish executing
     juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
 
     # make sure we can still read data with the previously set password
     assert await get_key(
-        hostnames=hostnames, username=INTERNAL_USER, password=new_password, key=TEST_KEY
+        hostnames=hostnames, username=CharmUsers.VALKEY_ADMIN, password=new_password, key=TEST_KEY
     ) == bytes(TEST_VALUE, "utf-8")
 
 
@@ -109,10 +113,10 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     logger.info("Creating new user secret")
     secret_name = "my_secret"
     new_password = "even-newer-password"
-    secret_id = juju.add_secret(name=secret_name, content={INTERNAL_USER: new_password})
+    secret_id = juju.add_secret(name=secret_name, content={CharmUsers.VALKEY_ADMIN: new_password})
 
     logger.info("Updating configuration with the new secret - but without access")
-    juju.config(app=APP_NAME, values={INTERNAL_USER_PASSWORD_CONFIG: secret_id})
+    juju.config(app=APP_NAME, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
     juju.wait(
         lambda status: does_status_match(
@@ -142,7 +146,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
 
     # perform read operation with the updated password
     assert await get_key(
-        hostnames=hostnames, username=INTERNAL_USER, password=new_password, key=TEST_KEY
+        hostnames=hostnames, username=CharmUsers.VALKEY_ADMIN, password=new_password, key=TEST_KEY
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after secret permissions were updated"
 
     logger.info("Password update successful after secret was granted")

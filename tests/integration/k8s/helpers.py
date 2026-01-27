@@ -14,7 +14,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
 from ops import SecretNotFoundError, StatusBase
 
-from literals import CLIENT_PORT, INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG
+from literals import CLIENT_PORT, INTERNAL_USERS_PASSWORD_CONFIG, CharmUsers
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,9 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
 
 
 async def create_valkey_client(
-    hostnames: list[str], username: str | None = INTERNAL_USER, password: str | None = None
+    hostnames: list[str],
+    username: str | None = CharmUsers.VALKEY_ADMIN,
+    password: str | None = None,
 ):
     """Create and return a Valkey client connected to the cluster.
 
@@ -203,7 +205,7 @@ async def create_valkey_client(
 def set_password(
     juju: jubilant.Juju,
     password: str,
-    username: str = INTERNAL_USER,
+    username: str = CharmUsers.VALKEY_ADMIN,
     application: str = APP_NAME,
 ) -> None:
     """Set a user password (or update it if existing) via secret.
@@ -228,7 +230,7 @@ def set_password(
     juju.grant_secret(identifier=secret_id, app=application)
 
     # update the application config to include the secret
-    juju.config(app=application, values={INTERNAL_USER_PASSWORD_CONFIG: secret_id})
+    juju.config(app=application, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
 
 async def set_key(
