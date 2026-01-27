@@ -17,7 +17,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 )
 from pydantic import Field
 
-from literals import INTERNAL_USER
+from literals import CharmUsers
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,9 @@ class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 
     charmed_operator_password: ExtraSecretStr = Field(default="")
+    charmed_sentinel_valkey_password: ExtraSecretStr = Field(default="")
+    charmed_replication_password: ExtraSecretStr = Field(default="")
+    charmed_sentinel_operator_password: ExtraSecretStr = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -129,7 +132,11 @@ class ValkeyCluster(RelationState):
     @property
     def internal_user_credentials(self) -> dict[str, str]:
         """Retrieve the credentials for the internal admin user."""
-        if self.model and (password := self.model.charmed_operator_password):
-            return {INTERNAL_USER: password}
+        passwords = {}
+        if not self.model:
+            return passwords
 
-        return {}
+        for user in CharmUsers:
+            if password := getattr(self.model, f"{user.value.replace('-', '_')}_password", ""):
+                passwords[user.value] = password
+        return passwords
