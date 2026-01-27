@@ -104,7 +104,7 @@ class ConfigManager(ManagerStatusProtocol):
         Returns:
             str: ACL line for the user.
         """
-        passwords = passwords or self.state.cluster.internal_user_credentials
+        passwords = passwords or self.state.cluster.internal_users_credentials
         if not (password := passwords.get(user.value, "")):
             raise ValueError(f"No password found for user {user}")
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()

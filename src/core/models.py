@@ -9,26 +9,31 @@ from typing import Any, final
 
 import ops
 from charms.data_platform_libs.v1.data_interfaces import (
-    ExtraSecretStr,
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
+    OptionalSecretStr,
     PeerModel,
 )
 from pydantic import Field
+from typing_extensions import Annotated
 
 from literals import CharmUsers
 
 logger = logging.getLogger(__name__)
 
+InternalUsersSecret = Annotated[
+    OptionalSecretStr, Field(exclude=True, default=None), "internal_users_secret"
+]
+
 
 class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 
-    charmed_operator_password: ExtraSecretStr = Field(default="")
-    charmed_sentinel_valkey_password: ExtraSecretStr = Field(default="")
-    charmed_replication_password: ExtraSecretStr = Field(default="")
-    charmed_sentinel_operator_password: ExtraSecretStr = Field(default="")
+    charmed_operator_password: InternalUsersSecret = Field(default="")
+    charmed_sentinel_valkey_password: InternalUsersSecret = Field(default="")
+    charmed_replication_password: InternalUsersSecret = Field(default="")
+    charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -130,7 +135,7 @@ class ValkeyCluster(RelationState):
         return self.data_interface.build_model(self.relation.id) if self.relation else None
 
     @property
-    def internal_user_credentials(self) -> dict[str, str]:
+    def internal_users_credentials(self) -> dict[str, str]:
         """Retrieve the credentials for the internal admin user."""
         passwords = {}
         if not self.model:

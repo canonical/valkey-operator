@@ -30,7 +30,7 @@ class ClusterManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
         self.admin_user = CharmUsers.VALKEY_ADMIN.value
-        self.admin_password = self.state.cluster.internal_user_credentials.get(
+        self.admin_password = self.state.cluster.internal_users_credentials.get(
             CharmUsers.VALKEY_ADMIN.value, ""
         )
         self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
