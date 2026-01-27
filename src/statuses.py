@@ -31,5 +31,5 @@ class ClusterStatuses(Enum):
     """Collection of possible cluster related statuses."""
 
     PASSWORD_UPDATE_FAILED = StatusObject(
-        status="blocked", message="Failed to update the internal user's password", running="async"
+        status="blocked", message="Failed to update an internal user's password", running="async"
     )

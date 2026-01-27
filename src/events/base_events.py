@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyClientError
+from common.exceptions import ValkeyACLLoadError
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL,
@@ -117,11 +117,11 @@ class BaseEvents(ops.Object):
                 try:
                     self.charm.config_manager.set_acl_file()
                     self.charm.cluster_manager.load_acl_file()
-                except ValkeyClientError as e:
+                except ValkeyACLLoadError as e:
                     logger.error(e)
                     self.charm.status.set_running_status(
                         ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                        scope="app",
+                        scope="unit",
                         component_name=self.charm.cluster_manager.name,
                         statuses_state=self.charm.state.statuses,
                     )
@@ -129,7 +129,7 @@ class BaseEvents(ops.Object):
                     return
                 self.charm.state.statuses.delete(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                    scope="app",
+                    scope="unit",
                     component=self.charm.cluster_manager.name,
                 )
             return
@@ -138,7 +138,7 @@ class BaseEvents(ops.Object):
             if admin_secret_id == event.secret.id:
                 try:
                     self._update_internal_users_password(str(admin_secret_id))
-                except (ops.ModelError, ops.SecretNotFoundError, ValkeyClientError):
+                except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
                     event.defer()
                     return
 
@@ -201,11 +201,11 @@ class BaseEvents(ops.Object):
                         for user in CharmUsers
                     }
                 )
-            except ValkeyClientError as e:
+            except ValkeyACLLoadError as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                    scope="app",
+                    scope="unit",
                     component_name=self.charm.cluster_manager.name,
                     statuses_state=self.charm.state.statuses,
                 )
@@ -213,6 +213,6 @@ class BaseEvents(ops.Object):
 
         self.charm.state.statuses.delete(
             ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-            scope="app",
+            scope="unit",
             component=self.charm.cluster_manager.name,
         )
