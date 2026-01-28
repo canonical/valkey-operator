@@ -310,7 +310,7 @@ def test_config_changed_leader_unit():
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()

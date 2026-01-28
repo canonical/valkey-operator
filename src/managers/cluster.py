@@ -35,15 +35,15 @@ class ClusterManager(ManagerStatusProtocol):
         )
         self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
 
-    def load_acl_file(self) -> None:
-        """Load the ACL file into the cluster."""
+    def reload_acl_file(self) -> None:
+        """Reload the ACL file into the cluster."""
         try:
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
                 hosts=self.cluster_hostnames,
             )
-            client.load_acl()
+            client.reload_acl()
         except ValkeyACLLoadError:
             raise
 
