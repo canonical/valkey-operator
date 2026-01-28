@@ -186,7 +186,7 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
 
 async def create_valkey_client(
     hostnames: list[str],
-    username: str | None = CharmUsers.VALKEY_ADMIN,
+    username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
 ):
     """Create and return a Valkey client connected to the cluster.
