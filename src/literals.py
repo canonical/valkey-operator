@@ -31,7 +31,8 @@ class CharmUsers(str, Enum):
     VALKEY_REPLICA = "charmed-replication"
 
     # Sentinel users
-    SENTINEL_ADMIN = "charmed-sentinel-operator"
+    SENTINEL_ADMIN = "charmed-sentinel-peers"
+    SENTINEL_CHARM_ADMIN = "charmed-sentinel-operator"
 
 
 CHARM_USERS_ROLE_MAP = {
@@ -39,4 +40,5 @@ CHARM_USERS_ROLE_MAP = {
     CharmUsers.VALKEY_SENTINEL: "+client +config +info +publish +subscribe +monitor +ping +replicaof +failover +script|kill +multi +exec &__sentinel__:hello",
     CharmUsers.VALKEY_REPLICA: "+psync +replconf +ping",
     CharmUsers.SENTINEL_ADMIN: "~* +@all",
+    CharmUsers.SENTINEL_CHARM_ADMIN: "~* +@all",
 }
