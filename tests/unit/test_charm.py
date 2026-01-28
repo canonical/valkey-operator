@@ -12,7 +12,7 @@ from common.exceptions import ValkeyACLLoadError
 from src.charm import ValkeyCharm
 from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
-    INTERNAL_USERS_SECRET_LABEL,
+    INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
     CharmUsers,
@@ -173,7 +173,7 @@ def test_internal_user_creation():
     with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
         secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL}"
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
         assert secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
 
@@ -211,7 +211,7 @@ def test_leader_elected_leader_password_specified():
     ):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
         secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL}"
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
         for user in CharmUsers:
             if user == CharmUsers.VALKEY_ADMIN:
@@ -315,7 +315,7 @@ def test_config_changed_leader_unit():
         mock_set_acl_file.assert_called_once()
         mock_load_acl.assert_called_once()
         secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL}"
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
         assert (
             secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
@@ -360,7 +360,7 @@ def test_change_password_secret_changed_non_leader_unit():
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL}",
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
         tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
         remote_grants=APP_NAME,
     )
@@ -392,7 +392,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful():
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL}",
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
         tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
         remote_grants=APP_NAME,
     )
