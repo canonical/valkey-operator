@@ -219,3 +219,8 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
+        self.charm.state.statuses.delete(
+            ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
+            scope="app",
+            component=self.charm.cluster_manager.name,
+        )

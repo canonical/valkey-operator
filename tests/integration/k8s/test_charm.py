@@ -11,6 +11,7 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     CharmUsers,
 )
+from statuses import ClusterStatuses
 
 from .helpers import (
     APP_NAME,
@@ -106,6 +107,39 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         password=new_password,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8")
+
+
+@pytest.mark.abort_on_fail
+async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
+    """Assert the admin password is updated when adding a user secret to the config."""
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+
+    # create a user secret and grant it to the application
+    new_password = "some-password"
+    set_password(juju, username="wrong-username", password=new_password)
+
+    # wait for config-changed hook to finish executing
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={APP_NAME: [ClusterStatuses.PASSWORD_UPDATE_FAILED.value]},
+        ),
+        timeout=1200,
+    )
+
+    set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
+    # wait for config-changed hook to finish executing
+    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+
+    # perform read operation with the updated password
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=new_password,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data after admin password update"
 
 
 @pytest.mark.abort_on_fail
