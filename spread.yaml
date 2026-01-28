@@ -117,6 +117,7 @@ prepare: |
   concierge prepare --trace
 
   pipx install tox poetry
+  rustup default 1.90.0
 prepare-each: |
   cd "$SPREAD_PATH"
   # `concierge prepare` needs to be run for each spread job in case Juju version changed

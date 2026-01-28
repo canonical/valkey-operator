@@ -20,3 +20,16 @@ class CharmStatuses(Enum):
         message="Scaling Valkey is not implemented yet",
     )
     SERVICE_NOT_STARTED = StatusObject(status="blocked", message="Service not started")
+    SECRET_ACCESS_ERROR = StatusObject(
+        status="blocked",
+        message="Cannot access configured secret, check permissions",
+        running="async",
+    )
+
+
+class ClusterStatuses(Enum):
+    """Collection of possible cluster related statuses."""
+
+    PASSWORD_UPDATE_FAILED = StatusObject(
+        status="blocked", message="Failed to update the internal user's password", running="async"
+    )

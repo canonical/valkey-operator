@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import contextlib
 import logging
 from enum import Enum
 from pathlib import Path
@@ -10,7 +11,10 @@ from typing import List
 import jubilant
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
-from ops import StatusBase
+from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
+from ops import SecretNotFoundError, StatusBase
+
+from literals import CLIENT_PORT, INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,11 @@ class CharmStatuses(Enum):
     SCALING_NOT_IMPLEMENTED = StatusObject(
         status="blocked",
         message="Scaling Valkey is not implemented yet",
+    )
+    SECRET_ACCESS_ERROR = StatusObject(
+        status="blocked",
+        message="Cannot access configured secret, check permissions",
+        running="async",
     )
 
 
@@ -141,3 +150,122 @@ def verify_unit_count(
                 unit_count[app] = 1
 
     return all(count == len(status.get_units(app)) for app, count in unit_count.items())
+
+
+def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
+    """Get the hostnames of all units in the Valkey application.
+
+    Args:
+        juju: The Juju client instance.
+        app_name: The name of the Valkey application.
+
+    Returns:
+        A list of hostnames for all units in the Valkey application.
+    """
+    status = juju.status()
+    return [unit.address for unit in status.get_units(app_name).values()]
+
+
+def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
+    for secret in juju.secrets():
+        if label == secret.label:
+            revealed_secret = juju.show_secret(secret.uri, reveal=True)
+            return revealed_secret.content
+
+    raise SecretNotFoundError(f"Secret with label {label} not found")
+
+
+async def create_valkey_client(
+    hostnames: list[str], username: str | None = INTERNAL_USER, password: str | None = None
+):
+    """Create and return a Valkey client connected to the cluster.
+
+    Args:
+        hostnames: List of hostnames of the Valkey cluster nodes.
+        username: The username for authentication.
+        password: The password for the internal user.
+
+    Returns:
+        A Valkey client instance connected to the cluster.
+    """
+    addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in hostnames]
+
+    credentials = None
+    if username or password:
+        credentials = ServerCredentials(username=username, password=password)
+    client_config = GlideClientConfiguration(
+        addresses,
+        credentials=credentials,
+    )
+    return await GlideClient.create(client_config)
+
+
+def set_password(
+    juju: jubilant.Juju,
+    password: str,
+    username: str = INTERNAL_USER,
+    application: str = APP_NAME,
+) -> None:
+    """Set a user password (or update it if existing) via secret.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        password: password to use
+        username: the user to set the password
+        application: the application the created secret will be granted to
+    """
+    secret_name = "system_users_secret"
+
+    # if secret exists, update it, else add secret
+    existing = next((s for s in juju.secrets() if s.name == secret_name), None)
+    if existing:
+        juju.update_secret(identifier=existing.uri, content={username: password})
+        secret_id = existing.uri
+    else:
+        secret_id = juju.add_secret(name=secret_name, content={username: password})
+
+    # grant the application access to this secret
+    juju.grant_secret(identifier=secret_id, app=application)
+
+    # update the application config to include the secret
+    juju.config(app=application, values={INTERNAL_USER_PASSWORD_CONFIG: secret_id})
+
+
+async def set_key(
+    hostnames: list[str], username: str, password: str, key: str, value: str
+) -> bytes | None:
+    """Write a key-value pair to the Valkey cluster.
+
+    Args:
+        hostnames: List of hostnames of the Valkey cluster nodes.
+        key: The key to write.
+        value: The value to write.
+        username: The username for authentication.
+        password: The password for authentication.
+    """
+    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
+    return await client.set(key, value)
+
+
+async def get_key(hostnames: list[str], username: str, password: str, key: str) -> bytes | None:
+    """Read a value from the Valkey cluster by key.
+
+    Args:
+        hostnames: List of hostnames of the Valkey cluster nodes.
+        key: The key to read.
+        username: The username for authentication.
+        password: The password for authentication.
+    """
+    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
+    return await client.get(key)
+
+
+@contextlib.contextmanager
+def fast_forward(juju: jubilant.Juju):
+    """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
+    old = juju.model_config()["update-status-hook-interval"]
+    juju.model_config({"update-status-hook-interval": "10s"})
+    try:
+        yield
+    finally:
+        juju.model_config({"update-status-hook-interval": old})
