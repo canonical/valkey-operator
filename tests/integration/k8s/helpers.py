@@ -14,7 +14,13 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
 from ops import SecretNotFoundError, StatusBase
 
-from literals import CLIENT_PORT, INTERNAL_USERS_PASSWORD_CONFIG, CharmUsers
+from literals import (
+    CLIENT_PORT,
+    INTERNAL_USERS_PASSWORD_CONFIG,
+    INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    PEER_RELATION,
+    CharmUsers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,9 @@ logger = logging.getLogger(__name__)
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
+INTERNAL_USERS_SECRET_LABEL = (
+    f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+)
 
 
 class CharmStatuses(Enum):
@@ -205,7 +214,7 @@ async def create_valkey_client(
 def set_password(
     juju: jubilant.Juju,
     password: str,
-    username: str = CharmUsers.VALKEY_ADMIN,
+    username: str = CharmUsers.VALKEY_ADMIN.value,
     application: str = APP_NAME,
 ) -> None:
     """Set a user password (or update it if existing) via secret.

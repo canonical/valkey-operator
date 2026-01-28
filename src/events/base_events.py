@@ -13,7 +13,7 @@ import ops
 from common.exceptions import ValkeyACLLoadError
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
-    INTERNAL_USERS_SECRET_LABEL,
+    INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     CharmUsers,
 )
@@ -112,7 +112,9 @@ class BaseEvents(ops.Object):
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
         if not self.charm.unit.is_leader():
-            if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL):
+            if event.secret.label and event.secret.label.endswith(
+                INTERNAL_USERS_SECRET_LABEL_SUFFIX
+            ):
                 # leader unit processed the secret change from user, non-leader units can replicate
                 try:
                     self.charm.config_manager.set_acl_file()

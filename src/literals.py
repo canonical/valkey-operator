@@ -18,7 +18,7 @@ PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
-INTERNAL_USERS_SECRET_LABEL = "internal_users_secret"
+INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
 CLIENT_PORT = 6379
 
 
