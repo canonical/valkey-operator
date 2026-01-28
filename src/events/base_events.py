@@ -105,7 +105,7 @@ class BaseEvents(ops.Object):
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
                 self._update_internal_users_password(str(admin_secret_id))
-            except (ops.ModelError, ops.SecretNotFoundError):
+            except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
                 event.defer()
                 return
 
@@ -116,7 +116,7 @@ class BaseEvents(ops.Object):
                 # leader unit processed the secret change from user, non-leader units can replicate
                 try:
                     self.charm.config_manager.set_acl_file()
-                    self.charm.cluster_manager.load_acl_file()
+                    self.charm.cluster_manager.reload_acl_file()
                 except ValkeyACLLoadError as e:
                     logger.error(e)
                     self.charm.status.set_running_status(
@@ -169,14 +169,6 @@ class BaseEvents(ops.Object):
         # Check which passwords have changed
         old_passwords = self.charm.state.cluster.internal_users_credentials
         passwords = {user.value: old_passwords.get(user.value, "") for user in CharmUsers}
-        for user in CharmUsers:
-            new_password = secret_content.get(user.value)
-            if not new_password:
-                continue
-            # only update user credentials if the password has changed
-            if new_password != passwords.get(user.value):
-                logger.debug(f"Password for user {user.value} has changed.")
-                passwords[user.value] = new_password
 
         # check if there are any users that are in the secret but not in the CharmUsers
         for key in secret_content.keys():
@@ -190,11 +182,20 @@ class BaseEvents(ops.Object):
                 )
                 return
 
+        for user in CharmUsers:
+            new_password = secret_content.get(user.value)
+            if not new_password:
+                continue
+            # only update user credentials if the password has changed
+            if new_password != passwords.get(user.value):
+                logger.debug(f"Password for user {user.value} has changed.")
+                passwords[user.value] = new_password
+
         # Update passwords if any have changed
         if passwords != old_passwords:
             try:
                 self.charm.config_manager.set_acl_file(passwords=passwords)
-                self.charm.cluster_manager.load_acl_file()
+                self.charm.cluster_manager.reload_acl_file()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": passwords[user.value]
@@ -209,7 +210,7 @@ class BaseEvents(ops.Object):
                     component_name=self.charm.cluster_manager.name,
                     statuses_state=self.charm.state.statuses,
                 )
-                raise
+                raise e
 
         self.charm.state.statuses.delete(
             ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
