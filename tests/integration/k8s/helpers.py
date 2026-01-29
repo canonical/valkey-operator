@@ -36,10 +36,6 @@ INTERNAL_USERS_SECRET_LABEL = (
 class CharmStatuses(Enum):
     """List all StatusObjects here that are checked against in the integration tests."""
 
-    SCALING_NOT_IMPLEMENTED = StatusObject(
-        status="blocked",
-        message="Scaling Valkey is not implemented yet",
-    )
     SECRET_ACCESS_ERROR = StatusObject(
         status="blocked",
         message="Cannot access configured secret, check permissions",

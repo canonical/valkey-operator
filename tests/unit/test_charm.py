@@ -30,6 +30,12 @@ SERVICE_SENTINEL = "valkey-sentinel"
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 
+internal_passwords_secret = testing.Secret(
+    tracked_content={f"{user.value}-password": "secure-password" for user in CharmUsers},
+    owner="app",
+    label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
+)
+
 
 def test_start_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
@@ -93,7 +99,7 @@ def test_start_leader_unit(cloud_spec):
             == pebble.ServiceStatus.ACTIVE
         )
         assert state_out.unit_status == ActiveStatus()
-        assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value, is_app=True)
+        assert state_out.app_status == ActiveStatus()
 
         # container not ready
         container = testing.Container(name=CONTAINER, can_connect=False)
@@ -127,15 +133,30 @@ def test_start_non_leader_unit(cloud_spec):
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
     ):
-        # generate passwords
-        state_out = ctx.run(ctx.on.leader_elected(), state_in)
-
-        state_out = ctx.run(ctx.on.start(), state_out)
+        state_out = ctx.run(ctx.on.start(), state_in)
         assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
         assert not state_out.get_container(container.name).service_statuses.get(
             SERVICE_METRIC_EXPORTER
         )
-        assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+        assert "start" in [e.name for e in state_out.deferred]
+
+        relation = testing.PeerRelation(
+            id=1, endpoint=PEER_RELATION, local_app_data={"primary_ip": "127.1.0.1"}
+        )
+        state_in = testing.State(
+            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+            leader=False,
+            relations={relation, status_peer_relation},
+            secrets={internal_passwords_secret},
+            containers={container},
+        )
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
+        assert state_out.get_container(container.name).service_statuses.get(
+            SERVICE_METRIC_EXPORTER
+        )
+        assert state_out.get_container(container.name).service_statuses[SERVICE_SENTINEL]
+        assert state_out.get_relation(1).local_unit_data["started"] == "true"
 
         # container not ready
         container = testing.Container(name=CONTAINER, can_connect=False)
@@ -174,7 +195,9 @@ def test_update_status_leader_unit(cloud_spec):
 
 def test_update_status_non_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"started": "true"}
+    )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
 
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -185,7 +208,7 @@ def test_update_status_non_leader_unit(cloud_spec):
         containers={container},
     )
     state_out = ctx.run(ctx.on.update_status(), state_in)
-    assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+    assert state_out.unit_status == ActiveStatus()
 
 
 def test_internal_user_creation():
