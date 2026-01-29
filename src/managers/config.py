@@ -24,6 +24,7 @@ from literals import (
     DATA_DIR,
     PRIMARY_NAME,
     QUORUM_NUMBER,
+    SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
     SENTINEL_PORT,
     CharmUsers,
@@ -145,7 +146,7 @@ class ConfigManager(ManagerStatusProtocol):
         acl_line = f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
         return acl_line
 
-    def set_sentinel_config(self) -> None:
+    def set_sentinel_config_properties(self) -> None:
         """Write sentinel configuration file."""
         if not self.state.cluster.model or not self.state.cluster.model.primary_ip:
             logger.warning("Cannot write sentinel config without primary details set")
@@ -176,6 +177,23 @@ class ConfigManager(ManagerStatusProtocol):
         self.workload.write_file(
             sentinel_config, SENTINEL_CONFIG_FILE, mode=0o600, user=CHARM_USER, group=CHARM_USER
         )
+
+    def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
+        """Write the Sentinel ACL file with appropriate user permissions.
+
+        Args:
+            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
+                the passwords from the cluster state will be used.
+        """
+        logger.debug("Writing Sentinel ACL configuration")
+        acl_content = "user default off\n"
+        for user in CharmUsers:
+            # only process VALKEY users
+            # Sentinel users should be in the sentinel acl file
+            if "VALKEY_" in str(user):
+                continue
+            acl_content += self._get_user_acl_line(user, passwords=passwords)
+        self.workload.write_file(acl_content, SENTINEL_ACL_FILE)
 
     def generate_password(self) -> str:
         """Create randomized string for use as app passwords.

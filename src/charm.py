@@ -42,17 +42,17 @@ class ValkeyCharm(ops.CharmBase):
         self.base_events = BaseEvents(self)
 
         # --- Observers ---
-        self.framework.observe(self.on.start, self._on_ready)
+        self.framework.observe(self.on.start, self._on_start)
 
-    def _on_ready(self, event: ops.StartEvent) -> None:
-        """Handle the `pebble-ready` event."""
+    def _on_start(self, event: ops.StartEvent) -> None:
+        """Handle the `start` event."""
         if not self.workload.can_connect:
             logger.warning("Container not ready yet")
             event.defer()
             return
 
         if not self.unit.is_leader() and (
-            not self.state.cluster.internal_user_credentials
+            not self.state.cluster.internal_users_credentials
             or not self.state.cluster.model.primary_ip
         ):
             logger.info("Deferring leader write primary and internal user credentials")
@@ -61,7 +61,8 @@ class ValkeyCharm(ops.CharmBase):
 
         self.config_manager.set_config_properties()
         self.config_manager.set_acl_file()
-        self.config_manager.set_sentinel_config()
+        self.config_manager.set_sentinel_config_properties()
+        self.config_manager.set_sentinel_acl_file()
         self.workload.mkdir(DATA_DIR, user=CHARM_USER, group=CHARM_USER)
         self.workload.start()
         logger.info("Services started")

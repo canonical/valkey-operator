@@ -13,6 +13,7 @@ CONTAINER = "valkey"
 CONFIG_FILE = "/var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "/var/lib/valkey/sentinel.conf"
 ACL_FILE = "/var/lib/valkey/users.acl"
+SENTINEL_ACL_FILE = "/var/lib/valkey/sentinel-users.acl"
 DATA_DIR = "/var/lib/valkey/data"
 
 PEER_RELATION = "valkey-peers"
