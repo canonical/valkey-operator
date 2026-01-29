@@ -148,7 +148,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     logger.info("Creating new user secret")
-    secret_name = "my_secret_2"
+    secret_name = "my_secret"
     new_password = "even-newer-password"
     secret_id = juju.add_secret(
         name=secret_name, content={CharmUsers.VALKEY_ADMIN.value: new_password}
