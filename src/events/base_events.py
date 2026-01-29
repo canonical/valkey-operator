@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyACLLoadError
+from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
@@ -137,7 +137,8 @@ class BaseEvents(ops.Object):
                 try:
                     self.charm.config_manager.set_acl_file()
                     self.charm.cluster_manager.reload_acl_file()
-                except ValkeyACLLoadError as e:
+                    self.charm.cluster_manager.update_primary_auth()
+                except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
                     logger.error(e)
                     self.charm.status.set_running_status(
                         ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -158,7 +159,12 @@ class BaseEvents(ops.Object):
             if admin_secret_id == event.secret.id:
                 try:
                     self._update_internal_users_password(str(admin_secret_id))
-                except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
+                except (
+                    ops.ModelError,
+                    ops.SecretNotFoundError,
+                    ValkeyACLLoadError,
+                    ValkeyConfigSetError,
+                ):
                     event.defer()
                     return
 
@@ -216,13 +222,14 @@ class BaseEvents(ops.Object):
             try:
                 self.charm.config_manager.set_acl_file(passwords=passwords)
                 self.charm.cluster_manager.reload_acl_file()
+                self.charm.cluster_manager.update_primary_auth()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": passwords[user.value]
                         for user in CharmUsers
                     }
                 )
-            except ValkeyACLLoadError as e:
+            except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

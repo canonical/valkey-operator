@@ -16,6 +16,7 @@ from glide import (
 
 from common.exceptions import (
     ValkeyACLLoadError,
+    ValkeyConfigSetError,
     ValkeyCustomCommandError,
 )
 from literals import CLIENT_PORT
@@ -77,3 +78,20 @@ class ValkeyClient:
         except ValkeyCustomCommandError as e:
             logger.error(f"Error loading ACL: {e}")
             raise ValkeyACLLoadError(f"Could not load ACL: {e}")
+
+    def set_runtime_config(self, config_properties: dict[str, str]) -> None:
+        """Set configuration properties on the Valkey server.
+
+        Args:
+            config_properties (dict[str, str]): Configuration properties to set.
+        """
+        try:
+            command = ["CONFIG", "SET"]
+            for key, value in config_properties.items():
+                command.append(key)
+                command.append(value)
+            result = asyncio.run(self._run_custom_command(command))
+            logger.debug("Config set result: %s", result)
+        except ValkeyCustomCommandError as e:
+            logger.error("Error setting config: %s", e)
+            raise ValkeyConfigSetError(f"Could not set config: {e}")
