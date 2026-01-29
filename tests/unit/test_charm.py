@@ -25,12 +25,13 @@ CHARM_USER = "valkey"
 CONTAINER = "valkey"
 SERVICE_VALKEY = "valkey"
 SERVICE_METRIC_EXPORTER = "metric_exporter"
+SERVICE_SENTINEL = "valkey-sentinel"
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 
 
-def test_pebble_ready_leader_unit(cloud_spec):
+def test_start_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -54,6 +55,14 @@ def test_pebble_ready_leader_unit(cloud_spec):
                 "group": CHARM_USER,
                 "startup": "enabled",
             },
+            SERVICE_SENTINEL: {
+                "override": "replace",
+                "summary": "Valkey sentinel service",
+                "command": "valkey-sentinel /var/lib/valkey/sentinel.conf",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "enabled",
+            },
             SERVICE_METRIC_EXPORTER: {
                 "override": "replace",
                 "summary": "Valkey metric exporter",
@@ -65,34 +74,42 @@ def test_pebble_ready_leader_unit(cloud_spec):
         }
     }
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
-    assert state_out.get_container(container.name).plan == expected_plan
-    assert (
-        state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
-        == pebble.ServiceStatus.ACTIVE
-    )
-    assert (
-        state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
-        == pebble.ServiceStatus.ACTIVE
-    )
-    assert state_out.unit_status == ActiveStatus()
-    assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value, is_app=True)
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+        patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
+    ):
+        # generate passwords
+        state_out = ctx.run(ctx.on.leader_elected(), state_in)
 
-    # container not ready
-    container = testing.Container(name=CONTAINER, can_connect=False)
-    state_in = testing.State(
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-        leader=True,
-        relations={relation, status_peer_relation},
-        containers={container},
-    )
+        # start event
+        state_out = ctx.run(ctx.on.start(), state_out)
+        assert state_out.get_container(container.name).plan == expected_plan
+        assert (
+            state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
+            == pebble.ServiceStatus.ACTIVE
+        )
+        assert (
+            state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
+            == pebble.ServiceStatus.ACTIVE
+        )
+        assert state_out.unit_status == ActiveStatus()
+        assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value, is_app=True)
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
-    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
-    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
+        # container not ready
+        container = testing.Container(name=CONTAINER, can_connect=False)
+        state_in = testing.State(
+            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+            leader=True,
+            relations={relation, status_peer_relation},
+            containers={container},
+        )
+
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
-def test_pebble_ready_non_leader_unit(cloud_spec):
+def test_start_non_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -106,24 +123,31 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
-    assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
-    assert not state_out.get_container(container.name).service_statuses.get(
-        SERVICE_METRIC_EXPORTER
-    )
-    assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+        patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
+    ):
+        # generate passwords
+        state_out = ctx.run(ctx.on.leader_elected(), state_in)
 
-    # container not ready
-    container = testing.Container(name=CONTAINER, can_connect=False)
-    state_in = testing.State(
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-        leader=True,
-        relations={relation, status_peer_relation},
-        containers={container},
-    )
+        state_out = ctx.run(ctx.on.start(), state_out)
+        assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
+        assert not state_out.get_container(container.name).service_statuses.get(
+            SERVICE_METRIC_EXPORTER
+        )
+        assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
-    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+        # container not ready
+        container = testing.Container(name=CONTAINER, can_connect=False)
+        state_in = testing.State(
+            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+            leader=True,
+            relations={relation, status_peer_relation},
+            containers={container},
+        )
+
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
 
 
 def test_update_status_leader_unit(cloud_spec):
@@ -310,10 +334,48 @@ def test_config_changed_leader_unit():
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.set_runtime_config") as mock_set_runtime_config,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
         mock_load_acl.assert_called_once()
+        mock_set_runtime_config.assert_called_once()
+        secret_out = state_out.get_secret(
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+        )
+        assert (
+            secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+            == "secure-password"
+        )
+
+
+def test_config_changed_leader_unit_primary():
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_app_data={"primary_ip": "127.0.1.1"}
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    password_secret = testing.Secret(
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
+    )
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        secrets={password_secret},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+    )
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.set_runtime_config") as mock_set_runtime_config,
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        mock_set_acl_file.assert_called_once()
+        mock_load_acl.assert_called_once()
+        mock_set_runtime_config.assert_not_called()
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )

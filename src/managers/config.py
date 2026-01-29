@@ -150,16 +150,6 @@ class ConfigManager(ManagerStatusProtocol):
 
     def set_sentinel_config_properties(self) -> None:
         """Write sentinel configuration file."""
-        if not self.state.cluster.model or not self.state.cluster.model.primary_ip:
-            logger.warning("Cannot write sentinel config without primary details set")
-            return
-        if not (
-            charmed_sentinel_valkey_password := self.state.cluster.internal_users_credentials.get(
-                CharmUsers.VALKEY_SENTINEL.value
-            )
-        ):
-            logger.warning("Cannot write sentinel config without sentinel user credentials set")
-            return
         logger.debug("Writing Sentinel configuration")
 
         sentinel_config = f"port {SENTINEL_PORT}\n"
@@ -172,9 +162,7 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config += (
             f"sentinel auth-user {PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}\n"
         )
-        sentinel_config += (
-            f"sentinel auth-pass {PRIMARY_NAME} {charmed_sentinel_valkey_password}\n"
-        )
+        sentinel_config += f"sentinel auth-pass {PRIMARY_NAME} {self.state.cluster.internal_users_credentials.get(CharmUsers.VALKEY_SENTINEL.value, '')}\n"
         # sentinel admin user settings used by sentinel for its own authentication
         sentinel_config += f"sentinel sentinel-user {CharmUsers.SENTINEL_ADMIN.value}\n"
         sentinel_config += f"sentinel sentinel-pass {self.state.cluster.internal_users_credentials.get(CharmUsers.SENTINEL_ADMIN.value, '')}\n"

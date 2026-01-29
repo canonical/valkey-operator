@@ -111,6 +111,8 @@ class ValkeyK8sWorkload(WorkloadBase):
         Args:
             path (str): The directory path to be created.
             mode (int, optional): The directory mode (permissions). Defaults to None.
+            user (str, optional): The user name. Defaults to None.
+            group (str, optional): The group name. Defaults to None.
         """
         dir_path = pathops.ContainerPath(path, container=self.container)
         dir_path.mkdir(mode=mode, user=user, group=group)
