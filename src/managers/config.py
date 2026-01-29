@@ -101,8 +101,10 @@ class ConfigManager(ManagerStatusProtocol):
             # set replicaof
             logger.debug("Setting replicaof to primary %s", self.state.cluster.model.primary_ip)
             config_properties["replicaof"] = f"{self.state.cluster.model.primary_ip} {CLIENT_PORT}"
-            config_properties["primaryuser"] = "replication-user"
-            config_properties["primaryauth"] = "testpassword"  # TODO make this configurable
+            config_properties["primaryuser"] = CharmUsers.VALKEY_REPLICA.value
+            config_properties["primaryauth"] = self.state.cluster.internal_users_credentials.get(
+                CharmUsers.VALKEY_REPLICA.value, ""
+            )
 
         return config_properties
 
@@ -161,14 +163,21 @@ class ConfigManager(ManagerStatusProtocol):
         logger.debug("Writing Sentinel configuration")
 
         sentinel_config = f"port {SENTINEL_PORT}\n"
+
+        sentinel_config += f"aclfile {SENTINEL_ACL_FILE}\n"
         # TODO consider adding quorum calculation based on number of units
         sentinel_config += f"sentinel monitor {PRIMARY_NAME} {self.state.cluster.model.primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
+        # auth settings
+        # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_config += (
             f"sentinel auth-user {PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}\n"
         )
         sentinel_config += (
             f"sentinel auth-pass {PRIMARY_NAME} {charmed_sentinel_valkey_password}\n"
         )
+        # sentinel admin user settings used by sentinel for its own authentication
+        sentinel_config += f"sentinel sentinel-user {CharmUsers.SENTINEL_ADMIN.value}\n"
+        sentinel_config += f"sentinel sentinel-pass {self.state.cluster.internal_users_credentials.get(CharmUsers.SENTINEL_ADMIN.value, '')}\n"
         # TODO consider making these configs adjustable via charm config
         sentinel_config += f"sentinel down-after-milliseconds {PRIMARY_NAME} 30000\n"
         sentinel_config += f"sentinel failover-timeout {PRIMARY_NAME} 180000\n"
