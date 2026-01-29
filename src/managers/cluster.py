@@ -33,7 +33,7 @@ class ClusterManager(ManagerStatusProtocol):
         self.admin_password = self.state.cluster.internal_users_credentials.get(
             CharmUsers.VALKEY_ADMIN.value, ""
         )
-        self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
+        self.cluster_ips = [server.model.private_ip for server in self.state.servers]
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
@@ -41,7 +41,7 @@ class ClusterManager(ManagerStatusProtocol):
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
-                hosts=self.cluster_hostnames,
+                hosts=self.cluster_ips,
             )
             client.reload_acl()
         except ValkeyACLLoadError:
@@ -56,7 +56,7 @@ class ClusterManager(ManagerStatusProtocol):
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
-                hosts=self.cluster_hostnames,
+                hosts=self.cluster_ips,
             )
             client.set_runtime_config(
                 {
