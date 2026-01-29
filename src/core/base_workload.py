@@ -76,3 +76,8 @@ class WorkloadBase(ABC):
             logger.error(f"Error executing command '{cmd}': {e}")
 
         return socket.gethostbyname(socket.gethostname())
+
+    @abstractmethod
+    def alive(self) -> bool:
+        """Check if the Valkey service is running."""
+        pass

@@ -79,10 +79,6 @@ class ClusterManager(ManagerStatusProtocol):
             status_list.append(CharmStatuses.SERVICE_NOT_STARTED.value)
 
         if not self.state.unit_server.is_started:
-            status_list.append(CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
-
-        if scope == "app":
-            # todo: remove when scaling is implemented
-            status_list.append(CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
+            status_list.append(CharmStatuses.SERVICE_NOT_STARTED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

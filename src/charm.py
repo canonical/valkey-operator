@@ -11,9 +11,10 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from literals import CHARM_USER, CONTAINER, DATA_DIR
+from literals import CHARM_USER, CLIENT_PORT, CONTAINER, DATA_DIR
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
+from statuses import ValkeyServiceStatuses
 from workload_k8s import ValkeyK8sWorkload
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,29 @@ class ValkeyCharm(ops.CharmBase):
         self.config_manager.set_sentinel_config_properties()
         self.config_manager.set_sentinel_acl_file()
         self.workload.mkdir(DATA_DIR, user=CHARM_USER, group=CHARM_USER)
+        self.status.set_running_status(
+            ValkeyServiceStatuses.SERVICE_STARTING.value,
+            scope="unit",
+            component_name=self.cluster_manager.name,
+            statuses_state=self.state.statuses,
+        )
         self.workload.start()
+        if self.workload.alive():
+            logger.info("Workload started successfully. Opening client port")
+            self.unit.open_port("tcp", CLIENT_PORT)
+            self.state.statuses.delete(
+                ValkeyServiceStatuses.SERVICE_STARTING.value,
+                scope="unit",
+                component=self.cluster_manager.name,
+            )
+        else:
+            logger.error("Workload failed to start.")
+            self.status.set_running_status(
+                ValkeyServiceStatuses.SERVICE_NOT_RUNNING.value,
+                scope="unit",
+                component_name=self.cluster_manager.name,
+                statuses_state=self.state.statuses,
+            )
         logger.info("Services started")
         self.state.unit_server.update({"started": True})
 

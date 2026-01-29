@@ -116,3 +116,15 @@ class ValkeyK8sWorkload(WorkloadBase):
         """
         dir_path = pathops.ContainerPath(path, container=self.container)
         dir_path.mkdir(mode=mode, user=user, group=group)
+
+    def alive(self) -> bool:
+        """Check if the Valkey service is running."""
+        for service_name in [
+            self.valkey_service,
+            self.sentinel_service,
+            self.metric_service,
+        ]:
+            service = self.container.get_service(service_name)
+            if not service.is_running():
+                return False
+        return True

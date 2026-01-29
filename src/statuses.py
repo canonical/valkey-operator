@@ -15,10 +15,6 @@ class CharmStatuses(Enum):
     """Collection of possible statuses for the charm."""
 
     ACTIVE_IDLE = StatusObject(status="active", message="")
-    SCALING_NOT_IMPLEMENTED = StatusObject(
-        status="blocked",
-        message="Scaling Valkey is not implemented yet",
-    )
     SERVICE_NOT_STARTED = StatusObject(status="blocked", message="Service not started")
     SECRET_ACCESS_ERROR = StatusObject(
         status="blocked",
@@ -32,4 +28,15 @@ class ClusterStatuses(Enum):
 
     PASSWORD_UPDATE_FAILED = StatusObject(
         status="blocked", message="Failed to update an internal user's password", running="async"
+    )
+
+
+class ValkeyServiceStatuses(Enum):
+    """Collection of possible Valkey service related statuses."""
+
+    SERVICE_STARTING = StatusObject(
+        status="maintenance", message="waiting for valkey to start...", running="async"
+    )
+    SERVICE_NOT_RUNNING = StatusObject(
+        status="blocked", message="valkey service not running", running="async"
     )
