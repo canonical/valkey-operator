@@ -19,14 +19,14 @@ from core.cluster_state import ClusterState
 from literals import (
     ACL_FILE,
     CHARM_USER,
+    CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
     DATA_DIR,
-    INTERNAL_USER,
     PRIMARY_NAME,
     QUORUM_NUMBER,
     SENTINEL_CONFIG_FILE,
     SENTINEL_PORT,
-    SENTINEL_USER,
+    CharmUsers,
 )
 from statuses import CharmStatuses
 
@@ -110,36 +110,40 @@ class ConfigManager(ManagerStatusProtocol):
         logger.debug("Writing configuration")
         self.workload.write_config_file(config=self.config_properties)
 
-    def set_acl_file(self, charmed_operator_password: str = "") -> None:
+    def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.
 
         Args:
-            charmed_operator_password (str): Password for the charmed-operator user. If not provided,
-                the password from the cluster state will be used.
+            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
+                the passwords from the cluster state will be used.
         """
         logger.debug("Writing ACL configuration")
-        if not charmed_operator_password:
-            charmed_operator_password = self.state.cluster.internal_user_credentials.get(
-                INTERNAL_USER, ""
-            )
-        # sha256 hash the password
-        charmed_operator_password_hash = hashlib.sha256(
-            charmed_operator_password.encode("utf-8")
-        ).hexdigest()
-        # sentinel user
-        charmed_replication_password = self.state.cluster.internal_user_credentials.get(
-            SENTINEL_USER, ""
-        )
-        charmed_replication_password_hash = hashlib.sha256(
-            charmed_replication_password.encode("utf-8")
-        ).hexdigest()
-        # write the ACL file
         acl_content = "user default off\n"
-        acl_content += f"user {INTERNAL_USER} on #{charmed_operator_password_hash} ~* +@all\n"
-        acl_content += f"user {SENTINEL_USER} on #{charmed_replication_password_hash} +client +config +info +publish +subscribe +monitor +ping +replicaof +failover +script|kill +multi +exec &__sentinel__:hello\n"
-        # TODO make the replication user password configurable
-        acl_content += "user replication-user on >testpassword +psync +replconf +ping\n"
+        for user in CharmUsers:
+            # only process VALKEY users
+            # Sentinel users should be in the sentinel acl file
+            if "VALKEY_" not in str(user):
+                continue
+            acl_content += self._get_user_acl_line(user, passwords=passwords)
         self.workload.write_file(acl_content, ACL_FILE)
+
+    def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
+        """Generate an ACL line for a given user.
+
+        Args:
+            user (CharmUsers): User for which to generate the ACL line.
+            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
+                the passwords from the cluster state will be used.
+
+        Returns:
+            str: ACL line for the user.
+        """
+        passwords = passwords or self.state.cluster.internal_users_credentials
+        if not (password := passwords.get(user.value, "")):
+            raise ValueError(f"No password found for user {user}")
+        password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        acl_line = f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
+        return acl_line
 
     def set_sentinel_config(self) -> None:
         """Write sentinel configuration file."""
@@ -147,8 +151,8 @@ class ConfigManager(ManagerStatusProtocol):
             logger.warning("Cannot write sentinel config without primary details set")
             return
         if not (
-            charmed_replication_password := self.state.cluster.internal_user_credentials.get(
-                SENTINEL_USER
+            charmed_sentinel_valkey_password := self.state.cluster.internal_users_credentials.get(
+                CharmUsers.VALKEY_SENTINEL.value
             )
         ):
             logger.warning("Cannot write sentinel config without sentinel user credentials set")
@@ -158,8 +162,12 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config = f"port {SENTINEL_PORT}\n"
         # TODO consider adding quorum calculation based on number of units
         sentinel_config += f"sentinel monitor {PRIMARY_NAME} {self.state.cluster.model.primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
-        sentinel_config += f"sentinel auth-user {PRIMARY_NAME} {SENTINEL_USER}\n"
-        sentinel_config += f"sentinel auth-pass {PRIMARY_NAME} {charmed_replication_password}\n"
+        sentinel_config += (
+            f"sentinel auth-user {PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}\n"
+        )
+        sentinel_config += (
+            f"sentinel auth-pass {PRIMARY_NAME} {charmed_sentinel_valkey_password}\n"
+        )
         # TODO consider making these configs adjustable via charm config
         sentinel_config += f"sentinel down-after-milliseconds {PRIMARY_NAME} 30000\n"
         sentinel_config += f"sentinel failover-timeout {PRIMARY_NAME} 180000\n"

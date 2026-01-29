@@ -4,26 +4,49 @@
 
 """Collection of global literals for the Valkey charm."""
 
+from enum import Enum
+
 CHARM = "valkey"
 CHARM_USER = "valkey"
 CONTAINER = "valkey"
 
 CONFIG_FILE = "/var/lib/valkey/valkey.conf"
-VALKEY_LOG_FILE = "/var/lib/valkey/valkey.log"
-SENTINEL_LOG_FILE = "/var/lib/valkey/sentinel.log"
-ACL_FILE = "/var/lib/valkey/users.acl"
 SENTINEL_CONFIG_FILE = "/var/lib/valkey/sentinel.conf"
+ACL_FILE = "/var/lib/valkey/users.acl"
 DATA_DIR = "/var/lib/valkey/data"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 
-INTERNAL_USER = "charmed-operator"
-SENTINEL_USER = "charmed-replication"
-INTERNAL_USER_PASSWORD_CONFIG = "system-users"
 
 CLIENT_PORT = 6379
 SENTINEL_PORT = 26379
 
 PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2
+INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
+INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
+CLIENT_PORT = 6379
+
+
+# As per the valkey users spec
+# https://docs.google.com/document/d/1EImKKHK3wLY73-D1M2ItpHe88NHeB-Iq2M3lz7AQB7E
+class CharmUsers(str, Enum):
+    """Enumeration of Valkey charm users."""
+
+    VALKEY_ADMIN = "charmed-operator"
+    VALKEY_SENTINEL = "charmed-sentinel-valkey"
+    VALKEY_REPLICA = "charmed-replication"
+
+    # Sentinel users
+    SENTINEL_ADMIN = "charmed-sentinel-peers"
+    SENTINEL_CHARM_ADMIN = "charmed-sentinel-operator"
+
+
+CHARM_USERS_ROLE_MAP = {
+    CharmUsers.VALKEY_ADMIN: "~* +@all",
+    CharmUsers.VALKEY_SENTINEL: "+client +config +info +publish +subscribe +monitor +ping +replicaof +failover +script|kill +multi +exec &__sentinel__:hello",
+    CharmUsers.VALKEY_REPLICA: "+psync +replconf +ping",
+    CharmUsers.SENTINEL_ADMIN: "~* +@all",
+    CharmUsers.SENTINEL_CHARM_ADMIN: "~* +@all",
+}

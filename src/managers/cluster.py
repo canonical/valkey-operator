@@ -11,10 +11,10 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyUserManagementError
+from common.exceptions import ValkeyACLLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import INTERNAL_USER
+from literals import CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -29,20 +29,22 @@ class ClusterManager(ManagerStatusProtocol):
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
-        self.admin_user = INTERNAL_USER
-        self.admin_password = self.state.cluster.internal_user_credentials.get(INTERNAL_USER, "")
+        self.admin_user = CharmUsers.VALKEY_ADMIN.value
+        self.admin_password = self.state.cluster.internal_users_credentials.get(
+            CharmUsers.VALKEY_ADMIN.value, ""
+        )
         self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
 
-    def load_acl_file(self) -> None:
-        """Load the ACL file into the cluster."""
+    def reload_acl_file(self) -> None:
+        """Reload the ACL file into the cluster."""
         try:
             client = ValkeyClient(
                 username=self.admin_user,
                 password=self.admin_password,
                 hosts=self.cluster_hostnames,
             )
-            client.load_acl()
-        except ValkeyUserManagementError:
+            client.reload_acl()
+        except ValkeyACLLoadError:
             raise
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:

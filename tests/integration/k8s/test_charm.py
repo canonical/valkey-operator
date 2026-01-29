@@ -7,11 +7,16 @@ from time import sleep
 import jubilant
 import pytest
 
-from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
+from literals import (
+    INTERNAL_USERS_PASSWORD_CONFIG,
+    CharmUsers,
+)
+from statuses import ClusterStatuses
 
 from .helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    INTERNAL_USERS_SECRET_LABEL,
     CharmStatuses,
     create_valkey_client,
     does_status_match,
@@ -58,8 +63,8 @@ async def test_authentication(juju: jubilant.Juju) -> None:
     assert "NOAUTH" in str(exc_info.value), "Unauthenticated access did not fail as expected"
 
     # Authenticate with internal user
-    secret = get_secret_by_label(juju, label=f"{PEER_RELATION}.{APP_NAME}.app")
-    password = secret.get(f"{INTERNAL_USER}-password")
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
     assert password is not None, "Admin password secret not found"
 
     client = await create_valkey_client(hostnames=hostnames, password=password)
@@ -82,7 +87,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     # perform read operation with the updated password
     result = await set_key(
         hostnames=hostnames,
-        username=INTERNAL_USER,
+        username=CharmUsers.VALKEY_ADMIN.value,
         password=new_password,
         key=TEST_KEY,
         value=TEST_VALUE,
@@ -90,15 +95,51 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data after admin password update"
 
     # update the config again and remove the option `admin-password`
-    juju.config(app=APP_NAME, reset=[INTERNAL_USER_PASSWORD_CONFIG])
+    juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
 
     # wait for config-changed hook to finish executing
     juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
 
     # make sure we can still read data with the previously set password
     assert await get_key(
-        hostnames=hostnames, username=INTERNAL_USER, password=new_password, key=TEST_KEY
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=new_password,
+        key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8")
+
+
+@pytest.mark.abort_on_fail
+async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
+    """Assert the admin password is updated when adding a user secret to the config."""
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+
+    # create a user secret and grant it to the application
+    new_password = "some-password"
+    set_password(juju, username="wrong-username", password=new_password)
+
+    # wait for config-changed hook to finish executing
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={APP_NAME: [ClusterStatuses.PASSWORD_UPDATE_FAILED.value]},
+        ),
+        timeout=1200,
+    )
+
+    set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
+    # wait for config-changed hook to finish executing
+    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+
+    # perform read operation with the updated password
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=new_password,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data after admin password update"
 
 
 @pytest.mark.abort_on_fail
@@ -107,12 +148,14 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     logger.info("Creating new user secret")
-    secret_name = "my_secret"
+    secret_name = "my_secret_2"
     new_password = "even-newer-password"
-    secret_id = juju.add_secret(name=secret_name, content={INTERNAL_USER: new_password})
+    secret_id = juju.add_secret(
+        name=secret_name, content={CharmUsers.VALKEY_ADMIN.value: new_password}
+    )
 
     logger.info("Updating configuration with the new secret - but without access")
-    juju.config(app=APP_NAME, values={INTERNAL_USER_PASSWORD_CONFIG: secret_id})
+    juju.config(app=APP_NAME, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
     juju.wait(
         lambda status: does_status_match(
@@ -126,7 +169,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     # deferred `config_changed` event will be retried before `update_status`
     with fast_forward(juju):
         juju.grant_secret(identifier=secret_name, app=APP_NAME)
-        sleep(10)  # allow some time for the permission to propagate
+        sleep(20)  # allow some time for the permission to propagate
 
     # juju.wait(
     #     lambda status: jubilant.all_active(status, APP_NAME),
@@ -142,7 +185,13 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
 
     # perform read operation with the updated password
     assert await get_key(
-        hostnames=hostnames, username=INTERNAL_USER, password=new_password, key=TEST_KEY
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=new_password,
+        key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after secret permissions were updated"
 
     logger.info("Password update successful after secret was granted")
+
+
+# TODO Once scaling is implemented, add tests to check on password update in non-leader units
