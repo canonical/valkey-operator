@@ -16,7 +16,18 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import ACL_FILE, CLIENT_PORT, INTERNAL_USER
+from literals import (
+    ACL_FILE,
+    CHARM_USER,
+    CLIENT_PORT,
+    DATA_DIR,
+    INTERNAL_USER,
+    PRIMARY_NAME,
+    QUORUM_NUMBER,
+    SENTINEL_CONFIG_FILE,
+    SENTINEL_PORT,
+    SENTINEL_USER,
+)
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -42,6 +53,8 @@ class ConfigManager(ManagerStatusProtocol):
             Dictionary of properties to be written to the config file.
         """
         config_properties = {}
+        if not self.state.unit_server.model or not self.state.cluster.model:
+            return config_properties
 
         # load the config properties provided from the template in this repo
         # it does NOT load the file from disk in the charm unit in order to avoid config drift
@@ -60,6 +73,8 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
+        # dir
+        config_properties["dir"] = DATA_DIR
         # port
         config_properties["port"] = str(CLIENT_PORT)
 
@@ -67,7 +82,26 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["bind"] = "0.0.0.0 -::1"
 
         # Use the ACL file
-        config_properties["aclfile"] = str(ACL_FILE)
+        config_properties["aclfile"] = ACL_FILE
+
+        # # logfile location
+        # config_properties["logfile"] = VALKEY_LOG_FILE
+
+        logger.debug(
+            "primary: %s, hostname: %s",
+            self.state.cluster.model.primary_ip,
+            self.state.unit_server.model.hostname,
+        )
+        # replicaof
+        if (
+            self.state.cluster.model.primary_ip
+            and self.state.cluster.model.primary_ip != self.state.unit_server.model.private_ip
+        ):
+            # set replicaof
+            logger.debug("Setting replicaof to primary %s", self.state.cluster.model.primary_ip)
+            config_properties["replicaof"] = f"{self.state.cluster.model.primary_ip} {CLIENT_PORT}"
+            config_properties["primaryuser"] = "replication-user"
+            config_properties["primaryauth"] = "testpassword"  # TODO make this configurable
 
         return config_properties
 
@@ -92,10 +126,48 @@ class ConfigManager(ManagerStatusProtocol):
         charmed_operator_password_hash = hashlib.sha256(
             charmed_operator_password.encode("utf-8")
         ).hexdigest()
+        # sentinel user
+        charmed_replication_password = self.state.cluster.internal_user_credentials.get(
+            SENTINEL_USER, ""
+        )
+        charmed_replication_password_hash = hashlib.sha256(
+            charmed_replication_password.encode("utf-8")
+        ).hexdigest()
         # write the ACL file
         acl_content = "user default off\n"
         acl_content += f"user {INTERNAL_USER} on #{charmed_operator_password_hash} ~* +@all\n"
+        acl_content += f"user {SENTINEL_USER} on #{charmed_replication_password_hash} +client +config +info +publish +subscribe +monitor +ping +replicaof +failover +script|kill +multi +exec &__sentinel__:hello\n"
+        # TODO make the replication user password configurable
+        acl_content += "user replication-user on >testpassword +psync +replconf +ping\n"
         self.workload.write_file(acl_content, ACL_FILE)
+
+    def set_sentinel_config(self) -> None:
+        """Write sentinel configuration file."""
+        if not self.state.cluster.model or not self.state.cluster.model.primary_ip:
+            logger.warning("Cannot write sentinel config without primary details set")
+            return
+        if not (
+            charmed_replication_password := self.state.cluster.internal_user_credentials.get(
+                SENTINEL_USER
+            )
+        ):
+            logger.warning("Cannot write sentinel config without sentinel user credentials set")
+            return
+        logger.debug("Writing Sentinel configuration")
+
+        sentinel_config = f"port {SENTINEL_PORT}\n"
+        # TODO consider adding quorum calculation based on number of units
+        sentinel_config += f"sentinel monitor {PRIMARY_NAME} {self.state.cluster.model.primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
+        sentinel_config += f"sentinel auth-user {PRIMARY_NAME} {SENTINEL_USER}\n"
+        sentinel_config += f"sentinel auth-pass {PRIMARY_NAME} {charmed_replication_password}\n"
+        # TODO consider making these configs adjustable via charm config
+        sentinel_config += f"sentinel down-after-milliseconds {PRIMARY_NAME} 30000\n"
+        sentinel_config += f"sentinel failover-timeout {PRIMARY_NAME} 180000\n"
+        sentinel_config += f"sentinel parallel-syncs {PRIMARY_NAME} 1\n"
+
+        self.workload.write_file(
+            sentinel_config, SENTINEL_CONFIG_FILE, mode=0o600, user=CHARM_USER, group=CHARM_USER
+        )
 
     def generate_password(self) -> str:
         """Create randomized string for use as app passwords.

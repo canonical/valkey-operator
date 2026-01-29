@@ -11,7 +11,7 @@ import ops
 from charmlibs import pathops
 
 from core.base_workload import WorkloadBase
-from literals import CHARM, CHARM_USER, CONFIG_FILE
+from literals import CHARM, CHARM_USER, CONFIG_FILE, SENTINEL_CONFIG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,9 @@ class ValkeyK8sWorkload(WorkloadBase):
 
         self.container = container
         self.config_file = pathops.ContainerPath(CONFIG_FILE, container=container)
+        self.sentinel_config = pathops.ContainerPath(SENTINEL_CONFIG_FILE, container=container)
         self.valkey_service = "valkey"
+        self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
 
     @property
@@ -48,6 +50,14 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "group": CHARM_USER,
                     "startup": "enabled",
                 },
+                self.sentinel_service: {
+                    "override": "replace",
+                    "summary": "Valkey sentinel service",
+                    "command": f"valkey-sentinel {self.sentinel_config}",
+                    "user": CHARM_USER,
+                    "group": CHARM_USER,
+                    "startup": "enabled",
+                },
                 self.metric_service: {
                     "override": "replace",
                     "summary": "Valkey metric exporter",
@@ -63,7 +73,7 @@ class ValkeyK8sWorkload(WorkloadBase):
     @override
     def start(self) -> None:
         self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-        self.container.restart(self.valkey_service, self.metric_service)
+        self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
 
     @override
     def write_config_file(self, config: dict[str, str]) -> None:
@@ -73,12 +83,34 @@ class ValkeyK8sWorkload(WorkloadBase):
         path.write_text(config_string)
 
     @override
-    def write_file(self, content: str, path: str) -> None:
+    def write_file(
+        self,
+        content: str,
+        path: str,
+        mode: int | None = None,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
         """Write content to a file on disk.
 
         Args:
             content (str): The content to be written.
             path (str): The file path where the content should be written.
+            mode (int, optional): The file mode (permissions). Defaults to None.
+            user (str, optional): The user name. Defaults to None.
+            group (str, optional): The group name. Defaults to None.
         """
         file_path = pathops.ContainerPath(path, container=self.container)
-        file_path.write_text(content)
+        file_path.write_text(content, mode=mode, user=user, group=group)
+
+    def mkdir(
+        self, path: str, mode: int = 0o755, user: str | None = None, group: str | None = None
+    ) -> None:
+        """Create a directory on disk.
+
+        Args:
+            path (str): The directory path to be created.
+            mode (int, optional): The directory mode (permissions). Defaults to None.
+        """
+        dir_path = pathops.ContainerPath(path, container=self.container)
+        dir_path.mkdir(mode=mode, user=user, group=group)

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import ops
 
 from common.exceptions import ValkeyUserManagementError
-from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
+from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION, SENTINEL_USER
 from statuses import CharmStatuses, ClusterStatuses
 
 if TYPE_CHECKING:
@@ -50,25 +50,52 @@ class BaseEvents(ops.Object):
         if not self.charm.state.peer_relation:
             event.defer()
             return
+        self.charm.state.unit_server.update(
+            {
+                "hostname": socket.gethostname(),
+                "private_ip": self.charm.workload.get_private_ip(),
+            }
+        )
+        if not self.charm.state.cluster.model.primary_ip and self.charm.unit.is_leader():
+            # set the primary to this unit if not already set
+            self.charm.state.cluster.update(
+                {
+                    "primary_ip": self.charm.state.unit_server.model.private_ip,
+                }
+            )
 
         if self.charm.unit.is_leader() and not self.charm.state.cluster.internal_user_credentials:
+            charmed_operator_password = ""
+            charmed_replication_password = ""
             if admin_secret_id := self.charm.config.get(INTERNAL_USER_PASSWORD_CONFIG):
                 try:
-                    password = self.charm.state.get_secret_from_id(str(admin_secret_id)).get(
-                        INTERNAL_USER
-                    )
+                    admin_secret = self.charm.state.get_secret_from_id(str(admin_secret_id))
+                    charmed_operator_password = admin_secret.get(INTERNAL_USER)
+                    charmed_replication_password = admin_secret.get(SENTINEL_USER)
                 except (ops.ModelError, ops.SecretNotFoundError) as e:
                     logger.error(f"Could not access secret {admin_secret_id}: {e}")
                     raise
-            else:
-                password = self.charm.config_manager.generate_password()
 
-            self.charm.state.cluster.update({"charmed_operator_password": password})
-            self.charm.config_manager.set_acl_file()
+            if not charmed_operator_password:
+                charmed_operator_password = self.charm.config_manager.generate_password()
+            if not charmed_replication_password:
+                charmed_replication_password = self.charm.config_manager.generate_password()
+
+            self.charm.state.cluster.update(
+                {
+                    "charmed_operator_password": charmed_operator_password,
+                    "charmed_replication_password": charmed_replication_password,
+                }
+            )
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        self.charm.state.unit_server.update({"hostname": socket.gethostname()})
+        self.charm.state.unit_server.update(
+            {
+                "hostname": socket.gethostname(),
+                "private_ip": self.charm.workload.get_private_ip(),
+            }
+        )
 
         if not self.charm.unit.is_leader():
             return

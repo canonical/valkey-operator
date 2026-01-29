@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from literals import CONTAINER
+from literals import CHARM_USER, CONTAINER, DATA_DIR
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from workload_k8s import ValkeyK8sWorkload
@@ -41,21 +41,28 @@ class ValkeyCharm(ops.CharmBase):
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)
 
-        # --- Observers
-        self.framework.observe(self.on.valkey_pebble_ready, self._on_pebble_ready)
+        # --- Observers ---
+        self.framework.observe(self.on.start, self._on_ready)
 
-    def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
+    def _on_ready(self, event: ops.StartEvent) -> None:
         """Handle the `pebble-ready` event."""
         if not self.workload.can_connect:
             logger.warning("Container not ready yet")
             event.defer()
             return
 
-        if not self.unit.is_leader():
-            logger.warning("Scaling not implemented yet, services not started")
+        if not self.unit.is_leader() and (
+            not self.state.cluster.internal_user_credentials
+            or not self.state.cluster.model.primary_ip
+        ):
+            logger.info("Deferring leader write primary and internal user credentials")
+            event.defer()
             return
 
         self.config_manager.set_config_properties()
+        self.config_manager.set_acl_file()
+        self.config_manager.set_sentinel_config()
+        self.workload.mkdir(DATA_DIR, user=CHARM_USER, group=CHARM_USER)
         self.workload.start()
         logger.info("Services started")
         self.state.unit_server.update({"started": True})
