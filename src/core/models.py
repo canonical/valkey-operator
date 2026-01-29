@@ -33,6 +33,7 @@ class PeerAppModel(PeerModel):
     charmed_operator_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_valkey_password: InternalUsersSecret = Field(default="")
     charmed_replication_password: InternalUsersSecret = Field(default="")
+    charmed_stats_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
 
