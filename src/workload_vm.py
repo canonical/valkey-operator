@@ -5,7 +5,8 @@
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
 import logging
-from typing import override
+import subprocess
+from typing import List, override
 
 from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -97,3 +98,19 @@ class ValkeyVmWorkload(WorkloadBase):
         """
         file_path = pathops.LocalPath(f"{SNAP_CURRENT_PATH}/{path}")
         file_path.write_text(content)
+
+    @override
+    def exec(self, command: List[str]) -> str:
+        try:
+            output = subprocess.run(
+                command,
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=10,
+            ).stdout.strip()
+            logger.debug(output)
+            return output
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error(e)
+            raise

@@ -6,9 +6,11 @@
 
 import logging
 import socket
+from subprocess import CalledProcessError, TimeoutExpired
 from typing import TYPE_CHECKING
 
 import ops
+from ops.pebble import ExecError
 
 from common.exceptions import ValkeyClientError
 from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
@@ -38,6 +40,13 @@ class BaseEvents(ops.Object):
 
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
+        try:
+            # TODO: create the path via Juju storage volumes
+            valkey_path = "/var/lib/valkey/"
+            self.charm.workload.exec(["mkdir", "-p", valkey_path])
+        except (CalledProcessError, TimeoutExpired, ExecError):
+            raise
+
         try:
             self.charm.workload.install()
         except RuntimeError:

@@ -22,7 +22,10 @@ def test_install_failure(cloud_spec_vm):
         relations={relation, status_peer_relation},
     )
 
-    with patch("workload_vm.ValkeyVmWorkload.install", side_effect=RuntimeError()):
+    with (
+        patch("workload_vm.ValkeyVmWorkload.install", side_effect=RuntimeError()),
+        patch("workload_vm.ValkeyVmWorkload.exec"),
+    ):
         with raises(testing.errors.UncaughtCharmError) as e:
             ctx.run(ctx.on.install(), state_in)
         assert isinstance(e.value.__cause__, RuntimeError)

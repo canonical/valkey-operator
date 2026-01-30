@@ -5,7 +5,7 @@
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
 import logging
-from typing import override
+from typing import List, override
 
 import ops
 from charmlibs import pathops
@@ -82,3 +82,12 @@ class ValkeyK8sWorkload(WorkloadBase):
         """
         file_path = pathops.ContainerPath(path, container=self.container)
         file_path.write_text(content)
+
+    @override
+    def exec(self, command: List[str]) -> str:
+        process = self.container.exec(
+            command=command,
+            combine_stderr=True,
+        )
+        output, _ = process.wait_output()
+        return output

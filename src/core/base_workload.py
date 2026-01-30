@@ -5,6 +5,7 @@
 """Base objects for workload operations across different substrates."""
 
 from abc import ABC, abstractmethod
+from typing import List
 
 
 class WorkloadBase(ABC):
@@ -38,4 +39,9 @@ class WorkloadBase(ABC):
             content (str): The content to be written.
             path (str): The file path where the content should be written.
         """
+        pass
+
+    @abstractmethod
+    def exec(self, command: List[str]) -> str:
+        """Run a command on the workload substrate."""
         pass
