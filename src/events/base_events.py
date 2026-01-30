@@ -27,6 +27,7 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
+        self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_joined, self._on_peer_relation_joined
         )
@@ -34,6 +35,13 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
+
+    def _on_install(self, event: ops.InstallEvent) -> None:
+        """Handle install event."""
+        try:
+            self.charm.workload.install()
+        except RuntimeError:
+            raise RuntimeError("Failed to install the Valkey snap")
 
     def _on_peer_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
         """Handle event received by all units when a new unit joins the cluster relation."""

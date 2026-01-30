@@ -58,7 +58,7 @@ in Juju. For details, see [development setup](https://documentation.ubuntu.com/j
 
 In our case, we want to deploy `valkey` to a model `test`. Use the `upstream-source` from `metadata.yaml`:
 ```shell
-$ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge
+$ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge --trust
 
 $ juju status
 Model    Controller      Cloud/Region        Version  SLA          Timestamp

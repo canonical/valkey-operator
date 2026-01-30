@@ -8,8 +8,7 @@ import jubilant
 import pytest
 
 from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
-
-from .helpers import (
+from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     CharmStatuses,

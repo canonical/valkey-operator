@@ -15,6 +15,7 @@ from literals import CONTAINER
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from workload_k8s import ValkeyK8sWorkload
+from workload_vm import ValkeyVmWorkload
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,16 @@ class ValkeyCharm(ops.CharmBase):
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
-        self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
+        try:
+            cloud_spec = self.model.get_cloud_spec()
+        except ops.ModelError:
+            logger.error("Application must be deployed with `trust` to get cloud spec")
+            raise
+
+        if cloud_spec.type == "kubernetes":
+            self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
+        else:
+            self.workload = ValkeyVmWorkload()
         self.state = ClusterState(self)
 
         # --- MANAGERS ---
@@ -47,7 +57,7 @@ class ValkeyCharm(ops.CharmBase):
     def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
         """Handle the `pebble-ready` event."""
         if not self.workload.can_connect:
-            logger.warning("Container not ready yet")
+            logger.warning("Workload not ready yet")
             event.defer()
             return
 
