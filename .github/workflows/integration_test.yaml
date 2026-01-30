@@ -27,6 +27,11 @@ jobs:
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
           pipx install tox poetry
+          # to build Valkey-glide during tests
+          sudo apt install libprotobuf-dev protobuf-compiler -y
+          sudo apt install rustup -y
+          rustup set profile minimal
+          rustup default 1.90.0
       - name: Collect spread jobs
         id: collect-jobs
         shell: python
