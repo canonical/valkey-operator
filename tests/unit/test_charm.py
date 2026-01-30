@@ -8,7 +8,7 @@ from unittest.mock import patch
 import yaml
 from ops import ActiveStatus, pebble, testing
 
-from common.exceptions import ValkeyACLLoadError
+from common.exceptions import ValkeyExecCommandError
 from src.charm import ValkeyCharm
 from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
@@ -356,13 +356,11 @@ def test_config_changed_leader_unit():
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
-        patch("common.client.ValkeyClient.set_runtime_config") as mock_set_runtime_config,
+        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mocl_exec_command,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        mock_load_acl.assert_called_once()
-        mock_set_runtime_config.assert_called_once()
+        assert mocl_exec_command.call_count == 2  # one for acl load, one for primaryauth set
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -392,13 +390,13 @@ def test_config_changed_leader_unit_primary():
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
-        patch("common.client.ValkeyClient.set_runtime_config") as mock_set_runtime_config,
+        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mock_exec_command,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        mock_load_acl.assert_called_once()
-        mock_set_runtime_config.assert_not_called()
+        mock_exec_command.assert_called_once_with(
+            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
+        )
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -462,12 +460,14 @@ def test_change_password_secret_changed_non_leader_unit():
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.reload_acl") as mock_reload_acl,
+        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mock_exec_command,
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_reload_acl.assert_called_once()
+        mock_exec_command.assert_called_once_with(
+            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
+        )
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful():
@@ -495,16 +495,18 @@ def test_change_password_secret_changed_non_leader_unit_not_successful():
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch(
-            "common.client.ValkeyClient.reload_acl",
-            side_effect=ValkeyACLLoadError("Reload failed"),
-        ) as mock_reload_acl,
+            "workload_k8s.ValkeyK8sWorkload.exec_command",
+            side_effect=ValkeyExecCommandError("Failed to execute command"),
+        ) as mock_exec_command,
         ctx(ctx.on.secret_changed(password_secret), state_in) as manager,
     ):
         charm: ValkeyCharm = manager.charm
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_reload_acl.assert_called_once()
+        mock_exec_command.assert_called_once_with(
+            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
+        )
         cluster_statuses = charm.state.statuses.get(
             scope="unit",
             component=charm.cluster_manager.name,
