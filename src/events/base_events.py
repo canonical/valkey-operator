@@ -106,6 +106,8 @@ class BaseEvents(ops.Object):
                     for user in CharmUsers
                 }
             )
+            # update local unit admin password
+            self.charm.config_manager.update_local_valkey_admin()
             self.charm.config_manager.set_acl_file()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
@@ -138,6 +140,8 @@ class BaseEvents(ops.Object):
                     self.charm.config_manager.set_acl_file()
                     self.charm.cluster_manager.reload_acl_file()
                     self.charm.cluster_manager.update_primary_auth()
+                    # update the local unit admin password to match the leader
+                    self.charm.config_manager.update_local_valkey_admin()
                 except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
                     logger.error(e)
                     self.charm.status.set_running_status(
@@ -175,7 +179,7 @@ class BaseEvents(ops.Object):
             secret_id (str): The id of the secret containing the internal users' passwords.
         """
         try:
-            secret_content = self.charm.state.get_secret_from_id(secret_id)
+            secret_content = self.charm.state.get_secret_from_id(secret_id, refresh=True)
         except (ops.ModelError, ops.SecretNotFoundError) as e:
             logger.error(e)
             self.charm.status.set_running_status(
@@ -229,6 +233,8 @@ class BaseEvents(ops.Object):
                         for user in CharmUsers
                     }
                 )
+                # update the local unit admin password
+                self.charm.config_manager.update_local_valkey_admin()
             except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(

@@ -2,7 +2,6 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 import logging
-from time import sleep
 
 import jubilant
 import pytest
@@ -11,13 +10,13 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     CharmUsers,
 )
-from statuses import ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses
 
 from .helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
-    CharmStatuses,
+    are_apps_active_and_agents_idle,
     create_valkey_client,
     does_status_match,
     fast_forward,
@@ -30,8 +29,7 @@ from .helpers import (
 
 logger = logging.getLogger(__name__)
 
-# TODO scale up when scaling is implemented
-NUM_UNITS = 1
+NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
@@ -41,10 +39,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS)
     juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
-        ),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
     )
 
@@ -82,7 +77,10 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     set_password(juju, new_password)
 
     # wait for config-changed hook to finish executing
-    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        timeout=1200,
+    )
 
     # perform read operation with the updated password
     result = await set_key(
@@ -98,7 +96,10 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
 
     # wait for config-changed hook to finish executing
-    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        timeout=1200,
+    )
 
     # make sure we can still read data with the previously set password
     assert await get_key(
@@ -129,7 +130,10 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
 
     set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
     # wait for config-changed hook to finish executing
-    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        timeout=1200,
+    )
 
     # perform read operation with the updated password
     result = await set_key(
@@ -169,19 +173,10 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     # deferred `config_changed` event will be retried before `update_status`
     with fast_forward(juju):
         juju.grant_secret(identifier=secret_name, app=APP_NAME)
-        sleep(20)  # allow some time for the permission to propagate
-
-    # juju.wait(
-    #     lambda status: jubilant.all_active(status, APP_NAME),
-    #     timeout=1200,
-    # )
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
-        ),
-        timeout=600,
-    )
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+            timeout=1200,
+        )
 
     # perform read operation with the updated password
     assert await get_key(

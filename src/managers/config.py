@@ -200,6 +200,19 @@ class ConfigManager(ManagerStatusProtocol):
         """
         return "".join([secrets.choice(string.ascii_letters + string.digits) for _ in range(32)])
 
+    def update_local_valkey_admin(self) -> None:
+        """Update the local unit's valkey admin password in the state."""
+        if not (
+            app_password := self.state.cluster.internal_users_credentials.get(
+                CharmUsers.VALKEY_ADMIN.value
+            )
+        ):
+            logger.warning("No valkey admin password found to update local unit state")
+            return
+        self.state.unit_server.update(
+            {f"{CharmUsers.VALKEY_ADMIN.value.replace('-', '_')}_password": app_password}
+        )
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
         status_list: list[StatusObject] = []

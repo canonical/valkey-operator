@@ -60,6 +60,7 @@ class ValkeyCharm(ops.CharmBase):
             event.defer()
             return
 
+        self.config_manager.update_local_valkey_admin()
         self.config_manager.set_config_properties()
         self.config_manager.set_acl_file()
         self.config_manager.set_sentinel_config_properties()

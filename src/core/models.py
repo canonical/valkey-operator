@@ -42,6 +42,7 @@ class PeerAppModel(PeerModel):
 class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
 
+    charmed_operator_password: InternalUsersSecret = Field(default="")
     started: bool = Field(default=False)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
@@ -117,6 +118,13 @@ class ValkeyServer(RelationState):
     def is_started(self) -> bool:
         """Check if the unit has started."""
         return self.model.started if self.model else False
+
+    @property
+    def valkey_admin_password(self) -> str:
+        """Retrieve the password for the valkey admin user."""
+        if not self.model:
+            return ""
+        return self.model.charmed_operator_password or ""
 
 
 @final
