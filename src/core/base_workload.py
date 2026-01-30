@@ -81,3 +81,19 @@ class WorkloadBase(ABC):
     def alive(self) -> bool:
         """Check if the Valkey service is running."""
         pass
+
+    @abstractmethod
+    def exec_command(
+        self, command: list[str], username: str, password: str
+    ) -> tuple[str, str | None] | None:
+        """Execute a Valkey command inside the workload.
+
+        Args:
+            command (list[str]): The command to execute as a list of strings.
+            username (str): The username for authentication.
+            password (str): The password for authentication.
+
+        Returns:
+            bool: True if the command executed successfully, False otherwise.
+        """
+        pass

@@ -10,6 +10,7 @@ from typing import override
 import ops
 from charmlibs import pathops
 
+from common.exceptions import ValkeyExecCommandError
 from core.base_workload import WorkloadBase
 from literals import CHARM, CHARM_USER, CONFIG_FILE, SENTINEL_CONFIG_FILE
 
@@ -128,3 +129,27 @@ class ValkeyK8sWorkload(WorkloadBase):
             if not service.is_running():
                 return False
         return True
+
+    def exec_command(
+        self, command: list[str], username: str, password: str
+    ) -> tuple[str, str | None] | None:
+        """Execute a Valkey command inside the container.
+
+        Args:
+            command (list[str]): The command to execute as a list of strings.
+            username (str): The username for authentication.
+            password (str): The password for authentication.
+
+        Returns:
+            bool: True if the command executed successfully, False otherwise.
+        """
+        full_command = ["valkey-cli"] + ["--user", username, "--pass", password] + command
+        try:
+            process = self.container.exec(full_command)
+            out, err = process.wait_output()
+            if err:
+                logger.warning("Command returned error: %s", err)
+            return out.strip(), err.strip() if err else None
+        except (ops.pebble.ExecError, ops.pebble.ChangeError) as e:
+            logger.error("Error executing command: %s", e)
+            raise ValkeyExecCommandError(f"Could not execute command{e}")

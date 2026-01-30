@@ -18,3 +18,7 @@ class ValkeyACLLoadError(ValkeyClientError):
 
 class ValkeyConfigSetError(ValkeyClientError):
     """Custom Exception if setting configuration on valkey cluster fails."""
+
+
+class ValkeyExecCommandError(Exception):
+    """Custom Exception if exec command on valkey container fails."""

@@ -10,8 +10,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
-from common.client import ValkeyClient
-from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError
+from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError, ValkeyExecCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -30,22 +29,18 @@ class ClusterManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
         self.admin_user = CharmUsers.VALKEY_ADMIN.value
-        self.admin_password = self.state.cluster.internal_users_credentials.get(
-            CharmUsers.VALKEY_ADMIN.value, ""
-        )
-        self.cluster_ips = [server.model.private_ip for server in self.state.servers]
+        self.admin_password = self.state.unit_server.valkey_admin_password
+        # target only the unit's valkey server IP
+        self.cluster_ips = [self.workload.get_private_ip()]
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                hosts=self.cluster_ips,
+            self.workload.exec_command(
+                ["acl", "load"], username=self.admin_user, password=self.admin_password
             )
-            client.reload_acl()
-        except ValkeyACLLoadError:
-            raise
+        except ValkeyExecCommandError:
+            raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
@@ -53,21 +48,21 @@ class ClusterManager(ManagerStatusProtocol):
             logger.info("Current unit is primary; no need to update primaryauth")
             return
         try:
-            client = ValkeyClient(
+            self.workload.exec_command(
+                [
+                    "config",
+                    "set",
+                    "primaryauth",
+                    self.state.cluster.internal_users_credentials.get(
+                        CharmUsers.VALKEY_REPLICA.value, ""
+                    ),
+                ],
                 username=self.admin_user,
                 password=self.admin_password,
-                hosts=self.cluster_ips,
-            )
-            client.set_runtime_config(
-                {
-                    "primaryauth": self.state.cluster.internal_users_credentials.get(
-                        CharmUsers.VALKEY_REPLICA.value, ""
-                    )
-                }
             )
             logger.info("Updated primaryauth runtime configuration on Valkey server")
-        except ValkeyConfigSetError:
-            raise
+        except ValkeyExecCommandError:
+            raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
