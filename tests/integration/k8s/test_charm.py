@@ -96,10 +96,16 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         timeout=1200,
     )
 
-    # make sure we can still read data with the previously set password
-    assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
-        "Failed to read data after admin password update"
-    )
+    for hostname in get_cluster_hostnames(juju, APP_NAME):
+        client = create_valkey_client(
+            hostname=hostname, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with admin password after removing user secret on host {hostname}"
+        )
+        assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+            f"Failed to read data after admin password update on host {hostname}"
+        )
 
 
 @pytest.mark.abort_on_fail
@@ -167,18 +173,52 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
         )
 
     # perform read operation with the updated password
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
     primary = get_primary_ip(juju, APP_NAME)
     client = create_valkey_client(
         hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     )
-    assert client.ping() is True, (
-        "Failed to authenticate with new admin password after secret access"
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
     )
-    assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
-        "Failed to read data after secret permissions were updated"
-    )
+    for hostname in hostnames:
+        client = create_valkey_client(
+            hostname=hostname,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=new_password,
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with new admin password on host {hostname}"
+        )
+        assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+            f"Failed to read data after admin password update on host {hostname}"
+        )
 
     logger.info("Password update successful after secret was granted")
 
+    # change replication password
+    replica_password = "replica-password"
+    juju.update_secret(
+        identifier=secret_id,
+        content={
+            CharmUsers.VALKEY_ADMIN.value: new_password,
+            CharmUsers.VALKEY_REPLICA.value: replica_password,
+        },
+    )
 
-# TODO Once scaling is implemented, add tests to check on password update in non-leader units
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        timeout=1200,
+    )
+
+    # perform pings with the updated replica password
+    for hostname in hostnames:
+        client = create_valkey_client(
+            hostname=hostname,
+            username=CharmUsers.VALKEY_REPLICA.value,
+            password=replica_password,
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with new replica password on host {hostname}"
+        )
