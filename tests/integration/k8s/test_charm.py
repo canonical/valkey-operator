@@ -5,6 +5,7 @@ import logging
 
 import jubilant
 import pytest
+from valkey import AuthenticationError
 
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
@@ -15,15 +16,13 @@ from statuses import CharmStatuses, ClusterStatuses
 from .helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
-    INTERNAL_USERS_SECRET_LABEL,
     are_apps_active_and_agents_idle,
     create_valkey_client,
     does_status_match,
     fast_forward,
     get_cluster_hostnames,
-    get_key,
-    get_secret_by_label,
-    set_key,
+    get_password,
+    get_primary_ip,
     set_password,
 )
 
@@ -47,31 +46,28 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
 @pytest.mark.abort_on_fail
 async def test_authentication(juju: jubilant.Juju) -> None:
     """Assert that we can authenticate to valkey."""
+    primary = get_primary_ip(juju, APP_NAME)
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     # try without authentication
-    with pytest.raises(Exception) as exc_info:
-        unauth_client = await create_valkey_client(
-            hostnames=hostnames, username=None, password=None
-        )
+    with pytest.raises(AuthenticationError):
+        unauth_client = create_valkey_client(hostname=primary, username=None, password=None)
         await unauth_client.ping()
-    assert "NOAUTH" in str(exc_info.value), "Unauthenticated access did not fail as expected"
 
     # Authenticate with internal user
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
     assert password is not None, "Admin password secret not found"
 
-    client = await create_valkey_client(hostnames=hostnames, password=password)
-    auth_result = await client.ping()
-    assert auth_result == b"PONG", "Authentication to Valkey cluster failed"
+    for hostname in hostnames:
+        client = create_valkey_client(hostname=hostname, password=password)
+        assert client.ping() is True, (
+            f"Authentication to Valkey cluster failed for host {hostname}"
+        )
 
 
 @pytest.mark.abort_on_fail
 async def test_update_admin_password(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
-
     # create a user secret and grant it to the application
     new_password = "some-password"
     set_password(juju, new_password)
@@ -81,16 +77,15 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
         timeout=1200,
     )
-
-    # perform read operation with the updated password
-    result = await set_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-        value=TEST_VALUE,
+    primary = get_primary_ip(juju, APP_NAME)
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     )
-    assert result == "OK", "Failed to write data after admin password update"
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
+    )
 
     # update the config again and remove the option `admin-password`
     juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
@@ -102,19 +97,14 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     )
 
     # make sure we can still read data with the previously set password
-    assert await get_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8")
+    assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+        "Failed to read data after admin password update"
+    )
 
 
 @pytest.mark.abort_on_fail
 async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
-
     # create a user secret and grant it to the application
     new_password = "some-password"
     set_password(juju, username="wrong-username", password=new_password)
@@ -136,21 +126,19 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     )
 
     # perform read operation with the updated password
-    result = await set_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-        value=TEST_VALUE,
+    primary = get_primary_ip(juju, APP_NAME)
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     )
-    assert result == "OK", "Failed to write data after admin password update"
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
+    )
 
 
 @pytest.mark.abort_on_fail
 async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     """If a user secret is not granted, ensure we can process updated permissions."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
-
     logger.info("Creating new user secret")
     secret_name = "my_secret"
     new_password = "even-newer-password"
@@ -179,12 +167,16 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
         )
 
     # perform read operation with the updated password
-    assert await get_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after secret permissions were updated"
+    primary = get_primary_ip(juju, APP_NAME)
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
+    )
+    assert client.ping() is True, (
+        "Failed to authenticate with new admin password after secret access"
+    )
+    assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+        "Failed to read data after secret permissions were updated"
+    )
 
     logger.info("Password update successful after secret was granted")
 

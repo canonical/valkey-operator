@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import List
 
 import jubilant
+import valkey
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from dateutil.parser import parse
-from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
 from ops import SecretNotFoundError, StatusBase
 
 from literals import (
@@ -229,31 +229,23 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     raise SecretNotFoundError(f"Secret with label {label} not found")
 
 
-async def create_valkey_client(
-    hostnames: list[str],
+def create_valkey_client(
+    hostname: str,
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
-):
+) -> valkey.Valkey:
     """Create and return a Valkey client connected to the cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        hostname: The hostname of the Valkey cluster node.
         username: The username for authentication.
         password: The password for the internal user.
 
     Returns:
         A Valkey client instance connected to the cluster.
     """
-    addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in hostnames]
-
-    credentials = None
-    if username or password:
-        credentials = ServerCredentials(username=username, password=password)
-    client_config = GlideClientConfiguration(
-        addresses,
-        credentials=credentials,
-    )
-    return await GlideClient.create(client_config)
+    client = valkey.Valkey(host=hostname, port=CLIENT_PORT, username=username, password=password)
+    return client
 
 
 def set_password(
@@ -287,35 +279,6 @@ def set_password(
     juju.config(app=application, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
 
-async def set_key(
-    hostnames: list[str], username: str, password: str, key: str, value: str
-) -> bytes | None:
-    """Write a key-value pair to the Valkey cluster.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to write.
-        value: The value to write.
-        username: The username for authentication.
-        password: The password for authentication.
-    """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.set(key, value)
-
-
-async def get_key(hostnames: list[str], username: str, password: str, key: str) -> bytes | None:
-    """Read a value from the Valkey cluster by key.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to read.
-        username: The username for authentication.
-        password: The password for authentication.
-    """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.get(key)
-
-
 @contextlib.contextmanager
 def fast_forward(juju: jubilant.Juju):
     """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
@@ -325,3 +288,29 @@ def fast_forward(juju: jubilant.Juju):
         yield
     finally:
         juju.model_config({"update-status-hook-interval": old})
+
+
+def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+    """Get the primary node of the Valkey cluster.
+
+    Returns:
+        The IP address of the primary node.
+    """
+    hostnames = get_cluster_hostnames(juju, app)
+    client = create_valkey_client(hostname=hostnames[0], password=get_password(juju))
+    info = client.info("replication")
+    return hostnames[0] if info["role"] == "master" else info.get("master_host", "")
+
+
+def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
+    """Retrieve the password for a given internal user from Juju secrets.
+
+    Args:
+        juju: The Juju client instance.
+        user: The internal user whose password to retrieve.
+
+    Returns:
+        The password for the specified internal user.
+    """
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    return secret.get(f"{user.value}-password", "")
