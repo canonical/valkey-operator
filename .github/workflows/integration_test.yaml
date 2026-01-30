@@ -71,7 +71,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as file:
               file.write(output)
       - name: Generate Allure default test results
-        if: ${{ github.event_name == 'schedule' && github.run_attempt == '1' }}
+        # if: ${{ github.event_name == 'schedule' && github.run_attempt == '1' }}
         run: tox run -e integration -- tests/integration --allure-default-dir=allure-default-results
       - name: Upload Allure default results
         # Default test results in case the integration tests time out or runner set up fails
