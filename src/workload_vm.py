@@ -5,6 +5,7 @@
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
 import logging
+import socket
 import subprocess
 from typing import List, override
 
@@ -31,7 +32,7 @@ class ValkeyVmWorkload(WorkloadBase):
     @override
     def can_connect(self) -> bool:
         try:
-            return bool(self.valkey.services[SNAP_SERVICE]["active"])
+            return bool(self.valkey.services[SNAP_SERVICE])
         except KeyError:
             return False
 
@@ -108,3 +109,22 @@ class ValkeyVmWorkload(WorkloadBase):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.error(e)
             raise
+
+    @override
+    def get_private_ip(self) -> str:
+        cmd = "unit-get private-address"
+        try:
+            output = subprocess.run(
+                cmd,
+                check=True,
+                text=True,
+                shell=True,
+                capture_output=True,
+                timeout=10,
+            )
+            if output.returncode == 0:
+                return output.stdout.strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.error(f"Error executing command '{cmd}': {e}")
+
+        return socket.gethostbyname(socket.gethostname())

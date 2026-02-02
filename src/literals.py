@@ -11,7 +11,7 @@ CHARM_USER = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISION = 10
+SNAP_REVISION = 12
 SNAP_SERVICE = "server"
 SNAP_COMMON_PATH = "/var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "/var/snap/charmed-valkey/current"

@@ -68,13 +68,17 @@ class ConfigManager(ManagerStatusProtocol):
 
         # Adjust default values
         config_properties["port"] = str(CLIENT_PORT)
+        config_properties["loglevel"] = "verbose"
 
         if self.state.substrate == Substrate.VM:
-            config_properties["bind"] = "0.0.0.0 -::1"
+            private_ip = self.workload.get_private_ip()
+            config_properties["bind"] = f"{private_ip} -::1"
+            config_properties["dir"] = f"{SNAP_COMMON_PATH}/var/lib/valkey"
             config_properties["logfile"] = f"{SNAP_COMMON_PATH}{LOG_FILE}"
             config_properties["aclfile"] = f"{SNAP_COMMON_PATH}{ACL_FILE}"
         else:
             config_properties["bind"] = "0.0.0.0 -::1"
+            config_properties["dir"] = "/var/lib/valkey"
             config_properties["aclfile"] = str(ACL_FILE)
 
         return config_properties

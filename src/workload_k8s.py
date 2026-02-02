@@ -5,6 +5,7 @@
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
 import logging
+import socket
 from typing import List, override
 
 import ops
@@ -85,9 +86,23 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def exec(self, command: List[str]) -> str:
-        process = self.container.exec(
-            command=command,
-            combine_stderr=True,
-        )
-        output, _ = process.wait_output()
-        return output
+        try:
+            process = self.container.exec(
+                command=command,
+                combine_stderr=True,
+            )
+            output, _ = process.wait_output()
+            return output
+        except ops.pebble.ExecError:
+            raise
+
+    @override
+    def get_private_ip(self) -> str:
+        cmd = ["unit-get", "private-address"]
+        try:
+            output = self.exec(cmd)
+            return output
+        except ops.pebble.ExecError as e:
+            logger.error(f"Error executing command '{cmd}': {e}")
+
+        return socket.gethostbyname(socket.gethostname())
