@@ -29,7 +29,7 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 
 
-def test_pebble_ready_leader_unit(cloud_spec):
+def test_start_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -64,7 +64,7 @@ def test_pebble_ready_leader_unit(cloud_spec):
         }
     }
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert state_out.get_container(container.name).plan == expected_plan
     assert (
         state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
@@ -86,12 +86,12 @@ def test_pebble_ready_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
-def test_pebble_ready_non_leader_unit(cloud_spec):
+def test_start_non_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -105,7 +105,7 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
     assert not state_out.get_container(container.name).service_statuses.get(
         SERVICE_METRIC_EXPORTER
@@ -121,7 +121,7 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
 
 

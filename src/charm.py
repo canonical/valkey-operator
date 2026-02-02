@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from literals import CONTAINER
+from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from workload_k8s import ValkeyK8sWorkload
@@ -32,8 +32,10 @@ class ValkeyCharm(ops.CharmBase):
             raise
 
         if cloud_spec.type == "kubernetes":
+            self.substrate = Substrate.K8S.value
             self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
         else:
+            self.substrate = Substrate.VM.value
             self.workload = ValkeyVmWorkload()
         self.state = ClusterState(self)
 
@@ -50,25 +52,6 @@ class ValkeyCharm(ops.CharmBase):
 
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)
-
-        # --- Observers
-        self.framework.observe(self.on.valkey_pebble_ready, self._on_pebble_ready)
-
-    def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
-        """Handle the `pebble-ready` event."""
-        if not self.workload.can_connect:
-            logger.warning("Workload not ready yet")
-            event.defer()
-            return
-
-        if not self.unit.is_leader():
-            logger.warning("Scaling not implemented yet, services not started")
-            return
-
-        self.config_manager.set_config_properties()
-        self.workload.start()
-        logger.info("Services started")
-        self.state.unit_server.update({"started": True})
 
 
 if __name__ == "__main__":

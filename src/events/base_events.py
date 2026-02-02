@@ -10,10 +10,15 @@ from subprocess import CalledProcessError, TimeoutExpired
 from typing import TYPE_CHECKING
 
 import ops
-from ops.pebble import ExecError
 
 from common.exceptions import ValkeyClientError
-from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
+from literals import (
+    INTERNAL_USER,
+    INTERNAL_USER_PASSWORD_CONFIG,
+    PEER_RELATION,
+    SNAP_CURRENT_PATH,
+    Substrate,
+)
 from statuses import CharmStatuses, ClusterStatuses
 
 if TYPE_CHECKING:
@@ -30,6 +35,7 @@ class BaseEvents(ops.Object):
         self.charm = charm
 
         self.framework.observe(self.charm.on.install, self._on_install)
+        self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_joined, self._on_peer_relation_joined
         )
@@ -40,17 +46,37 @@ class BaseEvents(ops.Object):
 
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
-        try:
-            # TODO: create the path via Juju storage volumes
-            valkey_path = "/var/lib/valkey/"
-            self.charm.workload.exec(["mkdir", "-p", valkey_path])
-        except (CalledProcessError, TimeoutExpired, ExecError):
-            raise
+        if self.charm.substrate == Substrate.K8S:
+            logger.debug("No installation required.")
+            return
 
         try:
             self.charm.workload.install()
         except RuntimeError:
             raise RuntimeError("Failed to install the Valkey snap")
+
+        try:
+            # TODO: create the path via Juju storage volumes
+            valkey_path = f"{SNAP_CURRENT_PATH}/var/lib/valkey/"
+            self.charm.workload.exec(["mkdir", "-p", valkey_path])
+        except (CalledProcessError, TimeoutExpired):
+            raise
+
+    def _on_start(self, event: ops.StartEvent) -> None:
+        """Handle the `pebble-ready` event."""
+        if not self.charm.workload.can_connect:
+            logger.warning("Workload not ready yet")
+            event.defer()
+            return
+
+        if not self.charm.unit.is_leader():
+            logger.warning("Scaling not implemented yet, services not started")
+            return
+
+        self.charm.config_manager.set_config_properties()
+        self.charm.workload.start()
+        logger.info("Services started")
+        self.charm.state.unit_server.update({"started": True})
 
     def _on_peer_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
         """Handle event received by all units when a new unit joins the cluster relation."""

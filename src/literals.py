@@ -4,9 +4,17 @@
 
 """Collection of global literals for the Valkey charm."""
 
+from enum import StrEnum
+
 CHARM = "valkey"
 CHARM_USER = "valkey"
 CONTAINER = "valkey"
+
+SNAP_NAME = "charmed-valkey"
+SNAP_REVISION = 10
+SNAP_SERVICE = "server"
+SNAP_COMMON_PATH = "/var/snap/charmed-valkey/common"
+SNAP_CURRENT_PATH = "/var/snap/charmed-valkey/current"
 
 CONFIG_FILE = "/var/lib/valkey/valkey.conf"
 ACL_FILE = "/var/lib/valkey/users.acl"
@@ -18,3 +26,10 @@ INTERNAL_USER = "charmed-operator"
 INTERNAL_USER_PASSWORD_CONFIG = "system-users"
 
 CLIENT_PORT = 6379
+
+
+class Substrate(StrEnum):
+    """Substrate types."""
+
+    VM = "vm"
+    K8S = "k8s"

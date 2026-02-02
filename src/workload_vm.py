@@ -12,15 +12,9 @@ from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from core.base_workload import WorkloadBase
-from literals import CONFIG_FILE
+from literals import CONFIG_FILE, SNAP_CURRENT_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
 
 logger = logging.getLogger(__name__)
-
-SNAP_NAME = "charmed-valkey"
-SNAP_REVISION = 10
-SNAP_SERVICE = "server"
-SNAP_COMMON_PATH = "/var/snap/charmed-valkey/common/"
-SNAP_CURRENT_PATH = "/var/snap/charmed-valkey/current/"
 
 
 class ValkeyVmWorkload(WorkloadBase):
