@@ -16,6 +16,7 @@ SNAP_SERVICE = "server"
 SNAP_COMMON_PATH = "/var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "/var/snap/charmed-valkey/current"
 
+LOG_FILE = "/var/lib/valkey/valkey.log"
 CONFIG_FILE = "/var/lib/valkey/valkey.conf"
 ACL_FILE = "/var/lib/valkey/users.acl"
 

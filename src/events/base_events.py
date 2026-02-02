@@ -6,7 +6,6 @@
 
 import logging
 import socket
-from subprocess import CalledProcessError, TimeoutExpired
 from typing import TYPE_CHECKING
 
 import ops
@@ -16,7 +15,6 @@ from literals import (
     INTERNAL_USER,
     INTERNAL_USER_PASSWORD_CONFIG,
     PEER_RELATION,
-    SNAP_CURRENT_PATH,
     Substrate,
 )
 from statuses import CharmStatuses, ClusterStatuses
@@ -54,13 +52,6 @@ class BaseEvents(ops.Object):
             self.charm.workload.install()
         except RuntimeError:
             raise RuntimeError("Failed to install the Valkey snap")
-
-        try:
-            # TODO: create the path via Juju storage volumes
-            valkey_path = f"{SNAP_CURRENT_PATH}/var/lib/valkey/"
-            self.charm.workload.exec(["mkdir", "-p", valkey_path])
-        except (CalledProcessError, TimeoutExpired):
-            raise
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle the `pebble-ready` event."""

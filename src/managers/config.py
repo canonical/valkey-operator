@@ -16,7 +16,14 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import ACL_FILE, CLIENT_PORT, INTERNAL_USER
+from literals import (
+    ACL_FILE,
+    CLIENT_PORT,
+    INTERNAL_USER,
+    LOG_FILE,
+    SNAP_COMMON_PATH,
+    Substrate,
+)
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -60,14 +67,15 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        # port
         config_properties["port"] = str(CLIENT_PORT)
 
-        # bind to all interfaces
-        config_properties["bind"] = "0.0.0.0 -::1"
-
-        # Use the ACL file
-        config_properties["aclfile"] = str(ACL_FILE)
+        if self.state.substrate == Substrate.VM:
+            config_properties["bind"] = "0.0.0.0 -::1"
+            config_properties["logfile"] = f"{SNAP_COMMON_PATH}{LOG_FILE}"
+            config_properties["aclfile"] = f"{SNAP_COMMON_PATH}{ACL_FILE}"
+        else:
+            config_properties["bind"] = "0.0.0.0 -::1"
+            config_properties["aclfile"] = str(ACL_FILE)
 
         return config_properties
 
@@ -95,7 +103,10 @@ class ConfigManager(ManagerStatusProtocol):
         # write the ACL file
         acl_content = "user default off\n"
         acl_content += f"user {INTERNAL_USER} on #{charmed_operator_password_hash} ~* +@all\n"
-        self.workload.write_file(acl_content, ACL_FILE)
+        if self.state.substrate == Substrate.VM:
+            self.workload.write_file(acl_content, f"{SNAP_COMMON_PATH}{ACL_FILE}")
+        else:
+            self.workload.write_file(acl_content, ACL_FILE)
 
     def generate_password(self) -> str:
         """Create randomized string for use as app passwords.

@@ -32,12 +32,12 @@ class ValkeyCharm(ops.CharmBase):
             raise
 
         if cloud_spec.type == "kubernetes":
-            self.substrate = Substrate.K8S.value
+            self.substrate = Substrate.K8S
             self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
         else:
-            self.substrate = Substrate.VM.value
+            self.substrate = Substrate.VM
             self.workload = ValkeyVmWorkload()
-        self.state = ClusterState(self)
+        self.state = ClusterState(self, self.substrate)
 
         # --- MANAGERS ---
         self.cluster_manager = ClusterManager(state=self.state, workload=self.workload)

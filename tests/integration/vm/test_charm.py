@@ -10,7 +10,6 @@ import pytest
 from literals import INTERNAL_USER, INTERNAL_USER_PASSWORD_CONFIG, PEER_RELATION
 from tests.integration.helpers import (
     APP_NAME,
-    IMAGE_RESOURCE,
     CharmStatuses,
     create_valkey_client,
     does_status_match,

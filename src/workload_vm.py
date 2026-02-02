@@ -12,7 +12,7 @@ from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from core.base_workload import WorkloadBase
-from literals import CONFIG_FILE, SNAP_CURRENT_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
+from literals import CONFIG_FILE, SNAP_COMMON_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class ValkeyVmWorkload(WorkloadBase):
             with attempt:
                 self.valkey = snap.SnapCache()[SNAP_NAME]
 
-        self.config_file = pathops.LocalPath(f"{SNAP_CURRENT_PATH}/{CONFIG_FILE}")
+        self.config_file = pathops.LocalPath(f"{SNAP_COMMON_PATH}/{CONFIG_FILE}")
 
     @property
     @override
@@ -90,7 +90,7 @@ class ValkeyVmWorkload(WorkloadBase):
             content (str): The content to be written.
             path (str): The file path where the content should be written.
         """
-        file_path = pathops.LocalPath(f"{SNAP_CURRENT_PATH}/{path}")
+        file_path = pathops.LocalPath(path)
         file_path.write_text(content)
 
     @override
