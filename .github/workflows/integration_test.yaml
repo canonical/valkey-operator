@@ -17,7 +17,7 @@ jobs:
   collect-integration-tests:
     name: Collect spread jobs | ${{ inputs.path-to-charm-directory }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -27,6 +27,11 @@ jobs:
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
           pipx install tox poetry
+          # to build Valkey-glide during tests
+          sudo apt install libprotobuf-dev protobuf-compiler -y
+          sudo apt install rustup -y
+          rustup set profile minimal
+          rustup default 1.90.0
       - name: Collect spread jobs
         id: collect-jobs
         shell: python
