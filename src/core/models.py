@@ -138,7 +138,7 @@ class ValkeyCluster(RelationState):
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:
-        """Retrieve the credentials for the internal admin user."""
+        """Retrieve the credentials for the internal admin users."""
         passwords = {}
         if not self.model:
             return passwords

@@ -141,6 +141,13 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     )
     assert result == "OK", "Failed to write data after admin password update"
 
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    for user in CharmUsers:
+        if user == CharmUsers.VALKEY_ADMIN:
+            continue
+        password = secret.get(f"{user.value}-password")
+        assert password != new_password, f"Password for {user} must not be updated"
+
 
 @pytest.mark.abort_on_fail
 async def test_user_secret_permissions(juju: jubilant.Juju) -> None:

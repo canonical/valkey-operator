@@ -56,43 +56,37 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if self.charm.unit.is_leader() and not self.charm.state.cluster.internal_users_credentials:
-            passwords = {}
-            user_specified_passwords = {}
-            if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
-                try:
-                    user_specified_passwords = self.charm.state.get_secret_from_id(
-                        str(admin_secret_id)
-                    )
-                except (ops.ModelError, ops.SecretNotFoundError) as e:
-                    logger.error(f"Could not access secret {admin_secret_id}: {e}")
-                    self.charm.status.set_running_status(
-                        CharmStatuses.SECRET_ACCESS_ERROR.value,
-                        scope="app",
-                        component_name=self.charm.cluster_manager.name,
-                        statuses_state=self.charm.state.statuses,
-                    )
-                    raise
+        if not self.charm.unit.is_leader():
+            return
 
-                self.charm.state.statuses.delete(
-                    CharmStatuses.SECRET_ACCESS_ERROR.value,
-                    scope="app",
-                    component=self.charm.cluster_manager.name,
+        if self.charm.state.cluster.internal_users_credentials:
+            logger.debug("Internal user credentials already set")
+            return
+
+        passwords = {}
+        user_specified_passwords = {}
+        if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
+            try:
+                user_specified_passwords = self.charm.state.get_secret_from_id(
+                    str(admin_secret_id)
                 )
+            except (ops.ModelError, ops.SecretNotFoundError) as e:
+                logger.error(f"Could not access secret {admin_secret_id}: {e}")
+                raise
 
-            # generate passwords for all internal users if not specified in the user secret
-            for user in CharmUsers:
-                passwords[user.value] = user_specified_passwords.get(
-                    user.value, self.charm.config_manager.generate_password()
-                )
-
-            self.charm.state.cluster.update(
-                {
-                    f"{user.value.replace('-', '_')}_password": passwords[user.value]
-                    for user in CharmUsers
-                }
+        # generate passwords for all internal users if not specified in the user secret
+        for user in CharmUsers:
+            passwords[user.value] = user_specified_passwords.get(
+                user.value, self.charm.config_manager.generate_password()
             )
-            self.charm.config_manager.set_acl_file()
+
+        self.charm.state.cluster.update(
+            {
+                f"{user.value.replace('-', '_')}_password": passwords[user.value]
+                for user in CharmUsers
+            }
+        )
+        self.charm.config_manager.set_acl_file()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -143,7 +137,6 @@ class BaseEvents(ops.Object):
                 scope="unit",
                 component=self.charm.cluster_manager.name,
             )
-        return
 
     def _update_internal_users_password(self, secret_id: str) -> None:
         """Update internal users' passwords in charm/valkey if they have changed.
