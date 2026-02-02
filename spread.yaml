@@ -59,7 +59,9 @@ backends:
       # Use instead of `concierge restore` to save time between tests
       # For example, with microk8s, using `concierge restore` takes twice as long as this (e.g. 6
       # min instead of 3 min between every spread job)
-      juju destroy-model --force --no-wait --destroy-storage --no-prompt testing
+      juju destroy-model --force --no-wait --destroy-storage --no-prompt concierge-k8s:testing
+      juju destroy-model --force --no-wait --destroy-storage --no-prompt concierge-lxd:testing
+      juju kill-controller --no-prompt concierge-k8s
       juju kill-controller --no-prompt concierge-lxd
     restore: |
       rm -rf "$SPREAD_PATH"
@@ -98,8 +100,10 @@ backends:
           username: ubuntu
 
 suites:
-  tests/spread/:
-    summary: General test suite
+  tests/spread/k8s/:
+    summary: Integration tests for K8s
+  tests/spread/vm/:
+    summary: Integration tests for VM
 
 path: /root/spread_project
 
@@ -114,14 +118,30 @@ prepare: |
   snap install --classic concierge
 
   # Install charmcraft & pipx (on lxd-vm backend)
-  concierge prepare --trace
+  if [[ $SPREAD_SUITE == *"lxd"* ]]
+  then
+    concierge prepare --trace -c concierge-lxd.yaml
+  fi
+  
+  if [[ $SPREAD_SUITE == *"k8s"* ]]
+  then
+    concierge prepare --trace -c concierge-k8s.yaml
+  fi
 
   pipx install tox poetry
   rustup default 1.90.0
 prepare-each: |
   cd "$SPREAD_PATH"
   # `concierge prepare` needs to be run for each spread job in case Juju version changed
-  concierge prepare --trace
+  if [[ $SPREAD_SUITE == *"lxd"* ]]
+  then
+    concierge prepare --trace -c concierge-lxd.yaml
+  fi
+  
+  if [[ $SPREAD_SUITE == *"k8s"* ]]
+  then
+    concierge prepare --trace -c concierge-k8s.yaml
+  fi
 
   # Unable to set constraint on all models because of Juju bug:
   # https://bugs.launchpad.net/juju/+bug/2065050
