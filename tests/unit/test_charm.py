@@ -5,6 +5,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import yaml
 from ops import ActiveStatus, pebble, testing
 
@@ -234,14 +235,10 @@ def test_leader_elected_leader_password_specified_wrong_secret():
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        ctx(ctx.on.leader_elected(), state_in) as manager,
+        pytest.raises(testing.errors.UncaughtCharmError) as exc_info,
     ):
-        charm: ValkeyCharm = manager.charm
-        manager.run()
-        assert (
-            charm.state.statuses.get(scope="app", component="cluster")[0]
-            == CharmStatuses.SECRET_ACCESS_ERROR.value
-        )
+        ctx.run(ctx.on.leader_elected(), state_in)
+        assert "SecretNotFoundError" in str(exc_info.value)
 
 
 def test_config_changed_non_leader_unit():

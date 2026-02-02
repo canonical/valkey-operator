@@ -72,8 +72,7 @@ class BaseEvents(ops.Object):
                         component_name=self.charm.cluster_manager.name,
                         statuses_state=self.charm.state.statuses,
                     )
-                    event.defer()
-                    return
+                    raise
 
                 self.charm.state.statuses.delete(
                     CharmStatuses.SECRET_ACCESS_ERROR.value,
