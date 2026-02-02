@@ -163,6 +163,11 @@ def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
         A list of hostnames for all units in the Valkey application.
     """
     status = juju.status()
+    model_info = juju.show_model()
+
+    if model_info.type == "lxd":
+        return [unit.public_address for unit in status.get_units(app_name).values()]
+
     return [unit.address for unit in status.get_units(app_name).values()]
 
 
