@@ -294,7 +294,8 @@ def test_config_changed_leader_unit():
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={user.value: "secure-password" for user in CharmUsers},
+        remote_grants=APP_NAME,
     )
     state_in = testing.State(
         leader=True,
@@ -318,6 +319,8 @@ def test_config_changed_leader_unit():
             secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
             == "secure-password"
         )
+        for user in CharmUsers:
+            assert secret_out.latest_content.get(f"{user.value}-password") == "secure-password"
 
 
 def test_config_changed_leader_unit_wrong_username():
