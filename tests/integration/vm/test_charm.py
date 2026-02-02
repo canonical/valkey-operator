@@ -33,7 +33,7 @@ TEST_VALUE = "test_value"
 @pytest.mark.abort_on_fail
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
+    juju.deploy(charm, num_units=NUM_UNITS, trust=True)
     juju.wait(
         lambda status: does_status_match(
             status,
