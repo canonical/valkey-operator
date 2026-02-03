@@ -401,8 +401,8 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         mock_reload_acl.assert_called_once()
 
 
-def test_change_password_secret_changed_non_leader_unit_not_successful():
-    ctx = testing.Context(ValkeyCharm)
+def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     statuses_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -419,6 +419,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch(

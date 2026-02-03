@@ -12,7 +12,6 @@ from literals import (
     CharmUsers,
 )
 from statuses import ClusterStatuses
-
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
