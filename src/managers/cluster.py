@@ -14,7 +14,7 @@ from common.client import ValkeyClient
 from common.exceptions import ValkeyACLLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import INTERNAL_USER
+from literals import CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,10 @@ class ClusterManager(ManagerStatusProtocol):
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
-        self.admin_user = INTERNAL_USER
-        self.admin_password = self.state.cluster.internal_user_credentials.get(INTERNAL_USER, "")
+        self.admin_user = CharmUsers.VALKEY_ADMIN.value
+        self.admin_password = self.state.cluster.internal_users_credentials.get(
+            CharmUsers.VALKEY_ADMIN.value, ""
+        )
         self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
 
     def reload_acl_file(self) -> None:

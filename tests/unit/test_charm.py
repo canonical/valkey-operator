@@ -9,14 +9,16 @@ import pytest
 import yaml
 from ops import ActiveStatus, pebble, testing
 
+from common.exceptions import ValkeyACLLoadError
 from src.charm import ValkeyCharm
 from src.literals import (
-    INTERNAL_USER,
-    INTERNAL_USER_PASSWORD_CONFIG,
+    INTERNAL_USERS_PASSWORD_CONFIG,
+    INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
+    CharmUsers,
 )
-from src.statuses import CharmStatuses
+from src.statuses import CharmStatuses, ClusterStatuses
 
 from .helpers import status_is
 
@@ -176,8 +178,10 @@ def test_internal_user_creation(cloud_spec):
     )
     with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
-        secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
-        assert secret_out.latest_content.get(f"{INTERNAL_USER}-password")
+        secret_out = state_out.get_secret(
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+        )
+        assert secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
 
 
 def test_leader_elected_no_peer_relation(cloud_spec):
@@ -200,36 +204,44 @@ def test_leader_elected_leader_password_specified(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
     )
     state_in = testing.State(
         leader=True,
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("managers.config.ConfigManager.generate_password") as mock_generate,
+        patch(
+            "managers.config.ConfigManager.generate_password", return_value="generated-password"
+        ),
     ):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
-        secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
-        assert secret_out.latest_content.get(f"{INTERNAL_USER}-password") == "secure-password"
-        mock_generate.assert_not_called()
+        secret_out = state_out.get_secret(
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+        )
+        for user in CharmUsers:
+            if user == CharmUsers.VALKEY_ADMIN:
+                assert secret_out.latest_content.get(f"{user.value}-password") == "secure-password"
+                continue
+            assert secret_out.latest_content.get(f"{user.value}-password") == "generated-password"
 
 
 def test_leader_elected_leader_password_specified_wrong_secret(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     state_in = testing.State(
         leader=True,
-        relations={relation},
+        relations={relation, status_relation},
         containers={container},
-        config={INTERNAL_USER_PASSWORD_CONFIG: "secret:1tf1wk0tmfrodp8ofwxn"},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: "secret:1tf1wk0tmfrodp8ofwxn"},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
@@ -237,7 +249,7 @@ def test_leader_elected_leader_password_specified_wrong_secret(cloud_spec):
         pytest.raises(testing.errors.UncaughtCharmError) as exc_info,
     ):
         ctx.run(ctx.on.leader_elected(), state_in)
-    assert "SecretNotFoundError" in str(exc_info.value)
+        assert "SecretNotFoundError" in str(exc_info.value)
 
 
 def test_config_changed_non_leader_unit(cloud_spec):
@@ -245,7 +257,7 @@ def test_config_changed_non_leader_unit(cloud_spec):
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
     )
 
     state_in = testing.State(
@@ -253,11 +265,11 @@ def test_config_changed_non_leader_unit(cloud_spec):
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("events.base_events.BaseEvents.update_admin_password") as mock_update,
+        patch("events.base_events.BaseEvents._update_internal_users_password") as mock_update,
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_update.assert_not_called()
@@ -269,14 +281,15 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={user.value: "secure-password" for user in CharmUsers},
+        remote_grants=APP_NAME,
     )
     state_in = testing.State(
         leader=True,
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
@@ -294,31 +307,40 @@ def test_config_changed_leader_unit(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={user.value: "secure-password" for user in CharmUsers},
+        remote_grants=APP_NAME,
     )
     state_in = testing.State(
         leader=True,
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.reload_acl") as mock_reload_acl,
+        patch("common.client.ValkeyClient.reload_acl") as mock_load_acl,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        mock_reload_acl.assert_called_once()
-        secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
-        assert secret_out.latest_content.get(f"{INTERNAL_USER}-password") == "secure-password"
+        mock_load_acl.assert_called_once()
+        secret_out = state_out.get_secret(
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+        )
+        assert (
+            secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+            == "secure-password"
+        )
+        for user in CharmUsers:
+            assert secret_out.latest_content.get(f"{user.value}-password") == "secure-password"
 
 
 def test_config_changed_leader_unit_wrong_username(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -326,17 +348,24 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
     )
     state_in = testing.State(
         leader=True,
-        relations={relation},
+        relations={relation, status_peer_relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        ctx(ctx.on.config_changed(), state_in) as manager,
     ):
-        ctx.run(ctx.on.config_changed(), state_in)
+        charm: ValkeyCharm = manager.charm
+        manager.run()
+        cluster_statuses = charm.state.statuses.get(
+            scope="app",
+            component=charm.cluster_manager.name,
+        )
+        assert ClusterStatuses.PASSWORD_UPDATE_FAILED.value in cluster_statuses
         mock_set_acl_file.assert_not_called()
 
 
@@ -346,7 +375,9 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
+        remote_grants=APP_NAME,
     )
 
     state_in = testing.State(
@@ -354,14 +385,63 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("events.base_events.BaseEvents.update_admin_password") as mock_update_password,
+        patch(
+            "events.base_events.BaseEvents._update_internal_users_password"
+        ) as mock_update_password,
+        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("common.client.ValkeyClient.reload_acl") as mock_reload_acl,
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
+        mock_set_acl_file.assert_called_once()
+        mock_reload_acl.assert_called_once()
+
+
+def test_change_password_secret_changed_non_leader_unit_not_successful():
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    statuses_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    password_secret = testing.Secret(
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
+        remote_grants=APP_NAME,
+    )
+
+    state_in = testing.State(
+        leader=False,
+        relations={relation, statuses_peer_relation},
+        containers={container},
+        secrets={password_secret},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+    )
+    with (
+        patch(
+            "events.base_events.BaseEvents._update_internal_users_password"
+        ) as mock_update_password,
+        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch(
+            "common.client.ValkeyClient.reload_acl",
+            side_effect=ValkeyACLLoadError("Reload failed"),
+        ) as mock_reload_acl,
+        ctx(ctx.on.secret_changed(password_secret), state_in) as manager,
+    ):
+        charm: ValkeyCharm = manager.charm
+        state_out = manager.run()
+        mock_update_password.assert_not_called()
+        mock_set_acl_file.assert_called_once()
+        mock_reload_acl.assert_called_once()
+        cluster_statuses = charm.state.statuses.get(
+            scope="unit",
+            component=charm.cluster_manager.name,
+        )
+        assert "secret_changed" in [e.name for e in state_out.deferred]
+        assert ClusterStatuses.PASSWORD_UPDATE_FAILED.value in cluster_statuses
 
 
 def test_change_password_secret_changed_leader_unit(cloud_spec):
@@ -370,7 +450,7 @@ def test_change_password_secret_changed_leader_unit(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={INTERNAL_USER: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
     )
 
     state_in = testing.State(
@@ -378,11 +458,13 @@ def test_change_password_secret_changed_leader_unit(cloud_spec):
         relations={relation},
         containers={container},
         secrets={password_secret},
-        config={INTERNAL_USER_PASSWORD_CONFIG: password_secret.id},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("events.base_events.BaseEvents.update_admin_password") as mock_update_password,
+        patch(
+            "events.base_events.BaseEvents._update_internal_users_password"
+        ) as mock_update_password,
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_called_once_with(password_secret.id)
