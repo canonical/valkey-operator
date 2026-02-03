@@ -5,7 +5,14 @@ options:
   system-users:
     type: secret
     description: |
-      Configure the internal system user and it's password. The password will
+      Configure the internal system users and their passwords. The passwords will
       be auto-generated if this option is not set. It is for internal use only
       and SHOULD NOT be used by applications. This needs to be a Juju Secret URI pointing
-      to a secret that contains the following content: `root: <password>`.
+      to a secret that contains the following content: `username: <password>`.
+      The following system users are supported:
+      - charmed-operator: administrative user for the charmed valkey operator
+      - charmed-replication: used by valkey replica instances to connect to the primary
+      - charmed-stats: used by the metrics exporter to connect to valkey
+      - charmed-sentinel-operator: administrative user for operating valkey sentinel
+      - charmed-sentinel-valkey: used by sentinel to authenticate against valkey
+      - charmed-sentinel-peers: used by sentinel for inter-sentinel authentication
