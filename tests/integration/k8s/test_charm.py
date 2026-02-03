@@ -30,7 +30,6 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-@pytest.mark.abort_on_fail
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
@@ -43,7 +42,6 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     )
 
 
-@pytest.mark.abort_on_fail
 async def test_authentication(juju: jubilant.Juju) -> None:
     """Assert that we can authenticate to valkey."""
     hostnames = get_cluster_hostnames(juju, APP_NAME)
@@ -66,7 +64,6 @@ async def test_authentication(juju: jubilant.Juju) -> None:
     assert auth_result == b"PONG", "Authentication to Valkey cluster failed"
 
 
-@pytest.mark.abort_on_fail
 async def test_update_admin_password(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     hostnames = get_cluster_hostnames(juju, APP_NAME)
@@ -100,7 +97,6 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     ) == bytes(TEST_VALUE, "utf-8")
 
 
-@pytest.mark.abort_on_fail
 async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     """If a user secret is not granted, ensure we can process updated permissions."""
     hostnames = get_cluster_hostnames(juju, APP_NAME)
