@@ -81,13 +81,28 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # create a user secret and grant it to the application
     logger.info("Updating operator password")
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    old_password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
     new_password = "some-password"
     set_password(juju, new_password)
 
     # wait for config-changed hook to finish executing
     juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
 
-    # perform read operation with the updated password
+    logger.info("Ensure password was updated on charm-internal secret")
+    assert old_password != secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+
+    logger.info("Ensure access with old password no longer possible")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=old_password,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result != "OK", "Access with old password must not be possible anymore"
+
+    logger.info("Check access with updated password")
     result = await set_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
