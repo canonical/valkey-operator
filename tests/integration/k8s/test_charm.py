@@ -55,6 +55,7 @@ async def test_authentication(juju: jubilant.Juju) -> None:
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     # try without authentication
+    logger.info("Ensure unauthenticated access fails")
     with pytest.raises(Exception) as exc_info:
         unauth_client = await create_valkey_client(
             hostnames=hostnames, username=None, password=None
@@ -67,6 +68,7 @@ async def test_authentication(juju: jubilant.Juju) -> None:
     password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
     assert password is not None, "Admin password secret not found"
 
+    logger.info("Check access works correctly when authenticated")
     client = await create_valkey_client(hostnames=hostnames, password=password)
     auth_result = await client.ping()
     assert auth_result == b"PONG", "Authentication to Valkey cluster failed"
@@ -78,6 +80,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     # create a user secret and grant it to the application
+    logger.info("Updating operator password")
     new_password = "some-password"
     set_password(juju, new_password)
 
@@ -95,6 +98,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data after admin password update"
 
     # update the config again and remove the option `admin-password`
+    logger.info("Ensure access is still possible after removing config option")
     juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
 
     # wait for config-changed hook to finish executing
@@ -113,8 +117,17 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     hostnames = get_cluster_hostnames(juju, APP_NAME)
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    old_passwords = {}
+
+    logger.info("Storing old passwords before update")
+    for user in CharmUsers:
+        if user == CharmUsers.VALKEY_ADMIN:
+            continue
+        old_passwords[user.value] = secret.get(f"{user.value}-password")
 
     # create a user secret and grant it to the application
+    logger.info("Updating invalid username")
     new_password = "some-password"
     set_password(juju, username="wrong-username", password=new_password)
 
@@ -127,6 +140,7 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
         timeout=1200,
     )
 
+    logger.info("Updating password correctly now")
     set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
     # wait for config-changed hook to finish executing
     juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
@@ -141,12 +155,13 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     )
     assert result == "OK", "Failed to write data after admin password update"
 
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    logger.info("Comparing other users passwords to previously")
     for user in CharmUsers:
         if user == CharmUsers.VALKEY_ADMIN:
             continue
-        password = secret.get(f"{user.value}-password")
-        assert password != new_password, f"Password for {user} must not be updated"
+        assert old_passwords[user.value] == secret.get(f"{user.value}-password"), (
+            f"Password for {user} must not be updated"
+        )
 
 
 @pytest.mark.abort_on_fail
