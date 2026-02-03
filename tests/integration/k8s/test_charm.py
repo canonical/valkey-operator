@@ -90,17 +90,16 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
 
     logger.info("Ensure password was updated on charm-internal secret")
-    assert old_password != secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    updated_secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    assert old_password != updated_secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
 
     logger.info("Ensure access with old password no longer possible")
-    result = await set_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=old_password,
-        key=TEST_KEY,
-        value=TEST_VALUE,
-    )
-    assert result != "OK", "Access with old password must not be possible anymore"
+    with pytest.raises(Exception) as exc_info:
+        unauth_client = await create_valkey_client(
+            hostnames=hostnames, username=CharmUsers.VALKEY_ADMIN.value, password=old_password
+        )
+        await unauth_client.ping()
+    assert "WRONGPASS" in str(exc_info.value), "Unauthenticated access did not fail as expected"
 
     logger.info("Check access with updated password")
     result = await set_key(
@@ -171,10 +170,11 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     assert result == "OK", "Failed to write data after admin password update"
 
     logger.info("Comparing other users passwords to previously")
+    updated_secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
     for user in CharmUsers:
         if user == CharmUsers.VALKEY_ADMIN:
             continue
-        assert old_passwords[user.value] == secret.get(f"{user.value}-password"), (
+        assert old_passwords[user.value] == updated_secret.get(f"{user.value}-password"), (
             f"Password for {user} must not be updated"
         )
 
