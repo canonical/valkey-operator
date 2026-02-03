@@ -5,7 +5,6 @@
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
 import logging
-import socket
 import subprocess
 from typing import List, override
 
@@ -13,7 +12,7 @@ from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from core.base_workload import WorkloadBase
-from literals import CONFIG_FILE, SNAP_COMMON_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
+from literals import SNAP_CONFIG_FILE, SNAP_CURRENT_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ class ValkeyVmWorkload(WorkloadBase):
             with attempt:
                 self.valkey = snap.SnapCache()[SNAP_NAME]
 
-        self.config_file = pathops.LocalPath(f"{SNAP_COMMON_PATH}/{CONFIG_FILE}")
+        self.config_file = pathops.LocalPath(f"{SNAP_CURRENT_PATH}/{SNAP_CONFIG_FILE}")
 
     @property
     @override
@@ -109,22 +108,3 @@ class ValkeyVmWorkload(WorkloadBase):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.error(e)
             raise
-
-    @override
-    def get_private_ip(self) -> str:
-        cmd = "unit-get private-address"
-        try:
-            output = subprocess.run(
-                cmd,
-                check=True,
-                text=True,
-                shell=True,
-                capture_output=True,
-                timeout=10,
-            )
-            if output.returncode == 0:
-                return output.stdout.strip()
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error(f"Error executing command '{cmd}': {e}")
-
-        return socket.gethostbyname(socket.gethostname())

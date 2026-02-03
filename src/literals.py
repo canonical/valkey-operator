@@ -11,12 +11,13 @@ CHARM_USER = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISION = 12
+SNAP_REVISION = 14
 SNAP_SERVICE = "server"
 SNAP_COMMON_PATH = "/var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "/var/snap/charmed-valkey/current"
+SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
+SNAP_ACL_FILE = "etc/charmed-valkey/users.acl"
 
-LOG_FILE = "/var/lib/valkey/valkey.log"
 CONFIG_FILE = "/var/lib/valkey/valkey.conf"
 ACL_FILE = "/var/lib/valkey/users.acl"
 

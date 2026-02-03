@@ -20,8 +20,9 @@ from literals import (
     ACL_FILE,
     CLIENT_PORT,
     INTERNAL_USER,
-    LOG_FILE,
+    SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
+    SNAP_CURRENT_PATH,
     Substrate,
 )
 from statuses import CharmStatuses
@@ -67,17 +68,14 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
+        config_properties["bind"] = "0.0.0.0 -::1"
         config_properties["port"] = str(CLIENT_PORT)
         config_properties["loglevel"] = "verbose"
 
         if self.state.substrate == Substrate.VM:
-            private_ip = self.workload.get_private_ip()
-            config_properties["bind"] = f"{private_ip} -::1"
-            config_properties["dir"] = f"{SNAP_COMMON_PATH}/var/lib/valkey"
-            config_properties["logfile"] = f"{SNAP_COMMON_PATH}{LOG_FILE}"
-            config_properties["aclfile"] = f"{SNAP_COMMON_PATH}{ACL_FILE}"
+            config_properties["dir"] = f"{SNAP_COMMON_PATH}/var/lib/charmed-valkey"
+            config_properties["aclfile"] = f"{SNAP_CURRENT_PATH}/{SNAP_ACL_FILE}"
         else:
-            config_properties["bind"] = "0.0.0.0 -::1"
             config_properties["dir"] = "/var/lib/valkey"
             config_properties["aclfile"] = str(ACL_FILE)
 
@@ -108,7 +106,7 @@ class ConfigManager(ManagerStatusProtocol):
         acl_content = "user default off\n"
         acl_content += f"user {INTERNAL_USER} on #{charmed_operator_password_hash} ~* +@all\n"
         if self.state.substrate == Substrate.VM:
-            self.workload.write_file(acl_content, f"{SNAP_COMMON_PATH}{ACL_FILE}")
+            self.workload.write_file(acl_content, f"{SNAP_CURRENT_PATH}/{SNAP_ACL_FILE}")
         else:
             self.workload.write_file(acl_content, ACL_FILE)
 

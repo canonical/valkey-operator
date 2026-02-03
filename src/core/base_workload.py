@@ -45,8 +45,3 @@ class WorkloadBase(ABC):
     def exec(self, command: List[str]) -> str:
         """Run a command on the workload substrate."""
         pass
-
-    @abstractmethod
-    def get_private_ip(self) -> str:
-        """Get the Private IP address of the current unit."""
-        pass
