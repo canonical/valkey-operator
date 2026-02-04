@@ -16,7 +16,12 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import ACL_FILE, CHARM_USERS_ROLE_MAP, CLIENT_PORT, CharmUsers
+from literals import (
+    CHARM_USERS_ROLE_MAP,
+    CLIENT_PORT,
+    CharmUsers,
+    Substrate,
+)
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -60,14 +65,15 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        # port
         config_properties["port"] = str(CLIENT_PORT)
+        config_properties["loglevel"] = "verbose"
+        config_properties["aclfile"] = self.workload.acl_file.as_posix()
+        config_properties["dir"] = self.workload.working_dir.as_posix()
 
-        # bind to all interfaces
-        config_properties["bind"] = "0.0.0.0 -::1"
-
-        # Use the ACL file
-        config_properties["aclfile"] = str(ACL_FILE)
+        if self.state.substrate == Substrate.VM:
+            config_properties["bind"] = self.state.bind_address
+        else:
+            config_properties["bind"] = "0.0.0.0 -::1"
 
         return config_properties
 
@@ -88,10 +94,10 @@ class ConfigManager(ManagerStatusProtocol):
         for user in CharmUsers:
             # only process VALKEY users
             # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" not in str(user):
+            if "VALKEY_" not in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        self.workload.write_file(acl_content, ACL_FILE)
+        self.workload.write_file(acl_content, self.workload.acl_file)
 
     def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
         """Generate an ACL line for a given user.

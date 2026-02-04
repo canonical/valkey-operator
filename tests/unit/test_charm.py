@@ -31,7 +31,7 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 
 
-def test_pebble_ready_leader_unit(cloud_spec):
+def test_start_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -66,7 +66,7 @@ def test_pebble_ready_leader_unit(cloud_spec):
         }
     }
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert state_out.get_container(container.name).plan == expected_plan
     assert (
         state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
@@ -88,12 +88,12 @@ def test_pebble_ready_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
-def test_pebble_ready_non_leader_unit(cloud_spec):
+def test_start_non_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -107,7 +107,7 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
     assert not state_out.get_container(container.name).service_statuses.get(
         SERVICE_METRIC_EXPORTER
@@ -123,7 +123,7 @@ def test_pebble_ready_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.pebble_ready(container), state_in)
+    state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
 
 
@@ -165,12 +165,17 @@ def test_update_status_non_leader_unit(cloud_spec):
     assert status_is(state_out, CharmStatuses.SCALING_NOT_IMPLEMENTED.value)
 
 
-def test_internal_user_creation():
-    ctx = testing.Context(ValkeyCharm)
+def test_internal_user_creation(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
 
     container = testing.Container(name=CONTAINER, can_connect=True)
-    state_in = testing.State(relations={relation}, leader=True, containers={container})
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+    )
     with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
         secret_out = state_out.get_secret(
@@ -179,18 +184,22 @@ def test_internal_user_creation():
         assert secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
 
 
-def test_leader_elected_no_peer_relation():
-    ctx = testing.Context(ValkeyCharm)
+def test_leader_elected_no_peer_relation(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
 
     container = testing.Container(name=CONTAINER, can_connect=True)
-    state_in = testing.State(leader=True, containers={container})
+    state_in = testing.State(
+        leader=True,
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
     with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
         assert "leader_elected" in [e.name for e in state_out.deferred]
 
 
-def test_leader_elected_leader_password_specified():
-    ctx = testing.Context(ValkeyCharm)
+def test_leader_elected_leader_password_specified(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -203,6 +212,7 @@ def test_leader_elected_leader_password_specified():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
@@ -221,8 +231,8 @@ def test_leader_elected_leader_password_specified():
             assert secret_out.latest_content.get(f"{user.value}-password") == "generated-password"
 
 
-def test_leader_elected_leader_password_specified_wrong_secret():
-    ctx = testing.Context(ValkeyCharm)
+def test_leader_elected_leader_password_specified_wrong_secret(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -232,6 +242,7 @@ def test_leader_elected_leader_password_specified_wrong_secret():
         relations={relation, status_relation},
         containers={container},
         config={INTERNAL_USERS_PASSWORD_CONFIG: "secret:1tf1wk0tmfrodp8ofwxn"},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
@@ -241,8 +252,8 @@ def test_leader_elected_leader_password_specified_wrong_secret():
         assert "SecretNotFoundError" in str(exc_info.value)
 
 
-def test_config_changed_non_leader_unit():
-    ctx = testing.Context(ValkeyCharm)
+def test_config_changed_non_leader_unit(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     password_secret = testing.Secret(
@@ -255,6 +266,7 @@ def test_config_changed_non_leader_unit():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("events.base_events.BaseEvents._update_internal_users_password") as mock_update,
@@ -263,8 +275,8 @@ def test_config_changed_non_leader_unit():
         mock_update.assert_not_called()
 
 
-def test_config_changed_leader_unit_valkey_update_fails():
-    ctx = testing.Context(ValkeyCharm)
+def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -278,6 +290,7 @@ def test_config_changed_leader_unit_valkey_update_fails():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
@@ -288,8 +301,8 @@ def test_config_changed_leader_unit_valkey_update_fails():
         mock_update.assert_called_once()
 
 
-def test_config_changed_leader_unit():
-    ctx = testing.Context(ValkeyCharm)
+def test_config_changed_leader_unit(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -303,6 +316,7 @@ def test_config_changed_leader_unit():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
@@ -323,8 +337,8 @@ def test_config_changed_leader_unit():
             assert secret_out.latest_content.get(f"{user.value}-password") == "secure-password"
 
 
-def test_config_changed_leader_unit_wrong_username():
-    ctx = testing.Context(ValkeyCharm)
+def test_config_changed_leader_unit_wrong_username(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -338,6 +352,7 @@ def test_config_changed_leader_unit_wrong_username():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
@@ -354,8 +369,8 @@ def test_config_changed_leader_unit_wrong_username():
         mock_set_acl_file.assert_not_called()
 
 
-def test_change_password_secret_changed_non_leader_unit():
-    ctx = testing.Context(ValkeyCharm)
+def test_change_password_secret_changed_non_leader_unit(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -371,6 +386,7 @@ def test_change_password_secret_changed_non_leader_unit():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch(
@@ -385,8 +401,8 @@ def test_change_password_secret_changed_non_leader_unit():
         mock_reload_acl.assert_called_once()
 
 
-def test_change_password_secret_changed_non_leader_unit_not_successful():
-    ctx = testing.Context(ValkeyCharm)
+def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     statuses_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -403,6 +419,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch(
@@ -428,8 +445,8 @@ def test_change_password_secret_changed_non_leader_unit_not_successful():
         assert ClusterStatuses.PASSWORD_UPDATE_FAILED.value in cluster_statuses
 
 
-def test_change_password_secret_changed_leader_unit():
-    ctx = testing.Context(ValkeyCharm)
+def test_change_password_secret_changed_leader_unit(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -443,6 +460,7 @@ def test_change_password_secret_changed_leader_unit():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch(

@@ -11,10 +11,11 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from literals import CONTAINER
+from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from workload_k8s import ValkeyK8sWorkload
+from workload_vm import ValkeyVmWorkload
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,19 @@ class ValkeyCharm(ops.CharmBase):
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
-        self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
-        self.state = ClusterState(self)
+        try:
+            cloud_spec = self.model.get_cloud_spec()
+        except ops.ModelError:
+            logger.error("Application must be deployed with `trust` to get cloud spec")
+            raise
+
+        if cloud_spec.type == "kubernetes":
+            self.substrate = Substrate.K8S
+            self.workload = ValkeyK8sWorkload(container=self.unit.get_container(CONTAINER))
+        else:
+            self.substrate = Substrate.VM
+            self.workload = ValkeyVmWorkload()
+        self.state = ClusterState(self, self.substrate)
 
         # --- MANAGERS ---
         self.cluster_manager = ClusterManager(state=self.state, workload=self.workload)
@@ -40,25 +52,6 @@ class ValkeyCharm(ops.CharmBase):
 
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)
-
-        # --- Observers
-        self.framework.observe(self.on.valkey_pebble_ready, self._on_pebble_ready)
-
-    def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
-        """Handle the `pebble-ready` event."""
-        if not self.workload.can_connect:
-            logger.warning("Container not ready yet")
-            event.defer()
-            return
-
-        if not self.unit.is_leader():
-            logger.warning("Scaling not implemented yet, services not started")
-            return
-
-        self.config_manager.set_config_properties()
-        self.workload.start()
-        logger.info("Services started")
-        self.state.unit_server.update({"started": True})
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@ from literals import (
 from statuses import ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
-    IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
     CharmStatuses,
     create_valkey_client,
@@ -37,7 +36,7 @@ TEST_VALUE = "test_value"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
+    juju.deploy(charm, num_units=NUM_UNITS, trust=True)
     juju.wait(
         lambda status: does_status_match(
             status,
