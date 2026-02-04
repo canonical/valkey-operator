@@ -390,6 +390,7 @@ def test_config_changed_leader_unit_primary():
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mock_exec_command,
+        patch("core.base_workload.WorkloadBase.get_private_ip", return_value="127.0.1.1"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
