@@ -67,7 +67,7 @@ class BaseEvents(ops.Object):
 
         try:
             self.charm.config_manager.set_config_properties()
-        except ValkeyWorkloadCommandError:
+        except (ValkeyWorkloadCommandError, ValueError):
             logger.error("Failed to set configuration")
             event.defer()
             return

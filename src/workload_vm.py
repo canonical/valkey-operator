@@ -100,5 +100,5 @@ class ValkeyVmWorkload(WorkloadBase):
             logger.debug(output)
             return output
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.error(e)
+            logger.error("Command failed with %s, %s", e.returncode, e.stderr)
             raise ValkeyWorkloadCommandError(e)
