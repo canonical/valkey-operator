@@ -10,6 +10,7 @@ from typing import override
 import ops
 from charmlibs import pathops
 
+from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import ACL_FILE, CHARM, CHARM_USER, CONFIG_FILE
 
@@ -27,6 +28,8 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.root = pathops.ContainerPath("/", container=self.container)
         self.config_file = self.root / CONFIG_FILE
         self.acl_file = self.root / ACL_FILE
+        # todo: update this path once directories in the rock are complying with the standard
+        self.working_dir = self.root / "var/lib/valkey"
         self.valkey_service = "valkey"
         self.metric_service = "metric_exporter"
 
@@ -76,5 +79,5 @@ class ValkeyK8sWorkload(WorkloadBase):
             )
             output, _ = process.wait_output()
             return output
-        except ops.pebble.ExecError:
-            raise
+        except ops.pebble.ExecError as e:
+            raise ValkeyWorkloadCommandError(e)

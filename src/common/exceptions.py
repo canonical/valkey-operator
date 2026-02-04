@@ -14,3 +14,7 @@ class ValkeyCustomCommandError(ValkeyClientError):
 
 class ValkeyACLLoadError(ValkeyClientError):
     """Custom Exception if ACL file could not be loaded in valkey cluster."""
+
+
+class ValkeyWorkloadCommandError(Exception):
+    """Custom Exception if any workload-related command fails."""

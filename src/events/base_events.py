@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyACLLoadError
+from common.exceptions import ValkeyACLLoadError, ValkeyWorkloadCommandError
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
@@ -65,7 +65,13 @@ class BaseEvents(ops.Object):
             logger.warning("Scaling not implemented yet, services not started")
             return
 
-        self.charm.config_manager.set_config_properties()
+        try:
+            self.charm.config_manager.set_config_properties()
+        except ValkeyWorkloadCommandError:
+            logger.error("Failed to set configuration")
+            event.defer()
+            return
+
         self.charm.workload.start()
         logger.info("Services started")
         self.charm.state.unit_server.update({"started": True})
@@ -116,7 +122,11 @@ class BaseEvents(ops.Object):
                 for user in CharmUsers
             }
         )
-        self.charm.config_manager.set_acl_file()
+        try:
+            self.charm.config_manager.set_acl_file()
+        except ValkeyWorkloadCommandError:
+            logger.error("Failed to write acl file")
+            raise
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -128,7 +138,12 @@ class BaseEvents(ops.Object):
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
                 self._update_internal_users_password(str(admin_secret_id))
-            except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
+            except (
+                ops.ModelError,
+                ops.SecretNotFoundError,
+                ValkeyACLLoadError,
+                ValkeyWorkloadCommandError,
+            ):
                 event.defer()
                 return
 
@@ -141,7 +156,12 @@ class BaseEvents(ops.Object):
             if admin_secret_id == event.secret.id:
                 try:
                     self._update_internal_users_password(str(admin_secret_id))
-                except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
+                except (
+                    ops.ModelError,
+                    ops.SecretNotFoundError,
+                    ValkeyACLLoadError,
+                    ValkeyWorkloadCommandError,
+                ):
                     event.defer()
                     return
             return
@@ -152,7 +172,7 @@ class BaseEvents(ops.Object):
             try:
                 self.charm.config_manager.set_acl_file()
                 self.charm.cluster_manager.reload_acl_file()
-            except ValkeyACLLoadError as e:
+            except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -216,7 +236,7 @@ class BaseEvents(ops.Object):
                         for user in CharmUsers
                     }
                 )
-            except (ValkeyACLLoadError, ValueError) as e:
+            except (ValkeyACLLoadError, ValkeyWorkloadCommandError, ValueError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

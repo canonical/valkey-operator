@@ -19,7 +19,6 @@ from core.cluster_state import ClusterState
 from literals import (
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
-    SNAP_COMMON_PATH,
     CharmUsers,
     Substrate,
 )
@@ -66,16 +65,15 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        config_properties["bind"] = "0.0.0.0 -::1"
         config_properties["port"] = str(CLIENT_PORT)
         config_properties["loglevel"] = "verbose"
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
+        config_properties["dir"] = self.workload.working_dir.as_posix()
 
         if self.state.substrate == Substrate.VM:
-            config_properties["dir"] = f"/{SNAP_COMMON_PATH}/var/lib/charmed-valkey"
+            config_properties["bind"] = self.state.bind_address
         else:
-            # todo: update these paths once directories in the rock are complying with the standard
-            config_properties["dir"] = "/var/lib/valkey"
+            config_properties["bind"] = "0.0.0.0 -::1"
 
         return config_properties
 
