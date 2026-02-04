@@ -145,8 +145,7 @@ class ConfigManager(ManagerStatusProtocol):
         if not (password := passwords.get(user.value, "")):
             raise ValueError(f"No password found for user {user}")
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        acl_line = f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
-        return acl_line
+        return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
     def set_sentinel_config_properties(self) -> None:
         """Write sentinel configuration file."""

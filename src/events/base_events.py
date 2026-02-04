@@ -55,13 +55,18 @@ class BaseEvents(ops.Object):
         if not self.charm.state.peer_relation:
             event.defer()
             return
+
         self.charm.state.unit_server.update(
             {
                 "hostname": socket.gethostname(),
                 "private_ip": self.charm.workload.get_private_ip(),
             }
         )
-        if not self.charm.state.cluster.model.primary_ip and self.charm.unit.is_leader():
+
+        if not self.charm.unit.is_leader():
+            return
+
+        if not self.charm.state.cluster.model.primary_ip:
             # set the primary to this unit if not already set
             self.charm.state.cluster.update(
                 {
@@ -69,46 +74,36 @@ class BaseEvents(ops.Object):
                 }
             )
 
-        if self.charm.unit.is_leader() and not self.charm.state.cluster.internal_users_credentials:
-            passwords = {}
-            user_specified_passwords = {}
-            if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
-                try:
-                    user_specified_passwords = self.charm.state.get_secret_from_id(
-                        str(admin_secret_id)
-                    )
-                except (ops.ModelError, ops.SecretNotFoundError) as e:
-                    logger.error(f"Could not access secret {admin_secret_id}: {e}")
-                    self.charm.status.set_running_status(
-                        CharmStatuses.SECRET_ACCESS_ERROR.value,
-                        scope="app",
-                        component_name=self.charm.cluster_manager.name,
-                        statuses_state=self.charm.state.statuses,
-                    )
-                    event.defer()
-                    return
+        if self.charm.state.cluster.internal_users_credentials:
+            logger.debug("Internal user credentials already set")
+            return
 
-                self.charm.state.statuses.delete(
-                    CharmStatuses.SECRET_ACCESS_ERROR.value,
-                    scope="app",
-                    component=self.charm.cluster_manager.name,
+        passwords = {}
+        user_specified_passwords = {}
+        if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
+            try:
+                user_specified_passwords = self.charm.state.get_secret_from_id(
+                    str(admin_secret_id)
                 )
+            except (ops.ModelError, ops.SecretNotFoundError) as e:
+                logger.error(f"Could not access secret {admin_secret_id}: {e}")
+                raise
 
-            # generate passwords for all internal users if not specified in the user secret
-            for user in CharmUsers:
-                passwords[user.value] = user_specified_passwords.get(
-                    user.value, self.charm.config_manager.generate_password()
-                )
-
-            self.charm.state.cluster.update(
-                {
-                    f"{user.value.replace('-', '_')}_password": passwords[user.value]
-                    for user in CharmUsers
-                }
+        # generate passwords for all internal users if not specified in the user secret
+        for user in CharmUsers:
+            passwords[user.value] = user_specified_passwords.get(
+                user.value, self.charm.config_manager.generate_password()
             )
-            # update local unit admin password
-            self.charm.config_manager.update_local_valkey_admin()
-            self.charm.config_manager.set_acl_file()
+
+        self.charm.state.cluster.update(
+            {
+                f"{user.value.replace('-', '_')}_password": passwords[user.value]
+                for user in CharmUsers
+            }
+        )
+        # update local unit admin password
+        self.charm.config_manager.update_local_valkey_admin()
+        self.charm.config_manager.set_acl_file()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -131,46 +126,42 @@ class BaseEvents(ops.Object):
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
-        if not self.charm.unit.is_leader():
-            if event.secret.label and event.secret.label.endswith(
-                INTERNAL_USERS_SECRET_LABEL_SUFFIX
-            ):
-                # leader unit processed the secret change from user, non-leader units can replicate
-                try:
-                    self.charm.config_manager.set_acl_file()
-                    self.charm.cluster_manager.reload_acl_file()
-                    self.charm.cluster_manager.update_primary_auth()
-                    # update the local unit admin password to match the leader
-                    self.charm.config_manager.update_local_valkey_admin()
-                except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
-                    logger.error(e)
-                    self.charm.status.set_running_status(
-                        ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                        scope="unit",
-                        component_name=self.charm.cluster_manager.name,
-                        statuses_state=self.charm.state.statuses,
-                    )
-                    event.defer()
-                    return
-                self.charm.state.statuses.delete(
-                    ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                    scope="unit",
-                    component=self.charm.cluster_manager.name,
-                )
+        if not (admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)):
             return
 
-        if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
+        if self.charm.unit.is_leader():
             if admin_secret_id == event.secret.id:
                 try:
                     self._update_internal_users_password(str(admin_secret_id))
-                except (
-                    ops.ModelError,
-                    ops.SecretNotFoundError,
-                    ValkeyACLLoadError,
-                    ValkeyConfigSetError,
-                ):
+                except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
                     event.defer()
                     return
+            return
+
+        # from here, code is only relevant for non-leader units
+        if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):
+            # leader unit processed the secret change from user, non-leader units can replicate
+            try:
+                self.charm.config_manager.set_acl_file()
+                self.charm.cluster_manager.reload_acl_file()
+                self.charm.cluster_manager.update_primary_auth()
+                # update the local unit admin password to match the leader
+                self.charm.config_manager.update_local_valkey_admin()
+            except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
+                logger.error(e)
+                self.charm.status.set_running_status(
+                    ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
+                    scope="unit",
+                    component_name=self.charm.cluster_manager.name,
+                    statuses_state=self.charm.state.statuses,
+                )
+                event.defer()
+                return
+            self.charm.state.statuses.delete(
+                ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
+                scope="unit",
+                component=self.charm.cluster_manager.name,
+            )
 
     def _update_internal_users_password(self, secret_id: str) -> None:
         """Update internal users' passwords in charm/valkey if they have changed.
@@ -196,46 +187,34 @@ class BaseEvents(ops.Object):
             component=self.charm.cluster_manager.name,
         )
 
-        # Check which passwords have changed
-        old_passwords = self.charm.state.cluster.internal_users_credentials
-        passwords = {user.value: old_passwords.get(user.value, "") for user in CharmUsers}
+        if any(key not in CharmUsers for key in secret_content.keys()):
+            logger.error(f"Invalid username in secret {secret_id}.")
+            self.charm.status.set_running_status(
+                ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
+                scope="app",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
+            # do not raise here, we don't want to run again if data is wrong
+            return
 
-        # check if there are any users that are in the secret but not in the CharmUsers
-        for key in secret_content.keys():
-            if key not in passwords:
-                logger.error(f"Invalid username in secret {secret_id}.")
-                self.charm.status.set_running_status(
-                    ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
-                    scope="app",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
-                return
-
-        for user in CharmUsers:
-            new_password = secret_content.get(user.value)
-            if not new_password:
-                continue
-            # only update user credentials if the password has changed
-            if new_password != passwords.get(user.value):
-                logger.debug(f"Password for user {user.value} has changed.")
-                passwords[user.value] = new_password
-
-        # Update passwords if any have changed
-        if passwords != old_passwords:
+        # merge the credentials, replacing those which have been updated
+        new_passwords = self.charm.state.cluster.internal_users_credentials | secret_content
+        if new_passwords != self.charm.state.cluster.internal_users_credentials:
+            logger.info("Password(s) for internal users have changed")
             try:
-                self.charm.config_manager.set_acl_file(passwords=passwords)
+                self.charm.config_manager.set_acl_file(passwords=new_passwords)
                 self.charm.cluster_manager.reload_acl_file()
                 self.charm.cluster_manager.update_primary_auth()
                 self.charm.state.cluster.update(
                     {
-                        f"{user.value.replace('-', '_')}_password": passwords[user.value]
+                        f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
                         for user in CharmUsers
                     }
                 )
                 # update the local unit admin password
                 self.charm.config_manager.update_local_valkey_admin()
-            except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
+            except (ValkeyACLLoadError, ValueError, ValkeyConfigSetError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
