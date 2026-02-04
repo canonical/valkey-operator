@@ -60,9 +60,9 @@ backends:
       # For example, with microk8s, using `concierge restore` takes twice as long as this (e.g. 6
       # min instead of 3 min between every spread job)
       juju destroy-model --force --no-wait --destroy-storage --no-prompt concierge-k8s:testing
-      juju destroy-model --force --no-wait --destroy-storage --no-prompt concierge-lxd:testing
+      juju destroy-model --force --no-wait --destroy-storage --no-prompt concierge-vm:testing
       juju kill-controller --no-prompt concierge-k8s
-      juju kill-controller --no-prompt concierge-lxd
+      juju kill-controller --no-prompt concierge-vm
     restore: |
       rm -rf "$SPREAD_PATH"
 
@@ -120,7 +120,7 @@ prepare: |
   # Install charmcraft & pipx (on lxd-vm backend)
   if [[ $SPREAD_SUITE == *"vm"* ]]
   then
-    concierge prepare --trace -c concierge-lxd.yaml
+    concierge prepare --trace -c concierge-vm.yaml
   fi
   
   if [[ $SPREAD_SUITE == *"k8s"* ]]
@@ -135,7 +135,7 @@ prepare-each: |
   # `concierge prepare` needs to be run for each spread job in case Juju version changed
   if [[ $SPREAD_SUITE == *"vm"* ]]
   then
-    concierge prepare --trace -c concierge-lxd.yaml
+    concierge prepare --trace -c concierge-vm.yaml
   fi
   
   if [[ $SPREAD_SUITE == *"k8s"* ]]
