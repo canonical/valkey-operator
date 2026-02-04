@@ -5,13 +5,13 @@
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
 import logging
-from typing import List, override
+from typing import override
 
 import ops
 from charmlibs import pathops
 
 from core.base_workload import WorkloadBase
-from literals import CHARM, CHARM_USER, CONFIG_FILE
+from literals import ACL_FILE, CHARM, CHARM_USER, CONFIG_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,9 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise AttributeError("Container is required.")
 
         self.container = container
-        self.config_file = pathops.ContainerPath(CONFIG_FILE, container=container)
+        self.root = pathops.ContainerPath("/", container=self.container)
+        self.config_file = self.root / CONFIG_FILE
+        self.acl_file = self.root / ACL_FILE
         self.valkey_service = "valkey"
         self.metric_service = "metric_exporter"
 
@@ -43,7 +45,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 self.valkey_service: {
                     "override": "replace",
                     "summary": "Valkey service",
-                    "command": f"valkey-server {self.config_file}",
+                    "command": f"valkey-server {self.config_file.as_posix()}",
                     "user": CHARM_USER,
                     "group": CHARM_USER,
                     "startup": "enabled",
@@ -66,25 +68,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.container.restart(self.valkey_service, self.metric_service)
 
     @override
-    def write_config_file(self, config: dict[str, str]) -> None:
-        config_string = "\n".join(f"{str(key)}{' '}{str(value)}" for key, value in config.items())
-
-        path = self.config_file
-        path.write_text(config_string)
-
-    @override
-    def write_file(self, content: str, path: str) -> None:
-        """Write content to a file on disk.
-
-        Args:
-            content (str): The content to be written.
-            path (str): The file path where the content should be written.
-        """
-        file_path = pathops.ContainerPath(path, container=self.container)
-        file_path.write_text(content)
-
-    @override
-    def exec(self, command: List[str]) -> str:
+    def exec(self, command: list[str]) -> str:
         try:
             process = self.container.exec(
                 command=command,

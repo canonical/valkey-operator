@@ -17,12 +17,9 @@ from data_platform_helpers.advanced_statuses.types import Scope
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
-    ACL_FILE,
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
-    SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
-    SNAP_CURRENT_PATH,
     CharmUsers,
     Substrate,
 )
@@ -72,13 +69,13 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["bind"] = "0.0.0.0 -::1"
         config_properties["port"] = str(CLIENT_PORT)
         config_properties["loglevel"] = "verbose"
+        config_properties["aclfile"] = self.workload.acl_file.as_posix()
 
         if self.state.substrate == Substrate.VM:
-            config_properties["dir"] = f"{SNAP_COMMON_PATH}/var/lib/charmed-valkey"
-            config_properties["aclfile"] = f"{SNAP_CURRENT_PATH}/{SNAP_ACL_FILE}"
+            config_properties["dir"] = f"/{SNAP_COMMON_PATH}/var/lib/charmed-valkey"
         else:
+            # todo: update these paths once directories in the rock are complying with the standard
             config_properties["dir"] = "/var/lib/valkey"
-            config_properties["aclfile"] = str(ACL_FILE)
 
         return config_properties
 
@@ -99,13 +96,10 @@ class ConfigManager(ManagerStatusProtocol):
         for user in CharmUsers:
             # only process VALKEY users
             # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" not in str(user):
+            if "VALKEY_" not in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        if self.state.substrate == Substrate.VM:
-            self.workload.write_file(acl_content, f"{SNAP_CURRENT_PATH}/{SNAP_ACL_FILE}")
-        else:
-            self.workload.write_file(acl_content, ACL_FILE)
+        self.workload.write_file(acl_content, self.workload.acl_file)
 
     def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
         """Generate an ACL line for a given user.

@@ -5,7 +5,8 @@
 """Base objects for workload operations across different substrates."""
 
 from abc import ABC, abstractmethod
-from typing import List
+
+from charmlibs import pathops
 
 
 class WorkloadBase(ABC):
@@ -23,25 +24,26 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def write_config_file(self, config: dict[str, str]) -> None:
-        """Write config properties to the config file on disk.
-
-        Args:
-            config (dict): The config properties to be written.
-        """
+    def exec(self, command: list[str]) -> str:
+        """Run a command on the workload substrate."""
         pass
 
-    @abstractmethod
-    def write_file(self, content: str, path: str) -> None:
+    def write_file(self, content: str, path: pathops.PathProtocol) -> None:
         """Write content to a file on disk.
 
         Args:
             content (str): The content to be written.
             path (str): The file path where the content should be written.
         """
-        pass
+        path.write_text(content)
 
-    @abstractmethod
-    def exec(self, command: List[str]) -> str:
-        """Run a command on the workload substrate."""
-        pass
+    def write_config_file(self, config: dict[str, str]) -> None:
+        """Write config properties to the config file on disk.
+
+        Args:
+            config (dict): The config properties to be written.
+        """
+        config_string = "\n".join(f"{str(key)}{' '}{str(value)}" for key, value in config.items())
+
+        path = self.config_file
+        path.write_text(config_string)

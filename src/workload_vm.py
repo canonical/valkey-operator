@@ -12,7 +12,14 @@ from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from core.base_workload import WorkloadBase
-from literals import SNAP_CONFIG_FILE, SNAP_CURRENT_PATH, SNAP_NAME, SNAP_REVISION, SNAP_SERVICE
+from literals import (
+    SNAP_ACL_FILE,
+    SNAP_CONFIG_FILE,
+    SNAP_CURRENT_PATH,
+    SNAP_NAME,
+    SNAP_REVISION,
+    SNAP_SERVICE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +32,9 @@ class ValkeyVmWorkload(WorkloadBase):
             with attempt:
                 self.valkey = snap.SnapCache()[SNAP_NAME]
 
-        self.config_file = pathops.LocalPath(f"{SNAP_CURRENT_PATH}/{SNAP_CONFIG_FILE}")
+        self.root = pathops.LocalPath("/")
+        self.config_file = self.root / SNAP_CURRENT_PATH / SNAP_CONFIG_FILE
+        self.acl_file = self.root / SNAP_CURRENT_PATH / SNAP_ACL_FILE
 
     @property
     @override
@@ -74,24 +83,6 @@ class ValkeyVmWorkload(WorkloadBase):
             self.valkey.start(services=[SNAP_SERVICE])
         except snap.SnapError as e:
             logger.exception(str(e))
-
-    @override
-    def write_config_file(self, config: dict[str, str]) -> None:
-        config_string = "\n".join(f"{str(key)}{' '}{str(value)}" for key, value in config.items())
-
-        path = self.config_file
-        path.write_text(config_string)
-
-    @override
-    def write_file(self, content: str, path: str) -> None:
-        """Write content to a file on disk.
-
-        Args:
-            content (str): The content to be written.
-            path (str): The file path where the content should be written.
-        """
-        file_path = pathops.LocalPath(path)
-        file_path.write_text(content)
 
     @override
     def exec(self, command: List[str]) -> str:
