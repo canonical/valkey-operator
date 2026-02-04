@@ -25,7 +25,7 @@ def start_continuous_writes(
     sentinel_user: str,
     sentinel_password: str,
 ) -> None:
-    """Create a subprocess instance of `continuous writes` and start writing data to etcd."""
+    """Create a subprocess instance of `continuous writes` and start writing data to valkey."""
     subprocess.Popen(
         [
             "python3",
@@ -86,8 +86,8 @@ def assert_continuous_writes_consistent(
             username=valkey_user,
             password=valkey_password,
         )
-        last_etcd_value = int(client.get(KEY).decode("utf-8"))
-        assert last_written_value == last_etcd_value, (
-            f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_etcd_value}"
+        last_value = int(client.get(KEY).decode("utf-8"))
+        assert last_written_value == last_value, (
+            f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
         )
         logger.info(f"Continuous writes are consistent on {endpoint}.")

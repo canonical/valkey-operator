@@ -4,7 +4,6 @@
 import logging
 
 import jubilant
-import pytest
 import valkey
 
 from literals import CharmUsers
@@ -30,7 +29,6 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-@pytest.mark.abort_on_fail
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=1)
@@ -44,9 +42,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     )
 
 
-@pytest.mark.abort_on_fail
 async def test_scale_up(juju: jubilant.Juju) -> None:
-    """Make sure new units are added to the etcd cluster without downtime."""
+    """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
     init_endpoints = ",".join(get_cluster_hostnames(juju, APP_NAME))
     # start writing data to the cluster

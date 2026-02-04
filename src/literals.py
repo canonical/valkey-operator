@@ -27,7 +27,6 @@ PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
-CLIENT_PORT = 6379
 
 
 # As per the valkey users spec
