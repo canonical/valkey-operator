@@ -174,10 +174,10 @@ def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
     status = juju.status()
     model_info = juju.show_model()
 
-    if model_info.type == "lxd":
-        return [unit.public_address for unit in status.get_units(app_name).values()]
+    if model_info.type == "kubernetes":
+        return [unit.address for unit in status.get_units(app_name).values()]
 
-    return [unit.address for unit in status.get_units(app_name).values()]
+    return [unit.public_address for unit in status.get_units(app_name).values()]
 
 
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
