@@ -89,7 +89,7 @@ class WorkloadBase(ABC):
             group (str, optional): The group name. Defaults to None.
         """
         try:
-            path.write_text(content)
+            path.write_text(content, mode=mode, user=user, group=group)
         except (
             FileNotFoundError,
             LookupError,
