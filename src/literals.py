@@ -4,17 +4,25 @@
 
 """Collection of global literals for the Valkey charm."""
 
-from enum import Enum
+from enum import StrEnum
 
 CHARM = "valkey"
 CHARM_USER = "valkey"
 CONTAINER = "valkey"
 
-CONFIG_FILE = "/var/lib/valkey/valkey.conf"
-SENTINEL_CONFIG_FILE = "/var/lib/valkey/sentinel.conf"
-ACL_FILE = "/var/lib/valkey/users.acl"
-SENTINEL_ACL_FILE = "/var/lib/valkey/sentinel-users.acl"
-DATA_DIR = "/var/lib/valkey/data"
+SNAP_NAME = "charmed-valkey"
+SNAP_REVISION = 14
+SNAP_SERVICE = "server"
+SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"
+SNAP_CURRENT_PATH = "var/snap/charmed-valkey/current"
+SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
+SNAP_ACL_FILE = "etc/charmed-valkey/users.acl"
+
+# todo: update these paths once directories in the rock are complying with the standard
+CONFIG_FILE = "var/lib/valkey/valkey.conf"
+SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
+ACL_FILE = "var/lib/valkey/users.acl"
+SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
@@ -31,7 +39,7 @@ INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
 
 # As per the valkey users spec
 # https://docs.google.com/document/d/1EImKKHK3wLY73-D1M2ItpHe88NHeB-Iq2M3lz7AQB7E
-class CharmUsers(str, Enum):
+class CharmUsers(StrEnum):
     """Enumeration of Valkey charm users."""
 
     VALKEY_ADMIN = "charmed-operator"
@@ -52,3 +60,10 @@ CHARM_USERS_ROLE_MAP = {
     CharmUsers.SENTINEL_ADMIN: "~* +@all",
     CharmUsers.SENTINEL_CHARM_ADMIN: "~* +@all",
 }
+
+
+class Substrate(StrEnum):
+    """Substrate types."""
+
+    VM = "vm"
+    K8S = "k8s"

@@ -9,6 +9,8 @@ requires-poetry = ">=2.0.0"
 python = "^3.12"                  # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
+charmlibs-snap = "^1.0.1"
+tenacity = "*"
 data-platform-helpers = ">=0.1.7"
 # TODO replace with official release once build from source is possible
 # https://github.com/valkey-io/valkey-glide/pull/5202

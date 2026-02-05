@@ -20,5 +20,5 @@ class ValkeyConfigSetError(ValkeyClientError):
     """Custom Exception if setting configuration on valkey cluster fails."""
 
 
-class ValkeyExecCommandError(Exception):
-    """Custom Exception if exec command on valkey container fails."""
+class ValkeyWorkloadCommandError(Exception):
+    """Custom Exception if any workload-related command fails."""

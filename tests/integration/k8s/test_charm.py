@@ -12,8 +12,7 @@ from literals import (
     CharmUsers,
 )
 from statuses import CharmStatuses, ClusterStatuses
-
-from .helpers import (
+from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
@@ -35,17 +34,15 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-@pytest.mark.abort_on_fail
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS)
+    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
     )
 
 
-@pytest.mark.abort_on_fail
 async def test_authentication(juju: jubilant.Juju) -> None:
     """Assert that we can authenticate to valkey."""
     primary = get_primary_ip(juju, APP_NAME)
@@ -67,7 +64,6 @@ async def test_authentication(juju: jubilant.Juju) -> None:
         )
 
 
-@pytest.mark.abort_on_fail
 async def test_update_admin_password(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     # create a user secret and grant it to the application
@@ -124,7 +120,6 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         )
 
 
-@pytest.mark.abort_on_fail
 async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     # create a user secret and grant it to the application
@@ -175,7 +170,6 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
         )
 
 
-@pytest.mark.abort_on_fail
 async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     """If a user secret is not granted, ensure we can process updated permissions."""
     logger.info("Creating new user secret")

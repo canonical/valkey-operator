@@ -9,6 +9,10 @@ import socket
 import subprocess
 from abc import ABC, abstractmethod
 
+from charmlibs import pathops
+
+from common.exceptions import ValkeyWorkloadCommandError
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,35 +31,13 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def write_config_file(self, config: dict[str, str]) -> None:
-        """Write config properties to the config file on disk.
-
-        Args:
-            config (dict): The config properties to be written.
-        """
+    def exec(self, command: list[str]) -> str:
+        """Run a command on the workload substrate."""
         pass
 
     @abstractmethod
-    def write_file(
-        self,
-        content: str,
-        path: str,
-        mode: int | None = None,
-        user: str | None = None,
-        group: str | None = None,
-    ) -> None:
-        """Write content to a file on disk.
-
-        Note:
-            mode, user, and group are optional parameters used only on k8s workloads.
-
-        Args:
-            content (str): The content to be written.
-            path (str): The file path where the content should be written.
-            mode (int, optional): The file mode (permissions). Defaults to None.
-            user (str, optional): The user name. Defaults to None.
-            group (str, optional): The group name. Defaults to None.
-        """
+    def alive(self) -> bool:
+        """Check if the Valkey service is running."""
         pass
 
     def get_private_ip(self) -> str:
@@ -77,23 +59,55 @@ class WorkloadBase(ABC):
 
         return socket.gethostbyname(socket.gethostname())
 
-    @abstractmethod
-    def alive(self) -> bool:
-        """Check if the Valkey service is running."""
-        pass
+    def write_file(
+        self,
+        content: str,
+        path: pathops.ContainerPath,
+        mode: int | None = None,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        """Write content to a file on disk.
 
-    @abstractmethod
-    def exec_command(
-        self, command: list[str], username: str, password: str
-    ) -> tuple[str, str | None] | None:
-        """Execute a Valkey command inside the workload.
+        Note:
+            mode, user, and group are optional parameters used only on k8s workloads.
 
         Args:
-            command (list[str]): The command to execute as a list of strings.
-            username (str): The username for authentication.
-            password (str): The password for authentication.
-
-        Returns:
-            bool: True if the command executed successfully, False otherwise.
+            content (str): The content to be written.
+            path (str): The file path where the content should be written.
+            mode (int, optional): The file mode (permissions). Defaults to None.
+            user (str, optional): The user name. Defaults to None.
+            group (str, optional): The group name. Defaults to None.
         """
-        pass
+        try:
+            path.write_text(content)
+        except (
+            FileNotFoundError,
+            LookupError,
+            NotADirectoryError,
+            PermissionError,
+            pathops.PebbleConnectionError,
+            ValueError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    def write_config_file(self, config: dict[str, str]) -> None:
+        """Write config properties to the config file on disk.
+
+        Args:
+            config (dict): The config properties to be written.
+        """
+        config_string = "\n".join(f"{str(key)}{' '}{str(value)}" for key, value in config.items())
+
+        path = self.config_file
+        try:
+            path.write_text(config_string)
+        except (
+            FileNotFoundError,
+            LookupError,
+            NotADirectoryError,
+            PermissionError,
+            pathops.PebbleConnectionError,
+            ValueError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)

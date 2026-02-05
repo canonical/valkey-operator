@@ -56,9 +56,9 @@ You can also use `charmcraftcache` if desired.
 Make sure you have prepared an environment for deploying the charm code, e.g. a `microk8s` cloud + controller bootstrapped
 in Juju. For details, see [development setup](https://documentation.ubuntu.com/juju/3.6/howto/manage-your-juju-deployment/set-up-your-juju-deployment-local-testing-and-development/#set-things-up).
 
-In our case, we want to deploy `valkey` to a model `test`. Use the `upstream-source` from `metadata.yaml`:
+In our case, we want to deploy `valkey` to a model `test` on a Kubernetes cloud. Use the `upstream-source` from `metadata.yaml`:
 ```shell
-$ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge
+$ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 --resource valkey-image=ghcr.io/canonical/valkey:9.0.1-26.04-edge --trust
 
 $ juju status
 Model    Controller      Cloud/Region        Version  SLA          Timestamp
@@ -72,3 +72,5 @@ valkey/0*  active    idle   10.1.127.21
 valkey/1   blocked   idle   10.1.127.20         Scaling Valkey is not implemented yet
 valkey/2   blocked   idle   10.1.127.22         Scaling Valkey is not implemented yet
 ```
+
+If you deploy `valkey` on a VM cloud, you don't need to specify the image resource.

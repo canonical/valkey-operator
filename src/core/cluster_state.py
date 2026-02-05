@@ -15,7 +15,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
-from literals import PEER_RELATION, STATUS_PEERS_RELATION
+from literals import PEER_RELATION, STATUS_PEERS_RELATION, Substrate
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class ClusterState(ops.Object, StatusesStateProtocol):
     """Global state object for the Valkey cluster."""
 
-    def __init__(self, charm: ops.CharmBase):
+    def __init__(self, charm: ops.CharmBase, substrate: Substrate):
         super().__init__(parent=charm, key="charm_state")
         self.charm = charm
         self.peer_app_interface = OpsPeerRepositoryInterface(
@@ -35,6 +35,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         self.statuses_relation_name = STATUS_PEERS_RELATION
         self.statuses = StatusesState(self, self.statuses_relation_name)
         self.config = charm.config
+        self.substrate = substrate
 
     @property
     def peer_relation(self) -> ops.model.Relation | None:
@@ -99,6 +100,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         servers.add(self.unit_server)
 
         return servers
+
+    @property
+    def bind_address(self) -> str:
+        """The network binding address from the peer relation."""
+        if not (binding := self.model.get_binding(self.peer_relation)):
+            raise ValueError
+
+        if not (address := binding.network.bind_address):
+            raise ValueError
+
+        return str(address)
 
     def get_secret_from_id(self, secret_id: str, refresh: bool = False) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

@@ -21,13 +21,12 @@ from literals import (
     CHARM_USER,
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
-    DATA_DIR,
     PRIMARY_NAME,
     QUORUM_NUMBER,
     SENTINEL_ACL_FILE,
-    SENTINEL_CONFIG_FILE,
     SENTINEL_PORT,
     CharmUsers,
+    Substrate,
 )
 from statuses import CharmStatuses
 
@@ -74,14 +73,16 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        # dir
-        config_properties["dir"] = DATA_DIR
-        # port
         config_properties["port"] = str(CLIENT_PORT)
+        config_properties["loglevel"] = "verbose"
+        config_properties["aclfile"] = self.workload.acl_file.as_posix()
+        config_properties["dir"] = self.workload.working_dir.as_posix()
 
         # bind to all interfaces
-        config_properties["bind"] = "0.0.0.0 -::1"
-
+        if self.state.substrate == Substrate.VM:
+            config_properties["bind"] = self.state.bind_address
+        else:
+            config_properties["bind"] = "0.0.0.0 -::1"
         # Use the ACL file
         config_properties["aclfile"] = ACL_FILE
 
@@ -125,10 +126,10 @@ class ConfigManager(ManagerStatusProtocol):
         for user in CharmUsers:
             # only process VALKEY users
             # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" not in str(user):
+            if "VALKEY_" not in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        self.workload.write_file(acl_content, ACL_FILE)
+        self.workload.write_file(acl_content, self.workload.acl_file)
 
     def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
         """Generate an ACL line for a given user.
@@ -171,7 +172,11 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config += f"sentinel parallel-syncs {PRIMARY_NAME} 1\n"
 
         self.workload.write_file(
-            sentinel_config, SENTINEL_CONFIG_FILE, mode=0o600, user=CHARM_USER, group=CHARM_USER
+            sentinel_config,
+            self.workload.sentinel_config,
+            mode=0o600,
+            user=CHARM_USER,
+            group=CHARM_USER,
         )
 
     def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
@@ -189,7 +194,7 @@ class ConfigManager(ManagerStatusProtocol):
             if "VALKEY_" in str(user):
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        self.workload.write_file(acl_content, SENTINEL_ACL_FILE)
+        self.workload.write_file(acl_content, self.workload.sentinel_acl_file)
 
     def generate_password(self) -> str:
         """Create randomized string for use as app passwords.

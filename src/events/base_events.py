@@ -10,14 +10,17 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError
+from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError
 from literals import (
+    CHARM_USER,
+    CLIENT_PORT,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     CharmUsers,
+    Substrate,
 )
-from statuses import CharmStatuses, ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -32,6 +35,8 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
+        self.framework.observe(self.charm.on.install, self._on_install)
+        self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_joined, self._on_peer_relation_joined
         )
@@ -39,6 +44,72 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
+
+    def _on_install(self, event: ops.InstallEvent) -> None:
+        """Handle install event."""
+        if self.charm.substrate == Substrate.K8S:
+            logger.debug("No installation required.")
+            return
+
+        try:
+            self.charm.workload.install()
+        except RuntimeError:
+            raise RuntimeError("Failed to install the Valkey snap")
+
+    def _on_start(self, event: ops.StartEvent) -> None:
+        """Handle the `pebble-ready` event."""
+        if not self.charm.workload.can_connect:
+            logger.warning("Workload not ready yet")
+            event.defer()
+            return
+
+        if not self.charm.unit.is_leader() and (
+            not self.charm.state.cluster.internal_users_credentials
+            or not self.charm.state.cluster.model.primary_ip
+        ):
+            logger.info("Deferring leader write primary and internal user credentials")
+            event.defer()
+            return
+
+        try:
+            self.charm.config_manager.update_local_valkey_admin()
+            self.charm.config_manager.set_config_properties()
+            self.charm.config_manager.set_acl_file()
+            self.charm.config_manager.set_sentinel_config_properties()
+            self.charm.config_manager.set_sentinel_acl_file()
+            self.charm.workload.mkdir(
+                self.charm.workload.working_dir, user=CHARM_USER, group=CHARM_USER
+            )
+        except (ValkeyWorkloadCommandError, ValueError):
+            logger.error("Failed to set configuration")
+            event.defer()
+            return
+        self.charm.status.set_running_status(
+            ValkeyServiceStatuses.SERVICE_STARTING.value,
+            scope="unit",
+            component_name=self.charm.cluster_manager.name,
+            statuses_state=self.charm.state.statuses,
+        )
+
+        self.charm.workload.start()
+        if self.charm.workload.alive():
+            logger.info("Workload started successfully. Opening client port")
+            self.charm.unit.open_port("tcp", CLIENT_PORT)
+            self.charm.state.statuses.delete(
+                ValkeyServiceStatuses.SERVICE_STARTING.value,
+                scope="unit",
+                component=self.charm.cluster_manager.name,
+            )
+        else:
+            logger.error("Workload failed to start.")
+            self.charm.status.set_running_status(
+                ValkeyServiceStatuses.SERVICE_NOT_RUNNING.value,
+                scope="unit",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
+        logger.info("Services started")
+        self.charm.state.unit_server.update({"started": True})
 
     def _on_peer_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
         """Handle event received by all units when a new unit joins the cluster relation."""
@@ -103,7 +174,11 @@ class BaseEvents(ops.Object):
         )
         # update local unit admin password
         self.charm.config_manager.update_local_valkey_admin()
-        self.charm.config_manager.set_acl_file()
+        try:
+            self.charm.config_manager.set_acl_file()
+        except ValkeyWorkloadCommandError:
+            logger.error("Failed to write acl file")
+            raise
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -120,7 +195,12 @@ class BaseEvents(ops.Object):
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
                 self._update_internal_users_password(str(admin_secret_id))
-            except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
+            except (
+                ops.ModelError,
+                ops.SecretNotFoundError,
+                ValkeyACLLoadError,
+                ValkeyWorkloadCommandError,
+            ):
                 event.defer()
                 return
 
@@ -133,7 +213,12 @@ class BaseEvents(ops.Object):
             if admin_secret_id == event.secret.id:
                 try:
                     self._update_internal_users_password(str(admin_secret_id))
-                except (ops.ModelError, ops.SecretNotFoundError, ValkeyACLLoadError):
+                except (
+                    ops.ModelError,
+                    ops.SecretNotFoundError,
+                    ValkeyACLLoadError,
+                    ValkeyWorkloadCommandError,
+                ):
                     event.defer()
                     return
             return
@@ -147,7 +232,7 @@ class BaseEvents(ops.Object):
                 self.charm.cluster_manager.update_primary_auth()
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin()
-            except (ValkeyACLLoadError, ValkeyConfigSetError) as e:
+            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -214,7 +299,12 @@ class BaseEvents(ops.Object):
                 )
                 # update the local unit admin password
                 self.charm.config_manager.update_local_valkey_admin()
-            except (ValkeyACLLoadError, ValueError, ValkeyConfigSetError) as e:
+            except (
+                ValkeyACLLoadError,
+                ValueError,
+                ValkeyConfigSetError,
+                ValkeyWorkloadCommandError,
+            ) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

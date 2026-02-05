@@ -14,6 +14,22 @@ def mock_write_config_file(mocker):
 @pytest.fixture(autouse=True)
 def cloud_spec():
     return testing.CloudSpec(
+        type="kubernetes",
+        endpoint="https://127.0.0.1:8443",
+        credential=testing.CloudCredential(
+            auth_type="clientcertificate",
+            attributes={
+                "client-cert": "foo",
+                "client-key": "bar",
+                "server-cert": "baz",
+            },
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def cloud_spec_vm():
+    return testing.CloudSpec(
         type="lxd",
         endpoint="https://127.0.0.1:8443",
         credential=testing.CloudCredential(
