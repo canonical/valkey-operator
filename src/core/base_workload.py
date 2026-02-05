@@ -11,6 +11,48 @@ from charmlibs import pathops
 from common.exceptions import ValkeyWorkloadCommandError
 
 
+class TLSPaths:
+    """Object to store the TLS paths."""
+
+    def __init__(self, tls_root: pathops.LocalPath or pathops.ContainerPath):
+        self.tls_root = tls_root
+
+    @property
+    def peer_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer CA."""
+        return self.ca_certs_dir / "peer_ca.pem"
+
+    @property
+    def peer_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer cert."""
+        return self.tls_root / "peer.pem"
+
+    @property
+    def peer_key(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer key."""
+        return self.tls_root / "peer.key"
+
+    @property
+    def client_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the client CA."""
+        return self.ca_certs_dir / "client_ca.pem"
+
+    @property
+    def client_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the client cert."""
+        return self.tls_root / "client.pem"
+
+    @property
+    def client_key(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the client key."""
+        return self.tls_root / "client.key"
+
+    @property
+    def ca_certs_dir(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the directory for CA certs."""
+        return self.tls_root / "ca_certs"
+
+
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
 

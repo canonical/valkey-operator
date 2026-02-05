@@ -34,3 +34,9 @@ peers:
     interface: valkey_peers
   status-peers:
     interface: status_peers
+
+requires:
+  peer-certificates:
+    interface: tls-certificates
+    limit: 1
+    optional: true

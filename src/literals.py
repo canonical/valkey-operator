@@ -24,6 +24,8 @@ ACL_FILE = "var/lib/valkey/users.acl"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
+PEER_TLS_RELATION_NAME = "peer-certificates"
+CLIENT_TLS_RELATION_NAME = "client-certificates"
 
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
@@ -60,3 +62,19 @@ class Substrate(StrEnum):
 
     VM = "vm"
     K8S = "k8s"
+
+
+class TLSState(StrEnum):
+    """TLS states."""
+
+    NO_TLS = "no-tls"
+    TO_TLS = "to-tls"
+    TLS = "tls"
+    TO_NO_TLS = "to-no-tls"
+
+
+class TLSType(StrEnum):
+    """TLS types."""
+
+    PEER = "peer"
+    CLIENT = "client"

@@ -12,7 +12,7 @@ from charmlibs import pathops, snap
 from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
-from core.base_workload import WorkloadBase
+from core.base_workload import TLSPaths, WorkloadBase
 from literals import (
     SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
@@ -38,6 +38,8 @@ class ValkeyVmWorkload(WorkloadBase):
         self.config_file = self.root / SNAP_CURRENT_PATH / SNAP_CONFIG_FILE
         self.acl_file = self.root / SNAP_CURRENT_PATH / SNAP_ACL_FILE
         self.working_dir = self.root / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
+        self.tls_dir = self.root / SNAP_CURRENT_PATH / "tls"
+        self.tls: TLSPaths = TLSPaths(tls_root=self.tls_dir)
 
     @property
     @override
