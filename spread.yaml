@@ -95,7 +95,6 @@ backends:
       CHARM_UBUNTU_BASE: "$(HOST: echo $CHARM_UBUNTU_BASE)"
       # To install pipx on self-hosted runners
       CONCIERGE_EXTRA_DEBS: pipx
-      CONCIERGE_MICROK8S_CHANNEL: 1.34-strict/stable
       DOCKERHUB_MIRROR: "$(HOST: echo $DOCKERHUB_MIRROR)"
     systems:
       - self-hosted-linux-amd64-noble-medium:
