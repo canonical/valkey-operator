@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
 
+    def __init__(self) -> None:
+        """Initialize the WorkloadBase."""
+        self.root: pathops.PathProtocol
+        self.config_file: pathops.PathProtocol
+        self.sentinel_config: pathops.PathProtocol
+        self.acl_file: pathops.PathProtocol
+        self.sentinel_acl_file: pathops.PathProtocol
+        self.working_dir: pathops.PathProtocol
+
     @property
     @abstractmethod
     def can_connect(self) -> bool:
@@ -62,7 +71,7 @@ class WorkloadBase(ABC):
     def write_file(
         self,
         content: str,
-        path: pathops.ContainerPath,
+        path: pathops.PathProtocol,
         mode: int | None = None,
         user: str | None = None,
         group: str | None = None,
@@ -74,7 +83,7 @@ class WorkloadBase(ABC):
 
         Args:
             content (str): The content to be written.
-            path (str): The file path where the content should be written.
+            path (pathops.PathProtocol): The file path where the content should be written.
             mode (int, optional): The file mode (permissions). Defaults to None.
             user (str, optional): The user name. Defaults to None.
             group (str, optional): The group name. Defaults to None.
@@ -111,3 +120,22 @@ class WorkloadBase(ABC):
             ValueError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
+
+    def mkdir(
+        self,
+        path: pathops.PathProtocol,
+        mode: int = 0o755,
+        user: str | None = None,
+        group: str | None = None,
+        exist_ok: bool = True,
+    ) -> None:
+        """Create a directory on disk.
+
+        Args:
+            path (pathops.PathProtocol): The directory path to be created.
+            mode (int, optional): The directory mode (permissions). Defaults to None.
+            user (str, optional): The user name. Defaults to None.
+            group (str, optional): The group name. Defaults to None.
+            exist_ok (bool, optional): Whether to ignore if the directory already exists. Defaults to True.
+        """
+        path.mkdir(mode=mode, user=user, group=group, exist_ok=exist_ok)

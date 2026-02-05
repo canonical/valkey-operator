@@ -10,7 +10,11 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
-from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError, ValkeyExecCommandError
+from common.exceptions import (
+    ValkeyACLLoadError,
+    ValkeyConfigSetError,
+    ValkeyWorkloadCommandError,
+)
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -36,10 +40,8 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         try:
-            self.workload.exec_command(
-                ["acl", "load"], username=self.admin_user, password=self.admin_password
-            )
-        except ValkeyExecCommandError:
+            self._exec_cli_command(["acl", "load"])
+        except ValkeyWorkloadCommandError:
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
@@ -48,7 +50,7 @@ class ClusterManager(ManagerStatusProtocol):
             logger.info("Current unit is primary; no need to update primaryauth")
             return
         try:
-            self.workload.exec_command(
+            self._exec_cli_command(
                 [
                     "config",
                     "set",
@@ -57,12 +59,23 @@ class ClusterManager(ManagerStatusProtocol):
                         CharmUsers.VALKEY_REPLICA.value, ""
                     ),
                 ],
-                username=self.admin_user,
-                password=self.admin_password,
             )
             logger.info("Updated primaryauth runtime configuration on Valkey server")
-        except ValkeyExecCommandError:
+        except ValkeyWorkloadCommandError:
             raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
+
+    def _exec_cli_command(self, command: list[str]) -> str:
+        """Execute a Valkey CLI command on the server."""
+        cli_command = [
+            "valkey-cli",
+            "--user",
+            self.admin_user,
+            "--password",
+            self.admin_password,
+        ] + command
+        output = self.workload.exec(cli_command)
+        logger.debug("Executed command: %s, got output: %s", " ".join(command), output)
+        return output
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

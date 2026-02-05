@@ -65,7 +65,7 @@ class ValkeyVmWorkload(WorkloadBase):
             True if successfully installed, False if errors occur and `retry_and_raise` is False.
         """
         if not revision:
-            revision = SNAP_REVISION
+            revision = str(SNAP_REVISION)
 
         try:
             # as long as 26.04 is not stable, we need to install the core26 snap from edge
@@ -99,6 +99,17 @@ class ValkeyVmWorkload(WorkloadBase):
             ).stdout.strip()
             logger.debug(output)
             return output
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        except subprocess.CalledProcessError as e:
             logger.error("Command failed with %s, %s", e.returncode, e.stderr)
             raise ValkeyWorkloadCommandError(e)
+        except subprocess.TimeoutExpired as e:
+            logger.error("Command '%s' timed out: %s", command, str(e.stderr))
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def alive(self) -> bool:
+        """Check if the Valkey service is running."""
+        try:
+            return bool(self.valkey.services[SNAP_SERVICE]["active"])
+        except KeyError:
+            return False

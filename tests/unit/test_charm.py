@@ -9,6 +9,7 @@ import pytest
 import yaml
 from ops import ActiveStatus, pebble, testing
 
+from common.exceptions import ValkeyWorkloadCommandError
 from src.charm import ValkeyCharm
 from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
@@ -367,11 +368,11 @@ def test_config_changed_leader_unit(cloud_spec):
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mocl_exec_command,
+        patch("managers.cluster.ClusterManager._exec_cli_command") as mock_exec_command,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        assert mocl_exec_command.call_count == 2  # one for acl load, one for primaryauth set
+        assert mock_exec_command.call_count == 2  # one for acl load, one for primaryauth set
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -381,8 +382,8 @@ def test_config_changed_leader_unit(cloud_spec):
         )
 
 
-def test_config_changed_leader_unit_primary():
-    ctx = testing.Context(ValkeyCharm)
+def test_config_changed_leader_unit_primary(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1, endpoint=PEER_RELATION, local_app_data={"primary_ip": "127.0.1.1"}
     )
@@ -398,18 +399,17 @@ def test_config_changed_leader_unit_primary():
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mock_exec_command,
+        patch("managers.cluster.ClusterManager._exec_cli_command") as mock_exec_command,
         patch("core.base_workload.WorkloadBase.get_private_ip", return_value="127.0.1.1"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(
-            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
-        )
+        mock_exec_command.assert_called_once_with(["acl", "load"])
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -475,14 +475,12 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("workload_k8s.ValkeyK8sWorkload.exec_command") as mock_exec_command,
+        patch("managers.cluster.ClusterManager._exec_cli_command") as mock_exec_command,
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(
-            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
-        )
+        mock_exec_command.assert_called_once_with(["acl", "load"])
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
@@ -511,8 +509,8 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch(
-            "workload_k8s.ValkeyK8sWorkload.exec_command",
-            side_effect=ValkeyExecCommandError("Failed to execute command"),
+            "managers.cluster.ClusterManager._exec_cli_command",
+            side_effect=ValkeyWorkloadCommandError("Failed to execute command"),
         ) as mock_exec_command,
         ctx(ctx.on.secret_changed(password_secret), state_in) as manager,
     ):
@@ -520,9 +518,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(
-            ["acl", "load"], username=CharmUsers.VALKEY_ADMIN.value, password=""
-        )
+        mock_exec_command.assert_called_once_with(["acl", "load"])
         cluster_statuses = charm.state.statuses.get(
             scope="unit",
             component=charm.cluster_manager.name,
