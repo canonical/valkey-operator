@@ -10,6 +10,7 @@ python = "^3.12"                  # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 charmlibs-snap = "^1.0.1"
+charmlibs-interfaces-tls-certificates = ">=1.6.0"
 tenacity = "*"
 data-platform-helpers = ">=0.1.7"
 # TODO replace with official release once build from source is possible
