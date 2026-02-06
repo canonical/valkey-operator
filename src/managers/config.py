@@ -21,6 +21,7 @@ from literals import (
     CLIENT_PORT,
     CharmUsers,
     Substrate,
+    TLSState,
 )
 from statuses import CharmStatuses
 
@@ -74,6 +75,21 @@ class ConfigManager(ManagerStatusProtocol):
             config_properties["bind"] = self.state.bind_address
         else:
             config_properties["bind"] = "0.0.0.0 -::1"
+
+        # TLS related configuration
+        if self.state.unit_server.tls_client_state == TLSState.TLS:
+            config_properties["port"] = "0"
+            config_properties["tls-port"] = str(CLIENT_PORT)
+            config_properties["tls-cert-file"] = self.workload.tls_paths.client_cert.as_posix()
+            config_properties["tls-key-file"] = self.workload.tls_paths.client_key.as_posix()
+            config_properties["tls-ca-cert-dir"] = self.workload.tls_paths.ca_certs_dir.as_posix()
+            config_properties["tls-replication"] = "yes"
+
+        if self.state.unit_server.tls_peer_state == TLSState.TLS:
+            config_properties["tls-client-cert-file"] = (
+                self.workload.tls_paths.peer_cert.as_posix()
+            )
+            config_properties["tls-client-key-file"] = self.workload.tls_paths.peer_key.as_posix()
 
         return config_properties
 

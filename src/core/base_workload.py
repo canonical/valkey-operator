@@ -18,21 +18,6 @@ class TLSPaths:
         self.tls_root = tls_root
 
     @property
-    def peer_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer CA."""
-        return self.ca_certs_dir / "peer_ca.pem"
-
-    @property
-    def peer_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer cert."""
-        return self.tls_root / "peer.pem"
-
-    @property
-    def peer_key(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer key."""
-        return self.tls_root / "peer.key"
-
-    @property
     def client_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
         """Path to the client CA."""
         return self.ca_certs_dir / "client_ca.pem"
@@ -46,6 +31,21 @@ class TLSPaths:
     def client_key(self) -> pathops.LocalPath or pathops.ContainerPath:
         """Path to the client key."""
         return self.tls_root / "client.key"
+
+    @property
+    def peer_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer CA."""
+        return self.ca_certs_dir / "peer_ca.pem"
+
+    @property
+    def peer_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer cert."""
+        return self.tls_root / "peer.pem"
+
+    @property
+    def peer_key(self) -> pathops.LocalPath or pathops.ContainerPath:
+        """Path to the peer key."""
+        return self.tls_root / "peer.key"
 
     @property
     def ca_certs_dir(self) -> pathops.LocalPath or pathops.ContainerPath:
@@ -77,7 +77,7 @@ class WorkloadBase(ABC):
 
         Args:
             content (str): The content to be written.
-            path (str): The file path where the content should be written.
+            path (PathProtocol): The file path where the content should be written.
         """
         try:
             path.write_text(content)
@@ -109,5 +109,20 @@ class WorkloadBase(ABC):
             PermissionError,
             pathops.PebbleConnectionError,
             ValueError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    def remove_file(self, path: pathops.PathProtocol) -> None:
+        """Delete a file on disk.
+
+        Args:
+            path (PathProtocol): The file path where the content should be written.
+        """
+        try:
+            path.unlink(missing_ok=True)
+        except (
+            IsADirectoryError,
+            PermissionError,
+            pathops.PebbleConnectionError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)

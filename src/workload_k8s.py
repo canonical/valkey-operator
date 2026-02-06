@@ -33,7 +33,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         # todo: update this path once directories in the rock are complying with the standard
         self.working_dir = self.root / "var/lib/valkey"
         self.tls_dir = self.root / "var/lib/valkey/tls"
-        self.tls: TLSPaths = TLSPaths(tls_root=self.tls_dir)
+        self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
 
     @property
     @override

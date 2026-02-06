@@ -18,7 +18,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from pydantic import Field
 from typing_extensions import Annotated
 
-from literals import CharmUsers
+from literals import CharmUsers, TLSState
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,10 @@ class PeerUnitModel(PeerModel):
 
     started: bool = Field(default=False)
     hostname: str = Field(default="")
+    tls_client_state: str = Field(default="")
+    tls_peer_state: str = Field(default="")
+    client_cert_ready: bool = Field(default=False)
+    peer_cert_ready: bool = Field(default=False)
 
 
 class RelationState:
@@ -115,6 +119,32 @@ class ValkeyServer(RelationState):
     def is_started(self) -> bool:
         """Check if the unit has started."""
         return self.model.started if self.model else False
+
+    @property
+    def tls_client_state(self) -> TLSState:
+        """The current TLS state of the Valkey server for client TLS."""
+        if not self.model:
+            return TLSState.NO_TLS
+
+        return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
+
+    @property
+    def tls_peer_state(self) -> TLSState:
+        """The current TLS state of the Valkey server for peer TLS."""
+        if not self.model:
+            return TLSState.NO_TLS
+
+        return TLSState(self.model.tls_peer_state or TLSState.NO_TLS.value)
+
+    @property
+    def client_cert_ready(self) -> bool:
+        """Check if the unit has started."""
+        return self.model.client_cert_ready if self.model else False
+
+    @property
+    def peer_cert_ready(self) -> bool:
+        """Check if the unit has started."""
+        return self.model.peer_cert_ready if self.model else False
 
 
 @final
