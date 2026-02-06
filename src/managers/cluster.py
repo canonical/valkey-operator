@@ -70,7 +70,7 @@ class ClusterManager(ManagerStatusProtocol):
             "valkey-cli",
             "--user",
             self.admin_user,
-            "--password",
+            "--pass",
             self.admin_password,
         ] + command
         output = self.workload.exec(cli_command)

@@ -7,14 +7,14 @@ import jubilant
 import valkey
 
 from literals import CharmUsers
-
-from ..helpers import (
+from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
     get_cluster_hostnames,
     get_password,
 )
+
 from .helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
@@ -31,7 +31,7 @@ TEST_VALUE = "test_value"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=1)
+    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=1, trust=True)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,

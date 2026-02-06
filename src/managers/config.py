@@ -17,7 +17,6 @@ from data_platform_helpers.advanced_statuses.types import Scope
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
-    ACL_FILE,
     CHARM_USER,
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
@@ -83,11 +82,6 @@ class ConfigManager(ManagerStatusProtocol):
             config_properties["bind"] = self.state.bind_address
         else:
             config_properties["bind"] = "0.0.0.0 -::1"
-        # Use the ACL file
-        config_properties["aclfile"] = ACL_FILE
-
-        # # logfile location
-        # config_properties["logfile"] = VALKEY_LOG_FILE
 
         logger.debug(
             "primary: %s, hostname: %s",
@@ -191,7 +185,7 @@ class ConfigManager(ManagerStatusProtocol):
         for user in CharmUsers:
             # only process VALKEY users
             # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" in str(user):
+            if "VALKEY_" in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
         self.workload.write_file(acl_content, self.workload.sentinel_acl_file)
