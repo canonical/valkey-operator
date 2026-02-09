@@ -86,12 +86,35 @@ class BaseEvents(ops.Object):
                 logger.info(
                     "Non-leader unit waiting for leader to set primary and internal user credentials"
                 )
+                self.charm.status.set_running_status(
+                    ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
+                    scope="unit",
+                    component_name=self.charm.cluster_manager.name,
+                    statuses_state=self.charm.state.statuses,
+                )
                 event.defer()
                 return
+
+            self.charm.state.statuses.delete(
+                ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
+                scope="unit",
+                component=self.charm.cluster_manager.name,
+            )
             if self.charm.state.cluster.model.starting_member != self.charm.unit.name:
                 logger.info("Non-leader unit waiting for leader to choose it as starting member")
+                self.charm.status.set_running_status(
+                    CharmStatuses.WAITING_TO_START.value,
+                    scope="unit",
+                    component_name=self.charm.cluster_manager.name,
+                    statuses_state=self.charm.state.statuses,
+                )
                 event.defer()
                 return
+            self.charm.state.statuses.delete(
+                CharmStatuses.WAITING_TO_START.value,
+                scope="unit",
+                component=self.charm.cluster_manager.name,
+            )
 
         try:
             self.charm.config_manager.update_local_valkey_admin()
