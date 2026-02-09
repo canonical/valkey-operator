@@ -115,7 +115,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         assert client.ping() is True, (
             f"Failed to authenticate with admin password after removing user secret on host {hostname}"
         )
-        assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+        assert client.get(TEST_KEY) == TEST_VALUE, (
             f"Failed to read data after admin password update on host {hostname}"
         )
 
@@ -218,7 +218,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
         assert client.ping() is True, (
             f"Failed to authenticate with new admin password on host {hostname}"
         )
-        assert client.get(TEST_KEY) == bytes(TEST_VALUE, "utf-8"), (
+        assert client.get(TEST_KEY) == TEST_VALUE, (
             f"Failed to read data after admin password update on host {hostname}"
         )
 

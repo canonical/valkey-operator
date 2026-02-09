@@ -85,8 +85,9 @@ def assert_continuous_writes_consistent(
             port=CLIENT_PORT,
             username=valkey_user,
             password=valkey_password,
+            decode_responses=True,
         )
-        last_value = int(client.get(KEY).decode("utf-8"))
+        last_value = int(client.get(KEY))
         assert last_written_value == last_value, (
             f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
         )

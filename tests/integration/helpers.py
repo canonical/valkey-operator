@@ -4,6 +4,8 @@
 
 import contextlib
 import logging
+import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
@@ -32,6 +34,7 @@ IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstrea
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
+SEED_KEY_PREFIX = "seed:key:"
 
 
 def does_status_match(
@@ -249,8 +252,46 @@ def create_valkey_client(
     Returns:
         A Valkey client instance connected to the cluster.
     """
-    client = valkey.Valkey(host=hostname, port=CLIENT_PORT, username=username, password=password)
+    client = valkey.Valkey(
+        host=hostname,
+        port=CLIENT_PORT,
+        username=username,
+        password=password,
+        decode_responses=True,
+    )
     return client
+
+
+def create_sentinel_client(
+    hostnames: list[str],
+    valkey_user: str | None = CharmUsers.VALKEY_ADMIN.value,
+    valkey_password: str | None = None,
+    sentinel_user: str | None = CharmUsers.SENTINEL_ADMIN.value,
+    sentinel_password: str | None = None,
+) -> valkey.Sentinel:
+    """Create and return a Valkey Sentinel client connected to the cluster.
+
+    Args:
+        hostnames: A list of hostnames for the Sentinel nodes.
+        valkey_user: The username for authentication to Valkey.
+        valkey_password: The password for the internal user for Valkey authentication.
+        sentinel_user: The username for authentication to Sentinel.
+        sentinel_password: The password for the internal user for Sentinel authentication.
+
+    Returns:
+        A Valkey Sentinel client instance connected to the cluster.
+    """
+    sentinel_client = valkey.Sentinel(
+        [(host, 26379) for host in hostnames],
+        username=valkey_user,
+        password=valkey_password,
+        sentinel_kwargs={
+            "password": sentinel_password,
+            "username": sentinel_user,
+        },
+        decode_responses=True,
+    )
+    return sentinel_client
 
 
 def set_password(
@@ -302,9 +343,14 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    client = create_valkey_client(hostname=hostnames[0], password=get_password(juju))
-    info = client.info("replication")
-    return hostnames[0] if info["role"] == "master" else info.get("master_host", "")
+    client = create_sentinel_client(
+        hostnames=hostnames,
+        valkey_user=CharmUsers.VALKEY_ADMIN.value,
+        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        sentinel_user=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+    )
+    return client.discover_master("primary")[0]
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
@@ -319,3 +365,58 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
     """
     secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
     return secret.get(f"{user.value}-password", "")
+
+
+def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
+    # Connect to Valkey
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    client = valkey.Valkey(
+        host=primary_ip,
+        port=CLIENT_PORT,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+
+    # Configuration
+    value_size_bytes = 1024  # 1KB per value
+    batch_size = 5000  # Commands per pipeline
+    total_bytes_target = target_gb * 1024 * 1024 * 1024
+    total_keys = total_bytes_target // value_size_bytes
+
+    logger.debug(
+        f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
+    )
+
+    start_time = time.time()
+    keys_added = 0
+
+    # Generate a fixed random block to reuse (saves CPU cycles on generation)
+    random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
+
+    try:
+        while keys_added < total_keys:
+            pipe = client.pipeline(transaction=False)
+
+            # Fill the batch
+            for i in range(batch_size):
+                key_idx = keys_added + i
+                pipe.set(f"{SEED_KEY_PREFIX}{key_idx}", random_data)
+
+                if keys_added + i >= total_keys:
+                    break
+
+            pipe.execute()
+            keys_added += batch_size
+
+            # Progress reporting
+            elapsed = time.time() - start_time
+            percent = (keys_added / total_keys) * 100
+            logger.info(
+                f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+            )
+
+    except Exception as e:
+        logger.error(f"\nError: {e}")
+    finally:
+        total_time = time.time() - start_time
+        logger.info(f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds.")

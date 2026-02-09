@@ -13,6 +13,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     get_cluster_hostnames,
     get_password,
+    seed_valkey,
 )
 
 from .helpers import (
@@ -42,7 +43,12 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     )
 
 
-async def test_scale_up(juju: jubilant.Juju) -> None:
+def test_seed_data(juju: jubilant.Juju) -> None:
+    """Seed some data to the cluster."""
+    seed_valkey(juju, target_gb=1)
+
+
+def test_scale_up(juju: jubilant.Juju) -> None:
     """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
     init_endpoints = ",".join(get_cluster_hostnames(juju, APP_NAME))
