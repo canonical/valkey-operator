@@ -142,7 +142,7 @@ def test_start_non_leader_unit(cloud_spec):
         assert "start" in [e.name for e in state_out.deferred]
 
         relation = testing.PeerRelation(
-            id=1, endpoint=PEER_RELATION, local_app_data={"primary_ip": "127.1.0.1"}
+            id=1, endpoint=PEER_RELATION, local_app_data={"primary-ip": "127.1.0.1"}
         )
         state_in = testing.State(
             model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -152,24 +152,69 @@ def test_start_non_leader_unit(cloud_spec):
             containers={container},
         )
         state_out = ctx.run(ctx.on.start(), state_in)
-        assert state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
-        assert state_out.get_container(container.name).service_statuses.get(
-            SERVICE_METRIC_EXPORTER
-        )
-        assert state_out.get_container(container.name).service_statuses[SERVICE_SENTINEL]
-        assert state_out.get_relation(1).local_unit_data["started"] == "true"
 
-        # container not ready
-        container = testing.Container(name=CONTAINER, can_connect=False)
-        state_in = testing.State(
-            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-            leader=True,
-            relations={relation, status_peer_relation},
-            containers={container},
-        )
+        assert status_is(state_out, CharmStatuses.WAITING_TO_START.value)
 
-        state_out = ctx.run(ctx.on.start(), state_in)
-        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+        # replica syncing
+        with patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value)
+
+        # sentinel not yet discovered
+        with patch("managers.cluster.ClusterManager.is_sentinel_discovered", return_value=False):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+
+        # Happy path with sentinel discovered and replica synced
+        with (
+            patch("managers.cluster.ClusterManager.is_sentinel_discovered", return_value=True),
+            patch("managers.cluster.ClusterManager.is_replica_synced", return_value=True),
+        ):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, CharmStatuses.ACTIVE_IDLE.value)
+
+            assert state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
+            assert state_out.get_container(container.name).service_statuses.get(
+                SERVICE_METRIC_EXPORTER
+            )
+            assert state_out.get_container(container.name).service_statuses[SERVICE_SENTINEL]
+            assert state_out.get_relation(1).local_unit_data["started"] == "true"
 
 
 def test_update_status_leader_unit(cloud_spec):
