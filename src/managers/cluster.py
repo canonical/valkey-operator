@@ -7,6 +7,7 @@
 import logging
 from typing import Literal
 
+import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -65,6 +66,12 @@ class ClusterManager(ManagerStatusProtocol):
         except ValkeyWorkloadCommandError:
             raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
 
+    @tenacity.retry(
+        wait=tenacity.wait_fixed(5),
+        stop=tenacity.stop_after_attempt(5),
+        retry=tenacity.retry_if_result(lambda result: result is False),
+        reraise=True,
+    )
     def is_sentinel_discovered(self) -> bool:
         """Check if the sentinel of the local unit was discovered by the other sentinels in the cluster."""
         # list of active sentinels: units with started flag true
@@ -91,6 +98,12 @@ class ClusterManager(ManagerStatusProtocol):
                 continue
         return True
 
+    @tenacity.retry(
+        wait=tenacity.wait_fixed(5),
+        stop=tenacity.stop_after_attempt(5),
+        retry=tenacity.retry_if_result(lambda result: result is False),
+        reraise=True,
+    )
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
         if self.state.unit_server.model.private_ip == self.state.cluster.model.primary_ip:
