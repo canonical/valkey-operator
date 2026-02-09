@@ -102,14 +102,12 @@ class ValkeyK8sWorkload(WorkloadBase):
         return True
 
     @override
-    def exec(self, command: list[str]) -> str:
+    def exec(self, command: list[str]) -> tuple[str, str | None]:
         try:
             process = self.container.exec(
                 command=command,
-                combine_stderr=True,
             )
-            output, _ = process.wait_output()
-            return output
+            return process.wait_output()
         except ops.pebble.ExecError as e:
             logger.error("Command failed with %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)

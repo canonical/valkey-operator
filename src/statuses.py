@@ -30,6 +30,18 @@ class ClusterStatuses(Enum):
         status="blocked", message="Failed to update an internal user's password", running="async"
     )
 
+    WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
+        status="maintenance",
+        message="Waiting for sentinel to be discovered by other units...",
+        running="async",
+    )
+
+    WAITING_FOR_REPLICA_SYNC = StatusObject(
+        status="maintenance",
+        message="Waiting for replica to sync with primary...",
+        running="async",
+    )
+
 
 class ValkeyServiceStatuses(Enum):
     """Collection of possible Valkey service related statuses."""
