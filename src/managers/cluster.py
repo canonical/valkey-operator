@@ -36,8 +36,11 @@ class ClusterManager(ManagerStatusProtocol):
         self.workload = workload
         self.admin_user = CharmUsers.VALKEY_ADMIN.value
         self.admin_password = self.state.unit_server.valkey_admin_password
-        # target only the unit's valkey server IP
-        self.cluster_ips = [self.workload.get_private_ip()]
+
+    @property
+    def number_units_started(self) -> int:
+        """Return the number of units in the cluster that have their Valkey server started."""
+        return len([unit for unit in self.state.servers if unit.model and unit.model.started])
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
@@ -48,7 +51,7 @@ class ClusterManager(ManagerStatusProtocol):
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
-        if self.state.unit_server.model.private_ip == self.state.cluster.model.primary_ip:
+        if self.get_primary_ip() == self.state.unit_server.model.private_ip:
             logger.info("Current unit is primary; no need to update primaryauth")
             return
         try:
@@ -106,7 +109,7 @@ class ClusterManager(ManagerStatusProtocol):
     )
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
-        if self.state.unit_server.model.private_ip == self.state.cluster.model.primary_ip:
+        if self.get_primary_ip() == self.state.unit_server.model.private_ip:
             logger.info("Current unit is primary; no need to check replica sync")
             return True
         try:
@@ -125,6 +128,30 @@ class ClusterManager(ManagerStatusProtocol):
         except ValkeyWorkloadCommandError:
             logger.warning("Could not determine replica sync status from Valkey server.")
             return False
+
+    def get_primary_ip(self) -> str | None:
+        """Get the IP address of the primary node in the cluster."""
+        started_servers = [
+            unit for unit in self.state.servers if unit.model and unit.model.started
+        ]
+
+        for unit in started_servers:
+            try:
+                output = self._exec_cli_command(
+                    ["sentinel", "get-master-addr-by-name", PRIMARY_NAME],
+                    connect_to="sentinel",
+                    hostname=unit.model.private_ip,
+                )[0]
+                primary_ip = output.strip().split()[0]
+                logger.info(f"Primary IP address is {primary_ip}")
+                return primary_ip
+            except (IndexError, ValkeyWorkloadCommandError):
+                logger.error("Could not get primary IP from sentinel output.")
+
+        logger.error(
+            "Could not determine primary IP from sentinels. Number of started servers: %d.",
+            len(started_servers),
+        )
 
     def _exec_cli_command(
         self,

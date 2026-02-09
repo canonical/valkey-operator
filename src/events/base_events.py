@@ -81,7 +81,7 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             if (
                 not self.charm.state.cluster.internal_users_credentials
-                or not self.charm.state.cluster.model.primary_ip
+                or not self.charm.cluster_manager.number_units_started
             ):
                 logger.info(
                     "Non-leader unit waiting for leader to set primary and internal user credentials"
@@ -116,11 +116,22 @@ class BaseEvents(ops.Object):
                 component=self.charm.cluster_manager.name,
             )
 
+        if not (
+            primary_ip := (
+                self.charm.state.unit_server.model.private_ip
+                if self.charm.unit.is_leader()
+                else self.charm.cluster_manager.get_primary_ip()
+            )
+        ):
+            logger.error("Primary IP not found. Deferring start event.")
+            event.defer()
+            return
+
         try:
             self.charm.config_manager.update_local_valkey_admin()
-            self.charm.config_manager.set_config_properties()
+            self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
             self.charm.config_manager.set_acl_file()
-            self.charm.config_manager.set_sentinel_config_properties()
+            self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
             self.charm.config_manager.set_sentinel_acl_file()
             self.charm.workload.mkdir(
                 self.charm.workload.working_dir, user=CHARM_USER, group=CHARM_USER
@@ -159,6 +170,10 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
+        if self.charm.unit.is_leader():
+            logger.info("Services started")
+            self.charm.state.unit_server.update({"started": True})
+            return
 
         self.unit_fully_started.emit()
 
@@ -272,14 +287,6 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
-
-        if not self.charm.state.cluster.model.primary_ip:
-            # set the primary to this unit if not already set
-            self.charm.state.cluster.update(
-                {
-                    "primary_ip": self.charm.state.unit_server.model.private_ip,
-                }
-            )
 
         if self.charm.state.cluster.internal_users_credentials:
             logger.debug("Internal user credentials already set")

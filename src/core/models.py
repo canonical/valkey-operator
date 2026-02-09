@@ -36,7 +36,6 @@ class PeerAppModel(PeerModel):
     charmed_stats_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
-    primary_ip: str = Field(default="")
     starting_member: str = Field(default="")
 
 

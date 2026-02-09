@@ -44,8 +44,7 @@ class ConfigManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
 
-    @property
-    def config_properties(self) -> dict[str, str]:
+    def get_config_properties(self, primary_ip: str) -> dict[str, str]:
         """Assemble the config properties.
 
         Returns:
@@ -85,17 +84,14 @@ class ConfigManager(ManagerStatusProtocol):
 
         logger.debug(
             "primary: %s, hostname: %s",
-            self.state.cluster.model.primary_ip,
+            primary_ip,
             self.state.unit_server.model.hostname,
         )
         # replicaof
-        if (
-            self.state.cluster.model.primary_ip
-            and self.state.cluster.model.primary_ip != self.state.unit_server.model.private_ip
-        ):
+        if primary_ip != self.state.unit_server.model.private_ip:
             # set replicaof
-            logger.debug("Setting replicaof to primary %s", self.state.cluster.model.primary_ip)
-            config_properties["replicaof"] = f"{self.state.cluster.model.primary_ip} {CLIENT_PORT}"
+            logger.debug("Setting replicaof to primary %s", primary_ip)
+            config_properties["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
             config_properties["primaryuser"] = CharmUsers.VALKEY_REPLICA.value
             config_properties["primaryauth"] = self.state.cluster.internal_users_credentials.get(
                 CharmUsers.VALKEY_REPLICA.value, ""
@@ -103,10 +99,10 @@ class ConfigManager(ManagerStatusProtocol):
 
         return config_properties
 
-    def set_config_properties(self) -> None:
+    def set_config_properties(self, primary_ip: str) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
-        self.workload.write_config_file(config=self.config_properties)
+        self.workload.write_config_file(config=self.get_config_properties(primary_ip=primary_ip))
 
     def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.
@@ -142,7 +138,7 @@ class ConfigManager(ManagerStatusProtocol):
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
-    def set_sentinel_config_properties(self) -> None:
+    def set_sentinel_config_properties(self, primary_ip: str) -> None:
         """Write sentinel configuration file."""
         logger.debug("Writing Sentinel configuration")
 
@@ -150,7 +146,9 @@ class ConfigManager(ManagerStatusProtocol):
 
         sentinel_config += f"aclfile {SENTINEL_ACL_FILE}\n"
         # TODO consider adding quorum calculation based on number of units
-        sentinel_config += f"sentinel monitor {PRIMARY_NAME} {self.state.cluster.model.primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
+        sentinel_config += (
+            f"sentinel monitor {PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
+        )
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_config += (
