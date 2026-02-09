@@ -121,7 +121,6 @@ def test_start_non_leader_unit(cloud_spec):
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
 
-    # happy path
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -133,6 +132,7 @@ def test_start_non_leader_unit(cloud_spec):
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
+        patch("managers.cluster.ClusterManager.get_primary_ip", return_value="127.1.0.1"),
     ):
         state_out = ctx.run(ctx.on.start(), state_in)
         assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
@@ -141,8 +141,23 @@ def test_start_non_leader_unit(cloud_spec):
         )
         assert "start" in [e.name for e in state_out.deferred]
 
+        relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+        state_in = testing.State(
+            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+            leader=False,
+            relations={relation, status_peer_relation},
+            secrets={internal_passwords_secret},
+            containers={container},
+        )
+        state_out = ctx.run(ctx.on.start(), state_in)
+
+        assert status_is(state_out, ClusterStatuses.WAITING_FOR_PRIMARY_START.value)
+
         relation = testing.PeerRelation(
-            id=1, endpoint=PEER_RELATION, local_app_data={"primary-ip": "127.1.0.1"}
+            id=1,
+            endpoint=PEER_RELATION,
+            local_app_data={"primary-ip": "127.1.0.1"},
+            peers_data={1: {"started": "true"}},
         )
         state_in = testing.State(
             model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -160,7 +175,8 @@ def test_start_non_leader_unit(cloud_spec):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+                local_app_data={"starting-member": "valkey/0"},
+                peers_data={1: {"started": "true"}},
             )
             state_in = testing.State(
                 model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -177,7 +193,8 @@ def test_start_non_leader_unit(cloud_spec):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+                local_app_data={"starting-member": "valkey/0"},
+                peers_data={1: {"started": "true"}},
             )
             state_in = testing.State(
                 model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -197,7 +214,8 @@ def test_start_non_leader_unit(cloud_spec):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"primary-ip": "127.1.0.1", "starting-member": "valkey/0"},
+                local_app_data={"starting-member": "valkey/0"},
+                peers_data={1: {"started": "true"}},
             )
             state_in = testing.State(
                 model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -429,9 +447,7 @@ def test_config_changed_leader_unit(cloud_spec):
 
 def test_config_changed_leader_unit_primary(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(
-        id=1, endpoint=PEER_RELATION, local_app_data={"primary_ip": "127.0.1.1"}
-    )
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -451,6 +467,7 @@ def test_config_changed_leader_unit_primary(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("managers.cluster.ClusterManager._exec_cli_command") as mock_exec_command,
         patch("core.base_workload.WorkloadBase.get_private_ip", return_value="127.0.1.1"),
+        patch("managers.cluster.ClusterManager.get_primary_ip", return_value="127.0.1.1"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
@@ -498,7 +515,11 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
 
 def test_change_password_secret_changed_non_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"started": "true", "private-ip": "127.0.1.0"},
+    )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -521,11 +542,12 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("managers.cluster.ClusterManager._exec_cli_command") as mock_exec_command,
+        patch("managers.cluster.ClusterManager.get_primary_ip", return_value="127.0.1.1"),
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(["acl", "load"])
+        assert mock_exec_command.call_count == 2
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
