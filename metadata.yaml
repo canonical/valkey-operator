@@ -36,6 +36,10 @@ peers:
     interface: status_peers
 
 requires:
+  client-certificates:
+    interface: tls-certificates
+    limit: 1
+    optional: true
   peer-certificates:
     interface: tls-certificates
     limit: 1

@@ -128,6 +128,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         return str(address)
 
+    @property
+    def ingress_address(self) -> str | None:
+        """The network ingress address from the peer relation."""
+        if not (binding := self.model.get_binding(self.peer_relation)):
+            raise ValueError
+
+        if not (address := binding.network.ingress_address):
+            return None
+
+        return str(address)
+
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
 

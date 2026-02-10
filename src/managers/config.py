@@ -77,19 +77,8 @@ class ConfigManager(ManagerStatusProtocol):
             config_properties["bind"] = "0.0.0.0 -::1"
 
         # TLS related configuration
-        if self.state.unit_server.tls_client_state == TLSState.TLS:
-            config_properties["port"] = "0"
-            config_properties["tls-port"] = str(CLIENT_PORT)
-            config_properties["tls-cert-file"] = self.workload.tls_paths.client_cert.as_posix()
-            config_properties["tls-key-file"] = self.workload.tls_paths.client_key.as_posix()
-            config_properties["tls-ca-cert-dir"] = self.workload.tls_paths.ca_certs_dir.as_posix()
-            config_properties["tls-replication"] = "yes"
-
-        if self.state.unit_server.tls_peer_state == TLSState.TLS:
-            config_properties["tls-client-cert-file"] = (
-                self.workload.tls_paths.peer_cert.as_posix()
-            )
-            config_properties["tls-client-key-file"] = self.workload.tls_paths.peer_key.as_posix()
+        tls_config = self.generate_tls_config()
+        config_properties.update(tls_config)
 
         return config_properties
 
@@ -97,6 +86,27 @@ class ConfigManager(ManagerStatusProtocol):
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
         self.workload.write_config_file(config=self.config_properties)
+
+    def generate_tls_config(self) -> dict[str, str]:
+        """Return the TLS configuration based on the current state."""
+        if self.state.unit_server.tls_client_state != TLSState.TLS:
+            return {"tls-port": "0"}
+
+        tls_config = {
+            "port": "0",
+            "tls-port": str(CLIENT_PORT),
+            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
+            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
+            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
+        }
+
+        # peer TLS only possible when server-side TLS enabled
+        if self.state.unit_server.tls_peer_state == TLSState.TLS:
+            tls_config["tls-client-cert-file"] = self.workload.tls_paths.peer_cert.as_posix()
+            tls_config["tls-client-key-file"] = self.workload.tls_paths.peer_key.as_posix()
+            tls_config["tls-replication"] = "yes"
+
+        return tls_config
 
     def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.

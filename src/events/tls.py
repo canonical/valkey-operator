@@ -46,9 +46,9 @@ class TLSEvents(ops.Object):
             CLIENT_TLS_RELATION_NAME,
             certificate_requests=[
                 CertificateRequestAttributes(
-                    common_name=self.charm.tls_manager.build_common_name(TLSType.CLIENT),
+                    common_name=self.charm.tls_manager.build_common_name(),
                     sans_ip=self.charm.tls_manager.build_sans_ip(TLSType.CLIENT),
-                    sans_dns=self.charm.tls_manager.build_sans_dns(TLSType.CLIENT),
+                    sans_dns=self.charm.tls_manager.build_sans_dns(),
                 ),
             ],
             private_key=None,
@@ -60,9 +60,9 @@ class TLSEvents(ops.Object):
             PEER_TLS_RELATION_NAME,
             certificate_requests=[
                 CertificateRequestAttributes(
-                    common_name=self.charm.tls_manager.build_common_name(TLSType.PEER),
+                    common_name=self.charm.tls_manager.build_common_name(),
                     sans_ip=self.charm.tls_manager.build_sans_ip(TLSType.PEER),
-                    sans_dns=self.charm.tls_manager.build_sans_dns(TLSType.PEER),
+                    sans_dns=self.charm.tls_manager.build_sans_dns(),
                 ),
             ],
             private_key=None,
@@ -76,6 +76,10 @@ class TLSEvents(ops.Object):
             )
             self.framework.observe(
                 self.charm.on[relation].relation_broken, self._on_relation_broken
+            )
+        for relation in [self.peer_certificate, self.client_certificate]:
+            self.framework.observe(
+                relation.on.certificate_available, self._on_certificate_available
             )
 
     def _on_relation_created(self, event: ops.RelationCreatedEvent) -> None:
@@ -143,7 +147,7 @@ class TLSEvents(ops.Object):
         self.charm.tls_manager.set_tls_state(tls_type, TLSState.TO_NO_TLS)
         try:
             self.charm.config_manager.set_config_properties()
-            # todo: self.charm.tls_manager.load_tls_configuration()
+            self.charm.cluster_manager.disable_tls_settings()
         except (ValkeyWorkloadCommandError, ValueError):
             # todo: which other exceptions?
             logger.error("Failed to disable % TLS", tls_type)
@@ -151,6 +155,7 @@ class TLSEvents(ops.Object):
             return
 
         self.charm.tls_manager.remove_certificate(tls_type)
+        self.charm.tls_manager.set_cert_state(tls_type, is_ready=False)
         self.charm.tls_manager.set_tls_state(tls_type, TLSState.NO_TLS)
 
     def _enable_tls(self, tls_type: TLSType, event: ops.EventBase) -> None:
@@ -165,7 +170,8 @@ class TLSEvents(ops.Object):
             try:
                 self.charm.tls_manager.set_tls_state(tls_type, TLSState.TLS)
                 self.charm.config_manager.set_config_properties()
-                # todo: self.charm.tls_manager.load_tls_configuration()
+                tls_config = self.charm.config_manager.generate_tls_config()
+                self.charm.cluster_manager.enable_tls_settings(tls_config)
                 return
             except (ValkeyWorkloadCommandError, ValueError):
                 # todo: which other exceptions?

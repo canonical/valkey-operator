@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyACLLoadError
+from common.exceptions import ValkeyACLLoadError, ValkeyTLSLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -45,6 +45,42 @@ class ClusterManager(ManagerStatusProtocol):
             )
             client.reload_acl()
         except ValkeyACLLoadError:
+            raise
+
+    def enable_tls_settings(self, tls_config: dict[str, str]) -> None:
+        """Enable TLS by loading the TLS settings."""
+        try:
+            client = ValkeyClient(
+                username=self.admin_user,
+                password=self.admin_password,
+                hosts=self.cluster_hostnames,
+            )
+            client.enable_tls(tls_config)
+        except ValkeyTLSLoadError:
+            raise
+
+    def reload_tls_settings(self) -> None:
+        """Reload the TLS settings."""
+        try:
+            client = ValkeyClient(
+                username=self.admin_user,
+                password=self.admin_password,
+                hosts=self.cluster_hostnames,
+            )
+            client.reload_tls()
+        except ValkeyTLSLoadError:
+            raise
+
+    def disable_tls_settings(self) -> None:
+        """Disable TLS by loading the default settings."""
+        try:
+            client = ValkeyClient(
+                username=self.admin_user,
+                password=self.admin_password,
+                hosts=self.cluster_hostnames,
+            )
+            client.disable_tls()
+        except ValkeyTLSLoadError:
             raise
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:

@@ -80,6 +80,14 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(private_key.raw, private_key_path)
         self.workload.write_file(certificate.certificate.raw, certificate_path)
         self.workload.write_file(certificate.ca.raw, ca_cert_path)
+        self.rehash_ca_certificates()
+
+    def rehash_ca_certificates(self) -> None:
+        """Generate hashed certificate names according to x509 format."""
+        # using a CA directory for TLS requires hashed file links, see:
+        # https://docs.openssl.org/1.1.1/man1/verify/#options
+        cmd = ["c_rehash", self.workload.tls_paths.ca_certs_dir.as_posix()]
+        self.workload.exec(cmd)
 
     def remove_certificate(self, cert_type: TLSType) -> None:
         """Remove the certificate from the unit.
@@ -99,6 +107,41 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.remove_file(private_key_path)
         self.workload.remove_file(certificate_path)
         self.workload.remove_file(ca_cert_path)
+
+    def build_common_name(self) -> str:
+        """Build the Common Name for the TLS certificate."""
+        # default common name, as per DA-166
+        # https://docs.google.com/document/d/1OyxzBq5H4sFYZgmhWWVy5F4tQFmASQ7XKHVghxjW6go/edit?usp=sharing
+        return f"{self.state.unit_server.unit_name.replace('/', '')}-{self.state.model.uuid}"
+
+    def build_sans_ip(self, tls_type: TLSType) -> frozenset[str]:
+        """Build the SANs IP for the TLS certificate."""
+        sans_ip = set()
+
+        if not self.state.peer_relation:
+            return frozenset(sans_ip)
+
+        sans_ip.add(self.state.bind_address)
+
+        if tls_type == TLSType.PEER:
+            return frozenset(sans_ip)
+
+        if ingress_ip := self.state.ingress_address:
+            sans_ip.add(ingress_ip)
+
+        return frozenset(sans_ip)
+
+    def build_sans_dns(self) -> frozenset[str]:
+        """Build the SANs DNS for the TLS certificate.
+
+        Returns:
+            frozenset[str]: The SANs DNS.
+        """
+        sans_dns = set()
+        sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
+        sans_dns.add(self.state.unit_server.hostname)
+
+        return frozenset(sans_dns)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
