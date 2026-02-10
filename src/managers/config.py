@@ -143,7 +143,7 @@ class ConfigManager(ManagerStatusProtocol):
 
         sentinel_config = f"port {SENTINEL_PORT}\n"
 
-        # TODO remove once deamonized in snap
+        # TODO remove once daemonized in snap
         if self.state.substrate == Substrate.VM:
             sentinel_config += "daemonize yes\n"
 
