@@ -156,14 +156,14 @@ class ClusterManager(ManagerStatusProtocol):
     def _exec_cli_command(
         self,
         command: list[str],
-        hostname: str = "localhost",
+        hostname: str | None = None,
         connect_to: Literal["valkey", "sentinel"] = "valkey",
     ) -> tuple[str, str | None]:
         """Execute a Valkey CLI command on the server.
 
         Args:
             command (list[str]): The CLI command to execute, as a list of arguments.
-            hostname (str): The hostname to connect to. Defaults to "localhost".
+            hostname (str | None): The hostname to connect to. Defaults to private ip of unit.
             connect_to (Literal["valkey", "sentinel"]): Whether to connect to the valkey server or sentinel for executing the command. Defaults to "valkey".
 
         Returns:
@@ -172,6 +172,8 @@ class ClusterManager(ManagerStatusProtocol):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
+        if not hostname:
+            hostname = self.workload.get_private_ip()
         port = CLIENT_PORT if connect_to == "valkey" else SENTINEL_PORT
         user = (
             CharmUsers.VALKEY_ADMIN.value
@@ -186,7 +188,7 @@ class ClusterManager(ManagerStatusProtocol):
             )
         )
         cli_command = [
-            "valkey-cli",
+            self.workload.cli,
             "-h",
             hostname,
             "-p",

@@ -28,7 +28,8 @@ from tests.integration.helpers import (
 
 logger = logging.getLogger(__name__)
 
-NUM_UNITS = 3
+# Update once scale up is implemented in VM
+NUM_UNITS = 1
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 

@@ -14,8 +14,14 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 class CharmStatuses(Enum):
     """Collection of possible statuses for the charm."""
 
-    ACTIVE_IDLE = StatusObject(status="active", message="")
-    SERVICE_NOT_STARTED = StatusObject(status="blocked", message="Service not started")
+    ACTIVE_IDLE = StatusObject(
+        status="active",
+        message="",
+    )
+    SERVICE_NOT_STARTED = StatusObject(
+        status="blocked",
+        message="Service not started",
+    )
     SECRET_ACCESS_ERROR = StatusObject(
         status="blocked",
         message="Cannot access configured secret, check permissions",
@@ -26,13 +32,20 @@ class CharmStatuses(Enum):
         message="Waiting for leader to authorize service start",
         running="async",
     )
+    CONFIGURATION_ERROR = StatusObject(
+        status="blocked",
+        message="Configuration error, check logs for details",
+        running="async",
+    )
 
 
 class ClusterStatuses(Enum):
     """Collection of possible cluster related statuses."""
 
     PASSWORD_UPDATE_FAILED = StatusObject(
-        status="blocked", message="Failed to update an internal user's password", running="async"
+        status="blocked",
+        message="Failed to update an internal user's password",
+        running="async",
     )
 
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
@@ -58,8 +71,12 @@ class ValkeyServiceStatuses(Enum):
     """Collection of possible Valkey service related statuses."""
 
     SERVICE_STARTING = StatusObject(
-        status="maintenance", message="waiting for valkey to start...", running="async"
+        status="maintenance",
+        message="waiting for valkey to start...",
+        running="async",
     )
     SERVICE_NOT_RUNNING = StatusObject(
-        status="blocked", message="valkey service not running", running="async"
+        status="blocked",
+        message="valkey service not running",
+        running="async",
     )

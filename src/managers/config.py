@@ -163,13 +163,20 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config += f"sentinel failover-timeout {PRIMARY_NAME} 180000\n"
         sentinel_config += f"sentinel parallel-syncs {PRIMARY_NAME} 1\n"
 
-        self.workload.write_file(
-            sentinel_config,
-            self.workload.sentinel_config,
-            mode=0o600,
-            user=CHARM_USER,
-            group=CHARM_USER,
-        )
+        if self.state.substrate == Substrate.K8S:
+            # on k8s we need to set the ownership of the sentinel config file to the non-root user that the valkey process runs as in order for sentinel to be able to read/write it
+            self.workload.write_file(
+                sentinel_config,
+                self.workload.sentinel_config,
+                mode=0o600,
+                user=CHARM_USER,
+                group=CHARM_USER,
+            )
+        else:
+            self.workload.write_file(
+                sentinel_config,
+                self.workload.sentinel_config,
+            )
 
     def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the Sentinel ACL file with appropriate user permissions.

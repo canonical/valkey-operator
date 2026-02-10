@@ -12,7 +12,6 @@ import ops
 
 from common.exceptions import ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError
 from literals import (
-    CHARM_USER,
     CLIENT_PORT,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
@@ -118,7 +117,7 @@ class BaseEvents(ops.Object):
 
         if not (
             primary_ip := (
-                self.charm.state.unit_server.model.private_ip
+                self.charm.workload.get_private_ip()
                 if self.charm.unit.is_leader()
                 else self.charm.cluster_manager.get_primary_ip()
             )
@@ -133,13 +132,21 @@ class BaseEvents(ops.Object):
             self.charm.config_manager.set_acl_file()
             self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
             self.charm.config_manager.set_sentinel_acl_file()
-            self.charm.workload.mkdir(
-                self.charm.workload.working_dir, user=CHARM_USER, group=CHARM_USER
-            )
         except (ValkeyWorkloadCommandError, ValueError):
             logger.error("Failed to set configuration")
+            self.charm.status.set_running_status(
+                CharmStatuses.CONFIGURATION_ERROR.value,
+                scope="unit",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
             event.defer()
             return
+        self.charm.state.statuses.delete(
+            CharmStatuses.CONFIGURATION_ERROR.value,
+            scope="unit",
+            component=self.charm.cluster_manager.name,
+        )
         self.charm.status.set_running_status(
             ValkeyServiceStatuses.SERVICE_STARTING.value,
             scope="unit",

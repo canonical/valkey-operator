@@ -42,6 +42,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.valkey_service = "valkey"
         self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
+        self.cli = "valkey-cli"
 
     @property
     @override

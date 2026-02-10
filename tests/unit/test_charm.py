@@ -83,7 +83,6 @@ def test_start_leader_unit(cloud_spec):
 
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
     ):
         # generate passwords
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
@@ -131,7 +130,6 @@ def test_start_non_leader_unit(cloud_spec):
 
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("workload_k8s.ValkeyK8sWorkload.mkdir"),
         patch("managers.cluster.ClusterManager.get_primary_ip", return_value="127.1.0.1"),
     ):
         state_out = ctx.run(ctx.on.start(), state_in)

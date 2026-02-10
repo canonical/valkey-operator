@@ -20,6 +20,8 @@ from literals import (
     SNAP_CURRENT_PATH,
     SNAP_NAME,
     SNAP_REVISION,
+    SNAP_SENTINEL_ACL_FILE,
+    SNAP_SENTINEL_CONFIG_FILE,
     SNAP_SERVICE,
 )
 
@@ -36,8 +38,11 @@ class ValkeyVmWorkload(WorkloadBase):
 
         self.root = pathops.LocalPath("/")
         self.config_file = self.root / SNAP_CURRENT_PATH / SNAP_CONFIG_FILE
+        self.sentinel_config = self.root / SNAP_CURRENT_PATH / SNAP_SENTINEL_CONFIG_FILE
         self.acl_file = self.root / SNAP_CURRENT_PATH / SNAP_ACL_FILE
+        self.sentinel_acl_file = self.root / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
+        self.cli = "charmed-valkey.cli"
 
     @property
     @override

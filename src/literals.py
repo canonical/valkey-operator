@@ -16,7 +16,9 @@ SNAP_SERVICE = "server"
 SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "var/snap/charmed-valkey/current"
 SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
+SNAP_SENTINEL_CONFIG_FILE = "etc/charmed-valkey/sentinel.conf"
 SNAP_ACL_FILE = "etc/charmed-valkey/users.acl"
+SNAP_SENTINEL_ACL_FILE = "etc/charmed-valkey/sentinel-users.acl"
 
 # todo: update these paths once directories in the rock are complying with the standard
 CONFIG_FILE = "var/lib/valkey/valkey.conf"
