@@ -184,6 +184,7 @@ class BaseEvents(ops.Object):
 
         self.unit_fully_started.emit()
 
+    # TODO check how to trigger if defered without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
         """Handle the unit-fully-started event."""
         self.charm.status.set_running_status(

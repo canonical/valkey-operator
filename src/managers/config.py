@@ -22,7 +22,6 @@ from literals import (
     CLIENT_PORT,
     PRIMARY_NAME,
     QUORUM_NUMBER,
-    SENTINEL_ACL_FILE,
     SENTINEL_PORT,
     CharmUsers,
     Substrate,
@@ -144,7 +143,11 @@ class ConfigManager(ManagerStatusProtocol):
 
         sentinel_config = f"port {SENTINEL_PORT}\n"
 
-        sentinel_config += f"aclfile {SENTINEL_ACL_FILE}\n"
+        # TODO remove once deamonized in snap
+        if self.state.substrate == Substrate.VM:
+            sentinel_config += "daemonize yes\n"
+
+        sentinel_config += f"aclfile {self.workload.sentinel_acl_file.as_posix()}\n"
         # TODO consider adding quorum calculation based on number of units
         sentinel_config += (
             f"sentinel monitor {PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"

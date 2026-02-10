@@ -89,6 +89,13 @@ class ValkeyVmWorkload(WorkloadBase):
     def start(self) -> None:
         try:
             self.valkey.start(services=[SNAP_SERVICE])
+            # TODO replace with snap service when PR merged
+            self.exec(
+                [
+                    "charmed-valkey.sentinel",
+                    self.sentinel_config.as_posix(),
+                ]
+            )
         except snap.SnapError as e:
             logger.exception(str(e))
 
