@@ -7,6 +7,12 @@ import jubilant
 import valkey
 
 from literals import CharmUsers
+from tests.integration.cw_helpers import (
+    assert_continuous_writes_consistent,
+    assert_continuous_writes_increasing,
+    start_continuous_writes,
+    stop_continuous_writes,
+)
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
@@ -14,13 +20,6 @@ from tests.integration.helpers import (
     get_cluster_hostnames,
     get_password,
     seed_valkey,
-)
-
-from .helpers import (
-    assert_continuous_writes_consistent,
-    assert_continuous_writes_increasing,
-    start_continuous_writes,
-    stop_continuous_writes,
 )
 
 logger = logging.getLogger(__name__)

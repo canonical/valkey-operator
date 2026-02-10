@@ -29,7 +29,7 @@ def start_continuous_writes(
     subprocess.Popen(
         [
             "python3",
-            "tests/integration/k8s/ha/continuous_writes.py",
+            "tests/integration/continuous_writes.py",
             endpoints,
             valkey_user,
             valkey_password,
