@@ -89,7 +89,10 @@ class ConfigManager(ManagerStatusProtocol):
 
     def generate_tls_config(self) -> dict[str, str]:
         """Return the TLS configuration based on the current state."""
-        if self.state.unit_server.tls_client_state != TLSState.TLS:
+        if not (
+            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            and self.state.unit_server.client_cert_ready
+        ):
             return {"tls-port": "0"}
 
         tls_config = {
@@ -101,7 +104,10 @@ class ConfigManager(ManagerStatusProtocol):
         }
 
         # peer TLS only possible when server-side TLS enabled
-        if self.state.unit_server.tls_peer_state == TLSState.TLS:
+        if (
+            self.state.unit_server.tls_peer_state in [TLSState.TLS, TLSState.TO_TLS]
+            and self.state.unit_server.peer_cert_ready
+        ):
             tls_config["tls-client-cert-file"] = self.workload.tls_paths.peer_cert.as_posix()
             tls_config["tls-client-key-file"] = self.workload.tls_paths.peer_key.as_posix()
             tls_config["tls-replication"] = "yes"

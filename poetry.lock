@@ -1147,8 +1147,8 @@ sniffio = "*"
 [package.source]
 type = "git"
 url = "https://github.com/skourta/valkey-glide"
-reference = "add-build-rs"
-resolved_reference = "5e2dfce07bed84dc8637e1c43aa55b135a76137f"
+reference = "add-build-rs-to-async-client"
+resolved_reference = "96f76a45dee1cfe6cf8d6b421b34cad57088bdff"
 subdirectory = "python/glide-async"
 
 [[package]]
@@ -1191,4 +1191,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "3da477e0edd769c881cb96ee9240c07ff806e1eab2da48c6e6fcfa5159661fc5"
+content-hash = "af3f20fc5b6058fd654895d62e82f0f8c366e1f25035688d95586bf5f02afb9c"

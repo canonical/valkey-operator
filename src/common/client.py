@@ -8,10 +8,13 @@ import logging
 from typing import Any
 
 from glide import (
+    AdvancedGlideClientConfiguration,
     GlideClient,
     GlideClientConfiguration,
+    GlideError,
     NodeAddress,
     ServerCredentials,
+    TlsAdvancedConfiguration,
 )
 
 from common.exceptions import (
@@ -32,20 +35,43 @@ class ValkeyClient:
         username: str,
         password: str,
         hosts: list[str],
+        tls_cert: bytes | None,
+        tls_key: bytes | None,
+        tls_ca_cert: bytes | None,
     ):
         self.hosts = hosts
         self.user = username
         self.password = password
+        self.tls_cert = tls_cert
+        self.tls_key = tls_key
+        self.tls_ca_cert = tls_ca_cert
 
     async def create_client(self) -> GlideClient:
         """Initialize the Valkey client."""
         addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in self.hosts]
         credentials = ServerCredentials(username=self.user, password=self.password)
-        client_config = GlideClientConfiguration(
-            addresses,
-            credentials=credentials,
-            request_timeout=1000,  # in milliseconds
-        )
+
+        # only use the TLS options if the client cert is available
+        if self.tls_cert:
+            tls_config = TlsAdvancedConfiguration(
+                client_cert_pem=self.tls_cert,
+                client_key_pem=self.tls_key,
+                root_pem_cacerts=self.tls_ca_cert,
+            )
+
+            client_config = GlideClientConfiguration(
+                addresses,
+                use_tls=True,
+                credentials=credentials,
+                request_timeout=1000,  # in milliseconds
+                advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
+            )
+        else:
+            client_config = GlideClientConfiguration(
+                addresses,
+                credentials=credentials,
+                request_timeout=1000,  # in milliseconds
+            )
         return await GlideClient.create(client_config)
 
     async def _run_custom_command(self, command: list[str]) -> Any:
@@ -62,8 +88,7 @@ class ValkeyClient:
             client = await self.create_client()
             result = await asyncio.wait_for(client.custom_command(command), timeout=5)
             return result
-        # TODO refine exception handling
-        except Exception as e:
+        except (GlideError, FileNotFoundError) as e:
             logger.error("Error running custom command: %s", e)
             raise ValkeyCustomCommandError(f"Could not run custom command: {e}")
         finally:

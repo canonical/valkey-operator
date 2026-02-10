@@ -112,6 +112,21 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def read_raw_file(self, path: pathops.PathProtocol) -> bytes:
+        """Read a file and return the binary content.
+
+        Args:
+            path (PathProtocol): The file path to read.
+        """
+        try:
+            return path.read_bytes()
+        except (
+            FileNotFoundError,
+            PermissionError,
+            pathops.PebbleConnectionError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
     def remove_file(self, path: pathops.PathProtocol) -> None:
         """Delete a file on disk.
 

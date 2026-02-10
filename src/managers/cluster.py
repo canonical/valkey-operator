@@ -14,7 +14,7 @@ from common.client import ValkeyClient
 from common.exceptions import ValkeyACLLoadError, ValkeyTLSLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers
+from literals import CharmUsers, TLSState
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -33,16 +33,32 @@ class ClusterManager(ManagerStatusProtocol):
         self.admin_password = self.state.cluster.internal_users_credentials.get(
             CharmUsers.VALKEY_ADMIN.value, ""
         )
-        self.cluster_hostnames = [server.model.hostname for server in self.state.servers]
+        self.cluster_hostnames = [server.hostname for server in self.state.servers]
+
+    def _get_valkey_client(self) -> ValkeyClient:
+        """Get a client connection to Valkey."""
+        if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
+            tls_cert = self.workload.read_raw_file(self.workload.tls_paths.client_cert)
+            tls_key = self.workload.read_raw_file(self.workload.tls_paths.client_key)
+            tls_ca_cert = self.workload.read_raw_file(self.workload.tls_paths.client_ca)
+        else:
+            tls_cert = None
+            tls_key = None
+            tls_ca_cert = None
+
+        return ValkeyClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            hosts=[self.state.bind_address],
+            tls_cert=tls_cert,
+            tls_key=tls_key,
+            tls_ca_cert=tls_ca_cert,
+        )
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                hosts=self.cluster_hostnames,
-            )
+            client = self._get_valkey_client()
             client.reload_acl()
         except ValkeyACLLoadError:
             raise
@@ -50,11 +66,7 @@ class ClusterManager(ManagerStatusProtocol):
     def enable_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Enable TLS by loading the TLS settings."""
         try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                hosts=self.cluster_hostnames,
-            )
+            client = self._get_valkey_client()
             client.enable_tls(tls_config)
         except ValkeyTLSLoadError:
             raise
@@ -62,11 +74,7 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_tls_settings(self) -> None:
         """Reload the TLS settings."""
         try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                hosts=self.cluster_hostnames,
-            )
+            client = self._get_valkey_client()
             client.reload_tls()
         except ValkeyTLSLoadError:
             raise
@@ -74,11 +82,7 @@ class ClusterManager(ManagerStatusProtocol):
     def disable_tls_settings(self) -> None:
         """Disable TLS by loading the default settings."""
         try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                hosts=self.cluster_hostnames,
-            )
+            client = self._get_valkey_client()
             client.disable_tls()
         except ValkeyTLSLoadError:
             raise
