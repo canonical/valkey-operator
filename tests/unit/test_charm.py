@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from glide_shared import GlideError
 from ops import ActiveStatus, pebble, testing
 
 from common.exceptions import ValkeyACLLoadError
@@ -294,7 +295,7 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
     )
     with (
         patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("common.client.ValkeyClient.create_client", side_effect=Exception("fail")),
+        patch("common.client.ValkeyClient.create_client", side_effect=GlideError("fail")),
         patch("core.models.RelationState.update") as mock_update,
     ):
         ctx.run(ctx.on.config_changed(), state_in)
