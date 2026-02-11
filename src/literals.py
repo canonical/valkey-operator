@@ -56,7 +56,7 @@ class CharmUsers(StrEnum):
 
 CHARM_USERS_ROLE_MAP = {
     CharmUsers.VALKEY_ADMIN: "~* +@all",
-    CharmUsers.VALKEY_SENTINEL: "+client +config +info +publish +subscribe +monitor +ping +replicaof +failover +script|kill +multi +exec &__sentinel__:hello",
+    CharmUsers.VALKEY_SENTINEL: "+subscribe +publish +failover +script|kill +ping +info +multi +slaveof +config +client +exec &__sentinel__:hello",
     CharmUsers.VALKEY_REPLICA: "+psync +replconf +ping",
     CharmUsers.VALKEY_MONITORING: "-@all +@connection +memory -readonly +strlen +config|get +xinfo +pfcount -quit +zcard +type +xlen -readwrite -command +client -wait +scard +llen +hlen +get +eval +slowlog +cluster|info +cluster|slots +cluster|nodes -hello -echo +info +latency +scan -reset -auth -asking",
     CharmUsers.SENTINEL_ADMIN: "~* +@all",

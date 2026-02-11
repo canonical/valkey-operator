@@ -90,10 +90,10 @@ class ConfigManager(ManagerStatusProtocol):
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
             config_properties["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
-            config_properties["primaryuser"] = CharmUsers.VALKEY_REPLICA.value
-            config_properties["primaryauth"] = self.state.cluster.internal_users_credentials.get(
-                CharmUsers.VALKEY_REPLICA.value, ""
-            )
+        config_properties["primaryuser"] = CharmUsers.VALKEY_REPLICA.value
+        config_properties["primaryauth"] = self.state.cluster.internal_users_credentials.get(
+            CharmUsers.VALKEY_REPLICA.value, ""
+        )
 
         return config_properties
 
