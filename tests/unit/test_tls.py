@@ -233,18 +233,6 @@ def test_client_certificate_available(cloud_spec):
     client_tls_relation = testing.Relation(
         id=3,
         endpoint=CLIENT_TLS_RELATION_NAME,
-        remote_app_data={
-            "certificates": f"{
-                [
-                    {
-                        'ca': ca,
-                        'certificate_signing_request': csr,
-                        'certificate': cert,
-                        'chain': f'{[cert, ca]}',
-                    }
-                ]
-            }"
-        },
     )
     certificate = ProviderCertificate(
         relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
@@ -292,18 +280,6 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
     client_tls_relation = testing.Relation(
         id=3,
         endpoint=CLIENT_TLS_RELATION_NAME,
-        remote_app_data={
-            "certificates": f"{
-                [
-                    {
-                        'ca': ca,
-                        'certificate_signing_request': csr,
-                        'certificate': cert,
-                        'chain': f'{[cert, ca]}',
-                    }
-                ]
-            }"
-        },
     )
     certificate = ProviderCertificate(
         relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
@@ -338,3 +314,132 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
             enable_tls.assert_not_called()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"
+
+
+def test_peer_certificate_available(cloud_spec):
+    ca = MagicMock("my_ca")
+    client_csr = MagicMock("another_value")
+    client_cert = MagicMock("another_value")
+    peer_csr = MagicMock("my_csr")
+    peer_cert = MagicMock("my_cert")
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "started": "True",
+            "tls-client-state": "tls",
+            "tls-peer-state": "to-tls",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    peer_tls_relation = testing.Relation(
+        id=4,
+        endpoint=PEER_TLS_RELATION_NAME,
+    )
+    client_certificate = ProviderCertificate(
+        relation_id=4,
+        certificate=client_cert,
+        certificate_signing_request=client_csr,
+        ca=ca,
+        chain=[client_cert, ca],
+    )
+    peer_certificate = ProviderCertificate(
+        relation_id=4,
+        certificate=peer_cert,
+        certificate_signing_request=peer_csr,
+        ca=ca,
+        chain=[peer_cert, ca],
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, peer_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
+
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                side_effect=[([client_certificate], None), ([peer_certificate], None)],
+            ),
+            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.tls.TLSManager.write_certificate"),
+        ):
+            event.certificate = peer_certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
+
+            enable_tls.assert_called_once()
+            assert state_out.get_relation(1).local_unit_data.get("peer-cert-ready") == "true"
+            assert state_out.get_relation(1).local_unit_data.get("tls-peer-state") == "tls"
+
+
+def test_peer_certificate_available_not_all_units_ready(cloud_spec):
+    ca = MagicMock("my_ca")
+    client_csr = MagicMock("another_value")
+    client_cert = MagicMock("another_value")
+    peer_csr = MagicMock("my_csr")
+    peer_cert = MagicMock("my_cert")
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "started": "True",
+            "tls-client-state": "tls",
+            "tls-peer-state": "to-tls",
+        },
+        peers_data={1: {"started": "True", "peer-cert-ready": "False"}},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    peer_tls_relation = testing.Relation(
+        id=4,
+        endpoint=PEER_TLS_RELATION_NAME,
+    )
+    client_certificate = ProviderCertificate(
+        relation_id=4,
+        certificate=client_cert,
+        certificate_signing_request=client_csr,
+        ca=ca,
+        chain=[client_cert, ca],
+    )
+    peer_certificate = ProviderCertificate(
+        relation_id=4,
+        certificate=peer_cert,
+        certificate_signing_request=peer_csr,
+        ca=ca,
+        chain=[peer_cert, ca],
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, peer_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
+
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                side_effect=[([client_certificate], None), ([peer_certificate], None)],
+            ),
+            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.tls.TLSManager.write_certificate"),
+        ):
+            event.certificate = peer_certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
+
+            enable_tls.assert_not_called()
+            assert state_out.get_relation(1).local_unit_data.get("peer-cert-ready") == "true"
+            assert state_out.get_relation(1).local_unit_data.get("tls-peer-state") == "to-tls"
