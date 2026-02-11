@@ -17,7 +17,7 @@ def c_writes(juju: jubilant.Juju):
     """Create instance of the ContinuousWrites."""
     app = APP_NAME
     logger.debug(f"Creating ContinuousWrites instance for app with name {app}")
-    return ContinuousWrites(juju, app, log_written_values=True)
+    return ContinuousWrites(juju, app)
 
 
 @pytest.fixture(scope="function")
