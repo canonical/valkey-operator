@@ -10,12 +10,15 @@ import valkey
 from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from literals import CLIENT_PORT, SENTINEL_PORT
+from tests.integration.continuous_writes import ContinuousWrites
 
 logger = logging.getLogger(__name__)
 
-WRITES_LAST_WRITTEN_VAL_PATH = "last_written_value"
+# WRITES_LAST_WRITTEN_VAL_PATH = "last_written_value"
+# KEY = "cw_key"
 
-KEY = "cw_key"
+KEY = ContinuousWrites.KEY
+WRITES_LAST_WRITTEN_VAL_PATH = ContinuousWrites.LAST_WRITTEN_VAL_PATH
 
 
 def start_continuous_writes(
@@ -60,9 +63,9 @@ def assert_continuous_writes_increasing(
         sentinel_kwargs={"password": sentinel_password, "username": sentinel_user},
     )
     master = client.master_for("primary")
-    writes_count = int(master.get(KEY))
+    writes_count = int(master.llen(KEY))
     time.sleep(10)
-    more_writes = int(master.get(KEY))
+    more_writes = int(master.llen(KEY))
     assert more_writes > writes_count, "Writes not continuing to DB"
     logger.info("Continuous writes are increasing.")
 
@@ -79,6 +82,9 @@ def assert_continuous_writes_consistent(
             with open(WRITES_LAST_WRITTEN_VAL_PATH, "r") as f:
                 last_written_value = int(f.read().rstrip())
 
+    if not last_written_value:
+        raise ValueError("Could not read last written value from file.")
+
     for endpoint in endpoints.split(","):
         client = valkey.Valkey(
             host=endpoint,
@@ -87,8 +93,12 @@ def assert_continuous_writes_consistent(
             password=valkey_password,
             decode_responses=True,
         )
-        last_value = int(client.get(KEY))
+        last_value = int(client.lrange(KEY, 0, 0)[0])
+        count = int(client.llen(KEY))
         assert last_written_value == last_value, (
             f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
+        )
+        assert count == last_written_value + 1, (
+            f"endpoint: {endpoint}, expected count: {last_written_value + 1}, current count: {count}"
         )
         logger.info(f"Continuous writes are consistent on {endpoint}.")

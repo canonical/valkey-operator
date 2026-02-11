@@ -14,7 +14,6 @@ tenacity = "*"
 data-platform-helpers = ">=0.1.7"
 # TODO replace with official release once build from source is possible
 # https://github.com/valkey-io/valkey-glide/pull/5202
-valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs" }
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"

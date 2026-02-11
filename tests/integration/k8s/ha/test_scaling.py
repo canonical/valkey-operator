@@ -10,8 +10,6 @@ from literals import CharmUsers
 from tests.integration.cw_helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
-    start_continuous_writes,
-    stop_continuous_writes,
 )
 from tests.integration.helpers import (
     APP_NAME,
@@ -47,18 +45,9 @@ def test_seed_data(juju: jubilant.Juju) -> None:
     seed_valkey(juju, target_gb=1)
 
 
-def test_scale_up(juju: jubilant.Juju) -> None:
+def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
-    init_endpoints = ",".join(get_cluster_hostnames(juju, APP_NAME))
-    # start writing data to the cluster
-    start_continuous_writes(
-        endpoints=init_endpoints,
-        valkey_user=CharmUsers.VALKEY_ADMIN.value,
-        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        sentinel_user=CharmUsers.SENTINEL_ADMIN.value,
-        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_ADMIN),
-    )
 
     # scale up
     juju.add_unit(APP_NAME, num_units=2)
@@ -99,7 +88,8 @@ def test_scale_up(juju: jubilant.Juju) -> None:
         sentinel_user=CharmUsers.SENTINEL_ADMIN.value,
         sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_ADMIN),
     )
-    stop_continuous_writes()
+    logger.info("Stopping continuous writes after scale up test.")
+    logger.info(c_writes.stop())
     assert_continuous_writes_consistent(
         endpoints=endpoints,
         valkey_user=CharmUsers.VALKEY_ADMIN.value,
