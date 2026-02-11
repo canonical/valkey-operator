@@ -11,12 +11,11 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     CharmUsers,
 )
-from statuses import ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
-    CharmStatuses,
     create_valkey_client,
     does_status_match,
     fast_forward,

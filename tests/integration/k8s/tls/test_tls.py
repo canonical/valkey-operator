@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+import logging
+
+import jubilant
+
+from literals import CharmUsers
+from statuses import CharmStatuses, TLSStatuses
+from tests.integration.helpers import (
+    APP_NAME,
+    IMAGE_RESOURCE,
+    INTERNAL_USERS_SECRET_LABEL,
+    TLS_NAME,
+    does_status_match,
+    download_client_certificate_from_unit,
+    get_cluster_hostnames,
+    get_key,
+    get_secret_by_label,
+    set_key,
+)
+
+logger = logging.getLogger(__name__)
+
+# TODO scale up when scaling is implemented
+NUM_UNITS = 1
+TEST_KEY = "test_key"
+TEST_VALUE = "test_value"
+
+
+def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
+    """Deploy the charm under test and a TLS provider."""
+    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
+    juju.deploy(TLS_NAME, channel="1/edge")
+    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    juju.integrate(f"{APP_NAME}:peer-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={
+                APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+            expected_unit_statuses={
+                APP_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+        ),
+        timeout=600,
+    )
+
+
+async def test_tls_enabled(juju: jubilant.Juju) -> None:
+    """Check if the TLS has been enabled on app startup."""
+    logger.info("Downloading TLS certificates from deployed app.")
+    download_client_certificate_from_unit(juju, APP_NAME)
+
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    assert password is not None, "Admin password secret not found"
+
+    logger.info("Check access with TLS enabled")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=True,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data with TLS enabled"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=True,
+        key=TEST_KEY,
+    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+
+
+async def test_disable_tls(juju: jubilant.Juju) -> None:
+    """Disable TLS on a running cluster and check if it is still accessible."""
+    logger.info("Removing peer-certificates and client-certificates relations")
+    juju.remove_relation(f"{APP_NAME}:peer-certificates", f"{TLS_NAME}:certificates")
+    juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
+
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={
+                APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+            expected_unit_statuses={
+                APP_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+        ),
+        timeout=600,
+    )
+
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    assert password is not None, "Admin password secret not found"
+
+    logger.info("Check access with TLS enabled")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data after TLS was disabled"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after TLS was disabled"
+
+
+async def test_enable_tls(juju: jubilant.Juju) -> None:
+    """Enable TLS on a running cluster and check if it is still accessible."""
+    logger.info("Enabling peer TLS only")
+    juju.integrate(f"{APP_NAME}:peer-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={
+                APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+            expected_unit_statuses={
+                APP_NAME: [TLSStatuses.MISSING_CLIENT_TLS.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+        ),
+        timeout=600,
+    )
+
+    logger.info("Enabling client TLS")
+    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_app_statuses={
+                APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+            expected_unit_statuses={
+                APP_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+                TLS_NAME: [CharmStatuses.ACTIVE_IDLE.value],
+            },
+        ),
+        timeout=600,
+    )
+
+    logger.info("Downloading TLS certificates from deployed app.")
+    download_client_certificate_from_unit(juju, APP_NAME)
+
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    assert password is not None, "Admin password secret not found"
+
+    logger.info("Check access with TLS enabled")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=True,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data with TLS enabled"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=True,
+        key=TEST_KEY,
+    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"

@@ -4,14 +4,20 @@
 
 import contextlib
 import logging
-from enum import Enum
 from pathlib import Path
 from typing import List
 
 import jubilant
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
-from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
+from glide import (
+    AdvancedGlideClientConfiguration,
+    GlideClient,
+    GlideClientConfiguration,
+    NodeAddress,
+    ServerCredentials,
+    TlsAdvancedConfiguration,
+)
 from ops import SecretNotFoundError, StatusBase
 
 from literals import (
@@ -31,20 +37,7 @@ IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstrea
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
-
-
-class CharmStatuses(Enum):
-    """List all StatusObjects here that are checked against in the integration tests."""
-
-    SCALING_NOT_IMPLEMENTED = StatusObject(
-        status="blocked",
-        message="Scaling Valkey is not implemented yet",
-    )
-    SECRET_ACCESS_ERROR = StatusObject(
-        status="blocked",
-        message="Cannot access configured secret, check permissions",
-        running="async",
-    )
+TLS_NAME = "self-signed-certificates"
 
 
 def does_status_match(
@@ -193,6 +186,7 @@ async def create_valkey_client(
     hostnames: list[str],
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
+    tls_enabled: bool = False,
 ):
     """Create and return a Valkey client connected to the cluster.
 
@@ -200,6 +194,7 @@ async def create_valkey_client(
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for the internal user.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         A Valkey client instance connected to the cluster.
@@ -209,10 +204,35 @@ async def create_valkey_client(
     credentials = None
     if username or password:
         credentials = ServerCredentials(username=username, password=password)
-    client_config = GlideClientConfiguration(
-        addresses,
-        credentials=credentials,
-    )
+
+    if tls_enabled:
+        # Read locally stored certificate files
+        with open("client.pem", "rb") as f:
+            tls_cert = f.read()
+        with open("client.key", "rb") as f:
+            tls_key = f.read()
+        with open("client_ca.pem", "rb") as f:
+            tls_ca_cert = f.read()
+
+        tls_config = TlsAdvancedConfiguration(
+            client_cert_pem=tls_cert,
+            client_key_pem=tls_key,
+            root_pem_cacerts=tls_ca_cert,
+        )
+
+        client_config = GlideClientConfiguration(
+            addresses,
+            use_tls=True,
+            credentials=credentials,
+            request_timeout=1000,  # in milliseconds
+            advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
+        )
+    else:
+        client_config = GlideClientConfiguration(
+            addresses,
+            credentials=credentials,
+        )
+
     return await GlideClient.create(client_config)
 
 
@@ -248,7 +268,12 @@ def set_password(
 
 
 async def set_key(
-    hostnames: list[str], username: str, password: str, key: str, value: str
+    hostnames: list[str],
+    username: str,
+    password: str,
+    key: str,
+    value: str,
+    tls_enabled: bool = False,
 ) -> bytes | None:
     """Write a key-value pair to the Valkey cluster.
 
@@ -258,12 +283,21 @@ async def set_key(
         value: The value to write.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
+    client = await create_valkey_client(
+        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
+    )
     return await client.set(key, value)
 
 
-async def get_key(hostnames: list[str], username: str, password: str, key: str) -> bytes | None:
+async def get_key(
+    hostnames: list[str],
+    username: str,
+    password: str,
+    key: str,
+    tls_enabled: bool = False,
+) -> bytes | None:
     """Read a value from the Valkey cluster by key.
 
     Args:
@@ -271,8 +305,11 @@ async def get_key(hostnames: list[str], username: str, password: str, key: str) 
         key: The key to read.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
+    client = await create_valkey_client(
+        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
+    )
     return await client.get(key)
 
 
@@ -285,3 +322,18 @@ def fast_forward(juju: jubilant.Juju):
         yield
     finally:
         juju.model_config({"update-status-hook-interval": old})
+
+
+def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = APP_NAME) -> None:
+    """Copy the client certificate files from a unit to the host's filesystem."""
+    unit = next(iter(juju.status().get_units(app_name)))
+    model_info = juju.show_model()
+
+    if model_info.type == "kubernetes":
+        tls_path = "/var/snap/charmed-valkey/current/tls"
+    else:
+        tls_path = "/var/lib/valkey/tls"
+
+    juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem")
+    juju.scp(f"{unit}:{tls_path}/client.key", "client.key")
+    juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem")
