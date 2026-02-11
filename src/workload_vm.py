@@ -22,6 +22,7 @@ from literals import (
     SNAP_REVISION,
     SNAP_SENTINEL_ACL_FILE,
     SNAP_SENTINEL_CONFIG_FILE,
+    SNAP_SENTINEL_SERVICE,
     SNAP_SERVICE,
 )
 
@@ -43,6 +44,7 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
         self.cli = "charmed-valkey.cli"
+        self.user = "snap_daemon"
 
     @property
     @override
@@ -88,14 +90,7 @@ class ValkeyVmWorkload(WorkloadBase):
     @override
     def start(self) -> None:
         try:
-            self.valkey.start(services=[SNAP_SERVICE])
-            # TODO replace with snap service when PR merged
-            self.exec(
-                [
-                    "charmed-valkey.sentinel",
-                    self.sentinel_config.as_posix(),
-                ]
-            )
+            self.valkey.start(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
         except snap.SnapError as e:
             logger.exception(str(e))
 
@@ -122,6 +117,8 @@ class ValkeyVmWorkload(WorkloadBase):
     def alive(self) -> bool:
         """Check if the Valkey service is running."""
         try:
-            return bool(self.valkey.services[SNAP_SERVICE]["active"])
+            return bool(self.valkey.services[SNAP_SERVICE]["active"]) and bool(
+                self.valkey.services[SNAP_SENTINEL_SERVICE]["active"]
+            )
         except KeyError:
             return False

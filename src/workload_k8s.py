@@ -15,7 +15,6 @@ from core.base_workload import WorkloadBase
 from literals import (
     ACL_FILE,
     CHARM,
-    CHARM_USER,
     CONFIG_FILE,
     SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
@@ -43,6 +42,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
         self.cli = "valkey-cli"
+        self.user = "valkey"
 
     @property
     @override
@@ -60,24 +60,24 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "override": "replace",
                     "summary": "Valkey service",
                     "command": f"valkey-server {self.config_file.as_posix()}",
-                    "user": CHARM_USER,
-                    "group": CHARM_USER,
+                    "user": self.user,
+                    "group": self.user,
                     "startup": "enabled",
                 },
                 self.sentinel_service: {
                     "override": "replace",
                     "summary": "Valkey sentinel service",
                     "command": f"valkey-sentinel {self.sentinel_config.as_posix()}",
-                    "user": CHARM_USER,
-                    "group": CHARM_USER,
+                    "user": self.user,
+                    "group": self.user,
                     "startup": "enabled",
                 },
                 self.metric_service: {
                     "override": "replace",
                     "summary": "Valkey metric exporter",
                     "command": "bin/redis_exporter",
-                    "user": CHARM_USER,
-                    "group": CHARM_USER,
+                    "user": self.user,
+                    "group": self.user,
                     "startup": "enabled",
                 },
             },

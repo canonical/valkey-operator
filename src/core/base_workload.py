@@ -28,6 +28,7 @@ class WorkloadBase(ABC):
         self.sentinel_acl_file: pathops.PathProtocol
         self.working_dir: pathops.PathProtocol
         self.cli: str
+        self.user: str
 
     @property
     @abstractmethod
@@ -111,7 +112,7 @@ class WorkloadBase(ABC):
 
         path = self.config_file
         try:
-            path.write_text(config_string)
+            path.write_text(config_string, user=self.user, group=self.user)
         except (
             FileNotFoundError,
             LookupError,

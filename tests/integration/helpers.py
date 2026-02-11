@@ -336,23 +336,6 @@ def fast_forward(juju: jubilant.Juju):
         juju.model_config({"update-status-hook-interval": old})
 
 
-# TODO switch to sentinel once VM is implemented
-# def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
-#     """Get the primary node of the Valkey cluster.
-
-
-#     Returns:
-#         The IP address of the primary node.
-#     """
-#     hostnames = get_cluster_hostnames(juju, app)
-#     client = create_sentinel_client(
-#         hostnames=hostnames,
-#         valkey_user=CharmUsers.VALKEY_ADMIN.value,
-#         valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-#         sentinel_user=CharmUsers.SENTINEL_CHARM_ADMIN.value,
-#         sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
-#     )
-#     return client.discover_master("primary")[0]
 def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
     """Get the primary node of the Valkey cluster.
 
@@ -360,9 +343,14 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    client = create_valkey_client(hostname=hostnames[0], password=get_password(juju))
-    info = client.info("replication")
-    return hostnames[0] if info["role"] == "master" else info.get("master_host", "")
+    client = create_sentinel_client(
+        hostnames=hostnames,
+        valkey_user=CharmUsers.VALKEY_ADMIN.value,
+        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        sentinel_user=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+    )
+    return client.discover_master("primary")[0]
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:

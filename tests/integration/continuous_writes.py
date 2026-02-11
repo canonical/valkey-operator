@@ -45,6 +45,7 @@ class ContinuousWrites:
         app: str,
         initial_count: int = 0,
         log_written_values: bool = False,
+        in_between_sleep: float = 1,
     ):
         self._juju = juju
         self._app = app
@@ -54,6 +55,7 @@ class ContinuousWrites:
         self._process = None
         self._initial_count = initial_count
         self._log_written_values = log_written_values
+        self._in_between_sleep = in_between_sleep
 
     def _get_config(self) -> SimpleNamespace:
         """Fetch current cluster configuration from Juju."""
@@ -96,7 +98,13 @@ class ContinuousWrites:
         self._process = Process(
             target=self._run_wrapper,
             name="continuous_writes",
-            args=(self._event, self._queue, self._initial_count, self._log_written_values),
+            args=(
+                self._event,
+                self._queue,
+                self._initial_count,
+                self._log_written_values,
+                self._in_between_sleep,
+            ),
         )
 
         self.update()  # Load initial config into queue
@@ -159,7 +167,11 @@ class ContinuousWrites:
 
     @staticmethod
     def _run_wrapper(
-        event: Event, data_queue: Queue, starting_number: int, log_written_values: bool = False
+        event: Event,
+        data_queue: Queue,
+        starting_number: int,
+        log_written_values: bool = False,
+        in_between_sleep: float = 1,
     ) -> None:
         """Entry point for the Process; simplified without unnecessary asyncio."""
         proc_logger = log_to_stderr()
@@ -197,7 +209,7 @@ class ContinuousWrites:
                             proc_logger.info(f"Wrote value: {current_val}")
                         current_val += 1
                         # Throttle to avoid flooding small test runners
-                        time.sleep(1)
+                        time.sleep(in_between_sleep)
                     else:
                         raise WriteFailedError("LPUSH returned 0/None")
                 except Exception as e:
@@ -214,8 +226,18 @@ class ContinuousWrites:
 if __name__ == "__main__":
     # Example usage
     juju_env = jubilant.Juju(model="testing")
-    cw = ContinuousWrites(juju=juju_env, app="valkey", initial_count=100, log_written_values=False)
+    cw = ContinuousWrites(
+        juju=juju_env,
+        app="valkey",
+        initial_count=100,
+        log_written_values=True,
+        in_between_sleep=1,
+    )
     cw.clear()
     cw.start()
-    time.sleep(10)
-    print(f"Stats: {cw.clear()}")
+    # continue until manually stopped by ctrl+c or by calling cw.stop() from another process
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"Stats: {cw.clear()}")

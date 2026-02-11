@@ -17,7 +17,6 @@ from data_platform_helpers.advanced_statuses.types import Scope
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
-    CHARM_USER,
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
     PRIMARY_NAME,
@@ -118,7 +117,12 @@ class ConfigManager(ManagerStatusProtocol):
             if "VALKEY_" not in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        self.workload.write_file(acl_content, self.workload.acl_file)
+        self.workload.write_file(
+            acl_content,
+            self.workload.acl_file,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
 
     def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
         """Generate an ACL line for a given user.
@@ -143,10 +147,6 @@ class ConfigManager(ManagerStatusProtocol):
 
         sentinel_config = f"port {SENTINEL_PORT}\n"
 
-        # TODO remove once daemonized in snap
-        if self.state.substrate == Substrate.VM:
-            sentinel_config += "daemonize yes\n"
-
         sentinel_config += f"aclfile {self.workload.sentinel_acl_file.as_posix()}\n"
         # TODO consider adding quorum calculation based on number of units
         sentinel_config += (
@@ -166,20 +166,14 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config += f"sentinel failover-timeout {PRIMARY_NAME} 180000\n"
         sentinel_config += f"sentinel parallel-syncs {PRIMARY_NAME} 1\n"
 
-        if self.state.substrate == Substrate.K8S:
-            # on k8s we need to set the ownership of the sentinel config file to the non-root user that the valkey process runs as in order for sentinel to be able to read/write it
-            self.workload.write_file(
-                sentinel_config,
-                self.workload.sentinel_config,
-                mode=0o600,
-                user=CHARM_USER,
-                group=CHARM_USER,
-            )
-        else:
-            self.workload.write_file(
-                sentinel_config,
-                self.workload.sentinel_config,
-            )
+        # on k8s we need to set the ownership of the sentinel config file to the non-root user that the valkey process runs as in order for sentinel to be able to read/write it
+        self.workload.write_file(
+            sentinel_config,
+            self.workload.sentinel_config,
+            mode=0o600,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
 
     def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the Sentinel ACL file with appropriate user permissions.
@@ -196,7 +190,12 @@ class ConfigManager(ManagerStatusProtocol):
             if "VALKEY_" in user.name:
                 continue
             acl_content += self._get_user_acl_line(user, passwords=passwords)
-        self.workload.write_file(acl_content, self.workload.sentinel_acl_file)
+        self.workload.write_file(
+            acl_content,
+            self.workload.sentinel_acl_file,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
 
     def generate_password(self) -> str:
         """Create randomized string for use as app passwords.

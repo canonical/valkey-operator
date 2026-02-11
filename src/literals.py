@@ -7,12 +7,12 @@
 from enum import StrEnum
 
 CHARM = "valkey"
-CHARM_USER = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISION = 14
+SNAP_REVISION = 16
 SNAP_SERVICE = "server"
+SNAP_SENTINEL_SERVICE = "sentinel"
 SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "var/snap/charmed-valkey/current"
 SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
