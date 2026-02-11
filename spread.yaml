@@ -95,7 +95,6 @@ backends:
       CHARM_UBUNTU_BASE: "$(HOST: echo $CHARM_UBUNTU_BASE)"
       # To install pipx on self-hosted runners
       CONCIERGE_EXTRA_DEBS: pipx
-      CONCIERGE_MICROK8S_CHANNEL: 1.34-strict/stable
       DOCKERHUB_MIRROR: "$(HOST: echo $DOCKERHUB_MIRROR)"
     systems:
       - self-hosted-linux-amd64-noble-medium:
@@ -124,7 +123,7 @@ prepare: |
     # Running on IS-hosted runner; configure microk8s to use Docker Hub mirror
     # Run before concierge prepare because of https://github.com/canonical/concierge/issues/75
 
-    snap install microk8s --channel "$CONCIERGE_MICROK8S_CHANNEL" --classic
+    snap install microk8s --channel "latest/stable" --classic
 
     # Wait for microk8s to populate iptables
     # https://chat.canonical.com/canonical/pl/jo5cg6wqjjrudqd5ybj6hhttee
