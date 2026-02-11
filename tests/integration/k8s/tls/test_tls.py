@@ -47,6 +47,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
             },
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
 
@@ -99,6 +101,8 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
             },
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
@@ -143,6 +147,8 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
             },
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
     logger.info("Enabling client TLS")
@@ -160,6 +166,8 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
             },
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
     logger.info("Downloading TLS certificates from deployed app.")

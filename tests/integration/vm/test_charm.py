@@ -11,11 +11,10 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     CharmUsers,
 )
-from statuses import ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
     INTERNAL_USERS_SECRET_LABEL,
-    CharmStatuses,
     create_valkey_client,
     does_status_match,
     fast_forward,
@@ -43,6 +42,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
             expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
 
@@ -82,7 +83,12 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     set_password(juju, new_password)
 
     # wait for config-changed hook to finish executing
-    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+    juju.wait(
+        lambda status: jubilant.all_agents_idle(status, APP_NAME),
+        timeout=1200,
+        delay=5,
+        successes=3,
+    )
 
     logger.info("Ensure password was updated on charm-internal secret")
     updated_secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
@@ -111,7 +117,12 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     juju.config(app=APP_NAME, reset=[INTERNAL_USERS_PASSWORD_CONFIG])
 
     # wait for config-changed hook to finish executing
-    juju.wait(lambda status: jubilant.all_agents_idle(status, APP_NAME), timeout=1200)
+    juju.wait(
+        lambda status: jubilant.all_agents_idle(status, APP_NAME),
+        timeout=1200,
+        delay=5,
+        successes=3,
+    )
 
     # make sure we can still read data with the previously set password
     assert await get_key(
@@ -146,6 +157,8 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
             expected_app_statuses={APP_NAME: [ClusterStatuses.PASSWORD_UPDATE_FAILED.value]},
         ),
         timeout=1200,
+        delay=5,
+        successes=3,
     )
 
     logger.info("Updating password correctly now")
@@ -193,6 +206,8 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
             expected_app_statuses={APP_NAME: [CharmStatuses.SECRET_ACCESS_ERROR.value]},
         ),
         timeout=1200,
+        delay=5,
+        successes=3,
     )
 
     logger.info("Secret access will be granted now - wait for updated password")
@@ -211,6 +226,8 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
             expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
         ),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
     # perform read operation with the updated password
