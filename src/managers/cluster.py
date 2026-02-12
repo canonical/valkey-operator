@@ -199,9 +199,9 @@ class ClusterManager(ManagerStatusProtocol):
             password,
         ] + command
         output, error = self.workload.exec(cli_command)
-        logger.debug("Executed command: %s, got output: %s", " ".join(command), output)
+        logger.debug("Executed command: %s, got output: %s", " ".join(command[0]), output)
         if error:
-            logger.error("Error output from command '%s': %s", " ".join(command), error)
+            logger.error("Error output from command '%s': %s", " ".join(command[0]), error)
         return output, error
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
