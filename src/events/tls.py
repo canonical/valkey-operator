@@ -14,7 +14,11 @@ from charmlibs.interfaces.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 
-from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyCertificatesNotReadyError,
+    ValkeyTLSLoadError,
+    ValkeyWorkloadCommandError,
+)
 from literals import (
     CLIENT_TLS_RELATION_NAME,
     PEER_TLS_RELATION_NAME,
@@ -134,7 +138,16 @@ class TLSEvents(ops.Object):
             return
 
         if tls_state == TLSState.TO_TLS:
-            self._enable_tls(cert_type, event)
+            try:
+                self._enable_tls(cert_type)
+            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
+                logger.error("Failed to enable %s TLS", cert_type)
+                event.defer()
+                return
+            except ValkeyCertificatesNotReadyError:
+                logger.warning("Not all units have stored the %s certificate", cert_type)
+                event.defer()
+                return
 
     def _on_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
@@ -163,26 +176,18 @@ class TLSEvents(ops.Object):
         self.charm.tls_manager.set_cert_state(tls_type, is_ready=False)
         self.charm.tls_manager.set_tls_state(tls_type, TLSState.NO_TLS)
 
-    def _enable_tls(self, tls_type: TLSType, event: ops.EventBase) -> None:
+    def _enable_tls(self, tls_type: TLSType) -> None:
         """Check preconditions and enable TLS if possible."""
         if (
             tls_type == TLSType.CLIENT
-            and all(server.client_cert_ready for server in self.charm.state.servers)
+            and not all(server.client_cert_ready for server in self.charm.state.servers)
             or tls_type == TLSType.PEER
-            and all(server.peer_cert_ready for server in self.charm.state.servers)
+            and not all(server.peer_cert_ready for server in self.charm.state.servers)
         ):
-            logger.info("Enabling %s TLS in Valkey", tls_type)
-            try:
-                self.charm.config_manager.set_config_properties()
-                tls_config = self.charm.config_manager.generate_tls_config()
-                self.charm.cluster_manager.enable_tls_settings(tls_config)
-                self.charm.tls_manager.set_tls_state(tls_type, TLSState.TLS)
-                return
-            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
-                logger.error("Failed to enable %s TLS", tls_type)
-                event.defer()
-                return
+            raise ValkeyCertificatesNotReadyError
 
-        logger.info("Not all units have stored the %s certificate", tls_type)
-        event.defer()
-        return
+        logger.info("Enabling %s TLS in Valkey", tls_type)
+        self.charm.config_manager.set_config_properties()
+        tls_config = self.charm.config_manager.generate_tls_config()
+        self.charm.cluster_manager.enable_tls_settings(tls_config)
+        self.charm.tls_manager.set_tls_state(tls_type, TLSState.TLS)

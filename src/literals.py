@@ -7,7 +7,7 @@
 from enum import StrEnum
 
 CHARM = "valkey"
-CHARM_USER = "valkey"
+CHARM_USER = "_daemon_"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"

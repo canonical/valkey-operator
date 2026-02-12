@@ -4,6 +4,6 @@ environment:
 systems:
   - self-hosted-linux-amd64-noble-medium
 execute: |
-  tox run -e integration -- "tests/integration/vm/$TEST_MODULE" --alluredir="$SPREAD_TASK/allure-results"
+  tox run -e integration -- "tests/integration/vm/tls/$TEST_MODULE" --alluredir="$SPREAD_TASK/allure-results"
 artifacts:
   - allure-results

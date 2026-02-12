@@ -22,3 +22,7 @@ class ValkeyTLSLoadError(ValkeyClientError):
 
 class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
+
+
+class ValkeyCertificatesNotReadyError(Exception):
+    """Custom Exception if not all units have stored the TLS certificates."""

@@ -330,10 +330,12 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
     model_info = juju.show_model()
 
     if model_info.type == "kubernetes":
-        tls_path = "/var/snap/charmed-valkey/current/tls"
-    else:
         tls_path = "/var/lib/valkey/tls"
-
-    juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem")
-    juju.scp(f"{unit}:{tls_path}/client.key", "client.key")
-    juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem")
+        juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem", container="valkey")
+        juju.scp(f"{unit}:{tls_path}/client.key", "client.key", container="valkey")
+        juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem", container="valkey")
+    else:
+        tls_path = "/var/snap/charmed-valkey/current/tls"
+        juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem")
+        juju.scp(f"{unit}:{tls_path}/client.key", "client.key")
+        juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem")

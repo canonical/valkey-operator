@@ -23,7 +23,7 @@ from src.statuses import CharmStatuses, ClusterStatuses
 
 from .helpers import status_is
 
-CHARM_USER = "valkey"
+CHARM_USER = "_daemon_"
 CONTAINER = "valkey"
 SERVICE_VALKEY = "valkey"
 SERVICE_METRIC_EXPORTER = "metric_exporter"
