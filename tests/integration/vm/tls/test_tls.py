@@ -86,7 +86,7 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
     password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
     assert password is not None, "Admin password secret not found"
 
-    logger.info("Check access with TLS enabled")
+    logger.info("Check access with TLS disabled")
     result = await set_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
