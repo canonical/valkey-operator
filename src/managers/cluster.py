@@ -63,27 +63,11 @@ class ClusterManager(ManagerStatusProtocol):
         except ValkeyACLLoadError:
             raise
 
-    def enable_tls_settings(self, tls_config: dict[str, str]) -> None:
-        """Enable TLS by loading the TLS settings."""
+    def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
+        """Update TLS by loading the TLS settings."""
         try:
             client = self._get_valkey_client()
-            client.enable_tls(tls_config)
-        except ValkeyTLSLoadError:
-            raise
-
-    def reload_tls_settings(self) -> None:
-        """Reload the TLS settings."""
-        try:
-            client = self._get_valkey_client()
-            client.reload_tls()
-        except ValkeyTLSLoadError:
-            raise
-
-    def disable_tls_settings(self) -> None:
-        """Disable TLS by loading the default settings."""
-        try:
-            client = self._get_valkey_client()
-            client.disable_tls()
+            client.reload_tls(tls_config)
         except ValkeyTLSLoadError:
             raise
 

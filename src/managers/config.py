@@ -66,7 +66,6 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        config_properties["port"] = str(CLIENT_PORT)
         config_properties["loglevel"] = "verbose"
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
         config_properties["dir"] = self.workload.working_dir.as_posix()
@@ -89,19 +88,28 @@ class ConfigManager(ManagerStatusProtocol):
 
     def generate_tls_config(self) -> dict[str, str]:
         """Return the TLS configuration based on the current state."""
+        tls_config = {
+            "port": str(CLIENT_PORT),
+            "tls-port": "0",
+            "tls-cert-file": "''",
+            "tls-key-file": "''",
+            "tls-ca-cert-dir": "''",
+            "tls-client-cert-file": "''",
+            "tls-client-key-file": "''",
+            "tls-replication": "no",
+        }
+
         if not (
             self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
             and self.state.unit_server.client_cert_ready
         ):
-            return {"tls-port": "0"}
+            return tls_config
 
-        tls_config = {
-            "port": "0",
-            "tls-port": str(CLIENT_PORT),
-            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
-            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
-            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
-        }
+        tls_config["port"] = "0"
+        tls_config["tls-port"] = str(CLIENT_PORT)
+        tls_config["tls-cert-file"] = self.workload.tls_paths.client_cert.as_posix()
+        tls_config["tls-key-file"] = self.workload.tls_paths.client_key.as_posix()
+        tls_config["tls-ca-cert-dir"] = self.workload.tls_paths.ca_certs_dir.as_posix()
 
         # peer TLS only possible when server-side TLS enabled
         if (

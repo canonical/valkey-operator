@@ -104,37 +104,24 @@ class ValkeyClient:
             logger.error(f"Error loading ACL: {e}")
             raise ValkeyACLLoadError(f"Could not load ACL: {e}")
 
-    def enable_tls(self, tls_config: dict[str, str]) -> None:
+    def reload_tls(self, tls_config: dict[str, str]) -> None:
         """Trigger Valkey to load the TLS settings."""
         cmd = ["CONFIG", "SET"]
+
+        # avoid "bind: Address already in use" by advancing the disabled port
+        if tls_config["tls-port"] == "0":
+            cmd.append("tls-port")
+            cmd.append("0")
+            tls_config.pop("tls-port")
+
         for key, value in tls_config.items():
             cmd.append(key)
-            cmd.append(value)
-        logger.debug("Enabling TLS settings: %s", cmd)
+            cmd.append(value.strip("'"))
+        logger.debug("Loading TLS settings: %s", cmd)
 
         try:
             result = asyncio.run(self._run_custom_command(cmd))
-            logger.debug("Enabled TLS settings: %s", result)
+            logger.debug("Loading TLS settings: %s", result)
         except ValkeyCustomCommandError as e:
-            logger.error(f"Error enabling TLS settings: {e}")
+            logger.error(f"Error loading TLS settings: {e}")
             raise ValkeyTLSLoadError("Could not load TLS settings: %s", e)
-
-    def reload_tls(self) -> None:
-        """Trigger Valkey to reload the TLS settings."""
-        try:
-            cmd = ["CONFIG", "SET", "tls-port", str(CLIENT_PORT)]
-            result = asyncio.run(self._run_custom_command(cmd))
-            logger.debug("Reload TLS settings: %s", result)
-        except ValkeyCustomCommandError as e:
-            logger.error(f"Error reloading TLS settings: {e}")
-            raise ValkeyTLSLoadError("Could not load TLS settings: %s", e)
-
-    def disable_tls(self) -> None:
-        """Trigger Valkey to discard the TLS settings."""
-        try:
-            cmd = ["CONFIG", "SET", "tls-port", "0", "port", str(CLIENT_PORT)]
-            result = asyncio.run(self._run_custom_command(cmd))
-            logger.debug("Disable TLS on default port: %s", result)
-        except ValkeyCustomCommandError as e:
-            logger.error(f"Error disabling TLS settings: {e}")
-            raise ValkeyTLSLoadError("Could not disable TLS settings: %s", e)

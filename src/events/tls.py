@@ -163,10 +163,8 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_tls_state(tls_type, TLSState.TO_NO_TLS)
             try:
                 self.charm.config_manager.set_config_properties()
-                if tls_type == TLSType.CLIENT:
-                    self.charm.cluster_manager.disable_tls_settings()
-                else:
-                    self.charm.cluster_manager.reload_tls_settings()
+                tls_config = self.charm.config_manager.generate_tls_config()
+                self.charm.cluster_manager.reload_tls_settings(tls_config)
             except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
                 logger.error("Failed to disable %s TLS", tls_type)
                 event.defer()
@@ -189,5 +187,5 @@ class TLSEvents(ops.Object):
         logger.info("Enabling %s TLS in Valkey", tls_type)
         self.charm.config_manager.set_config_properties()
         tls_config = self.charm.config_manager.generate_tls_config()
-        self.charm.cluster_manager.enable_tls_settings(tls_config)
+        self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.tls_manager.set_tls_state(tls_type, TLSState.TLS)

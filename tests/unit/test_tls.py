@@ -146,10 +146,10 @@ def test_client_tls_relation_broken(cloud_spec):
     )
 
     with (
-        patch("managers.cluster.ClusterManager.disable_tls_settings") as disable_tls,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        disable_tls.assert_called_once()
+        reload_tls.assert_called_once()
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
@@ -180,10 +180,10 @@ def test_client_tls_relation_broken_disabling_tls_fails(cloud_spec):
         patch(
             "managers.config.ConfigManager.set_config_properties", side_effect=ValueError("failed")
         ),
-        patch("managers.cluster.ClusterManager.disable_tls_settings") as disable_tls,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        disable_tls.assert_not_called()
+        reload_tls.assert_not_called()
         assert "client_certificates_relation_broken" in [e.name for e in state_out.deferred]
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-no-tls"
@@ -211,9 +211,9 @@ def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    with patch("managers.cluster.ClusterManager.disable_tls_settings") as disable_tls:
+    with patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls:
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        disable_tls.assert_called_once()
+        reload_tls.assert_called_once()
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
@@ -253,14 +253,14 @@ def test_client_certificate_available(cloud_spec):
                 "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
                 return_value=([certificate], None),
             ),
-            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            enable_tls.assert_called_once()
+            reload_tls.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "tls"
 
@@ -304,14 +304,14 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
                 "managers.config.ConfigManager.set_config_properties",
                 side_effect=ValueError("failed"),
             ),
-            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            enable_tls.assert_not_called()
+            reload_tls.assert_not_called()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"
 
@@ -368,14 +368,14 @@ def test_peer_certificate_available(cloud_spec):
                 "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
                 side_effect=[([client_certificate], None), ([peer_certificate], None)],
             ),
-            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
         ):
             event.certificate = peer_certificate.certificate
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            enable_tls.assert_called_once()
+            reload_tls.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("peer-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-peer-state") == "tls"
 
@@ -433,13 +433,13 @@ def test_peer_certificate_available_not_all_units_ready(cloud_spec):
                 "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
                 side_effect=[([client_certificate], None), ([peer_certificate], None)],
             ),
-            patch("managers.cluster.ClusterManager.enable_tls_settings") as enable_tls,
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
         ):
             event.certificate = peer_certificate.certificate
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            enable_tls.assert_not_called()
+            reload_tls.assert_not_called()
             assert state_out.get_relation(1).local_unit_data.get("peer-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-peer-state") == "to-tls"
