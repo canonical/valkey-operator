@@ -8,7 +8,6 @@ import jubilant
 from literals import CharmUsers
 from tests.integration.helpers import (
     APP_NAME,
-    IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
@@ -29,7 +28,7 @@ TEST_VALUE = "test_value"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Deploy the charm under test and a TLS provider."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
+    juju.deploy(charm, num_units=NUM_UNITS, trust=True)
     juju.deploy(TLS_NAME, channel="1/edge")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.integrate(f"{APP_NAME}:peer-certificates", TLS_NAME)

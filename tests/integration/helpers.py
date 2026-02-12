@@ -4,12 +4,14 @@
 
 import contextlib
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
 import jubilant
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
+from dateutil.parser import parse
 from glide import (
     AdvancedGlideClientConfiguration,
     GlideClient,
@@ -122,6 +124,64 @@ def does_message_match(expected_status_message: str, status: StatusObject) -> bo
     except KeyError as e:
         logger.error(f"Error attempting to convert StatusObject to ops.StatusBase: {e}")
         return False
+
+
+def are_apps_active_and_agents_idle(
+    status: jubilant.Status,
+    *apps: str,
+    idle_period: int = 0,
+    unit_count: int | dict[str, int] | None = None,
+) -> bool:
+    """Check that all given apps are active, their agents idle (optional idle interval too) and optionally verify unit count as well.
+
+    Args:
+        status: represents the jubilant model's current status
+        apps: A list of applications whose statuses to test against
+        idle_period: Seconds to wait for the agents of each application unit to be idle.
+        unit_count: The desired number of units to wait for, can be > to 0.
+            If set as int, this value is expected for all apps but if more granularity is needed,
+            pass a dictionary such as: {"app1": 2, "app2": 1, ...}, if set to -1, the check
+            only happens at the application level.
+    """
+    return (
+        jubilant.all_active(status, *apps)
+        and jubilant.all_agents_idle(status, *apps)
+        and _check_apps_idle_period(status, *apps, idle_period=idle_period)
+        and verify_unit_count(status, *apps, unit_count=unit_count)
+    )
+
+
+def are_agents_idle(
+    status: jubilant.Status,
+    *apps: str,
+    idle_period: int = 0,
+    unit_count: int | dict[str, int] | None = None,
+) -> bool:
+    """Check that agents of all given apps are idle (optional idle interval too). Optionally verify unit count as well.
+
+    Args:
+        status: represents the jubilant model's current status
+        apps: A list of applications whose statuses to test against
+        idle_period: Seconds to wait for the agents of each application unit to be idle.
+        unit_count: The desired number of units to wait for, should be > 0.
+            If set as int, this value is expected for all apps but if more granularity is needed,
+            pass a dictionary such as: {"app1": 2, "app2": 1, ...}, if set to -1, the check
+            only happens at the application level.
+    """
+    return (
+        jubilant.all_agents_idle(status, *apps)
+        and _check_apps_idle_period(status, *apps, idle_period=idle_period)
+        and verify_unit_count(status, *apps, unit_count=unit_count)
+    )
+
+
+def _check_apps_idle_period(status: jubilant.Status, *apps: str, idle_period: int) -> bool:
+    return all(
+        parse(unit.juju_status.since, ignoretz=True) + timedelta(seconds=idle_period)
+        < datetime.now()
+        for app in apps
+        for unit in status.get_units(app).values()
+    )
 
 
 def verify_unit_count(
