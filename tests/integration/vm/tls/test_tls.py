@@ -6,11 +6,13 @@ import logging
 import jubilant
 
 from literals import CharmUsers
+from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
+    does_status_match,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
     get_key,
@@ -111,6 +113,14 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
+    )
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_unit_statuses={APP_NAME: [TLSStatuses.MISSING_CLIENT_TLS.value]},
+            num_units={APP_NAME: NUM_UNITS},
+        ),
+        timeout=100,
     )
 
     logger.info("Enabling client TLS")
