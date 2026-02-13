@@ -17,6 +17,7 @@ from src.literals import (
     PEER_RELATION,
     STATUS_PEERS_RELATION,
     CharmUsers,
+    StartState,
 )
 from src.statuses import CharmStatuses, ClusterStatuses
 
@@ -596,3 +597,70 @@ def test_change_password_secret_changed_leader_unit(cloud_spec):
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_called_once_with(password_secret.id)
+
+
+def test_relation_changed_event_leader_setting_starting_member(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+        peers_data={1: {"request-start-lock": "true"}},
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+    assert state_out.get_relation(1).local_app_data.get("starting-member") == "valkey/1"
+
+
+def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_app_data={"starting-member": "valkey/1"},
+        local_unit_data={"start-state": "started"},
+        peers_data={1: {"start-state": "started"}},
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+    assert state_out.get_relation(1).local_app_data.get("starting-member") is None
+
+
+def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_app_data={"starting-member": "valkey/1"},
+        local_unit_data={"start-state": StartState.STARTED.value},
+        peers_data={
+            1: {
+                "start-state": StartState.STARTING_WAITING_REPLICA_SYNC.value,
+                "request-start-lock": "true",
+            }
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+    assert state_out.get_relation(1).local_app_data.get("starting-member") == "valkey/1"
