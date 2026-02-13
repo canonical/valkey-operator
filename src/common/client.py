@@ -51,27 +51,20 @@ class ValkeyClient:
         addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in self.hosts]
         credentials = ServerCredentials(username=self.user, password=self.password)
 
-        # only use the TLS options if the client cert is available
-        if self.tls_cert:
-            tls_config = TlsAdvancedConfiguration(
-                client_cert_pem=self.tls_cert,
-                client_key_pem=self.tls_key,
-                root_pem_cacerts=self.tls_ca_cert,
-            )
+        tls_config = TlsAdvancedConfiguration(
+            client_cert_pem=self.tls_cert if self.tls_cert else None,
+            client_key_pem=self.tls_key if self.tls_cert else None,
+            root_pem_cacerts=self.tls_ca_cert if self.tls_cert else None,
+        )
 
-            client_config = GlideClientConfiguration(
-                addresses,
-                use_tls=True,
-                credentials=credentials,
-                request_timeout=1000,  # in milliseconds
-                advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
-            )
-        else:
-            client_config = GlideClientConfiguration(
-                addresses,
-                credentials=credentials,
-                request_timeout=1000,  # in milliseconds
-            )
+        client_config = GlideClientConfiguration(
+            addresses,
+            use_tls=True if self.tls_cert else False,
+            credentials=credentials,
+            request_timeout=1000,  # in milliseconds
+            advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
+        )
+
         return await GlideClient.create(client_config)
 
     async def _run_custom_command(self, command: list[str]) -> Any:

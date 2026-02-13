@@ -70,6 +70,25 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
 
+    logger.info("Check access without certs fails when TLS enabled")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result != "OK", "Should have failed without certs when TLS enabled"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+    ) != bytes(TEST_VALUE, "utf-8"), "Should have failed without certs when TLS enabled"
+
 
 async def test_disable_tls(juju: jubilant.Juju) -> None:
     """Disable TLS on a running cluster and check if it is still accessible."""
@@ -157,3 +176,22 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
         tls_enabled=True,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+
+    logger.info("Check access without certs fails when TLS enabled")
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result != "OK", "Should have failed without certs when TLS enabled"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=password,
+        tls_enabled=False,
+        key=TEST_KEY,
+    ) != bytes(TEST_VALUE, "utf-8"), "Should have failed without certs when TLS enabled"
