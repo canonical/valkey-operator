@@ -4,6 +4,7 @@
 import logging
 
 import jubilant
+import pytest
 
 from literals import CharmUsers
 from statuses import TLSStatuses
@@ -12,6 +13,7 @@ from tests.integration.helpers import (
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
+    create_valkey_client,
     does_status_match,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
@@ -68,6 +70,14 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
         tls_enabled=True,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+
+    logger.info("Check access without certs fails when TLS enabled")
+    with pytest.raises(Exception) as exc_info:
+        no_ssl_client = await create_valkey_client(
+            hostnames=hostnames, username=None, password=None, tls_enabled=False
+        )
+        await no_ssl_client.ping()
+    assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
 
 
 async def test_disable_tls(juju: jubilant.Juju) -> None:
@@ -156,3 +166,11 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
         tls_enabled=True,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+
+    logger.info("Check access without certs fails when TLS enabled")
+    with pytest.raises(Exception) as exc_info:
+        no_ssl_client = await create_valkey_client(
+            hostnames=hostnames, username=None, password=None, tls_enabled=False
+        )
+        await no_ssl_client.ping()
+    assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
