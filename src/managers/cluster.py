@@ -49,7 +49,7 @@ class ClusterManager(ManagerStatusProtocol):
                 password=self.admin_password,
                 workload=self.workload,
             )
-            client.exec_cli_command(["acl", "load"])
+            client.exec_cli_command(["acl", "load"], hostname=self.state.bind_address)
         except ValkeyWorkloadCommandError:
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
@@ -70,6 +70,7 @@ class ClusterManager(ManagerStatusProtocol):
                         CharmUsers.VALKEY_REPLICA.value, ""
                     ),
                 ],
+                hostname=self.state.bind_address,
             )
             logger.info("Updated primaryauth runtime configuration on Valkey server")
         except ValkeyWorkloadCommandError:
@@ -92,6 +93,7 @@ class ClusterManager(ManagerStatusProtocol):
             output = (
                 client.exec_cli_command(
                     command=["role"],
+                    hostname=self.state.bind_address,
                 )[0]
                 .strip()
                 .split()

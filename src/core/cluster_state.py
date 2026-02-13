@@ -116,7 +116,6 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         """Resolve the given id of a Juju secret and return the content as a dict.
 
         Args:
-            model (Model): Model object.
             secret_id (str): The id of the secret.
             refresh (bool): Whether to refresh the secret content from the controller. Defaults to False.
 

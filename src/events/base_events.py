@@ -77,7 +77,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
         if self.charm.unit.is_leader():
-            self._start_services(event, primary_ip=self.charm.workload.get_private_ip())
+            self._start_services(event, primary_ip=self.charm.state.bind_address)
             logger.info("Services started")
             self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
             return
@@ -234,7 +234,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "hostname": socket.gethostname(),
-                "private_ip": self.charm.workload.get_private_ip(),
+                "private_ip": self.charm.state.bind_address,
             }
         )
 
@@ -281,7 +281,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "hostname": socket.gethostname(),
-                "private_ip": self.charm.workload.get_private_ip(),
+                "private_ip": self.charm.state.bind_address,
             }
         )
 

@@ -30,13 +30,13 @@ class ValkeyClient:
     def exec_cli_command(
         self,
         command: list[str],
-        hostname: str | None = None,
+        hostname: str,
     ) -> tuple[str, str | None]:
         """Execute a Valkey CLI command on the server.
 
         Args:
             command (list[str]): The CLI command to execute, as a list of arguments.
-            hostname (str | None): The hostname to connect to. If None, defaults to the private IP of the unit.
+            hostname (str): The hostname to connect to.
 
         Returns:
             tuple[str, str | None]: The standard output and standard error from the command execution.
@@ -44,8 +44,6 @@ class ValkeyClient:
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        if not hostname:
-            hostname = self.workload.get_private_ip()
         port = CLIENT_PORT if self.connect_to == "valkey" else SENTINEL_PORT
         user = self.username
         password = self.password

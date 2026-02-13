@@ -446,7 +446,6 @@ def test_config_changed_leader_unit_primary(cloud_spec):
     with (
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
-        patch("core.base_workload.WorkloadBase.get_private_ip", return_value="127.0.1.1"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
@@ -564,7 +563,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(["acl", "load"])
+        mock_exec_command.assert_called_once_with(["acl", "load"], hostname="127.1.1.1")
         cluster_statuses = charm.state.statuses.get(
             scope="unit",
             component=charm.cluster_manager.name,
