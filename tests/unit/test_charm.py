@@ -81,38 +81,35 @@ def test_start_leader_unit(cloud_spec):
         }
     }
 
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-    ):
-        # generate passwords
-        state_out = ctx.run(ctx.on.leader_elected(), state_in)
+    # generate passwords
+    state_out = ctx.run(ctx.on.leader_elected(), state_in)
 
-        # start event
-        state_out = ctx.run(ctx.on.start(), state_out)
-        assert state_out.get_container(container.name).plan == expected_plan
-        assert (
-            state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
-            == pebble.ServiceStatus.ACTIVE
-        )
-        assert (
-            state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
-            == pebble.ServiceStatus.ACTIVE
-        )
-        assert state_out.unit_status == ActiveStatus()
-        assert state_out.app_status == ActiveStatus()
+    # start event
+    state_out = ctx.run(ctx.on.start(), state_out)
+    assert state_out.get_container(container.name).plan == expected_plan
+    assert (
+        state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
+        == pebble.ServiceStatus.ACTIVE
+    )
+    assert (
+        state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
+        == pebble.ServiceStatus.ACTIVE
+    )
+    assert state_out.unit_status == ActiveStatus()
+    assert state_out.app_status == ActiveStatus()
 
-        # container not ready
-        container = testing.Container(name=CONTAINER, can_connect=False)
-        state_in = testing.State(
-            model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-            leader=True,
-            relations={relation, status_peer_relation},
-            containers={container},
-        )
+    # container not ready
+    container = testing.Container(name=CONTAINER, can_connect=False)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={relation, status_peer_relation},
+        containers={container},
+    )
 
-        state_out = ctx.run(ctx.on.start(), state_in)
-        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
-        assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
+    state_out = ctx.run(ctx.on.start(), state_in)
+    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
+    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
 def test_start_non_leader_unit(cloud_spec):
@@ -128,10 +125,7 @@ def test_start_non_leader_unit(cloud_spec):
         containers={container},
     )
 
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"),
-    ):
+    with patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"):
         state_out = ctx.run(ctx.on.start(), state_in)
         assert not state_out.get_container(container.name).service_statuses.get(SERVICE_VALKEY)
         assert not state_out.get_container(container.name).service_statuses.get(
@@ -284,12 +278,11 @@ def test_internal_user_creation(cloud_spec):
         leader=True,
         containers={container},
     )
-    with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
-        state_out = ctx.run(ctx.on.leader_elected(), state_in)
-        secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
-        )
-        assert secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    state_out = ctx.run(ctx.on.leader_elected(), state_in)
+    secret_out = state_out.get_secret(
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+    )
+    assert secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
 
 
 def test_leader_elected_no_peer_relation(cloud_spec):
@@ -301,9 +294,8 @@ def test_leader_elected_no_peer_relation(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with patch("workload_k8s.ValkeyK8sWorkload.write_file"):
-        state_out = ctx.run(ctx.on.leader_elected(), state_in)
-        assert "leader_elected" in [e.name for e in state_out.deferred]
+    state_out = ctx.run(ctx.on.leader_elected(), state_in)
+    assert "leader_elected" in [e.name for e in state_out.deferred]
 
 
 def test_leader_elected_leader_password_specified(cloud_spec):
@@ -323,7 +315,6 @@ def test_leader_elected_leader_password_specified(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch(
             "managers.config.ConfigManager.generate_password", return_value="generated-password"
         ),
@@ -352,10 +343,7 @@ def test_leader_elected_leader_password_specified_wrong_secret(cloud_spec):
         config={INTERNAL_USERS_PASSWORD_CONFIG: "secret:1tf1wk0tmfrodp8ofwxn"},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        pytest.raises(testing.errors.UncaughtCharmError) as exc_info,
-    ):
+    with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
         ctx.run(ctx.on.leader_elected(), state_in)
         assert "SecretNotFoundError" in str(exc_info.value)
 
@@ -400,10 +388,7 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("core.models.RelationState.update") as mock_update,
-    ):
+    with patch("core.models.RelationState.update") as mock_update:
         ctx.run(ctx.on.config_changed(), state_in)
         mock_update.assert_called_once()
 
@@ -426,7 +411,6 @@ def test_config_changed_leader_unit(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
     ):
@@ -460,7 +444,6 @@ def test_config_changed_leader_unit_primary(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
         patch("core.base_workload.WorkloadBase.get_private_ip", return_value="127.0.1.1"),
@@ -496,7 +479,6 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
         ctx(ctx.on.config_changed(), state_in) as manager,
     ):

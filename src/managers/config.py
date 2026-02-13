@@ -80,22 +80,25 @@ class ConfigManager(ManagerStatusProtocol):
         else:
             config_properties["bind"] = "0.0.0.0 -::1"
 
-        logger.debug(
-            "primary: %s, hostname: %s",
-            primary_ip,
-            self.state.unit_server.model.hostname,
-        )
-        # replicaof
+        # replica related config
+        replica_config = self.generate_replica_config(primary_ip=primary_ip)
+        config_properties.update(replica_config)
+
+        return config_properties
+
+    def generate_replica_config(self, primary_ip):
+        """Generate the config properties related to replica configuration based on the current cluster state."""
+        replica_config = {
+            "primaryuser": CharmUsers.VALKEY_REPLICA.value,
+            "primaryauth": self.state.cluster.internal_users_credentials.get(
+                CharmUsers.VALKEY_REPLICA.value, ""
+            ),
+        }
         if primary_ip != self.state.unit_server.model.private_ip:
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
-            config_properties["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
-        config_properties["primaryuser"] = CharmUsers.VALKEY_REPLICA.value
-        config_properties["primaryauth"] = self.state.cluster.internal_users_credentials.get(
-            CharmUsers.VALKEY_REPLICA.value, ""
-        )
-
-        return config_properties
+            replica_config["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
+        return replica_config
 
     def set_config_properties(self, primary_ip: str) -> None:
         """Write the config properties to the config file."""

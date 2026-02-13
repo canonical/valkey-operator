@@ -50,17 +50,15 @@ def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     init_units_count = len(juju.status().apps[APP_NAME].units)
 
     # scale up
-    juju.add_unit(APP_NAME, num_units=2)
+    juju.add_unit(APP_NAME, num_units=NUM_UNITS - init_units_count)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=10, unit_count=init_units_count + 2
+            status, APP_NAME, idle_period=10, unit_count=NUM_UNITS
         ),
         timeout=1200,
     )
     num_units = len(juju.status().apps[APP_NAME].units)
-    assert num_units == init_units_count + 2, (
-        f"Expected {init_units_count + 2} units, got {num_units}."
-    )
+    assert num_units == NUM_UNITS, f"Expected {NUM_UNITS} units, got {num_units}."
 
     # check if all units have been added to the cluster
     endpoints = ",".join(get_cluster_hostnames(juju, APP_NAME))
@@ -77,8 +75,8 @@ def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     master = sentinel_client.master_for("primary")
     info = master.info("replication")
     connected_slaves = info.get("connected_slaves", 0)
-    assert connected_slaves == num_units - 1, (
-        f"Expected {num_units - 1} connected slaves, got {connected_slaves}."
+    assert connected_slaves == NUM_UNITS - 1, (
+        f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
     )
 
     assert_continuous_writes_increasing(

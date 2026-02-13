@@ -12,6 +12,11 @@ def mock_write_config_file(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_write_file(mocker):
+    mocker.patch("workload_k8s.ValkeyK8sWorkload.write_file")
+
+
+@pytest.fixture(autouse=True)
 def cloud_spec():
     return testing.CloudSpec(
         type="kubernetes",
