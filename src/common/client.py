@@ -3,23 +3,11 @@
 
 """ValkeyClient utility class to connect to valkey servers."""
 
-import asyncio
 import logging
-from typing import Any
+from typing import Literal
 
-from glide import (
-    GlideClient,
-    GlideClientConfiguration,
-    NodeAddress,
-    ServerCredentials,
-)
-
-from common.exceptions import (
-    ValkeyACLLoadError,
-    ValkeyConfigSetError,
-    ValkeyCustomCommandError,
-)
-from literals import CLIENT_PORT
+from core.base_workload import WorkloadBase
+from literals import CLIENT_PORT, SENTINEL_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -31,67 +19,46 @@ class ValkeyClient:
         self,
         username: str,
         password: str,
-        hosts: list[str],
+        workload: WorkloadBase,
+        connect_to: Literal["valkey", "sentinel"] = "valkey",
     ):
-        self.hosts = hosts
-        self.user = username
+        self.username = username
         self.password = password
+        self.workload = workload
+        self.connect_to = connect_to
 
-    async def create_client(self) -> GlideClient:
-        """Initialize the Valkey client."""
-        addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in self.hosts]
-        credentials = ServerCredentials(username=self.user, password=self.password)
-        client_config = GlideClientConfiguration(
-            addresses,
-            credentials=credentials,
-            request_timeout=1000,  # in milliseconds
-        )
-        return await GlideClient.create(client_config)
-
-    async def _run_custom_command(self, command: list[str]) -> Any:
-        """Run a custom command on the Valkey client.
+    def exec_cli_command(
+        self,
+        command: list[str],
+        hostname: str | None = None,
+    ) -> tuple[str, str | None]:
+        """Execute a Valkey CLI command on the server.
 
         Args:
-            command (list[str]): The command to run as a list of strings.
+            command (list[str]): The CLI command to execute, as a list of arguments.
+            hostname (str | None): The hostname to connect to. If None, defaults to the private IP of the unit.
 
         Returns:
-            Any result from the command.
+            tuple[str, str | None]: The standard output and standard error from the command execution.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        client = None
-        try:
-            client = await self.create_client()
-            result = await asyncio.wait_for(client.custom_command(command), timeout=5)
-            return result
-        # TODO refine exception handling
-        except Exception as e:
-            logger.error("Error running custom command: %s", e)
-            raise ValkeyCustomCommandError(f"Could not run custom command: {e}")
-        finally:
-            if client:
-                await client.close()
-
-    def reload_acl(self) -> None:
-        """Load ACL content to the Valkey server."""
-        try:
-            result = asyncio.run(self._run_custom_command(["ACL", "LOAD"]))
-            logger.debug(f"ACL load result: {result}")
-        except ValkeyCustomCommandError as e:
-            logger.error(f"Error loading ACL: {e}")
-            raise ValkeyACLLoadError(f"Could not load ACL: {e}")
-
-    def set_runtime_config(self, config_properties: dict[str, str]) -> None:
-        """Set configuration properties on the Valkey server.
-
-        Args:
-            config_properties (dict[str, str]): Configuration properties to set.
-        """
-        try:
-            command = ["CONFIG", "SET"]
-            for key, value in config_properties.items():
-                command.append(key)
-                command.append(value)
-            result = asyncio.run(self._run_custom_command(command))
-            logger.debug("Config set result: %s", result)
-        except ValkeyCustomCommandError as e:
-            logger.error("Error setting config: %s", e)
-            raise ValkeyConfigSetError(f"Could not set config: {e}")
+        if not hostname:
+            hostname = self.workload.get_private_ip()
+        port = CLIENT_PORT if self.connect_to == "valkey" else SENTINEL_PORT
+        user = self.username
+        password = self.password
+        cli_command: list[str] = [
+            self.workload.cli,
+            "-h",
+            hostname,
+            "-p",
+            str(port),
+            "--user",
+            user,
+            "--pass",
+            password,
+        ] + command
+        output, error = self.workload.exec(cli_command)
+        return output, error

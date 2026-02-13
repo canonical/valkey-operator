@@ -30,7 +30,6 @@ class CharmStatuses(Enum):
     WAITING_TO_START = StatusObject(
         status="maintenance",
         message="Waiting for leader to authorize service start",
-        running="async",
     )
     CONFIGURATION_ERROR = StatusObject(
         status="blocked",
@@ -51,19 +50,16 @@ class ClusterStatuses(Enum):
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
         status="maintenance",
         message="Waiting for sentinel to be discovered by other units...",
-        running="async",
     )
 
     WAITING_FOR_REPLICA_SYNC = StatusObject(
         status="maintenance",
         message="Waiting for replica to sync with primary...",
-        running="async",
     )
 
     WAITING_FOR_PRIMARY_START = StatusObject(
         status="maintenance",
         message="Waiting for primary to start and become active...",
-        running="async",
     )
 
 

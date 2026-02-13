@@ -17,6 +17,7 @@ from literals import (
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     CharmUsers,
+    StartState,
     Substrate,
 )
 from statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
@@ -48,9 +49,6 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_joined, self._on_peer_relation_joined
-        )
-        self.framework.observe(
             self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
@@ -77,55 +75,39 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if not self.charm.unit.is_leader():
-            if (
-                not self.charm.state.cluster.internal_users_credentials
-                or not self.charm.cluster_manager.number_units_started
-            ):
-                logger.info(
-                    "Non-leader unit waiting for leader to set primary and internal user credentials"
-                )
-                self.charm.status.set_running_status(
-                    ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
-                event.defer()
-                return
+        if self.charm.unit.is_leader():
+            self._start_services(event, primary_ip=self.charm.workload.get_private_ip())
+            logger.info("Services started")
+            self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
+            return
 
-            self.charm.state.statuses.delete(
-                ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
-            if self.charm.state.cluster.model.starting_member != self.charm.unit.name:
-                logger.info("Non-leader unit waiting for leader to choose it as starting member")
-                self.charm.status.set_running_status(
-                    CharmStatuses.WAITING_TO_START.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
-                event.defer()
-                return
-            self.charm.state.statuses.delete(
-                CharmStatuses.WAITING_TO_START.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
-
-        if not (
-            primary_ip := (
-                self.charm.workload.get_private_ip()
-                if self.charm.unit.is_leader()
-                else self.charm.cluster_manager.get_primary_ip()
-            )
+        if (
+            not self.charm.state.cluster.internal_users_credentials
+            or not self.charm.state.number_units_started
         ):
+            logger.info(
+                "Non-leader unit waiting for leader to set primary and internal user credentials"
+            )
+            event.defer()
+            return
+
+        self.charm.state.unit_server.update({"request_start_lock": True})
+
+        if self.charm.state.cluster.model.starting_member != self.charm.unit.name:
+            logger.info("Non-leader unit waiting for leader to choose it as starting member")
+            event.defer()
+            return
+
+        if not (primary_ip := (self.charm.sentinel_manager.get_primary_ip())):
             logger.error("Primary IP not found. Deferring start event.")
             event.defer()
             return
 
+        self._start_services(event, primary_ip=primary_ip)
+        self.unit_fully_started.emit()
+
+    def _start_services(self, event: ops.StartEvent, primary_ip: str) -> None:
+        """Start Valkey and Sentinel services."""
         try:
             self.charm.config_manager.update_local_valkey_admin()
             self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
@@ -177,81 +159,42 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
-        if self.charm.unit.is_leader():
-            logger.info("Services started")
-            self.charm.state.unit_server.update({"started": True})
-            return
-
-        self.unit_fully_started.emit()
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
         """Handle the unit-fully-started event."""
-        self.charm.status.set_running_status(
-            ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
-            scope="unit",
-            component_name=self.charm.cluster_manager.name,
-            statuses_state=self.charm.state.statuses,
-        )
-        self.charm.status.set_running_status(
-            ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value,
-            scope="unit",
-            component_name=self.charm.cluster_manager.name,
-            statuses_state=self.charm.state.statuses,
-        )
-
-        if not self.charm.cluster_manager.is_sentinel_discovered():
+        # Only ran on non-leader units when starting replicas
+        if not self.charm.sentinel_manager.is_sentinel_discovered():
             logger.info("Sentinel service not yet discovered by other units. Deferring event.")
-            event.defer()
-            return
-
-        self.charm.state.statuses.delete(
-            ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
-            scope="unit",
-            component=self.charm.cluster_manager.name,
-        )
-
-        if not self.charm.cluster_manager.is_replica_synced():
-            logger.info("Replica not yet synced. Deferring event.")
-            event.defer()
-            return
-
-        self.charm.state.statuses.delete(
-            ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value,
-            scope="unit",
-            component=self.charm.cluster_manager.name,
-        )
-
-        logger.info("Services started")
-        self.charm.state.unit_server.update({"started": True})
-
-    def _on_peer_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
-        """Handle event received by all units when a new unit joins the cluster relation."""
-        if not self.charm.unit.is_leader() or not event.unit:
-            return
-
-        logger.debug("Peer relation joined by %s", event.unit.name)
-
-        if not self.charm.state.unit_server.is_started:
-            logger.info("Primary member has not started yet. Deferring event.")
-            event.defer()
-            return
-
-        if self.charm.state.cluster.model.starting_member:
-            logger.debug(
-                "%s is already starting. Deferring relation joined event for %s",
-                self.charm.state.cluster.model.starting_member,
-                event.unit.name,
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
             )
             event.defer()
             return
-        self.charm.state.cluster.update({"starting_member": event.unit.name})
+
+        if not self.charm.cluster_manager.is_replica_synced():
+            logger.info("Replica not yet synced. Deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_REPLICA_SYNC.value}
+            )
+            event.defer()
+            return
+
+        logger.info("Services started")
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.STARTED.value, "request_start_lock": False}
+        )
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
-        logger.debug(
-            "Starting member is currently %s", self.charm.state.cluster.model.starting_member
-        )
+        if not self.charm.unit.is_leader():
+            return
+
+        units_requesting_start = [
+            unit.unit_name
+            for unit in self.charm.state.servers
+            if unit.model and unit.model.request_start_lock
+        ]
         starting_unit = next(
             (
                 unit
@@ -261,19 +204,25 @@ class BaseEvents(ops.Object):
             None,
         )
         logger.debug(
-            "Starting unit has started: %s",
+            "Starting unit %s has started: %s",
+            self.charm.state.cluster.model.starting_member,
             starting_unit.is_started if starting_unit else "No starting unit",
         )
-        if (
+        if not units_requesting_start or (
+            # if the starting member has not started yet, we want to wait for it to start instead of choosing another unit that requested start
             self.charm.state.cluster.model.starting_member
             and starting_unit
-            and starting_unit.is_started
+            and not starting_unit.is_started
         ):
             logger.debug(
-                "Starting member %s has started. Clearing starting member field.",
+                "Starting member %s has not started yet. Units requesting start: %s. ",
                 self.charm.state.cluster.model.starting_member,
+                units_requesting_start,
             )
-            self.charm.state.cluster.update({"starting_member": ""})
+
+        self.charm.state.cluster.update(
+            {"starting_member": units_requesting_start[0] if units_requesting_start else ""}
+        )
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""

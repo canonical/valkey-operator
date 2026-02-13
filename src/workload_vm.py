@@ -104,7 +104,6 @@ class ValkeyVmWorkload(WorkloadBase):
                 capture_output=True,
                 timeout=10,
             )
-            logger.debug("Executed command: %s, got output: %s", " ".join(command), output.stdout)
             return output.stdout, output.stderr
         except subprocess.CalledProcessError as e:
             logger.error("Command failed with %s, %s", e.returncode, e.stderr)

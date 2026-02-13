@@ -18,7 +18,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from pydantic import Field
 from typing_extensions import Annotated
 
-from literals import CharmUsers
+from literals import CharmUsers, StartState
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,10 @@ class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
 
     charmed_operator_password: InternalUsersSecret = Field(default="")
-    started: bool = Field(default=False)
+    start_state: str = Field(default=StartState.NOT_STARTED.value)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
+    request_start_lock: bool = Field(default=False)
 
 
 class RelationState:
@@ -117,7 +118,7 @@ class ValkeyServer(RelationState):
     @property
     def is_started(self) -> bool:
         """Check if the unit has started."""
-        return self.model.started if self.model else False
+        return self.model.start_state == StartState.STARTED.value if self.model else False
 
     @property
     def valkey_admin_password(self) -> str:
