@@ -74,6 +74,7 @@ class BaseEvents(ops.Object):
             logger.warning("Workload not ready yet")
             event.defer()
             return
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
         if self.charm.unit.is_leader():
             self._start_services(event, primary_ip=self.charm.workload.get_private_ip())
@@ -203,12 +204,7 @@ class BaseEvents(ops.Object):
             ),
             None,
         )
-        logger.debug(
-            "Starting unit %s has started: %s",
-            self.charm.state.cluster.model.starting_member,
-            starting_unit.is_started if starting_unit else "No starting unit",
-        )
-        if not units_requesting_start or (
+        if (
             # if the starting member has not started yet, we want to wait for it to start instead of choosing another unit that requested start
             self.charm.state.cluster.model.starting_member
             and starting_unit

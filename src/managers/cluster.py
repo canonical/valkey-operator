@@ -122,19 +122,19 @@ class ClusterManager(ManagerStatusProtocol):
             return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
 
         # non leader statuses
-        if (
-            not self.state.cluster.internal_users_credentials
-            or not self.state.number_units_started
-        ):
-            status_list.append(
-                ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
-            )
-
         match self.state.unit_server.model.start_state:
             case StartState.NOT_STARTED.value:
-                status_list.append(
-                    CharmStatuses.WAITING_TO_START.value,
-                )
+                if (
+                    not self.state.cluster.internal_users_credentials
+                    or not self.state.number_units_started
+                ):
+                    status_list.append(
+                        ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
+                    )
+                else:
+                    status_list.append(
+                        CharmStatuses.WAITING_TO_START.value,
+                    )
             case StartState.STARTING_WAITING_SENTINEL.value:
                 status_list.append(
                     ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
