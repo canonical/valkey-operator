@@ -36,6 +36,18 @@ class UnitFullyStarted(ops.EventBase):
         The Valkey service is running and the current node is in sync with the primary (if a replica).
     """
 
+    def __init__(self, handle: ops.Handle, is_primary: bool = False):
+        super().__init__(handle)
+        self.is_primary = is_primary
+
+    def snapshot(self) -> dict[str, str]:
+        """Save the state of the event."""
+        return {"is_primary": str(self.is_primary)}
+
+    def restore(self, snapshot: dict[str, str]) -> None:
+        """Restore the state of the event."""
+        self.is_primary = snapshot.get("is_primary", "False") == "True"
+
 
 class BaseEvents(ops.Object):
     """Handle all base events."""
@@ -78,9 +90,9 @@ class BaseEvents(ops.Object):
 
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         if self.charm.unit.is_leader() and not primary_ip:
-            self._start_services(event, primary_ip=self.charm.state.bind_address)
-            logger.info("Services started")
-            self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
+            if not self._start_services(event, primary_ip=self.charm.state.bind_address):
+                return
+            self.unit_fully_started.emit(is_primary=True)
             return
 
         if not self.charm.state.cluster.internal_users_credentials or not primary_ip:
@@ -100,7 +112,7 @@ class BaseEvents(ops.Object):
 
         if not self._start_services(event, primary_ip=primary_ip):
             return
-        self.unit_fully_started.emit()
+        self.unit_fully_started.emit(is_primary=False)
 
     def _start_services(self, event: ops.StartEvent, primary_ip: str) -> bool:
         """Start Valkey and Sentinel services."""
@@ -161,8 +173,25 @@ class BaseEvents(ops.Object):
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
         """Handle the unit-fully-started event."""
-        # Only ran on non-leader units when starting replicas
-        if not self.charm.sentinel_manager.is_sentinel_discovered():
+        if not self.charm.cluster_manager.is_healthy(
+            is_primary=event.is_primary, check_replica_sync=False
+        ):
+            logger.warning("Unit is not healthy after start, deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            )
+            event.defer()
+            return
+
+        if not self.charm.sentinel_manager.is_healthy():
+            logger.warning("Sentinel is not healthy after start, deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
+            )
+            event.defer()
+            return
+
+        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
             logger.info("Sentinel service not yet discovered by other units. Deferring event.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
@@ -170,7 +199,7 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if not self.charm.cluster_manager.is_replica_synced():
+        if not event.is_primary and not self.charm.cluster_manager.is_replica_synced():
             logger.info("Replica not yet synced. Deferring event.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_REPLICA_SYNC.value}
@@ -322,9 +351,9 @@ class BaseEvents(ops.Object):
             try:
                 self.charm.config_manager.set_acl_file()
                 self.charm.cluster_manager.reload_acl_file()
-                self.charm.cluster_manager.update_primary_auth()
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.cluster_manager.update_primary_auth()
             except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
@@ -383,7 +412,6 @@ class BaseEvents(ops.Object):
             try:
                 self.charm.config_manager.set_acl_file(passwords=new_passwords)
                 self.charm.cluster_manager.reload_acl_file()
-                self.charm.cluster_manager.update_primary_auth()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -392,6 +420,7 @@ class BaseEvents(ops.Object):
                 )
                 # update the local unit admin password
                 self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.cluster_manager.update_primary_auth()
             except (
                 ValkeyACLLoadError,
                 ValueError,

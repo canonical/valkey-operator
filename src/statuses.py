@@ -49,7 +49,7 @@ class ClusterStatuses(Enum):
 
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
         status="maintenance",
-        message="Waiting for sentinel to be discovered by other units...",
+        message="Waiting for sentinel to start and be discovered by other units...",
     )
 
     WAITING_FOR_REPLICA_SYNC = StatusObject(

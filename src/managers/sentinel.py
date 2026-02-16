@@ -45,7 +45,7 @@ class SentinelManager(ManagerStatusProtocol):
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),
         retry=retry_if_result(lambda result: result is False),
-        reraise=True,
+        retry_error_callback=lambda _: False,
     )
     def is_sentinel_discovered(self) -> bool:
         """Check if the sentinel of the local unit was discovered by the other sentinels in the cluster."""
@@ -91,22 +91,39 @@ class SentinelManager(ManagerStatusProtocol):
         )
 
         for unit in started_servers:
-            try:
-                output = client.exec_cli_command(
-                    command=["sentinel", "get-master-addr-by-name", PRIMARY_NAME],
-                    hostname=unit.model.private_ip,
-                )[0]
-                primary_ip = output.strip().split()[0]
+            if primary_ip := client.sentinel_get_primary_ip(hostname=unit.model.private_ip):
                 logger.info(f"Primary IP address is {primary_ip}")
                 return primary_ip
-            except (IndexError, ValkeyWorkloadCommandError) as e:
-                logger.error("Could not get primary IP from sentinel output: %s", e)
-
         logger.error(
             "Could not determine primary IP from sentinels. Number of started servers: %d.",
             len(started_servers),
         )
         return None
+
+    @retry(
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(5),
+        retry=retry_if_result(lambda result: result is False),
+        retry_error_callback=lambda retry_state: False,
+    )
+    def is_healthy(self) -> bool:
+        """Check if the sentinel service is healthy."""
+        client = ValkeyClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            workload=self.workload,
+            connect_to="sentinel",
+        )
+
+        if not client.ping(hostname=self.state.bind_address):
+            logger.warning("Health check failed: Sentinel did not respond to ping.")
+            return False
+
+        if not client.sentinel_get_master_info(hostname=self.state.bind_address):
+            logger.warning("Health check failed: Could not query sentinel for master information.")
+            return False
+
+        return True
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

@@ -75,6 +75,7 @@ class StartState(StrEnum):
     """Start states for the service."""
 
     NOT_STARTED = "not_started"
+    STARTING_WAITING_VALKEY = "starting_waiting_valkey"
     STARTING_WAITING_SENTINEL = "starting_waiting_sentinel"
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     STARTED = "started"

@@ -15,12 +15,11 @@ from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyConfigSetError,
-    ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers, StartState
-from statuses import CharmStatuses, ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +42,12 @@ class ClusterManager(ManagerStatusProtocol):
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
-        try:
-            client = ValkeyClient(
-                username=self.admin_user,
-                password=self.admin_password,
-                workload=self.workload,
-            )
-            client.exec_cli_command(["acl", "load"], hostname=self.state.bind_address)
-        except ValkeyWorkloadCommandError:
+        client = ValkeyClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            workload=self.workload,
+        )
+        if not client.load_acl(hostname=self.state.bind_address):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
@@ -60,27 +57,20 @@ class ClusterManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        try:
-            client.exec_cli_command(
-                [
-                    "config",
-                    "set",
-                    "primaryauth",
-                    self.state.cluster.internal_users_credentials.get(
-                        CharmUsers.VALKEY_REPLICA.value, ""
-                    ),
-                ],
-                hostname=self.state.bind_address,
-            )
-            logger.info("Updated primaryauth runtime configuration on Valkey server")
-        except ValkeyWorkloadCommandError:
+        if not client.config_set(
+            hostname=self.state.bind_address,
+            parameter="primaryauth",
+            value=self.state.cluster.internal_users_credentials.get(
+                CharmUsers.VALKEY_REPLICA.value, ""
+            ),
+        ):
             raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
 
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),
         retry=retry_if_result(lambda result: result is False),
-        reraise=True,
+        retry_error_callback=lambda _: False,
     )
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
@@ -89,23 +79,40 @@ class ClusterManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        try:
-            output = (
-                client.exec_cli_command(
-                    command=["role"],
-                    hostname=self.state.bind_address,
-                )[0]
-                .strip()
-                .split()
-            )
-            if output and output[0] == "slave" and output[3] == "connected":
-                logger.info("Replica is synced with primary")
-                return True
+        return client.is_replica_synced(hostname=self.state.bind_address)
 
+    @retry(
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(5),
+        retry=retry_if_result(lambda result: result is False),
+        retry_error_callback=lambda _: False,
+    )
+    def is_healthy(self, is_primary: bool = False, check_replica_sync: bool = True) -> bool:
+        """Check if a valkey instance is healthy."""
+        client = ValkeyClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            workload=self.workload,
+        )
+        if not client.ping(hostname=self.state.bind_address):
+            logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
-        except ValkeyWorkloadCommandError:
-            logger.warning("Could not determine replica sync status from Valkey server.")
+        if (
+            persistence_info := client.get_persistence_info(hostname=self.state.bind_address)
+        ) and persistence_info.get("loading", "") != "0":
+            logger.warning("Health check failed: Valkey server is still loading data.")
             return False
+        if is_primary and not client.set_value(
+            hostname=self.state.bind_address, key="healthcheck", value="ok"
+        ):
+            logger.warning("Health check failed: Could not set test key on Valkey server.")
+            return False
+
+        if not is_primary and check_replica_sync and not self.is_replica_synced():
+            logger.warning("Health check failed: Replica is not synced with primary.")
+            return False
+
+        return True
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
@@ -118,9 +125,6 @@ class ClusterManager(ManagerStatusProtocol):
 
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
-            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
-
-        if self.state.charm.unit.is_leader():
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         # non leader statuses
@@ -137,6 +141,10 @@ class ClusterManager(ManagerStatusProtocol):
                     status_list.append(
                         CharmStatuses.WAITING_TO_START.value,
                     )
+            case StartState.STARTING_WAITING_VALKEY.value:
+                status_list.append(
+                    ValkeyServiceStatuses.SERVICE_STARTING.value,
+                )
             case StartState.STARTING_WAITING_SENTINEL.value:
                 status_list.append(
                     ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
