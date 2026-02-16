@@ -6,10 +6,10 @@
 
 import logging
 
-import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.client import ValkeyClient
 from common.exceptions import (
@@ -41,10 +41,10 @@ class SentinelManager(ManagerStatusProtocol):
             CharmUsers.SENTINEL_CHARM_ADMIN.value, ""
         )
 
-    @tenacity.retry(
-        wait=tenacity.wait_fixed(5),
-        stop=tenacity.stop_after_attempt(5),
-        retry=tenacity.retry_if_result(lambda result: result is False),
+    @retry(
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(5),
+        retry=retry_if_result(lambda result: result is False),
         reraise=True,
     )
     def is_sentinel_discovered(self) -> bool:
@@ -76,7 +76,7 @@ class SentinelManager(ManagerStatusProtocol):
                     return False
             except ValkeyWorkloadCommandError:
                 logger.warning(f"Could not query sentinel at {sentinel_ip} for primary discovery.")
-                continue
+                return False
         return True
 
     def get_primary_ip(self) -> str | None:
@@ -99,13 +99,14 @@ class SentinelManager(ManagerStatusProtocol):
                 primary_ip = output.strip().split()[0]
                 logger.info(f"Primary IP address is {primary_ip}")
                 return primary_ip
-            except (IndexError, ValkeyWorkloadCommandError):
-                logger.error("Could not get primary IP from sentinel output.")
+            except (IndexError, ValkeyWorkloadCommandError) as e:
+                logger.error("Could not get primary IP from sentinel output: %s", e)
 
         logger.error(
             "Could not determine primary IP from sentinels. Number of started servers: %d.",
             len(started_servers),
         )
+        return None
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""
@@ -113,4 +114,4 @@ class SentinelManager(ManagerStatusProtocol):
             scope=scope, component=self.name, running_status_only=True, running_status_type="async"
         ).root
 
-        return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
+        return status_list or [CharmStatuses.ACTIVE_IDLE.value]

@@ -29,7 +29,7 @@ class CharmStatuses(Enum):
     )
     WAITING_TO_START = StatusObject(
         status="maintenance",
-        message="Waiting for leader to authorize service start",
+        message="Waiting for leader to allow service start",
     )
     CONFIGURATION_ERROR = StatusObject(
         status="blocked",
@@ -59,7 +59,7 @@ class ClusterStatuses(Enum):
 
     WAITING_FOR_PRIMARY_START = StatusObject(
         status="maintenance",
-        message="Waiting for primary to start and become active...",
+        message="Waiting for the primary unit to start...",
     )
 
 
@@ -68,11 +68,11 @@ class ValkeyServiceStatuses(Enum):
 
     SERVICE_STARTING = StatusObject(
         status="maintenance",
-        message="waiting for valkey to start...",
+        message="Waiting for Valkey to start...",
         running="async",
     )
     SERVICE_NOT_RUNNING = StatusObject(
         status="blocked",
-        message="valkey service not running",
+        message="Valkey service not running",
         running="async",
     )

@@ -19,9 +19,9 @@ class WorkloadBase(ABC):
 
     def __init__(self) -> None:
         """Initialize the WorkloadBase."""
-        self.root: pathops.PathProtocol
+        self.root_dir: pathops.PathProtocol
         self.config_file: pathops.PathProtocol
-        self.sentinel_config: pathops.PathProtocol
+        self.sentinel_config_file: pathops.PathProtocol
         self.acl_file: pathops.PathProtocol
         self.sentinel_acl_file: pathops.PathProtocol
         self.working_dir: pathops.PathProtocol

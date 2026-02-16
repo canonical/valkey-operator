@@ -50,6 +50,7 @@ class ValkeyCharm(ops.CharmBase):
             self,
             self.cluster_manager,
             self.config_manager,
+            self.sentinel_manager,
         )
 
         # --- EVENT HANDLERS ---

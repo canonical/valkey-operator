@@ -31,13 +31,13 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise AttributeError("Container is required.")
 
         self.container = container
-        self.root = pathops.ContainerPath("/", container=self.container)
-        self.config_file = self.root / CONFIG_FILE
-        self.sentinel_config = self.root / SENTINEL_CONFIG_FILE
-        self.acl_file = self.root / ACL_FILE
-        self.sentinel_acl_file = self.root / SENTINEL_ACL_FILE
+        self.root_dir = pathops.ContainerPath("/", container=self.container)
+        self.config_file = self.root_dir / CONFIG_FILE
+        self.sentinel_config_file = self.root_dir / SENTINEL_CONFIG_FILE
+        self.acl_file = self.root_dir / ACL_FILE
+        self.sentinel_acl_file = self.root_dir / SENTINEL_ACL_FILE
         # todo: update this path once directories in the rock are complying with the standard
-        self.working_dir = self.root / "var/lib/valkey"
+        self.working_dir = self.root_dir / "var/lib/valkey"
         self.valkey_service = "valkey"
         self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
@@ -67,7 +67,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 self.sentinel_service: {
                     "override": "replace",
                     "summary": "Valkey sentinel service",
-                    "command": f"valkey-sentinel {self.sentinel_config.as_posix()}",
+                    "command": f"valkey-sentinel {self.sentinel_config_file.as_posix()}",
                     "user": self.user,
                     "group": self.user,
                     "startup": "enabled",

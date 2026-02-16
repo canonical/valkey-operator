@@ -37,12 +37,12 @@ class ValkeyVmWorkload(WorkloadBase):
             with attempt:
                 self.valkey = snap.SnapCache()[SNAP_NAME]
 
-        self.root = pathops.LocalPath("/")
-        self.config_file = self.root / SNAP_CURRENT_PATH / SNAP_CONFIG_FILE
-        self.sentinel_config = self.root / SNAP_CURRENT_PATH / SNAP_SENTINEL_CONFIG_FILE
-        self.acl_file = self.root / SNAP_CURRENT_PATH / SNAP_ACL_FILE
-        self.sentinel_acl_file = self.root / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
-        self.working_dir = self.root / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
+        self.root_dir = pathops.LocalPath("/")
+        self.config_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_CONFIG_FILE
+        self.sentinel_config_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_CONFIG_FILE
+        self.acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_ACL_FILE
+        self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
+        self.working_dir = self.root_dir / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
         self.cli = "charmed-valkey.cli"
         self.user = "snap_daemon"
 

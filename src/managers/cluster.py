@@ -6,10 +6,10 @@
 
 import logging
 
-import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.client import ValkeyClient
 from common.exceptions import (
@@ -76,10 +76,10 @@ class ClusterManager(ManagerStatusProtocol):
         except ValkeyWorkloadCommandError:
             raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
 
-    @tenacity.retry(
-        wait=tenacity.wait_fixed(5),
-        stop=tenacity.stop_after_attempt(5),
-        retry=tenacity.retry_if_result(lambda result: result is False),
+    @retry(
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(5),
+        retry=retry_if_result(lambda result: result is False),
         reraise=True,
     )
     def is_replica_synced(self) -> bool:
@@ -118,10 +118,10 @@ class ClusterManager(ManagerStatusProtocol):
 
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
-            return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if self.state.charm.unit.is_leader():
-            return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         # non leader statuses
         match self.state.unit_server.model.start_state:
@@ -146,4 +146,4 @@ class ClusterManager(ManagerStatusProtocol):
                     ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value,
                 )
 
-        return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
+        return status_list or [CharmStatuses.ACTIVE_IDLE.value]

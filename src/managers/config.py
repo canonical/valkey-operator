@@ -81,12 +81,12 @@ class ConfigManager(ManagerStatusProtocol):
             config_properties["bind"] = "0.0.0.0 -::1"
 
         # replica related config
-        replica_config = self.generate_replica_config(primary_ip=primary_ip)
+        replica_config = self._generate_replica_config(primary_ip=primary_ip)
         config_properties.update(replica_config)
 
         return config_properties
 
-    def generate_replica_config(self, primary_ip):
+    def _generate_replica_config(self, primary_ip: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""
         replica_config = {
             "primaryuser": CharmUsers.VALKEY_REPLICA.value,
@@ -151,7 +151,7 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config = f"port {SENTINEL_PORT}\n"
 
         sentinel_config += f"aclfile {self.workload.sentinel_acl_file.as_posix()}\n"
-        # TODO consider adding quorum calculation based on number of units
+        # TODO consider adding quorum calculation based on number of planned_units and the parity of the number of units
         sentinel_config += (
             f"sentinel monitor {PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}\n"
         )
@@ -172,7 +172,7 @@ class ConfigManager(ManagerStatusProtocol):
         # on k8s we need to set the ownership of the sentinel config file to the non-root user that the valkey process runs as in order for sentinel to be able to read/write it
         self.workload.write_file(
             sentinel_config,
-            self.workload.sentinel_config,
+            self.workload.sentinel_config_file,
             mode=0o600,
             user=self.workload.user,
             group=self.workload.user,
@@ -208,7 +208,7 @@ class ConfigManager(ManagerStatusProtocol):
         """
         return "".join([secrets.choice(string.ascii_letters + string.digits) for _ in range(32)])
 
-    def update_local_valkey_admin(self) -> None:
+    def update_local_valkey_admin_password(self) -> None:
         """Update the local unit's valkey admin password in the state."""
         if not (
             app_password := self.state.cluster.internal_users_credentials.get(
