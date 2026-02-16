@@ -210,14 +210,13 @@ class ConfigManager(ManagerStatusProtocol):
 
     def update_local_valkey_admin_password(self) -> None:
         """Update the local unit's valkey admin password in the state."""
-        if not (
-            app_password := self.state.cluster.internal_users_credentials.get(
-                CharmUsers.VALKEY_ADMIN.value
-            )
-        ):
-            logger.warning("No valkey admin password found to update local unit state")
-            return
-        self.state.unit_server.update({"charmed_operator_password_local_unit_copy": app_password})
+        self.state.unit_server.update(
+            {
+                "charmed_operator_password_local_unit_copy": self.state.cluster.internal_users_credentials.get(
+                    CharmUsers.VALKEY_ADMIN.value
+                )
+            }
+        )
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
