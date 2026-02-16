@@ -42,7 +42,7 @@ class PeerAppModel(PeerModel):
 class PeerUnitModel(PeerModel):
     """Model for the peer unit data."""
 
-    charmed_operator_password: InternalUsersSecret = Field(default="")
+    charmed_operator_password_local_unit_copy: InternalUsersSecret = Field(default="")
     start_state: str = Field(default=StartState.NOT_STARTED.value)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
@@ -125,7 +125,7 @@ class ValkeyServer(RelationState):
         """Retrieve the password for the valkey admin user."""
         if not self.model:
             return ""
-        return self.model.charmed_operator_password or ""
+        return self.model.charmed_operator_password_local_unit_copy or ""
 
 
 @final

@@ -217,9 +217,7 @@ class ConfigManager(ManagerStatusProtocol):
         ):
             logger.warning("No valkey admin password found to update local unit state")
             return
-        self.state.unit_server.update(
-            {f"{CharmUsers.VALKEY_ADMIN.value.replace('-', '_')}_password": app_password}
-        )
+        self.state.unit_server.update({"charmed_operator_password_local_unit_copy": app_password})
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
