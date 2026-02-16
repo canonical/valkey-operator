@@ -9,7 +9,14 @@ import subprocess
 from typing import List, override
 
 from charmlibs import pathops, snap
-from tenacity import Retrying, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import (
+    Retrying,
+    retry,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -88,11 +95,13 @@ class ValkeyVmWorkload(WorkloadBase):
             return False
 
     @override
-    def start(self) -> None:
+    def start(self) -> bool:
         try:
             self.valkey.start(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
+            return self.alive()
         except snap.SnapError as e:
             logger.exception(str(e))
+            return False
 
     @override
     def exec(self, command: List[str]) -> tuple[str, str | None]:
@@ -113,6 +122,11 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_result(lambda healthy: not healthy),
+    )
     def alive(self) -> bool:
         """Check if the Valkey service is running."""
         try:

@@ -9,6 +9,7 @@ from typing import override
 
 import ops
 from charmlibs import pathops
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -85,11 +86,17 @@ class ValkeyK8sWorkload(WorkloadBase):
         return ops.pebble.Layer(layer_config)
 
     @override
-    def start(self) -> None:
+    def start(self) -> bool:
         self.container.add_layer(CHARM, self.pebble_layer, combine=True)
         self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
+        return self.alive()
 
     @override
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_result(lambda healthy: not healthy),
+    )
     def alive(self) -> bool:
         """Check if the Valkey service is running."""
         for service_name in [

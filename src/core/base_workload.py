@@ -35,7 +35,7 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def start(self) -> None:
+    def start(self) -> bool:
         """Start the workload service."""
         pass
 
