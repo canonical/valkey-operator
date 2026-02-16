@@ -28,6 +28,11 @@ def mock_bind_address(mocker):
 
 
 @pytest.fixture(autouse=True)
+def tenacity_wait(mocker):
+    mocker.patch("tenacity.nap.time")
+
+
+@pytest.fixture(autouse=True)
 def cloud_spec():
     return testing.CloudSpec(
         type="kubernetes",

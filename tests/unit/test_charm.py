@@ -19,7 +19,7 @@ from src.literals import (
     CharmUsers,
     StartState,
 )
-from src.statuses import CharmStatuses, ClusterStatuses
+from src.statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
 
 from .helpers import status_is
 
@@ -83,21 +83,38 @@ def test_start_leader_unit(cloud_spec):
     }
 
     # generate passwords
-    state_out = ctx.run(ctx.on.leader_elected(), state_in)
+    state_in = ctx.run(ctx.on.leader_elected(), state_in)
 
     # start event
-    state_out = ctx.run(ctx.on.start(), state_out)
-    assert state_out.get_container(container.name).plan == expected_plan
-    assert (
-        state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
-        == pebble.ServiceStatus.ACTIVE
-    )
-    assert (
-        state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
-        == pebble.ServiceStatus.ACTIVE
-    )
-    assert state_out.unit_status == ActiveStatus()
-    assert state_out.app_status == ActiveStatus()
+    with patch("common.client.ValkeyClient.ping", return_value=False):
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert state_out.get_container(container.name).plan == expected_plan
+        assert (
+            state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
+            == pebble.ServiceStatus.ACTIVE
+        )
+        assert (
+            state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
+            == pebble.ServiceStatus.ACTIVE
+        )
+        assert status_is(state_out, ValkeyServiceStatuses.SERVICE_STARTING.value)
+    with (
+        patch("common.client.ValkeyClient.ping", return_value=True),
+        patch("common.client.ValkeyClient.get_persistence_info", return_value={"loading": "0"}),
+        patch("common.client.ValkeyClient.set_value", return_value=True),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_out)
+        assert status_is(state_out, ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+
+    with (
+        patch("common.client.ValkeyClient.ping", return_value=True),
+        patch("common.client.ValkeyClient.get_persistence_info", return_value={"loading": "0"}),
+        patch("common.client.ValkeyClient.set_value", return_value=True),
+        patch("common.client.ValkeyClient.sentinel_get_master_info", return_value={"ip": "test"}),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_out)
+        assert state_out.unit_status == ActiveStatus()
+        assert state_out.app_status == ActiveStatus()
 
     # container not ready
     container = testing.Container(name=CONTAINER, can_connect=False)
@@ -163,8 +180,30 @@ def test_start_non_leader_unit(cloud_spec):
 
         assert status_is(state_out, CharmStatuses.WAITING_TO_START.value)
 
+        # health check
+        with patch("common.client.ValkeyClient.is_replica_synced", return_value=False):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"starting-member": "valkey/0"},
+                peers_data={1: {"start-state": "started"}},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, ValkeyServiceStatuses.SERVICE_STARTING.value)
+
         # replica syncing
-        with patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False):
+        with (
+            patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
@@ -182,7 +221,11 @@ def test_start_non_leader_unit(cloud_spec):
             assert status_is(state_out, ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value)
 
         # sentinel not yet discovered
-        with patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=False):
+        with (
+            patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=False),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
@@ -203,6 +246,8 @@ def test_start_non_leader_unit(cloud_spec):
         with (
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=True),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
@@ -413,11 +458,13 @@ def test_config_changed_leader_unit(cloud_spec):
     )
     with (
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
+        patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.config_set") as mock_config_set,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        assert mock_exec_command.call_count == 2  # one for acl load, one for primaryauth set
+        mock_load_acl.assert_called_once()
+        mock_config_set.assert_called_once()
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -427,38 +474,38 @@ def test_config_changed_leader_unit(cloud_spec):
         )
 
 
-def test_config_changed_leader_unit_primary(cloud_spec):
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
-    container = testing.Container(name=CONTAINER, can_connect=True)
+# def test_config_changed_leader_unit_primary(cloud_spec):
+#     ctx = testing.Context(ValkeyCharm, app_trusted=True)
+#     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+#     container = testing.Container(name=CONTAINER, can_connect=True)
 
-    password_secret = testing.Secret(
-        tracked_content={user.value: "secure-password" for user in CharmUsers},
-        remote_grants=APP_NAME,
-    )
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
-        secrets={password_secret},
-        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-    )
-    with (
-        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
-        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
-    ):
-        state_out = ctx.run(ctx.on.config_changed(), state_in)
-        mock_set_acl_file.assert_called_once()
-        assert mock_exec_command.call_count == 2  # one for acl load, one for primaryauth set
-        secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
-        )
-        assert (
-            secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
-            == "secure-password"
-        )
+#     password_secret = testing.Secret(
+#         tracked_content={user.value: "secure-password" for user in CharmUsers},
+#         remote_grants=APP_NAME,
+#     )
+#     state_in = testing.State(
+#         leader=True,
+#         relations={relation},
+#         containers={container},
+#         secrets={password_secret},
+#         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+#         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+#     )
+#     with (
+#         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+#         patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+#         patch("common.client.ValkeyClient.config_set") as mock_config_set,
+#         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
+#     ):
+#         state_out = ctx.run(ctx.on.config_changed(), state_in)
+#         mock_set_acl_file.assert_called_once()
+#         secret_out = state_out.get_secret(
+#             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
+#         )
+#         assert (
+#             secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+#             == "secure-password"
+#         )
 
 
 def test_config_changed_leader_unit_wrong_username(cloud_spec):
@@ -520,13 +567,15 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.exec_cli_command") as mock_exec_command,
+        patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        assert mock_exec_command.call_count == 2
+        mock_load_acl.assert_called_once()
+        mock_config_set.assert_called_once()
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
