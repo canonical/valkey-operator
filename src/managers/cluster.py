@@ -94,18 +94,15 @@ class ClusterManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
+
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
+
         if (
             persistence_info := client.get_persistence_info(hostname=self.state.bind_address)
         ) and persistence_info.get("loading", "") != "0":
             logger.warning("Health check failed: Valkey server is still loading data.")
-            return False
-        if is_primary and not client.set_value(
-            hostname=self.state.bind_address, key="healthcheck", value="ok"
-        ):
-            logger.warning("Health check failed: Could not set test key on Valkey server.")
             return False
 
         if not is_primary and check_replica_sync and not self.is_replica_synced():
@@ -120,17 +117,17 @@ class ClusterManager(ManagerStatusProtocol):
             scope=scope, component=self.name, running_status_only=True, running_status_type="async"
         ).root
 
-        if not self.workload.can_connect:
-            status_list.append(CharmStatuses.SERVICE_NOT_STARTED.value)
-
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        # non leader statuses
         match self.state.unit_server.model.start_state:
             case StartState.NOT_STARTED.value:
-                if (
+                if self.state.charm.unit.is_leader():
+                    status_list.append(
+                        CharmStatuses.SERVICE_NOT_STARTED.value,
+                    )
+                elif (
                     not self.state.cluster.internal_users_credentials
                     or not self.state.number_units_started
                 ):

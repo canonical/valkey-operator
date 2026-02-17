@@ -53,9 +53,7 @@ class SentinelManager(ManagerStatusProtocol):
         active_sentinels = [
             unit.model.private_ip
             for unit in self.state.servers
-            if unit.model
-            and unit.is_started
-            and unit.model.private_ip != self.state.unit_server.model.private_ip
+            if unit.is_started and unit.model.private_ip != self.state.unit_server.model.private_ip
         ]
 
         client = ValkeyClient(
@@ -81,7 +79,7 @@ class SentinelManager(ManagerStatusProtocol):
 
     def get_primary_ip(self) -> str | None:
         """Get the IP address of the primary node in the cluster."""
-        started_servers = [unit for unit in self.state.servers if unit.model and unit.is_started]
+        started_servers = [unit for unit in self.state.servers if unit.is_started]
 
         client = ValkeyClient(
             username=self.admin_user,
