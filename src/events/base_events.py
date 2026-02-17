@@ -377,7 +377,7 @@ class BaseEvents(ops.Object):
             secret_id (str): The id of the secret containing the internal users' passwords.
         """
         try:
-            secret_content = self.charm.state.get_secret_from_id(secret_id, refresh=True)
+            secret_content = self.charm.state.get_secret_from_id(secret_id)
         except (ops.ModelError, ops.SecretNotFoundError) as e:
             logger.error(e)
             self.charm.status.set_running_status(
