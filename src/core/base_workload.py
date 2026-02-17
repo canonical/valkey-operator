@@ -17,16 +17,14 @@ logger = logging.getLogger(__name__)
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
 
-    def __init__(self) -> None:
-        """Initialize the WorkloadBase."""
-        self.root_dir: pathops.PathProtocol
-        self.config_file: pathops.PathProtocol
-        self.sentinel_config_file: pathops.PathProtocol
-        self.acl_file: pathops.PathProtocol
-        self.sentinel_acl_file: pathops.PathProtocol
-        self.working_dir: pathops.PathProtocol
-        self.cli: str
-        self.user: str
+    root_dir: pathops.PathProtocol
+    config_file: pathops.PathProtocol
+    sentinel_config_file: pathops.PathProtocol
+    acl_file: pathops.PathProtocol
+    sentinel_acl_file: pathops.PathProtocol
+    working_dir: pathops.PathProtocol
+    cli: str
+    user: str
 
     @property
     @abstractmethod
