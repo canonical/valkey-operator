@@ -19,7 +19,7 @@ from common.exceptions import (
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers, StartState
-from statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
+from statuses import CharmStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -123,32 +123,36 @@ class ClusterManager(ManagerStatusProtocol):
 
         match self.state.unit_server.model.start_state:
             case StartState.NOT_STARTED.value:
-                if self.state.charm.unit.is_leader():
-                    status_list.append(
-                        CharmStatuses.SERVICE_NOT_STARTED.value,
-                    )
-                elif (
-                    not self.state.cluster.internal_users_credentials
-                    or not self.state.number_units_started
-                ):
-                    status_list.append(
-                        ClusterStatuses.WAITING_FOR_PRIMARY_START.value,
-                    )
-                else:
-                    status_list.append(
-                        CharmStatuses.WAITING_TO_START.value,
-                    )
+                status_list.append(
+                    StartStatuses.SERVICE_NOT_STARTED.value,
+                )
+            case StartState.WAITING_TO_START.value:
+                status_list.append(
+                    StartStatuses.WAITING_TO_START.value,
+                )
+            case StartState.WAITING_FOR_PRIMARY_START.value:
+                status_list.append(
+                    StartStatuses.WAITING_FOR_PRIMARY_START.value,
+                )
+            case StartState.CONFIGURATION_ERROR.value:
+                status_list.append(
+                    StartStatuses.CONFIGURATION_ERROR.value,
+                )
             case StartState.STARTING_WAITING_VALKEY.value:
                 status_list.append(
-                    ValkeyServiceStatuses.SERVICE_STARTING.value,
+                    StartStatuses.SERVICE_STARTING.value,
                 )
             case StartState.STARTING_WAITING_SENTINEL.value:
                 status_list.append(
-                    ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
+                    StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
                 )
             case StartState.STARTING_WAITING_REPLICA_SYNC.value:
                 status_list.append(
-                    ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value,
+                    StartStatuses.WAITING_FOR_REPLICA_SYNC.value,
+                )
+            case StartState.ERROR_ON_START.value:
+                status_list.append(
+                    StartStatuses.ERROR_ON_START.value,
                 )
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]

@@ -6,6 +6,7 @@
 
 import logging
 import subprocess
+import time
 from typing import List, override
 
 from charmlibs import pathops, snap
@@ -18,7 +19,11 @@ from tenacity import (
     wait_fixed,
 )
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyServiceNotAliveError,
+    ValkeyServicesFailedToStartError,
+    ValkeyWorkloadCommandError,
+)
 from core.base_workload import WorkloadBase
 from literals import (
     SNAP_ACL_FILE,
@@ -95,13 +100,19 @@ class ValkeyVmWorkload(WorkloadBase):
             return False
 
     @override
-    def start(self) -> bool:
+    def start(self) -> None:
         try:
             self.valkey.start(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
-            return self.alive()
         except snap.SnapError as e:
             logger.exception(str(e))
-            return False
+            raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
+
+        # The service might start but fail to load and die immediately
+        # On k8s starting the services will wait (poll) for them to be started.
+        # We do the same here to make sure the services are alive after start.
+        if not self.wait_for_services_to_be_alive(duration=3):
+            logger.error("Valkey service is not alive after start.")
+            raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
     def exec(self, command: List[str]) -> tuple[str, str | None]:
@@ -126,12 +137,36 @@ class ValkeyVmWorkload(WorkloadBase):
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
         retry=retry_if_result(lambda healthy: not healthy),
+        retry_error_callback=lambda _: False,
     )
     def alive(self) -> bool:
-        """Check if the Valkey service is running."""
         try:
             return bool(self.valkey.services[SNAP_SERVICE]["active"]) and bool(
                 self.valkey.services[SNAP_SENTINEL_SERVICE]["active"]
             )
         except KeyError:
             return False
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_result(lambda healthy: not healthy),
+        retry_error_callback=lambda _: False,
+    )
+    def wait_for_services_to_be_alive(self, duration: float = 30, delay: float = 0.1) -> bool:
+        """Poll until the Valkey services are alive for at least `duration` seconds.
+
+        Args:
+            duration (float): The maximum duration to poll for the services to be alive. Default is 30 seconds.
+            delay (float): The delay between each poll attempt in seconds. Default is 0.1 seconds.
+
+        Returns:
+                bool: True if the services are alive within the poll duration, False otherwise.
+        """
+        deadline = time.time() + duration
+        while time.time() < deadline:
+            if not self.alive():
+                return False
+
+            time.sleep(delay)
+        return True

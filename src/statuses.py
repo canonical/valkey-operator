@@ -18,22 +18,9 @@ class CharmStatuses(Enum):
         status="active",
         message="",
     )
-    SERVICE_NOT_STARTED = StatusObject(
-        status="blocked",
-        message="Service not started",
-    )
     SECRET_ACCESS_ERROR = StatusObject(
         status="blocked",
         message="Cannot access configured secret, check permissions",
-        running="async",
-    )
-    WAITING_TO_START = StatusObject(
-        status="maintenance",
-        message="Waiting for leader to allow service start",
-    )
-    CONFIGURATION_ERROR = StatusObject(
-        status="blocked",
-        message="Configuration error, check logs for details",
         running="async",
     )
 
@@ -47,6 +34,26 @@ class ClusterStatuses(Enum):
         running="async",
     )
 
+
+class StartStatuses(Enum):
+    """Collection of possible statuses related to the service start."""
+
+    SERVICE_NOT_STARTED = StatusObject(
+        status="maintenance",
+        message="Service not started",
+    )
+    WAITING_TO_START = StatusObject(
+        status="maintenance",
+        message="Waiting for leader to allow service start",
+    )
+    CONFIGURATION_ERROR = StatusObject(
+        status="blocked",
+        message="Configuration error, check logs for details",
+    )
+    SERVICE_STARTING = StatusObject(
+        status="maintenance",
+        message="Waiting for Valkey to start...",
+    )
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
         status="maintenance",
         message="Waiting for sentinel to start and be discovered by other units...",
@@ -61,18 +68,7 @@ class ClusterStatuses(Enum):
         status="maintenance",
         message="Waiting for the primary unit to start...",
     )
-
-
-class ValkeyServiceStatuses(Enum):
-    """Collection of possible Valkey service related statuses."""
-
-    SERVICE_STARTING = StatusObject(
-        status="maintenance",
-        message="Waiting for Valkey to start...",
-        running="async",
-    )
-    SERVICE_NOT_RUNNING = StatusObject(
+    ERROR_ON_START = StatusObject(
         status="blocked",
-        message="Valkey service not running",
-        running="async",
+        message="Error occurred during service start, check logs for details",
     )

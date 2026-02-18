@@ -102,7 +102,7 @@ class SentinelManager(ManagerStatusProtocol):
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),
         retry=retry_if_result(lambda result: result is False),
-        retry_error_callback=lambda retry_state: False,
+        retry_error_callback=lambda _: False,
     )
     def is_healthy(self) -> bool:
         """Check if the sentinel service is healthy."""

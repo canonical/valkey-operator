@@ -11,7 +11,11 @@ import ops
 from charmlibs import pathops
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyServiceNotAliveError,
+    ValkeyServicesFailedToStartError,
+    ValkeyWorkloadCommandError,
+)
 from core.base_workload import WorkloadBase
 from literals import (
     ACL_FILE,
@@ -86,19 +90,23 @@ class ValkeyK8sWorkload(WorkloadBase):
         return ops.pebble.Layer(layer_config)
 
     @override
-    def start(self) -> bool:
-        self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-        self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
-        return self.alive()
+    def start(self) -> None:
+        try:
+            self.container.add_layer(CHARM, self.pebble_layer, combine=True)
+            self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
+        except ops.pebble.ChangeError as e:
+            raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
+        if not self.alive():
+            raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
         retry=retry_if_result(lambda healthy: not healthy),
+        retry_error_callback=lambda _: False,
     )
     def alive(self) -> bool:
-        """Check if the Valkey service is running."""
         for service_name in [
             self.valkey_service,
             self.sentinel_service,

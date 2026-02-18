@@ -75,7 +75,11 @@ class StartState(StrEnum):
     """Start states for the service."""
 
     NOT_STARTED = "not_started"
+    WAITING_TO_START = "waiting_to_start"
+    WAITING_FOR_PRIMARY_START = "waiting_for_primary_start"
+    CONFIGURATION_ERROR = "configuration_error"
     STARTING_WAITING_VALKEY = "starting_waiting_valkey"
     STARTING_WAITING_SENTINEL = "starting_waiting_sentinel"
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
+    ERROR_ON_START = "error_on_start"
     STARTED = "started"

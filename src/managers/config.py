@@ -229,7 +229,6 @@ class ConfigManager(ManagerStatusProtocol):
         )
         full_config_string = f"{other_config_string}\n{sentinel_config_string}"
 
-        logger.debug("Full Sentinel config:\n%s", full_config_string)
         # on k8s we need to set the ownership of the sentinel config file to the non-root user that the valkey process runs as in order for sentinel to be able to read/write it
         self.workload.write_file(
             full_config_string,

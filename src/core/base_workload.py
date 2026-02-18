@@ -33,8 +33,13 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def start(self) -> bool:
-        """Start the workload service."""
+    def start(self) -> None:
+        """Start the workload service.
+
+        Raises:
+            ValkeyServicesFailedToStartError: If the service fails to start.
+            ValkeyServiceNotAliveError: If the service is not alive after start.
+        """
         pass
 
     @abstractmethod
@@ -44,7 +49,11 @@ class WorkloadBase(ABC):
 
     @abstractmethod
     def alive(self) -> bool:
-        """Check if the Valkey service is running."""
+        """Check if the Valkey services are running.
+
+        Returns:
+            bool: True if the services are active, False otherwise.
+        """
         pass
 
     def write_file(

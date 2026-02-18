@@ -22,3 +22,15 @@ class ValkeyConfigSetError(ValkeyClientError):
 
 class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
+
+
+class ValkeyServicesFailedToStartError(Exception):
+    """Custom Exception if Valkey service fails to start."""
+
+
+class ValkeyServiceNotAliveError(Exception):
+    """Custom Exception if Valkey service is not alive after start."""
+
+
+class ValkeyConfigurationError(Exception):
+    """Custom Exception if Valkey configuration fails to be set."""
