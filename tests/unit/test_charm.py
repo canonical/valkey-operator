@@ -39,7 +39,7 @@ internal_passwords_secret = testing.Secret(
 )
 
 
-def test_start_leader_unit(cloud_spec):
+def test_start_primary(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -148,7 +148,32 @@ def test_start_leader_unit(cloud_spec):
     assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
-def test_start_non_leader_unit(cloud_spec):
+def test_start_primary_started_flag_set(cloud_spec):
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    # no primary but started flag set
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, peers_data={1: {"start-state": "started"}}
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+
+    # happy path
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={relation, status_peer_relation},
+        containers={container},
+    )
+
+    # generate passwords
+    state_out = ctx.run(ctx.on.leader_elected(), state_in)
+    # start event
+    state_out = ctx.run(ctx.on.start(), state_out)
+    assert status_is(state_out, StartStatuses.ERROR_ON_START.value)
+
+
+def test_start_non_primary(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
