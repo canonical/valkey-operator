@@ -9,7 +9,7 @@ import pytest
 import yaml
 from ops import ActiveStatus, pebble, testing
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyServiceNotAliveError, ValkeyWorkloadCommandError
 from src.charm import ValkeyCharm
 from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
@@ -19,7 +19,7 @@ from src.literals import (
     CharmUsers,
     StartState,
 )
-from src.statuses import CharmStatuses, ClusterStatuses, ValkeyServiceStatuses
+from src.statuses import CharmStatuses, ClusterStatuses, StartStatuses
 
 from .helpers import status_is
 
@@ -86,25 +86,25 @@ def test_start_leader_unit(cloud_spec):
     state_in = ctx.run(ctx.on.leader_elected(), state_in)
 
     # start event
-    with patch("common.client.ValkeyClient.ping", return_value=False):
-        state_out = ctx.run(ctx.on.start(), state_in)
-        assert state_out.get_container(container.name).plan == expected_plan
-        assert (
-            state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
-            == pebble.ServiceStatus.ACTIVE
-        )
-        assert (
-            state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
-            == pebble.ServiceStatus.ACTIVE
-        )
-        assert status_is(state_out, ValkeyServiceStatuses.SERVICE_STARTING.value)
+    state_out = ctx.run(ctx.on.start(), state_in)
+    assert state_out.get_container(container.name).plan == expected_plan
+    assert (
+        state_out.get_container(container.name).service_statuses[SERVICE_VALKEY]
+        == pebble.ServiceStatus.ACTIVE
+    )
+    assert (
+        state_out.get_container(container.name).service_statuses[SERVICE_METRIC_EXPORTER]
+        == pebble.ServiceStatus.ACTIVE
+    )
+    assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
+
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.ValkeyClient.get_persistence_info", return_value={"loading": "0"}),
         patch("common.client.ValkeyClient.set_value", return_value=True),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
-        assert status_is(state_out, ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+        assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
 
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
@@ -116,6 +116,24 @@ def test_start_leader_unit(cloud_spec):
         assert state_out.unit_status == ActiveStatus()
         assert state_out.app_status == ActiveStatus()
 
+    with (
+        patch(
+            "managers.config.ConfigManager.set_config_properties",
+            side_effect=ValkeyWorkloadCommandError,
+        ),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert status_is(state_out, StartStatuses.CONFIGURATION_ERROR.value)
+
+    with (
+        patch(
+            "workload_k8s.ValkeyK8sWorkload.start",
+            side_effect=ValkeyServiceNotAliveError,
+        ),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_in)
+        assert status_is(state_out, StartStatuses.ERROR_ON_START.value)
+
     # container not ready
     container = testing.Container(name=CONTAINER, can_connect=False)
     state_in = testing.State(
@@ -126,8 +144,8 @@ def test_start_leader_unit(cloud_spec):
     )
 
     state_out = ctx.run(ctx.on.start(), state_in)
-    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value)
-    assert status_is(state_out, CharmStatuses.SERVICE_NOT_STARTED.value, is_app=True)
+    assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value)
+    assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
 def test_start_non_leader_unit(cloud_spec):
@@ -161,7 +179,7 @@ def test_start_non_leader_unit(cloud_spec):
         )
         state_out = ctx.run(ctx.on.start(), state_in)
 
-        assert status_is(state_out, ClusterStatuses.WAITING_FOR_PRIMARY_START.value)
+        assert status_is(state_out, StartStatuses.WAITING_TO_START.value)
 
         relation = testing.PeerRelation(
             id=1,
@@ -178,7 +196,7 @@ def test_start_non_leader_unit(cloud_spec):
         )
         state_out = ctx.run(ctx.on.start(), state_in)
 
-        assert status_is(state_out, CharmStatuses.WAITING_TO_START.value)
+        assert status_is(state_out, StartStatuses.WAITING_TO_START.value)
 
         # health check
         with patch("common.client.ValkeyClient.is_replica_synced", return_value=False):
@@ -196,7 +214,7 @@ def test_start_non_leader_unit(cloud_spec):
                 containers={container},
             )
             state_out = ctx.run(ctx.on.start(), state_in)
-            assert status_is(state_out, ValkeyServiceStatuses.SERVICE_STARTING.value)
+            assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
 
         # replica syncing
         with (
@@ -218,7 +236,7 @@ def test_start_non_leader_unit(cloud_spec):
                 containers={container},
             )
             state_out = ctx.run(ctx.on.start(), state_in)
-            assert status_is(state_out, ClusterStatuses.WAITING_FOR_REPLICA_SYNC.value)
+            assert status_is(state_out, StartStatuses.WAITING_FOR_REPLICA_SYNC.value)
 
         # sentinel not yet discovered
         with (
@@ -240,7 +258,7 @@ def test_start_non_leader_unit(cloud_spec):
                 containers={container},
             )
             state_out = ctx.run(ctx.on.start(), state_in)
-            assert status_is(state_out, ClusterStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+            assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
 
         # Happy path with sentinel discovered and replica synced
         with (

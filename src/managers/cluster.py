@@ -130,10 +130,6 @@ class ClusterManager(ManagerStatusProtocol):
                 status_list.append(
                     StartStatuses.WAITING_TO_START.value,
                 )
-            case StartState.WAITING_FOR_PRIMARY_START.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_PRIMARY_START.value,
-                )
             case StartState.CONFIGURATION_ERROR.value:
                 status_list.append(
                     StartStatuses.CONFIGURATION_ERROR.value,
