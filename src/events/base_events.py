@@ -119,18 +119,16 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if (primary_ip := self.charm.sentinel_manager.get_primary_ip()) is None:
-            if self.charm.state.number_units_started == 0:
-                logger.debug(
-                    "No primary discovered, but this is the first unit starting, proceeding with start."
-                )
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        if not primary_ip:
+            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
                 primary_ip = self.charm.state.bind_address
             else:
-                logger.error(
-                    "Cannot get primary IP address from sentinel but there are already units started."
+                logger.debug(
+                    "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
                 )
                 self.charm.state.unit_server.update(
-                    {"start_state": StartState.ERROR_ON_START.value}
+                    {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
                 )
                 event.defer()
                 return
