@@ -119,7 +119,19 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        primary_ip = self.charm.sentinel_manager.get_primary_ip() or self.charm.state.bind_address
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        if not primary_ip:
+            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
+                primary_ip = self.charm.state.bind_address
+            else:
+                logger.debug(
+                    "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
+                )
+                self.charm.state.unit_server.update(
+                    {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
+                )
+                event.defer()
+                return
 
         try:
             self._configure_services(primary_ip)
@@ -243,6 +255,9 @@ class BaseEvents(ops.Object):
 
         self.charm.state.cluster.update(
             {"starting_member": units_requesting_start[0] if units_requesting_start else ""}
+        )
+        logger.debug(
+            f"Updated starting member to {units_requesting_start[0] if units_requesting_start else ''}"
         )
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
