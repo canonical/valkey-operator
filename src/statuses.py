@@ -38,10 +38,5 @@ class ClusterStatuses(Enum):
 class TLSStatuses(Enum):
     """Collection of TLS related statuses."""
 
-    MISSING_CLIENT_TLS = StatusObject(
-        status="blocked", message="Must enable client TLS to use peer TLS"
-    )
     ENABLING_CLIENT_TLS = StatusObject(status="maintenance", message="Enabling client TLS...")
     DISABLING_CLIENT_TLS = StatusObject(status="maintenance", message="Disabling client TLS...")
-    ENABLING_PEER_TLS = StatusObject(status="maintenance", message="Enabling peer TLS...")
-    DISABLING_PEER_TLS = StatusObject(status="maintenance", message="Disabling peer TLS...")

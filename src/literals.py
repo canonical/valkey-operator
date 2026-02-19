@@ -24,7 +24,6 @@ ACL_FILE = "var/lib/valkey/users.acl"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
-PEER_TLS_RELATION_NAME = "peer-certificates"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
@@ -71,10 +70,3 @@ class TLSState(StrEnum):
     TO_TLS = "to-tls"
     TLS = "tls"
     TO_NO_TLS = "to-no-tls"
-
-
-class TLSType(StrEnum):
-    """TLS types."""
-
-    PEER = "peer"
-    CLIENT = "client"

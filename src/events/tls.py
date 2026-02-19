@@ -19,12 +19,7 @@ from common.exceptions import (
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import (
-    CLIENT_TLS_RELATION_NAME,
-    PEER_TLS_RELATION_NAME,
-    TLSState,
-    TLSType,
-)
+from literals import CLIENT_TLS_RELATION_NAME, TLSState
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -51,21 +46,7 @@ class TLSEvents(ops.Object):
             certificate_requests=[
                 CertificateRequestAttributes(
                     common_name=self.charm.tls_manager.build_common_name(),
-                    sans_ip=self.charm.tls_manager.build_sans_ip(TLSType.CLIENT),
-                    sans_dns=self.charm.tls_manager.build_sans_dns(),
-                ),
-            ],
-            private_key=None,
-            refresh_events=[self.refresh_tls_certificates_event],
-        )
-
-        self.peer_certificate = TLSCertificatesRequiresV4(
-            self.charm,
-            PEER_TLS_RELATION_NAME,
-            certificate_requests=[
-                CertificateRequestAttributes(
-                    common_name=self.charm.tls_manager.build_common_name(),
-                    sans_ip=self.charm.tls_manager.build_sans_ip(TLSType.PEER),
+                    sans_ip=self.charm.tls_manager.build_sans_ip(),
                     sans_dns=self.charm.tls_manager.build_sans_dns(),
                 ),
             ],
@@ -74,25 +55,19 @@ class TLSEvents(ops.Object):
         )
 
         # --- EVENTS TO OBSERVE ---
-        for relation in [CLIENT_TLS_RELATION_NAME, PEER_TLS_RELATION_NAME]:
-            self.framework.observe(
-                self.charm.on[relation].relation_created, self._on_relation_created
-            )
-            self.framework.observe(
-                self.charm.on[relation].relation_broken, self._on_relation_broken
-            )
-        for relation in [self.peer_certificate, self.client_certificate]:
-            self.framework.observe(
-                relation.on.certificate_available, self._on_certificate_available
-            )
+        self.framework.observe(
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created, self._on_relation_created
+        )
+        self.framework.observe(
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken, self._on_relation_broken
+        )
+        self.framework.observe(
+            self.client_certificate.on.certificate_available, self._on_certificate_available
+        )
 
     def _on_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Handle the `relation-created` event."""
-        if event.relation.name == CLIENT_TLS_RELATION_NAME:
-            self.charm.tls_manager.set_tls_state(tls_type=TLSType.CLIENT, state=TLSState.TO_TLS)
-            return
-
-        self.charm.tls_manager.set_tls_state(tls_type=TLSType.PEER, state=TLSState.TO_TLS)
+        self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
         """Handle the `certificate-available` event from TLS provider."""
@@ -100,19 +75,12 @@ class TLSEvents(ops.Object):
         client_certificates, client_private_key = (
             self.client_certificate.get_assigned_certificates()
         )
-        peer_certificates, peer_private_key = self.peer_certificate.get_assigned_certificates()
 
         try:
             if client_certificates and client_certificates[0].certificate == cert:
-                cert_type = TLSType.CLIENT
                 cert = client_certificates[0]
                 private_key = client_private_key
                 tls_state = self.charm.state.unit_server.tls_client_state
-            elif peer_certificates and peer_certificates[0].certificate == cert:
-                cert_type = TLSType.PEER
-                cert = peer_certificates[0]
-                private_key = peer_private_key
-                tls_state = self.charm.state.unit_server.tls_peer_state
             else:
                 logger.error("Received unknown certificate: %s", cert)
                 return
@@ -120,18 +88,10 @@ class TLSEvents(ops.Object):
             logger.error("Received certificate does not match provided certificates: %s", cert)
             return
 
-        if (
-            cert_type == TLSType.PEER
-            and self.charm.state.unit_server.tls_client_state != TLSState.TLS
-        ):
-            logger.warning("Cannot enable peer TLS if client TLS is not enabled")
-            event.defer()
-            return
-
-        logger.info("Storing %s certificate", cert_type.value)
+        logger.info("Storing client certificate")
         try:
-            self.charm.tls_manager.write_certificate(cert_type, cert, private_key)
-            self.charm.tls_manager.set_cert_state(cert_type, is_ready=True)
+            self.charm.tls_manager.write_certificate(cert, private_key)
+            self.charm.tls_manager.set_cert_state(is_ready=True)
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to store certificate: %s", e)
             event.defer()
@@ -139,53 +99,43 @@ class TLSEvents(ops.Object):
 
         if tls_state == TLSState.TO_TLS:
             try:
-                self._enable_tls(cert_type)
+                self._enable_tls()
             except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
-                logger.error("Failed to enable %s TLS", cert_type)
+                logger.error("Failed to enable client TLS")
                 event.defer()
                 return
             except ValkeyCertificatesNotReadyError:
-                logger.warning("Not all units have stored the %s certificate", cert_type)
+                logger.warning("Not all units have stored the client certificate")
                 event.defer()
                 return
 
     def _on_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
-        if event.relation.name == CLIENT_TLS_RELATION_NAME:
-            tls_type = TLSType.CLIENT
-            tls_state = self.charm.state.unit_server.tls_client_state
-        else:
-            tls_type = TLSType.PEER
-            tls_state = self.charm.state.unit_server.tls_peer_state
+        tls_state = self.charm.state.unit_server.tls_client_state
 
         if tls_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
-            logger.info("Disabling %s TLS", tls_type)
-            self.charm.tls_manager.set_tls_state(tls_type, TLSState.TO_NO_TLS)
+            logger.info("Disabling client TLS")
+            self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
                 self.charm.config_manager.set_config_properties()
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
             except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
-                logger.error("Failed to disable %s TLS", tls_type)
+                logger.error("Failed to disable client TLS")
                 event.defer()
                 return
 
-        self.charm.tls_manager.remove_certificate(tls_type)
-        self.charm.tls_manager.set_cert_state(tls_type, is_ready=False)
-        self.charm.tls_manager.set_tls_state(tls_type, TLSState.NO_TLS)
+        self.charm.tls_manager.remove_certificate()
+        self.charm.tls_manager.set_cert_state(is_ready=False)
+        self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
 
-    def _enable_tls(self, tls_type: TLSType) -> None:
+    def _enable_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""
-        if (
-            tls_type == TLSType.CLIENT
-            and not all(server.client_cert_ready for server in self.charm.state.servers)
-            or tls_type == TLSType.PEER
-            and not all(server.peer_cert_ready for server in self.charm.state.servers)
-        ):
+        if not all(server.client_cert_ready for server in self.charm.state.servers):
             raise ValkeyCertificatesNotReadyError
 
-        logger.info("Enabling %s TLS in Valkey", tls_type)
+        logger.info("Enabling TLS in Valkey")
         self.charm.config_manager.set_config_properties()
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
-        self.charm.tls_manager.set_tls_state(tls_type, TLSState.TLS)
+        self.charm.tls_manager.set_tls_state(TLSState.TLS)

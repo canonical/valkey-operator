@@ -7,14 +7,12 @@ import jubilant
 import pytest
 
 from literals import CharmUsers
-from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
     create_valkey_client,
-    does_status_match,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
     get_key,
@@ -35,7 +33,6 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     juju.deploy(charm, num_units=NUM_UNITS, trust=True)
     juju.deploy(TLS_NAME, channel="1/edge")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
-    juju.integrate(f"{APP_NAME}:peer-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -82,8 +79,7 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
 
 async def test_disable_tls(juju: jubilant.Juju) -> None:
     """Disable TLS on a running cluster and check if it is still accessible."""
-    logger.info("Removing peer-certificates and client-certificates relations")
-    juju.remove_relation(f"{APP_NAME}:peer-certificates", f"{TLS_NAME}:certificates")
+    logger.info("Removing client-certificates relation")
     juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
 
     juju.wait(
@@ -118,21 +114,6 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
 
 async def test_enable_tls(juju: jubilant.Juju) -> None:
     """Enable TLS on a running cluster and check if it is still accessible."""
-    logger.info("Enabling peer TLS only")
-    juju.integrate(f"{APP_NAME}:peer-certificates", TLS_NAME)
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_unit_statuses={APP_NAME: [TLSStatuses.MISSING_CLIENT_TLS.value]},
-            num_units={APP_NAME: NUM_UNITS},
-        ),
-        timeout=100,
-    )
-
     logger.info("Enabling client TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(

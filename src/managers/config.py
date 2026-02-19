@@ -94,8 +94,6 @@ class ConfigManager(ManagerStatusProtocol):
             "tls-cert-file": "''",
             "tls-key-file": "''",
             "tls-ca-cert-dir": "''",
-            "tls-client-cert-file": "''",
-            "tls-client-key-file": "''",
             "tls-replication": "no",
         }
 
@@ -110,15 +108,7 @@ class ConfigManager(ManagerStatusProtocol):
         tls_config["tls-cert-file"] = self.workload.tls_paths.client_cert.as_posix()
         tls_config["tls-key-file"] = self.workload.tls_paths.client_key.as_posix()
         tls_config["tls-ca-cert-dir"] = self.workload.tls_paths.ca_certs_dir.as_posix()
-
-        # peer TLS only possible when server-side TLS enabled
-        if (
-            self.state.unit_server.tls_peer_state in [TLSState.TLS, TLSState.TO_TLS]
-            and self.state.unit_server.peer_cert_ready
-        ):
-            tls_config["tls-client-cert-file"] = self.workload.tls_paths.peer_cert.as_posix()
-            tls_config["tls-client-key-file"] = self.workload.tls_paths.peer_key.as_posix()
-            tls_config["tls-replication"] = "yes"
+        tls_config["tls-replication"] = "yes"
 
         return tls_config
 

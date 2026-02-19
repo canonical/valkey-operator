@@ -44,9 +44,7 @@ class PeerUnitModel(PeerModel):
     started: bool = Field(default=False)
     hostname: str = Field(default="")
     tls_client_state: str = Field(default="")
-    tls_peer_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
-    peer_cert_ready: bool = Field(default=False)
 
 
 class RelationState:
@@ -134,22 +132,9 @@ class ValkeyServer(RelationState):
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
 
     @property
-    def tls_peer_state(self) -> TLSState:
-        """The current TLS state of the Valkey server for peer TLS."""
-        if not self.model:
-            return TLSState.NO_TLS
-
-        return TLSState(self.model.tls_peer_state or TLSState.NO_TLS.value)
-
-    @property
     def client_cert_ready(self) -> bool:
         """Flag to indicate if the unit has stored client TLS certificates."""
         return self.model.client_cert_ready if self.model else False
-
-    @property
-    def peer_cert_ready(self) -> bool:
-        """Flag to indicate if the unit has stored peer TLS certificates."""
-        return self.model.peer_cert_ready if self.model else False
 
 
 @final
