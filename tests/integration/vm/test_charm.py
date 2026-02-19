@@ -15,6 +15,7 @@ from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
     INTERNAL_USERS_SECRET_LABEL,
+    are_agents_idle,
     create_valkey_client,
     does_status_match,
     fast_forward,
@@ -82,8 +83,8 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, APP_NAME),
-        timeout=1200,
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
     )
 
     logger.info("Ensure password was updated on charm-internal secret")
@@ -114,8 +115,8 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, APP_NAME),
-        timeout=1200,
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
     )
 
     # make sure we can still read data with the previously set password
