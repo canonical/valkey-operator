@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyACLLoadError, ValkeyTLSLoadError
+from common.exceptions import ValkeyACLLoadError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers, TLSState
@@ -65,11 +65,8 @@ class ClusterManager(ManagerStatusProtocol):
 
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
-        try:
-            client = self._get_valkey_client()
-            client.reload_tls(tls_config)
-        except ValkeyTLSLoadError:
-            raise
+        client = self._get_valkey_client()
+        client.reload_tls(tls_config)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
