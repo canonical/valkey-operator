@@ -53,6 +53,7 @@ class StartStatuses(Enum):
     SERVICE_STARTING = StatusObject(
         status="maintenance",
         message="Waiting for Valkey to start...",
+        running="async",
     )
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
         status="maintenance",
@@ -66,7 +67,7 @@ class StartStatuses(Enum):
 
     WAITING_FOR_PRIMARY_START = StatusObject(
         status="maintenance",
-        message="Waiting for the primary unit to start...",
+        message="Waiting to discover the primary unit...",
     )
     ERROR_ON_START = StatusObject(
         status="blocked",
