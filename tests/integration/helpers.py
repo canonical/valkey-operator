@@ -392,7 +392,9 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
 
 def exec_valkey_cli(hostname: str, username: str, password: str, command: str) -> tuple[str, str]:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = f"charmed-valkey.cli -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
+    command = (
+        f"valkey-cli -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
+    )
     result = subprocess.run(
         command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
