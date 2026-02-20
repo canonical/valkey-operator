@@ -220,7 +220,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
 
     # perform read operation with the updated password
     hostnames = get_cluster_hostnames(juju, APP_NAME)
-    assert ping_cluster(
+    assert await ping_cluster(
         hostnames, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     ), "Failed to authenticate with new admin password"
 
@@ -268,7 +268,8 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     # perform pings with the updated replica password
     for hostname in get_cluster_hostnames(juju, APP_NAME):
         assert (
-            ping(hostname, username=CharmUsers.VALKEY_ADMIN.value, password=new_password) is True
+            ping(hostname, username=CharmUsers.VALKEY_REPLICA.value, password=replica_password)
+            is True
         ), (
-            f"Failed to authenticate with admin password after removing user secret on host {hostname}"
+            f"Failed to authenticate with replica password after removing user secret on host {hostname}"
         )

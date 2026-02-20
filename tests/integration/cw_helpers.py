@@ -52,16 +52,16 @@ async def assert_continuous_writes_increasing(
     password: str,
 ) -> None:
     """Assert that the continuous writes are increasing."""
-    client = await create_valkey_client(
+    async with create_valkey_client(
         hostnames,
         username=username,
         password=password,
-    )
-    writes_count = await client.llen(KEY)
-    await asyncio.sleep(10)
-    more_writes = await client.llen(KEY)
-    assert more_writes > writes_count, "Writes not continuing to DB"
-    logger.info("Continuous writes are increasing.")
+    ) as client:
+        writes_count = await client.llen(KEY)
+        await asyncio.sleep(10)
+        more_writes = await client.llen(KEY)
+        assert more_writes > writes_count, "Writes not continuing to DB"
+        logger.info("Continuous writes are increasing.")
 
 
 def assert_continuous_writes_consistent(

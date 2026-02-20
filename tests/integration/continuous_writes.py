@@ -256,8 +256,6 @@ class ContinuousWrites:
             while not event.is_set():
                 try:
                     config = data_queue.get_nowait()
-                    # await client.close()
-                    # client = await _make_client(config)
                     proc_logger.info("Configuration updated, client reconnected.")
                 except queue.Empty:
                     pass

@@ -2,12 +2,12 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import contextlib
 import logging
 import os
 import re
 import subprocess
 import time
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
@@ -245,6 +245,7 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     raise SecretNotFoundError(f"Secret with label {label} not found")
 
 
+@asynccontextmanager
 async def create_valkey_client(
     hostnames: list[str],
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
@@ -256,7 +257,6 @@ async def create_valkey_client(
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for the internal user.
-        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         A Valkey client instance connected to the cluster.
@@ -272,7 +272,11 @@ async def create_valkey_client(
         credentials=credentials,
     )
 
-    return await GlideClient.create(client_config)
+    client = await GlideClient.create(client_config)
+    try:
+        yield client
+    finally:
+        await client.close()
 
 
 def set_password(
@@ -306,7 +310,7 @@ def set_password(
     juju.config(app=application, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
 
-@contextlib.contextmanager
+@contextmanager
 def fast_forward(juju: jubilant.Juju):
     """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
     old = juju.model_config()["update-status-hook-interval"]
@@ -324,8 +328,8 @@ async def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    client = await create_valkey_client([hostnames[0]], password=get_password(juju))
-    info = await client.custom_command(["client", "info"])
+    async with create_valkey_client([hostnames[0]], password=get_password(juju)) as client:
+        info = await client.custom_command(["client", "info"])
     match = re.search(r"laddr=([\d\.]+):", info.decode())
     if match:
         return match.group(1)
@@ -349,7 +353,6 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
 async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     # Connect to Valkey
     hostnames = get_cluster_hostnames(juju, APP_NAME)
-    client = await create_valkey_client(hostnames, password=get_password(juju))
 
     # Configuration
     value_size_bytes = 1024  # 1KB per value
@@ -366,28 +369,33 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
 
     # Generate a fixed random block to reuse (saves CPU cycles on generation)
     random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
+    async with create_valkey_client(hostnames, password=get_password(juju)) as client:
+        try:
+            while keys_added < total_keys:
+                data = {
+                    f"{SEED_KEY_PREFIX}{key_idx}": random_data
+                    for key_idx in range(keys_added, keys_added + batch_size)
+                }
 
-    try:
-        while keys_added < total_keys:
-            data = {f"{SEED_KEY_PREFIX}{key_idx}": random_data for key_idx in range(batch_size)}
+                if await client.mset(data) != "OK":
+                    raise RuntimeError("Failed to set data in Valkey cluster")
 
-            if await client.mset(data) != "OK":
-                raise RuntimeError("Failed to set data in Valkey cluster")
+                keys_added += batch_size
 
-            keys_added += batch_size
+                # Progress reporting
+                elapsed = time.time() - start_time
+                percent = (keys_added / total_keys) * 100
+                logger.info(
+                    f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+                )
 
-            # Progress reporting
-            elapsed = time.time() - start_time
-            percent = (keys_added / total_keys) * 100
+        except Exception as e:
+            logger.error(f"\nError: {e}")
+        finally:
+            total_time = time.time() - start_time
             logger.info(
-                f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+                f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds."
             )
-
-    except Exception as e:
-        logger.error(f"\nError: {e}")
-    finally:
-        total_time = time.time() - start_time
-        logger.info(f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds.")
 
 
 def exec_valkey_cli(hostname: str, username: str, password: str, command: str) -> tuple[str, str]:
@@ -417,8 +425,10 @@ async def set_key(
         username: The username for authentication.
         password: The password for authentication.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.set(key, value)
+    async with create_valkey_client(
+        hostnames=hostnames, username=username, password=password
+    ) as client:
+        return await client.set(key, value)
 
 
 async def get_key(
@@ -435,8 +445,10 @@ async def get_key(
         username: The username for authentication.
         password: The password for authentication.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.get(key)
+    async with create_valkey_client(
+        hostnames=hostnames, username=username, password=password
+    ) as client:
+        return await client.get(key)
 
 
 def ping(
@@ -472,8 +484,10 @@ async def ping_cluster(
     Returns:
         True if all nodes respond to a ping, False otherwise.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.ping() == "PONG".encode()
+    async with create_valkey_client(
+        hostnames=hostnames, username=username, password=password
+    ) as client:
+        return await client.ping() == "PONG".encode()
 
 
 async def get_nbr_connected_slaves(
@@ -491,8 +505,10 @@ async def get_nbr_connected_slaves(
     Returns:
         The number of connected slaves.
     """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    info = (await client.info([InfoSection.REPLICATION])).decode()
+    async with create_valkey_client(
+        hostnames=hostnames, username=username, password=password
+    ) as client:
+        info = (await client.info([InfoSection.REPLICATION])).decode()
     search_result = re.search(r"connected_slaves:([\d+])", info)
     if not search_result:
         raise ValueError("Could not parse number of connected slaves from info output")
@@ -519,10 +535,10 @@ async def auth_test(hostnames: list[str], username: str | None, password: str | 
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
     try:
-        client = await create_valkey_client(
+        async with create_valkey_client(
             hostnames=hostnames, username=username, password=password
-        )
-        return await client.ping() == "PONG".encode()
+        ) as client:
+            return await client.ping() == "PONG".encode()
     except Exception as e:
         error_message = str(e)
         if "NOAUTH" in error_message:
