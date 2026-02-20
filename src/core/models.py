@@ -36,7 +36,8 @@ class PeerAppModel(PeerModel):
     charmed_stats_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
-    starting_member: str = Field(default="")
+    start_member: str = Field(default="")
+    scale_down_member: str = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -47,6 +48,8 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
+    request_scale_down_lock: bool = Field(default=False)
+    scale_down_state: str = Field(default="")
 
 
 class RelationState:

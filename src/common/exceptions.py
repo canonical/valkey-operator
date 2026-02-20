@@ -34,3 +34,15 @@ class ValkeyServiceNotAliveError(Exception):
 
 class ValkeyConfigurationError(Exception):
     """Custom Exception if Valkey configuration fails to be set."""
+
+
+class SentinelFailoverError(Exception):
+    """Custom Exception if triggering sentinel failover fails."""
+
+
+class ValkeyServicesCouldNotBeStoppedError(Exception):
+    """Custom Exception if Valkey services could not be stopped."""
+
+
+class CannotSeeAllActiveSentinelsError(Exception):
+    """Custom Exception if the local sentinel cannot see all active sentinels in the cluster."""

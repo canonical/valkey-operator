@@ -13,6 +13,7 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import (
     ValkeyServiceNotAliveError,
+    ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
@@ -127,3 +128,13 @@ class ValkeyK8sWorkload(WorkloadBase):
         except ops.pebble.ExecError as e:
             logger.error("Command failed with %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def stop(self) -> None:
+        try:
+            self.container.stop(self.valkey_service, self.sentinel_service, self.metric_service)
+        except ops.pebble.ChangeError as e:
+            logger.error("Failed to stop Valkey services: %s", e)
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Failed to stop Valkey services: {e}"
+            ) from e

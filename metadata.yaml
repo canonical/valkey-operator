@@ -22,6 +22,9 @@ website:
 containers:
   valkey:
     resource: valkey-image
+    mounts:
+      - storage: data
+        location: /var/lib/valkey/
 
 resources:
   valkey-image:
@@ -34,3 +37,10 @@ peers:
     interface: valkey_peers
   status-peers:
     interface: status_peers
+
+storage:
+  data:
+    type: filesystem
+    location: /var/snap/charmed-valkey/common/var/lib/charmed-valkey
+    description: storage for valkey data
+    minimum-size: 1G

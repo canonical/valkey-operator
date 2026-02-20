@@ -6,6 +6,8 @@
 import logging
 from typing import Literal
 
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
@@ -57,8 +59,9 @@ class ValkeyClient:
             "--pass",
             self.password,
         ] + command
+        logger.debug(f"Executing CLI command on {hostname}: {cli_command}")
         output, error = self.workload.exec(cli_command)
-        return output, error
+        return output.strip(), error
 
     def ping(self, hostname: str) -> bool:
         """Ping the Valkey server to check if it's responsive.
@@ -273,3 +276,99 @@ class ValkeyClient:
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to get master info from sentinel at {hostname}: {e}")
             return None
+
+    def sentinel_failover(self, hostname: str):
+        """Trigger a failover through the sentinel.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            bool: True if the failover command was executed successfully, False otherwise.
+        """
+        if not self.connect_to == "sentinel":
+            logger.error(
+                "Attempted to trigger failover through sentinel while client is configured to connect to valkey."
+            )
+            raise ValueError("Client is not configured to connect to sentinel.")
+        try:
+            output, err = self.exec_cli_command(
+                command=["sentinel", "failover", PRIMARY_NAME, "coordinated"],
+                hostname=hostname,
+            )
+            if "OK" not in output.strip():
+                logger.error(
+                    "Failed to trigger failover through sentinel at %s: stdout: %s, stderr: %s",
+                    hostname,
+                    output,
+                    err,
+                )
+                raise ValkeyWorkloadCommandError(
+                    f"Failed to trigger failover through sentinel at {hostname}: stdout, stderr: {(output, err)}"
+                )
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to trigger failover through sentinel at {hostname}: {e}")
+            raise
+
+    def sentinel_reset_state(self, hostname: str) -> None:
+        """Reset the sentinel state for the primary.
+
+        Args:
+            hostname (str): The hostname to connect to.
+        """
+        if not self.connect_to == "sentinel":
+            logger.error(
+                "Attempted to reset sentinel state through sentinel while client is configured to connect to valkey."
+            )
+            raise ValueError("Client is not configured to connect to sentinel.")
+        try:
+            output, err = self.exec_cli_command(
+                command=["sentinel", "reset", PRIMARY_NAME],
+                hostname=hostname,
+            )
+            if output != "1":
+                raise ValkeyWorkloadCommandError(
+                    f"Failed to reset sentinel state through sentinel at {hostname}: stdout, stderr: {(output, err)}"
+                )
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to reset sentinel state through sentinel at {hostname}: {e}")
+            raise
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        reraise=True,
+    )
+    def sentinel_get_replica_info(self, hostname: str) -> str:
+        """Get the replicas information of the primary from sentinel.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            str | None: The output of the "sentinel replicas" command if retrieved successfully, None otherwise.
+        """
+        if not self.connect_to == "sentinel":
+            logger.error(
+                "Attempted to get replica info from sentinel while client is configured to connect to valkey."
+            )
+            raise ValueError("Client is not configured to connect to sentinel.")
+        try:
+            output, err = self.exec_cli_command(
+                command=["sentinel", "replicas", PRIMARY_NAME],
+                hostname=hostname,
+            )
+            logger.debug(
+                "Output of 'sentinel replicas' command from sentinel at %s: stdout, stderr: %s",
+                hostname,
+                (output, err),
+            )
+            if not output.strip():
+                logger.warning(f"No replica info found in sentinel at {hostname}.")
+                raise ValkeyWorkloadCommandError(
+                    f"No replica info found in sentinel at {hostname}."
+                )
+            return output.strip()
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to get replica info from sentinel at {hostname}: {e}")
+            raise

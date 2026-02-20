@@ -43,6 +43,11 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
+    def stop(self) -> None:
+        """Stop the workload service."""
+        pass
+
+    @abstractmethod
     def exec(self, command: list[str]) -> tuple[str, str | None]:
         """Run a command on the workload substrate."""
         pass
