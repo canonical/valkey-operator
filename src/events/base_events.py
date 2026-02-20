@@ -203,9 +203,7 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered(
-            self.charm.state.bind_address
-        ):
+        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
             logger.info("Sentinel service not yet discovered by other units. Deferring event.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
@@ -449,9 +447,7 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        # Consider scaling to 0 if we need to clean databag
-
-        # consider quorom when removing unit
+        # TODO consider quorom when removing unit
 
         # if unit has primary then failover
         if self.charm.sentinel_manager.get_primary_ip() == self.charm.state.bind_address:
@@ -498,7 +494,6 @@ class BaseEvents(ops.Object):
 
         # check health after scale down
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
-
         if not self.charm.sentinel_manager.verify_expected_replica_count():
             logger.error("Not all sentinels see the expected number of replicas after scale down")
             event.defer()
