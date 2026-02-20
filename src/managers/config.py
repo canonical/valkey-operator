@@ -14,6 +14,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
+from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
@@ -23,6 +24,7 @@ from literals import (
     QUORUM_NUMBER,
     SENTINEL_PORT,
     CharmUsers,
+    StartState,
     Substrate,
 )
 from statuses import CharmStatuses
@@ -277,6 +279,21 @@ class ConfigManager(ManagerStatusProtocol):
                 )
             }
         )
+
+    def configure_services(self, primary_ip: str) -> None:
+        """Start Valkey and Sentinel services."""
+        try:
+            self.update_local_valkey_admin_password()
+            self.set_config_properties(primary_ip=primary_ip)
+            self.set_acl_file()
+            self.set_sentinel_config_properties(primary_ip=primary_ip)
+            self.set_sentinel_acl_file()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to set configuration properties: %s", e)
+            self.state.unit_server.update(
+                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
+            )
+            raise ValkeyConfigurationError("Failed to set configuration") from e
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""

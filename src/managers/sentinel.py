@@ -92,7 +92,7 @@ class SentinelManager(ManagerStatusProtocol):
             if primary_ip := client.sentinel_get_primary_ip(hostname=unit.model.private_ip):
                 logger.info(f"Primary IP address is {primary_ip}")
                 return primary_ip
-        logger.error(
+        logger.warning(
             "Could not determine primary IP from sentinels. Number of started servers: %d.",
             len(started_servers),
         )

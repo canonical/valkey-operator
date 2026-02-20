@@ -134,7 +134,7 @@ class BaseEvents(ops.Object):
                 return
 
         try:
-            self._configure_services(primary_ip)
+            self.charm.config_manager.configure_services(primary_ip)
             self.charm.workload.start()
         except ValkeyConfigurationError:
             self.charm.state.unit_server.update(
@@ -158,21 +158,6 @@ class BaseEvents(ops.Object):
         )
 
         self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
-
-    def _configure_services(self, primary_ip: str) -> None:
-        """Start Valkey and Sentinel services."""
-        try:
-            self.charm.config_manager.update_local_valkey_admin_password()
-            self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
-            self.charm.config_manager.set_acl_file()
-            self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
-            self.charm.config_manager.set_sentinel_acl_file()
-        except (ValkeyWorkloadCommandError, ValueError) as e:
-            logger.error("Failed to set configuration properties: %s", e)
-            self.charm.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
-            )
-            raise ValkeyConfigurationError("Failed to set configuration") from e
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -215,6 +200,9 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {"start_state": StartState.STARTED.value, "request_start_lock": False}
         )
+        # in case both units requests start before the leader is done
+        if self.charm.unit.is_leader():
+            self._process_lock_requests()
 
         self.charm.unit.open_port("tcp", CLIENT_PORT)
 
@@ -256,12 +244,13 @@ class BaseEvents(ops.Object):
             )
             return
 
-        self.charm.state.cluster.update(
-            {"starting_member": units_requesting_start[0] if units_requesting_start else ""}
-        )
-        logger.debug(
-            f"Updated starting member to {units_requesting_start[0] if units_requesting_start else ''}"
-        )
+        if units_requesting_start:
+            self.charm.state.cluster.update({"starting_member": units_requesting_start[0]})
+            logger.debug(f"Updated starting member to {units_requesting_start[0]}")
+            return
+
+        if self.charm.state.cluster.model.starting_member:
+            self.charm.state.cluster.update({"starting_member": ""})
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
