@@ -137,10 +137,7 @@ class BaseEvents(ops.Object):
             self.charm.workload.start()
         except ValkeyConfigurationError:
             self.charm.state.unit_server.update(
-                {
-                    "start_state": StartState.CONFIGURATION_ERROR.value,
-                    "request_start_lock": False,
-                }
+                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
             )
             event.defer()
             return
