@@ -6,7 +6,7 @@
 import logging
 from typing import Literal
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
 
@@ -20,11 +20,13 @@ class ValkeyClient:
         self,
         username: str,
         password: str,
+        tls: bool,
         workload: WorkloadBase,
         connect_to: Literal["valkey", "sentinel"] = "valkey",
     ):
         self.username = username
         self.password = password
+        self.tls = tls
         self.workload = workload
         self.connect_to = connect_to
 
@@ -56,7 +58,18 @@ class ValkeyClient:
             self.username,
             "--pass",
             self.password,
-        ] + command
+        ]
+
+        if self.tls:
+            cli_command.append("--tls")
+            cli_command.append("--cert")
+            cli_command.append(self.workload.tls_paths.client_cert.as_posix())
+            cli_command.append("--key")
+            cli_command.append(self.workload.tls_paths.client_key.as_posix())
+            cli_command.append("--cacertdir")
+            cli_command.append(self.workload.tls_paths.ca_certs_dir.as_posix())
+
+        cli_command = cli_command + command
         output, error = self.workload.exec(cli_command)
         return output, error
 
@@ -209,6 +222,28 @@ class ValkeyClient:
             logger.error(f"Failed to load ACL file on Valkey server at {hostname}: {e}")
             return False
 
+    def reload_tls(self, tls_config: dict[str, str], hostname: str) -> None:
+        """Trigger Valkey to load the TLS settings."""
+        cmd = ["CONFIG", "SET"]
+
+        # avoid "bind: Address already in use" by advancing the disabled port
+        if tls_config["tls-port"] == "0":
+            cmd.append("tls-port")
+            cmd.append("0")
+            tls_config.pop("tls-port")
+
+        for key, value in tls_config.items():
+            cmd.append(key)
+            cmd.append(value.strip("'"))
+        logger.debug("Loading TLS settings: %s", cmd)
+
+        try:
+            result = self.exec_cli_command(["acl", "load"], hostname=hostname)
+            logger.debug("Loading TLS settings: %s", result)
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Error loading TLS settings: {e}")
+            raise ValkeyTLSLoadError("Could not load TLS settings: %s", e)
+
     def sentinel_get_primary_ip(self, hostname: str) -> str | None:
         """Get the primary IP address from the sentinel.
 
@@ -273,25 +308,3 @@ class ValkeyClient:
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to get master info from sentinel at {hostname}: {e}")
             return None
-
-    def reload_tls(self, tls_config: dict[str, str]) -> None:
-        """Trigger Valkey to load the TLS settings."""
-        cmd = ["CONFIG", "SET"]
-
-        # avoid "bind: Address already in use" by advancing the disabled port
-        if tls_config["tls-port"] == "0":
-            cmd.append("tls-port")
-            cmd.append("0")
-            tls_config.pop("tls-port")
-
-        for key, value in tls_config.items():
-            cmd.append(key)
-            cmd.append(value.strip("'"))
-        logger.debug("Loading TLS settings: %s", cmd)
-
-        try:
-            result = asyncio.run(self._run_custom_command(cmd))
-            logger.debug("Loading TLS settings: %s", result)
-        except ValkeyCustomCommandError as e:
-            logger.error(f"Error loading TLS settings: {e}")
-            raise ValkeyTLSLoadError("Could not load TLS settings: %s", e)

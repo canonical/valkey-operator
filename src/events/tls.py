@@ -117,7 +117,9 @@ class TLSEvents(ops.Object):
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
-                self.charm.config_manager.set_config_properties()
+                self.charm.config_manager.set_config_properties(
+                    self.charm.sentinel_manager.get_primary_ip()
+                )
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
             except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
@@ -135,7 +137,9 @@ class TLSEvents(ops.Object):
             raise ValkeyCertificatesNotReadyError
 
         logger.info("Enabling TLS in Valkey")
-        self.charm.config_manager.set_config_properties()
+        self.charm.config_manager.set_config_properties(
+            self.charm.sentinel_manager.get_primary_ip()
+        )
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.tls_manager.set_tls_state(TLSState.TLS)

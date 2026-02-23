@@ -17,7 +17,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import PRIMARY_NAME, CharmUsers
+from literals import PRIMARY_NAME, CharmUsers, TLSState
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,18 @@ class SentinelManager(ManagerStatusProtocol):
             CharmUsers.SENTINEL_CHARM_ADMIN.value, ""
         )
 
+    def _get_valkey_client(self) -> ValkeyClient:
+        """Get a client connection to Valkey."""
+        return ValkeyClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            tls=True
+            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+            else False,
+            workload=self.workload,
+            connect_to="sentinel",
+        )
+
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),
@@ -56,12 +68,7 @@ class SentinelManager(ManagerStatusProtocol):
             if unit.is_started and unit.model.private_ip != self.state.unit_server.model.private_ip
         ]
 
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-            connect_to="sentinel",
-        )
+        client = self._get_valkey_client()
 
         for sentinel_ip in active_sentinels:
             try:
@@ -81,12 +88,7 @@ class SentinelManager(ManagerStatusProtocol):
         """Get the IP address of the primary node in the cluster."""
         started_servers = [unit for unit in self.state.servers if unit.is_started]
 
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-            connect_to="sentinel",
-        )
+        client = self._get_valkey_client()
 
         for unit in started_servers:
             if primary_ip := client.sentinel_get_primary_ip(hostname=unit.model.private_ip):
@@ -106,12 +108,7 @@ class SentinelManager(ManagerStatusProtocol):
     )
     def is_healthy(self) -> bool:
         """Check if the sentinel service is healthy."""
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-            connect_to="sentinel",
-        )
+        client = self._get_valkey_client()
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Sentinel did not respond to ping.")

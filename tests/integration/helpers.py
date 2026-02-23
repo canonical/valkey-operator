@@ -36,6 +36,9 @@ INTERNAL_USERS_SECRET_LABEL = (
 )
 SEED_KEY_PREFIX = "seed:key:"
 TLS_NAME = "self-signed-certificates"
+TLS_CERT_FILE = "client.pem"
+TLS_KEY_FILE = "client.key"
+TLS_CA_FILE = "client_ca.pem"
 
 
 def does_status_match(
@@ -261,6 +264,10 @@ def create_valkey_client(
         username=username,
         password=password,
         decode_responses=True,
+        ssl=True if tls_enabled else False,
+        ssl_keyfile=TLS_KEY_FILE if tls_enabled else None,
+        ssl_certfile=TLS_CERT_FILE if tls_enabled else None,
+        ssl_ca_certs=TLS_CA_FILE if tls_enabled else None,
     )
     return client
 
@@ -271,6 +278,7 @@ def create_sentinel_client(
     valkey_password: str | None = None,
     sentinel_user: str | None = CharmUsers.SENTINEL_ADMIN.value,
     sentinel_password: str | None = None,
+    tls_enabled: bool = False,
 ) -> valkey.Sentinel:
     """Create and return a Valkey Sentinel client connected to the cluster.
 
@@ -280,6 +288,7 @@ def create_sentinel_client(
         valkey_password: The password for the internal user for Valkey authentication.
         sentinel_user: The username for authentication to Sentinel.
         sentinel_password: The password for the internal user for Sentinel authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         A Valkey Sentinel client instance connected to the cluster.
@@ -293,6 +302,10 @@ def create_sentinel_client(
             "username": sentinel_user,
         },
         decode_responses=True,
+        ssl=True if tls_enabled else False,
+        ssl_keyfile=TLS_KEY_FILE if tls_enabled else None,
+        ssl_certfile=TLS_CERT_FILE if tls_enabled else None,
+        ssl_ca_certs=TLS_CA_FILE if tls_enabled else None,
     )
     return sentinel_client
 
@@ -328,52 +341,6 @@ def set_password(
     juju.config(app=application, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
 
-async def set_key(
-    hostnames: list[str],
-    username: str,
-    password: str,
-    key: str,
-    value: str,
-    tls_enabled: bool = False,
-) -> bytes | None:
-    """Write a key-value pair to the Valkey cluster.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to write.
-        value: The value to write.
-        username: The username for authentication.
-        password: The password for authentication.
-        tls_enabled: Whether TLS certificates are needed.
-    """
-    client = await create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    )
-    return await client.set(key, value)
-
-
-async def get_key(
-    hostnames: list[str],
-    username: str,
-    password: str,
-    key: str,
-    tls_enabled: bool = False,
-) -> bytes | None:
-    """Read a value from the Valkey cluster by key.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to read.
-        username: The username for authentication.
-        password: The password for authentication.
-        tls_enabled: Whether TLS certificates are needed.
-    """
-    client = await create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    )
-    return await client.get(key)
-
-
 @contextlib.contextmanager
 def fast_forward(juju: jubilant.Juju):
     """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
@@ -392,14 +359,14 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
 
     if model_info.type == "kubernetes":
         tls_path = "/var/lib/valkey/tls"
-        juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem", container="valkey")
-        juju.scp(f"{unit}:{tls_path}/client.key", "client.key", container="valkey")
-        juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem", container="valkey")
+        juju.scp(f"{unit}:{tls_path}/{TLS_CERT_FILE}", TLS_CERT_FILE, container="valkey")
+        juju.scp(f"{unit}:{tls_path}/{TLS_KEY_FILE}", TLS_KEY_FILE, container="valkey")
+        juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE, container="valkey")
     else:
         tls_path = "/var/snap/charmed-valkey/current/tls"
-        juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem")
-        juju.scp(f"{unit}:{tls_path}/client.key", "client.key")
-        juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem")
+        juju.scp(f"{unit}:{tls_path}/{TLS_CERT_FILE}", TLS_CERT_FILE)
+        juju.scp(f"{unit}:{tls_path}/{TLS_KEY_FILE}", TLS_KEY_FILE)
+        juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
 def get_primary_ip(juju: jubilant.Juju, app: str) -> str:

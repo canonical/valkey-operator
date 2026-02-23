@@ -25,7 +25,7 @@ def test_client_tls_relation_created(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"started": "True"},
+        local_unit_data={"start-state": "started"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
@@ -48,7 +48,7 @@ def test_client_tls_relation_broken(cloud_spec):
         id=1,
         endpoint=PEER_RELATION,
         local_unit_data={
-            "started": "True",
+            "start-state": "started",
             "tls-client-state": "tls",
             "client-cert-ready": "true",
         },
@@ -79,7 +79,7 @@ def test_client_tls_relation_broken_disabling_tls_fails(cloud_spec):
         id=1,
         endpoint=PEER_RELATION,
         local_unit_data={
-            "started": "True",
+            "start-state": "started",
             "tls-client-state": "tls",
             "client-cert-ready": "true",
         },
@@ -114,7 +114,7 @@ def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
         id=1,
         endpoint=PEER_RELATION,
         local_unit_data={
-            "started": "True",
+            "start-state": "started",
             "tls-client-state": "to-no-tls",
             "client-cert-ready": "true",
         },
@@ -146,7 +146,7 @@ def test_client_certificate_available(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"started": "True", "tls-client-state": "to-tls"},
+        local_unit_data={"start-state": "started", "tls-client-state": "to-tls"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_tls_relation = testing.Relation(
@@ -193,7 +193,7 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"started": "True", "tls-client-state": "to-tls"},
+        local_unit_data={"start-state": "started", "tls-client-state": "to-tls"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_tls_relation = testing.Relation(
@@ -245,10 +245,10 @@ def test_client_certificate_available_not_all_units_ready(cloud_spec):
         id=1,
         endpoint=PEER_RELATION,
         local_unit_data={
-            "started": "True",
+            "start-state": "started",
             "tls-client-state": "to-tls",
         },
-        peers_data={1: {"started": "True", "client-cert-ready": "False"}},
+        peers_data={1: {"start-state": "started", "client-cert-ready": "False"}},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_tls_relation = testing.Relation(
