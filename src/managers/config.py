@@ -182,8 +182,11 @@ class ConfigManager(ManagerStatusProtocol):
                 else:
                     try:
                         # other config options that are not specific to sentinel
+                        # just have the format "keyword argument1 argument2 ... argumentN",
+                        # for example "port 6379"
                         key, value = line.split(" ", 1)
                     except ValueError:
+                        key = line.strip()
                         value = ""
                     config_properties[key.strip()] = value.strip()
 
@@ -293,10 +296,7 @@ class ConfigManager(ManagerStatusProtocol):
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)
             self.state.unit_server.update(
-                {
-                    "start_state": StartState.CONFIGURATION_ERROR.value,
-                    "request_start_lock": False,
-                }
+                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
             )
             raise ValkeyConfigurationError("Failed to set configuration") from e
 

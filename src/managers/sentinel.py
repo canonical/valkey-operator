@@ -126,10 +126,7 @@ class SentinelManager(ManagerStatusProtocol):
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(
-            scope=scope,
-            component=self.name,
-            running_status_only=True,
-            running_status_type="async",
+            scope=scope, component=self.name, running_status_only=True, running_status_type="async"
         ).root
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]

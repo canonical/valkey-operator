@@ -68,8 +68,7 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_changed,
-            self._on_peer_relation_changed,
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
@@ -105,10 +104,7 @@ class BaseEvents(ops.Object):
             return
 
         self.charm.state.unit_server.update(
-            {
-                "start_state": StartState.WAITING_TO_START.value,
-                "request_start_lock": True,
-            }
+            {"start_state": StartState.WAITING_TO_START.value, "request_start_lock": True}
         )
 
         if self.charm.unit.is_leader():
@@ -151,10 +147,7 @@ class BaseEvents(ops.Object):
         except (ValkeyServicesFailedToStartError, ValkeyServiceNotAliveError) as e:
             logger.error(e)
             self.charm.state.unit_server.update(
-                {
-                    "start_state": StartState.ERROR_ON_START.value,
-                    "request_start_lock": False,
-                }
+                {"start_state": StartState.ERROR_ON_START.value, "request_start_lock": False}
             )
             event.defer()
             return
@@ -369,11 +362,7 @@ class BaseEvents(ops.Object):
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
                 self.charm.cluster_manager.update_primary_auth()
-            except (
-                ValkeyACLLoadError,
-                ValkeyConfigSetError,
-                ValkeyWorkloadCommandError,
-            ) as e:
+            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
