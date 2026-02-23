@@ -68,7 +68,8 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+            self.charm.on[PEER_RELATION].relation_changed,
+            self._on_peer_relation_changed,
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
@@ -89,7 +90,9 @@ class BaseEvents(ops.Object):
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle the on start event."""
-        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.NOT_STARTED.value}
+        )
 
         if not self.charm.workload.can_connect:
             logger.warning("Workload not ready yet")
@@ -104,7 +107,10 @@ class BaseEvents(ops.Object):
             return
 
         self.charm.state.unit_server.update(
-            {"start_state": StartState.WAITING_TO_START.value, "request_start_lock": True}
+            {
+                "start_state": StartState.WAITING_TO_START.value,
+                "request_start_lock": True,
+            }
         )
 
         if self.charm.unit.is_leader():
@@ -119,9 +125,11 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        if not primary_ip:
-            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
+        if not (primary_ip := self.charm.sentinel_manager.get_primary_ip()):
+            if (
+                self.charm.state.number_units_started == 0
+                and self.charm.unit.is_leader()
+            ):
                 primary_ip = self.charm.state.bind_address
             else:
                 logger.debug(
@@ -134,18 +142,24 @@ class BaseEvents(ops.Object):
                 return
 
         try:
-            self._configure_services(primary_ip)
+            self.charm.config_manager.configure_services(primary_ip)
             self.charm.workload.start()
         except ValkeyConfigurationError:
             self.charm.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
+                {
+                    "start_state": StartState.CONFIGURATION_ERROR.value,
+                    "request_start_lock": False,
+                }
             )
             event.defer()
             return
         except (ValkeyServicesFailedToStartError, ValkeyServiceNotAliveError) as e:
             logger.error(e)
             self.charm.state.unit_server.update(
-                {"start_state": StartState.ERROR_ON_START.value, "request_start_lock": False}
+                {
+                    "start_state": StartState.ERROR_ON_START.value,
+                    "request_start_lock": False,
+                }
             )
             event.defer()
             return
@@ -157,22 +171,9 @@ class BaseEvents(ops.Object):
             component_name=self.charm.cluster_manager.name,
         )
 
-        self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
-
-    def _configure_services(self, primary_ip: str) -> None:
-        """Start Valkey and Sentinel services."""
-        try:
-            self.charm.config_manager.update_local_valkey_admin_password()
-            self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
-            self.charm.config_manager.set_acl_file()
-            self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
-            self.charm.config_manager.set_sentinel_acl_file()
-        except (ValkeyWorkloadCommandError, ValueError) as e:
-            logger.error("Failed to set configuration properties: %s", e)
-            self.charm.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
-            )
-            raise ValkeyConfigurationError("Failed to set configuration") from e
+        self.unit_fully_started.emit(
+            is_primary=primary_ip == self.charm.state.bind_address
+        )
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -195,8 +196,13 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
-            logger.info("Sentinel service not yet discovered by other units. Deferring event.")
+        if (
+            not event.is_primary
+            and not self.charm.sentinel_manager.is_sentinel_discovered()
+        ):
+            logger.info(
+                "Sentinel service not yet discovered by other units. Deferring event."
+            )
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
             )
@@ -215,6 +221,9 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {"start_state": StartState.STARTED.value, "request_start_lock": False}
         )
+        # in case both units requests start before the leader is done
+        if self.charm.unit.is_leader():
+            self._process_lock_requests()
 
         self.charm.unit.open_port("tcp", CLIENT_PORT)
 
@@ -256,12 +265,15 @@ class BaseEvents(ops.Object):
             )
             return
 
-        self.charm.state.cluster.update(
-            {"starting_member": units_requesting_start[0] if units_requesting_start else ""}
-        )
-        logger.debug(
-            f"Updated starting member to {units_requesting_start[0] if units_requesting_start else ''}"
-        )
+        if units_requesting_start:
+            self.charm.state.cluster.update(
+                {"starting_member": units_requesting_start[0]}
+            )
+            logger.debug(f"Updated starting member to {units_requesting_start[0]}")
+            return
+
+        if self.charm.state.cluster.model.starting_member:
+            self.charm.state.cluster.update({"starting_member": ""})
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
@@ -345,7 +357,9 @@ class BaseEvents(ops.Object):
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
-        if not (admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)):
+        if not (
+            admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)
+        ):
             return
 
         if self.charm.unit.is_leader():
@@ -363,7 +377,9 @@ class BaseEvents(ops.Object):
             return
 
         # from here, code is only relevant for non-leader units
-        if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):
+        if event.secret.label and event.secret.label.endswith(
+            INTERNAL_USERS_SECRET_LABEL_SUFFIX
+        ):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
                 self.charm.config_manager.set_acl_file()
@@ -371,7 +387,11 @@ class BaseEvents(ops.Object):
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
                 self.charm.cluster_manager.update_primary_auth()
-            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+            except (
+                ValkeyACLLoadError,
+                ValkeyConfigSetError,
+                ValkeyWorkloadCommandError,
+            ) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -423,7 +443,9 @@ class BaseEvents(ops.Object):
             return
 
         # merge the credentials, replacing those which have been updated
-        new_passwords = self.charm.state.cluster.internal_users_credentials | secret_content
+        new_passwords = (
+            self.charm.state.cluster.internal_users_credentials | secret_content
+        )
         if new_passwords != self.charm.state.cluster.internal_users_credentials:
             logger.info("Password(s) for internal users have changed")
             try:
@@ -431,7 +453,9 @@ class BaseEvents(ops.Object):
                 self.charm.cluster_manager.reload_acl_file()
                 self.charm.state.cluster.update(
                     {
-                        f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
+                        f"{user.value.replace('-', '_')}_password": new_passwords[
+                            user.value
+                        ]
                         for user in CharmUsers
                     }
                 )

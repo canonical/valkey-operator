@@ -14,6 +14,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
+from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
@@ -23,6 +24,7 @@ from literals import (
     QUORUM_NUMBER,
     SENTINEL_PORT,
     CharmUsers,
+    StartState,
     Substrate,
 )
 from statuses import CharmStatuses
@@ -103,7 +105,9 @@ class ConfigManager(ManagerStatusProtocol):
     def set_config_properties(self, primary_ip: str) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
-        self.workload.write_config_file(config=self.get_config_properties(primary_ip=primary_ip))
+        self.workload.write_config_file(
+            config=self.get_config_properties(primary_ip=primary_ip)
+        )
 
     def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.
@@ -127,7 +131,9 @@ class ConfigManager(ManagerStatusProtocol):
             group=self.workload.user,
         )
 
-    def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
+    def _get_user_acl_line(
+        self, user: CharmUsers, passwords: dict[str, str] | None = None
+    ) -> str:
         """Generate an ACL line for a given user.
 
         Args:
@@ -144,7 +150,9 @@ class ConfigManager(ManagerStatusProtocol):
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
-    def get_sentinel_config_properties(self, primary_ip: str) -> dict[str, str | dict[str, str]]:
+    def get_sentinel_config_properties(
+        self, primary_ip: str
+    ) -> dict[str, str | dict[str, str]]:
         """Assemble the sentinel config properties.
 
         Returns:
@@ -168,6 +176,8 @@ class ConfigManager(ManagerStatusProtocol):
                     continue
                 elif line.startswith("sentinel "):
                     try:
+                        # some config options for sentinel start with "sentinel" followed by the
+                        # directive and its arguments, for example "sentinel monitor mymaster
                         key, value = line.split(" ", 2)[1:]
                     except ValueError:
                         key = line.strip().split(" ", 1)[1]
@@ -177,9 +187,9 @@ class ConfigManager(ManagerStatusProtocol):
                     )
                 else:
                     try:
+                        # other config options that are not specific to sentinel
                         key, value = line.split(" ", 1)
                     except ValueError:
-                        key = line.strip()
                         value = ""
                     config_properties[key.strip()] = value.strip()
 
@@ -187,8 +197,8 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["aclfile"] = self.workload.sentinel_acl_file.as_posix()
 
         # sentinel configs
-        config_properties["sentinel"] = sentinel_properties | self._generate_sentinel_configs(
-            primary_ip=primary_ip
+        config_properties["sentinel"] = (
+            sentinel_properties | self._generate_sentinel_configs(primary_ip=primary_ip)
         )
 
         return config_properties
@@ -197,10 +207,14 @@ class ConfigManager(ManagerStatusProtocol):
         """Generate the sentinel config properties based on the current cluster state."""
         sentinel_configs = {}
         # TODO consider adding quorum calculation based on number of planned_units and the parity of the number of units
-        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}"
+        sentinel_configs["monitor"] = (
+            f"{PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}"
+        )
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
-        sentinel_configs["auth-user"] = f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"
+        sentinel_configs["auth-user"] = (
+            f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"
+        )
         sentinel_configs["auth-pass"] = (
             f"{PRIMARY_NAME} {self.state.cluster.internal_users_credentials.get(CharmUsers.VALKEY_SENTINEL.value, '')}"
         )
@@ -222,10 +236,13 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_config = self.get_sentinel_config_properties(primary_ip=primary_ip)
 
         sentinel_config_string = "\n".join(
-            f"sentinel {key} {value}" for key, value in sentinel_config["sentinel"].items()
+            f"sentinel {key} {value}"
+            for key, value in sentinel_config["sentinel"].items()
         )
         other_config_string = "\n".join(
-            f"{key} {value}" for key, value in sentinel_config.items() if key != "sentinel"
+            f"{key} {value}"
+            for key, value in sentinel_config.items()
+            if key != "sentinel"
         )
         full_config_string = f"{other_config_string}\n{sentinel_config_string}"
 
@@ -266,7 +283,9 @@ class ConfigManager(ManagerStatusProtocol):
         Returns:
             str: String of 32 randomized letter+digit characters
         """
-        return "".join([secrets.choice(string.ascii_letters + string.digits) for _ in range(32)])
+        return "".join(
+            [secrets.choice(string.ascii_letters + string.digits) for _ in range(32)]
+        )
 
     def update_local_valkey_admin_password(self) -> None:
         """Update the local unit's valkey admin password in the state."""
@@ -277,6 +296,24 @@ class ConfigManager(ManagerStatusProtocol):
                 )
             }
         )
+
+    def configure_services(self, primary_ip: str) -> None:
+        """Start Valkey and Sentinel services."""
+        try:
+            self.update_local_valkey_admin_password()
+            self.set_config_properties(primary_ip=primary_ip)
+            self.set_acl_file()
+            self.set_sentinel_config_properties(primary_ip=primary_ip)
+            self.set_sentinel_acl_file()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to set configuration properties: %s", e)
+            self.state.unit_server.update(
+                {
+                    "start_state": StartState.CONFIGURATION_ERROR.value,
+                    "request_start_lock": False,
+                }
+            )
+            raise ValkeyConfigurationError("Failed to set configuration") from e
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
