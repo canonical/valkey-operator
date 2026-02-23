@@ -137,7 +137,6 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         """Resolve the given id of a Juju secret and return the content as a dict.
 
         Args:
-            model (Model): Model object.
             secret_id (str): The id of the secret.
 
         Returns:
@@ -151,3 +150,8 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             raise
 
         return secret_content
+
+    @property
+    def number_units_started(self) -> int:
+        """Return the number of units in the cluster that have their Valkey server started."""
+        return len([unit for unit in self.servers if unit.model and unit.is_started])

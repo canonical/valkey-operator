@@ -10,15 +10,24 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from common.exceptions import ValkeyACLLoadError, ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyACLLoadError,
+    ValkeyConfigSetError,
+    ValkeyConfigurationError,
+    ValkeyServiceNotAliveError,
+    ValkeyServicesFailedToStartError,
+    ValkeyWorkloadCommandError,
+)
 from literals import (
+    CLIENT_PORT,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     CharmUsers,
+    StartState,
     Substrate,
 )
-from statuses import CharmStatuses, ClusterStatuses
+from statuses import CharmStatuses, ClusterStatuses, StartStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -26,8 +35,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class UnitFullyStarted(ops.EventBase):
+    """Event that signals that the unit's has fully started.
+
+    This event will be deferred until:
+        The Sentinel service is running and was discovered by other units.
+        The Valkey service is running and the current node is in sync with the primary (if a replica).
+    """
+
+    def __init__(self, handle: ops.Handle, is_primary: bool = False):
+        super().__init__(handle)
+        self.is_primary = is_primary
+
+    def snapshot(self) -> dict[str, str]:
+        """Save the state of the event."""
+        return {"is_primary": str(self.is_primary)}
+
+    def restore(self, snapshot: dict[str, str]) -> None:
+        """Restore the state of the event."""
+        self.is_primary = snapshot.get("is_primary", "False") == "True"
+
+
 class BaseEvents(ops.Object):
     """Handle all base events."""
+
+    unit_fully_started = ops.EventSource(UnitFullyStarted)
 
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="base_events")
@@ -36,12 +68,13 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_joined, self._on_peer_relation_joined
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
+        self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
 
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
@@ -55,31 +88,168 @@ class BaseEvents(ops.Object):
             raise RuntimeError("Failed to install the Valkey snap")
 
     def _on_start(self, event: ops.StartEvent) -> None:
-        """Handle the `pebble-ready` event."""
+        """Handle the on start event."""
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
+
         if not self.charm.workload.can_connect:
             logger.warning("Workload not ready yet")
             event.defer()
             return
 
-        if not self.charm.unit.is_leader():
-            logger.warning("Scaling not implemented yet, services not started")
-            return
-
-        try:
-            self.charm.config_manager.set_config_properties()
-        except (ValkeyWorkloadCommandError, ValueError):
-            logger.error("Failed to set configuration")
+        if not self.charm.state.cluster.internal_users_credentials:
+            logger.info(
+                "Internal users' credentials not set yet. Deferring start event until credentials are set."
+            )
             event.defer()
             return
 
-        self.charm.workload.start()
-        logger.info("Services started")
-        self.charm.state.unit_server.update({"started": True})
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.WAITING_TO_START.value, "request_start_lock": True}
+        )
 
-    def _on_peer_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
-        """Handle event received by all units when a new unit joins the cluster relation."""
         if self.charm.unit.is_leader():
-            logger.info("Unit %s has joined the relation", event.unit.name)
+            logger.info(
+                "Leader unit requesting lock to start services. Triggering lock request processing."
+            )
+            self._process_lock_requests()
+
+        # TODO unit.name would not work across models we need to switch to using `model.unit.name + model_uuid`
+        if self.charm.state.cluster.model.starting_member != self.charm.unit.name:
+            logger.info("Waiting for lock to start")
+            event.defer()
+            return
+
+        if not (primary_ip := self.charm.sentinel_manager.get_primary_ip()):
+            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
+                primary_ip = self.charm.state.bind_address
+            else:
+                logger.debug(
+                    "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
+                )
+                self.charm.state.unit_server.update(
+                    {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
+                )
+                event.defer()
+                return
+
+        try:
+            self.charm.config_manager.configure_services(primary_ip)
+            self.charm.workload.start()
+        except ValkeyConfigurationError:
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
+            )
+            event.defer()
+            return
+        except (ValkeyServicesFailedToStartError, ValkeyServiceNotAliveError) as e:
+            logger.error(e)
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.ERROR_ON_START.value, "request_start_lock": False}
+            )
+            event.defer()
+            return
+
+        self.charm.status.set_running_status(
+            StartStatuses.SERVICE_STARTING.value,
+            scope="unit",
+            statuses_state=self.charm.state.statuses,
+            component_name=self.charm.cluster_manager.name,
+        )
+
+        self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
+
+    # TODO check how to trigger if deferred without update status event
+    def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
+        """Handle the unit-fully-started event."""
+        if not self.charm.cluster_manager.is_healthy(
+            is_primary=event.is_primary, check_replica_sync=False
+        ):
+            logger.warning("Unit is not healthy after start, deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            )
+            event.defer()
+            return
+
+        if not self.charm.sentinel_manager.is_healthy():
+            logger.warning("Sentinel is not healthy after start, deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
+            )
+            event.defer()
+            return
+
+        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
+            logger.info("Sentinel service not yet discovered by other units. Deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
+            )
+            event.defer()
+            return
+
+        if not event.is_primary and not self.charm.cluster_manager.is_replica_synced():
+            logger.info("Replica not yet synced. Deferring event.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_REPLICA_SYNC.value}
+            )
+            event.defer()
+            return
+
+        logger.info("Services started")
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.STARTED.value, "request_start_lock": False}
+        )
+        # in case both units requests start before the leader is done
+        if self.charm.unit.is_leader():
+            self._process_lock_requests()
+
+        self.charm.unit.open_port("tcp", CLIENT_PORT)
+
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Handle event received by all units when a unit's relation data changes."""
+        if not self.charm.unit.is_leader():
+            return
+
+        self._process_lock_requests()
+
+    def _process_lock_requests(self) -> None:
+        """Process start lock requests.
+
+        The leader unit will choose one of the units that requested the lock to start, and update the cluster model with that unit as the starting member.
+        """
+        units_requesting_start = [
+            unit.unit_name
+            for unit in self.charm.state.servers
+            if unit.model and unit.model.request_start_lock
+        ]
+        starting_unit = next(
+            (
+                unit
+                for unit in self.charm.state.servers
+                if unit.unit_name == self.charm.state.cluster.model.starting_member
+            ),
+            None,
+        )
+        if (
+            # if the starting member has not started yet, we want to wait for it to start instead of choosing another unit that requested start
+            self.charm.state.cluster.model.starting_member
+            and starting_unit
+            and not starting_unit.is_started
+        ):
+            logger.debug(
+                "Starting member %s has not started yet. Units requesting start: %s. ",
+                self.charm.state.cluster.model.starting_member,
+                units_requesting_start,
+            )
+            return
+
+        if units_requesting_start:
+            self.charm.state.cluster.update({"starting_member": units_requesting_start[0]})
+            logger.debug(f"Updated starting member to {units_requesting_start[0]}")
+            return
+
+        if self.charm.state.cluster.model.starting_member:
+            self.charm.state.cluster.update({"starting_member": ""})
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
@@ -92,6 +262,13 @@ class BaseEvents(ops.Object):
             logger.info("Workload not ready")
             event.defer()
             return
+
+        self.charm.state.unit_server.update(
+            {
+                "hostname": socket.gethostname(),
+                "private_ip": self.charm.state.bind_address,
+            }
+        )
 
         if not self.charm.unit.is_leader():
             return
@@ -123,6 +300,8 @@ class BaseEvents(ops.Object):
                 for user in CharmUsers
             }
         )
+        # update local unit admin password
+        self.charm.config_manager.update_local_valkey_admin_password()
         try:
             self.charm.config_manager.set_acl_file()
         except ValkeyWorkloadCommandError:
@@ -131,7 +310,12 @@ class BaseEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        self.charm.state.unit_server.update({"hostname": socket.gethostname()})
+        self.charm.state.unit_server.update(
+            {
+                "hostname": socket.gethostname(),
+                "private_ip": self.charm.state.bind_address,
+            }
+        )
 
         if not self.charm.unit.is_leader():
             return
@@ -173,7 +357,10 @@ class BaseEvents(ops.Object):
             try:
                 self.charm.config_manager.set_acl_file()
                 self.charm.cluster_manager.reload_acl_file()
-            except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+                # update the local unit admin password to match the leader
+                self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.cluster_manager.update_primary_auth()
+            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -237,7 +424,15 @@ class BaseEvents(ops.Object):
                         for user in CharmUsers
                     }
                 )
-            except (ValkeyACLLoadError, ValkeyWorkloadCommandError, ValueError) as e:
+                # update the local unit admin password
+                self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.cluster_manager.update_primary_auth()
+            except (
+                ValkeyACLLoadError,
+                ValueError,
+                ValkeyConfigSetError,
+                ValkeyWorkloadCommandError,
+            ) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

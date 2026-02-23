@@ -2,10 +2,10 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 import logging
-from time import sleep
 
 import jubilant
 import pytest
+from valkey import AuthenticationError
 
 from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
@@ -15,20 +15,20 @@ from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
     INTERNAL_USERS_SECRET_LABEL,
+    are_apps_active_and_agents_idle,
     create_valkey_client,
     does_status_match,
     fast_forward,
     get_cluster_hostnames,
-    get_key,
+    get_password,
+    get_primary_ip,
     get_secret_by_label,
-    set_key,
     set_password,
 )
 
 logger = logging.getLogger(__name__)
 
-# TODO scale up when scaling is implemented
-NUM_UNITS = 1
+NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
@@ -37,10 +37,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(charm, num_units=NUM_UNITS, trust=True)
     juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
-        ),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
         delay=5,
         successes=3,
@@ -49,68 +46,58 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
 
 async def test_authentication(juju: jubilant.Juju) -> None:
     """Assert that we can authenticate to valkey."""
+    primary = get_primary_ip(juju, APP_NAME)
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     # try without authentication
-    logger.info("Ensure unauthenticated access fails")
-    with pytest.raises(Exception) as exc_info:
-        unauth_client = await create_valkey_client(
-            hostnames=hostnames, username=None, password=None
-        )
+    with pytest.raises(AuthenticationError):
+        unauth_client = create_valkey_client(hostname=primary, username=None, password=None)
         await unauth_client.ping()
-    assert "NOAUTH" in str(exc_info.value), "Unauthenticated access did not fail as expected"
 
     # Authenticate with internal user
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
     assert password is not None, "Admin password secret not found"
 
-    logger.info("Check access works correctly when authenticated")
-    client = await create_valkey_client(hostnames=hostnames, password=password)
-    auth_result = await client.ping()
-    assert auth_result == b"PONG", "Authentication to Valkey cluster failed"
+    for hostname in hostnames:
+        client = create_valkey_client(hostname=hostname, password=password)
+        assert client.ping() is True, (
+            f"Authentication to Valkey cluster failed for host {hostname}"
+        )
 
 
 async def test_update_admin_password(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
-
     # create a user secret and grant it to the application
     logger.info("Updating operator password")
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    old_password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    old_password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
     new_password = "some-password"
     set_password(juju, new_password)
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, APP_NAME),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
         timeout=1200,
-        delay=5,
-        successes=3,
     )
 
-    logger.info("Ensure password was updated on charm-internal secret")
-    updated_secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    assert old_password != updated_secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
+    new_password_secret = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
+    assert new_password_secret == new_password, "Admin password not updated in secret"
 
-    logger.info("Ensure access with old password no longer possible")
-    with pytest.raises(Exception) as exc_info:
-        unauth_client = await create_valkey_client(
-            hostnames=hostnames, username=CharmUsers.VALKEY_ADMIN.value, password=old_password
-        )
-        await unauth_client.ping()
-    assert "WRONGPASS" in str(exc_info.value), "Unauthenticated access did not fail as expected"
+    primary = get_primary_ip(juju, APP_NAME)
 
-    logger.info("Check access with updated password")
-    result = await set_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-        value=TEST_VALUE,
+    # confirm old password no longer works
+    with pytest.raises(AuthenticationError):
+        create_valkey_client(
+            hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=old_password
+        ).ping()
+    # ping with new password
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     )
-    assert result == "OK", "Failed to write data after admin password update"
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
+    )
 
     # update the config again and remove the option `admin-password`
     logger.info("Ensure access is still possible after removing config option")
@@ -118,24 +105,25 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, APP_NAME),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
         timeout=1200,
-        delay=5,
-        successes=3,
     )
 
-    # make sure we can still read data with the previously set password
-    assert await get_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8")
+    for hostname in get_cluster_hostnames(juju, APP_NAME):
+        client = create_valkey_client(
+            hostname=hostname, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with admin password after removing user secret on host {hostname}"
+        )
+        assert client.get(TEST_KEY) == TEST_VALUE, (
+            f"Failed to read data after admin password update on host {hostname}"
+        )
 
 
 async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    # create a user secret and grant it to the application
     secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
     old_passwords = {}
 
@@ -144,9 +132,6 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
         if user == CharmUsers.VALKEY_ADMIN:
             continue
         old_passwords[user.value] = secret.get(f"{user.value}-password")
-
-    # create a user secret and grant it to the application
-    logger.info("Updating invalid username")
     new_password = "some-password"
     set_password(juju, username="wrong-username", password=new_password)
 
@@ -157,29 +142,24 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
             expected_app_statuses={APP_NAME: [ClusterStatuses.PASSWORD_UPDATE_FAILED.value]},
         ),
         timeout=1200,
-        delay=5,
-        successes=3,
     )
 
-    logger.info("Updating password correctly now")
     set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, APP_NAME),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
         timeout=1200,
-        delay=5,
-        successes=3,
     )
 
     # perform read operation with the updated password
-    result = await set_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-        value=TEST_VALUE,
+    primary = get_primary_ip(juju, APP_NAME)
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
     )
-    assert result == "OK", "Failed to write data after admin password update"
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
+    )
 
     logger.info("Comparing other users passwords to previously")
     updated_secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
@@ -193,8 +173,6 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
 
 async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     """If a user secret is not granted, ensure we can process updated permissions."""
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
-
     logger.info("Creating new user secret")
     secret_name = "my_secret"
     new_password = "even-newer-password"
@@ -211,39 +189,64 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
             expected_app_statuses={APP_NAME: [CharmStatuses.SECRET_ACCESS_ERROR.value]},
         ),
         timeout=1200,
-        delay=5,
-        successes=3,
     )
 
     logger.info("Secret access will be granted now - wait for updated password")
     # deferred `config_changed` event will be retried before `update_status`
     with fast_forward(juju):
         juju.grant_secret(identifier=secret_name, app=APP_NAME)
-        sleep(20)  # allow some time for the permission to propagate
-
-    # juju.wait(
-    #     lambda status: jubilant.all_active(status, APP_NAME),
-    #     timeout=1200,
-    # )
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_app_statuses={APP_NAME: [CharmStatuses.SCALING_NOT_IMPLEMENTED.value]},
-        ),
-        timeout=600,
-        delay=5,
-        successes=3,
-    )
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+            timeout=1200,
+        )
 
     # perform read operation with the updated password
-    assert await get_key(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=new_password,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after secret permissions were updated"
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    primary = get_primary_ip(juju, APP_NAME)
+    client = create_valkey_client(
+        hostname=primary, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
+    )
+    assert client.ping() is True, "Failed to authenticate with new admin password"
+    assert client.set(TEST_KEY, TEST_VALUE) is True, (
+        "Failed to write data after admin password update"
+    )
+    for hostname in hostnames:
+        client = create_valkey_client(
+            hostname=hostname,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=new_password,
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with new admin password on host {hostname}"
+        )
+        assert client.get(TEST_KEY) == TEST_VALUE, (
+            f"Failed to read data after admin password update on host {hostname}"
+        )
 
     logger.info("Password update successful after secret was granted")
 
+    # change replication password
+    replica_password = "replica-password"
+    juju.update_secret(
+        identifier=secret_id,
+        content={
+            CharmUsers.VALKEY_ADMIN.value: new_password,
+            CharmUsers.VALKEY_REPLICA.value: replica_password,
+        },
+    )
 
-# TODO Once scaling is implemented, add tests to check on password update in non-leader units
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        timeout=1200,
+    )
+
+    # perform pings with the updated replica password
+    for hostname in hostnames:
+        client = create_valkey_client(
+            hostname=hostname,
+            username=CharmUsers.VALKEY_REPLICA.value,
+            password=replica_password,
+        )
+        assert client.ping() is True, (
+            f"Failed to authenticate with new replica password on host {hostname}"
+        )

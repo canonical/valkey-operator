@@ -20,8 +20,24 @@ class ValkeyTLSLoadError(ValkeyClientError):
     """Custom Exception if TLS settings could not be loaded in Valkey."""
 
 
+class ValkeyConfigSetError(ValkeyClientError):
+    """Custom Exception if setting configuration on valkey cluster fails."""
+
+
 class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
+
+
+class ValkeyServicesFailedToStartError(Exception):
+    """Custom Exception if Valkey service fails to start."""
+
+
+class ValkeyServiceNotAliveError(Exception):
+    """Custom Exception if Valkey service is not alive after start."""
+
+
+class ValkeyConfigurationError(Exception):
+    """Custom Exception if Valkey configuration fails to be set."""
 
 
 class ValkeyCertificatesNotReadyError(Exception):

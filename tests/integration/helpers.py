@@ -4,22 +4,17 @@
 
 import contextlib
 import logging
+import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
 import jubilant
+import valkey
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from dateutil.parser import parse
-from glide import (
-    AdvancedGlideClientConfiguration,
-    GlideClient,
-    GlideClientConfiguration,
-    NodeAddress,
-    ServerCredentials,
-    TlsAdvancedConfiguration,
-)
 from ops import SecretNotFoundError, StatusBase
 
 from literals import (
@@ -39,6 +34,7 @@ IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstrea
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
+SEED_KEY_PREFIX = "seed:key:"
 TLS_NAME = "self-signed-certificates"
 
 
@@ -185,7 +181,7 @@ def _check_apps_idle_period(status: jubilant.Status, *apps: str, idle_period: in
 
 
 def verify_unit_count(
-    status: jubilant.Status, *apps: str, unit_count: int | dict[str, int] = None
+    status: jubilant.Status, *apps: str, unit_count: int | dict[str, int] | None = None
 ):
     """Verify the unit count for an application.
 
@@ -242,16 +238,16 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     raise SecretNotFoundError(f"Secret with label {label} not found")
 
 
-async def create_valkey_client(
-    hostnames: list[str],
+def create_valkey_client(
+    hostname: str,
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
     tls_enabled: bool = False,
-):
+) -> valkey.Valkey:
     """Create and return a Valkey client connected to the cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        hostname: The hostname of the Valkey cluster node.
         username: The username for authentication.
         password: The password for the internal user.
         tls_enabled: Whether TLS certificates are needed.
@@ -259,41 +255,46 @@ async def create_valkey_client(
     Returns:
         A Valkey client instance connected to the cluster.
     """
-    addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in hostnames]
+    client = valkey.Valkey(
+        host=hostname,
+        port=CLIENT_PORT,
+        username=username,
+        password=password,
+        decode_responses=True,
+    )
+    return client
 
-    credentials = None
-    if username or password:
-        credentials = ServerCredentials(username=username, password=password)
 
-    if tls_enabled:
-        # Read locally stored certificate files
-        with open("client.pem", "rb") as f:
-            tls_cert = f.read()
-        with open("client.key", "rb") as f:
-            tls_key = f.read()
-        with open("client_ca.pem", "rb") as f:
-            tls_ca_cert = f.read()
+def create_sentinel_client(
+    hostnames: list[str],
+    valkey_user: str | None = CharmUsers.VALKEY_ADMIN.value,
+    valkey_password: str | None = None,
+    sentinel_user: str | None = CharmUsers.SENTINEL_ADMIN.value,
+    sentinel_password: str | None = None,
+) -> valkey.Sentinel:
+    """Create and return a Valkey Sentinel client connected to the cluster.
 
-        tls_config = TlsAdvancedConfiguration(
-            client_cert_pem=tls_cert,
-            client_key_pem=tls_key,
-            root_pem_cacerts=tls_ca_cert,
-        )
+    Args:
+        hostnames: A list of hostnames for the Sentinel nodes.
+        valkey_user: The username for authentication to Valkey.
+        valkey_password: The password for the internal user for Valkey authentication.
+        sentinel_user: The username for authentication to Sentinel.
+        sentinel_password: The password for the internal user for Sentinel authentication.
 
-        client_config = GlideClientConfiguration(
-            addresses,
-            use_tls=True,
-            credentials=credentials,
-            request_timeout=1000,  # in milliseconds
-            advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
-        )
-    else:
-        client_config = GlideClientConfiguration(
-            addresses,
-            credentials=credentials,
-        )
-
-    return await GlideClient.create(client_config)
+    Returns:
+        A Valkey Sentinel client instance connected to the cluster.
+    """
+    sentinel_client = valkey.Sentinel(
+        [(host, 26379) for host in hostnames],
+        username=valkey_user,
+        password=valkey_password,
+        sentinel_kwargs={
+            "password": sentinel_password,
+            "username": sentinel_user,
+        },
+        decode_responses=True,
+    )
+    return sentinel_client
 
 
 def set_password(
@@ -399,3 +400,89 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
         juju.scp(f"{unit}:{tls_path}/client.pem", "client.pem")
         juju.scp(f"{unit}:{tls_path}/client.key", "client.key")
         juju.scp(f"{unit}:{tls_path}/ca_certs/client_ca.pem", "client_ca.pem")
+
+
+def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+    """Get the primary node of the Valkey cluster.
+
+    Returns:
+        The IP address of the primary node.
+    """
+    hostnames = get_cluster_hostnames(juju, app)
+    client = create_sentinel_client(
+        hostnames=hostnames,
+        valkey_user=CharmUsers.VALKEY_ADMIN.value,
+        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        sentinel_user=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+    )
+    return client.discover_master("primary")[0]
+
+
+def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
+    """Retrieve the password for a given internal user from Juju secrets.
+
+    Args:
+        juju: The Juju client instance.
+        user: The internal user whose password to retrieve.
+
+    Returns:
+        The password for the specified internal user.
+    """
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    return secret.get(f"{user.value}-password", "")
+
+
+def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
+    # Connect to Valkey
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    client = valkey.Valkey(
+        host=primary_ip,
+        port=CLIENT_PORT,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+
+    # Configuration
+    value_size_bytes = 1024  # 1KB per value
+    batch_size = 5000  # Commands per pipeline
+    total_bytes_target = target_gb * 1024 * 1024 * 1024
+    total_keys = total_bytes_target // value_size_bytes
+
+    logger.debug(
+        f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
+    )
+
+    start_time = time.time()
+    keys_added = 0
+
+    # Generate a fixed random block to reuse (saves CPU cycles on generation)
+    random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
+
+    try:
+        while keys_added < total_keys:
+            pipe = client.pipeline(transaction=False)
+
+            # Fill the batch
+            for i in range(batch_size):
+                key_idx = keys_added + i
+                pipe.set(f"{SEED_KEY_PREFIX}{key_idx}", random_data)
+
+                if keys_added + i >= total_keys:
+                    break
+
+            pipe.execute()
+            keys_added += batch_size
+
+            # Progress reporting
+            elapsed = time.time() - start_time
+            percent = (keys_added / total_keys) * 100
+            logger.info(
+                f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+            )
+
+    except Exception as e:
+        logger.error(f"\nError: {e}")
+    finally:
+        total_time = time.time() - start_time
+        logger.info(f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds.")
