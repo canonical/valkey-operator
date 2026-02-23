@@ -4,14 +4,17 @@
 
 import contextlib
 import logging
-from enum import Enum
+import os
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
 import jubilant
+import valkey
 import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
-from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
+from dateutil.parser import parse
 from ops import SecretNotFoundError, StatusBase
 
 from literals import (
@@ -31,20 +34,7 @@ IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstrea
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
-
-
-class CharmStatuses(Enum):
-    """List all StatusObjects here that are checked against in the integration tests."""
-
-    SCALING_NOT_IMPLEMENTED = StatusObject(
-        status="blocked",
-        message="Scaling Valkey is not implemented yet",
-    )
-    SECRET_ACCESS_ERROR = StatusObject(
-        status="blocked",
-        message="Cannot access configured secret, check permissions",
-        running="async",
-    )
+SEED_KEY_PREFIX = "seed:key:"
 
 
 def does_status_match(
@@ -131,8 +121,66 @@ def does_message_match(expected_status_message: str, status: StatusObject) -> bo
         return False
 
 
+def are_apps_active_and_agents_idle(
+    status: jubilant.Status,
+    *apps: str,
+    idle_period: int = 0,
+    unit_count: int | dict[str, int] | None = None,
+) -> bool:
+    """Check that all given apps are active, their agents idle (optional idle interval too) and optionally verify unit count as well.
+
+    Args:
+        status: represents the jubilant model's current status
+        apps: A list of applications whose statuses to test against
+        idle_period: Seconds to wait for the agents of each application unit to be idle.
+        unit_count: The desired number of units to wait for, can be > to 0.
+            If set as int, this value is expected for all apps but if more granularity is needed,
+            pass a dictionary such as: {"app1": 2, "app2": 1, ...}, if set to -1, the check
+            only happens at the application level.
+    """
+    return (
+        jubilant.all_active(status, *apps)
+        and jubilant.all_agents_idle(status, *apps)
+        and _check_apps_idle_period(status, *apps, idle_period=idle_period)
+        and verify_unit_count(status, *apps, unit_count=unit_count)
+    )
+
+
+def are_agents_idle(
+    status: jubilant.Status,
+    *apps: str,
+    idle_period: int = 0,
+    unit_count: int | dict[str, int] | None = None,
+) -> bool:
+    """Check that agents of all given apps are idle (optional idle interval too). Optionally verify unit count as well.
+
+    Args:
+        status: represents the jubilant model's current status
+        apps: A list of applications whose statuses to test against
+        idle_period: Seconds to wait for the agents of each application unit to be idle.
+        unit_count: The desired number of units to wait for, should be > 0.
+            If set as int, this value is expected for all apps but if more granularity is needed,
+            pass a dictionary such as: {"app1": 2, "app2": 1, ...}, if set to -1, the check
+            only happens at the application level.
+    """
+    return (
+        jubilant.all_agents_idle(status, *apps)
+        and _check_apps_idle_period(status, *apps, idle_period=idle_period)
+        and verify_unit_count(status, *apps, unit_count=unit_count)
+    )
+
+
+def _check_apps_idle_period(status: jubilant.Status, *apps: str, idle_period: int) -> bool:
+    return all(
+        parse(unit.juju_status.since, ignoretz=True) + timedelta(seconds=idle_period)
+        < datetime.now()
+        for app in apps
+        for unit in status.get_units(app).values()
+    )
+
+
 def verify_unit_count(
-    status: jubilant.Status, *apps: str, unit_count: int | dict[str, int] = None
+    status: jubilant.Status, *apps: str, unit_count: int | dict[str, int] | None = None
 ):
     """Verify the unit count for an application.
 
@@ -189,31 +237,61 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     raise SecretNotFoundError(f"Secret with label {label} not found")
 
 
-async def create_valkey_client(
-    hostnames: list[str],
+def create_valkey_client(
+    hostname: str,
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
-):
+) -> valkey.Valkey:
     """Create and return a Valkey client connected to the cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        hostname: The hostname of the Valkey cluster node.
         username: The username for authentication.
         password: The password for the internal user.
 
     Returns:
         A Valkey client instance connected to the cluster.
     """
-    addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in hostnames]
-
-    credentials = None
-    if username or password:
-        credentials = ServerCredentials(username=username, password=password)
-    client_config = GlideClientConfiguration(
-        addresses,
-        credentials=credentials,
+    client = valkey.Valkey(
+        host=hostname,
+        port=CLIENT_PORT,
+        username=username,
+        password=password,
+        decode_responses=True,
     )
-    return await GlideClient.create(client_config)
+    return client
+
+
+def create_sentinel_client(
+    hostnames: list[str],
+    valkey_user: str | None = CharmUsers.VALKEY_ADMIN.value,
+    valkey_password: str | None = None,
+    sentinel_user: str | None = CharmUsers.SENTINEL_ADMIN.value,
+    sentinel_password: str | None = None,
+) -> valkey.Sentinel:
+    """Create and return a Valkey Sentinel client connected to the cluster.
+
+    Args:
+        hostnames: A list of hostnames for the Sentinel nodes.
+        valkey_user: The username for authentication to Valkey.
+        valkey_password: The password for the internal user for Valkey authentication.
+        sentinel_user: The username for authentication to Sentinel.
+        sentinel_password: The password for the internal user for Sentinel authentication.
+
+    Returns:
+        A Valkey Sentinel client instance connected to the cluster.
+    """
+    sentinel_client = valkey.Sentinel(
+        [(host, 26379) for host in hostnames],
+        username=valkey_user,
+        password=valkey_password,
+        sentinel_kwargs={
+            "password": sentinel_password,
+            "username": sentinel_user,
+        },
+        decode_responses=True,
+    )
+    return sentinel_client
 
 
 def set_password(
@@ -247,35 +325,6 @@ def set_password(
     juju.config(app=application, values={INTERNAL_USERS_PASSWORD_CONFIG: secret_id})
 
 
-async def set_key(
-    hostnames: list[str], username: str, password: str, key: str, value: str
-) -> bytes | None:
-    """Write a key-value pair to the Valkey cluster.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to write.
-        value: The value to write.
-        username: The username for authentication.
-        password: The password for authentication.
-    """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.set(key, value)
-
-
-async def get_key(hostnames: list[str], username: str, password: str, key: str) -> bytes | None:
-    """Read a value from the Valkey cluster by key.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to read.
-        username: The username for authentication.
-        password: The password for authentication.
-    """
-    client = await create_valkey_client(hostnames=hostnames, username=username, password=password)
-    return await client.get(key)
-
-
 @contextlib.contextmanager
 def fast_forward(juju: jubilant.Juju):
     """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
@@ -285,3 +334,89 @@ def fast_forward(juju: jubilant.Juju):
         yield
     finally:
         juju.model_config({"update-status-hook-interval": old})
+
+
+def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+    """Get the primary node of the Valkey cluster.
+
+    Returns:
+        The IP address of the primary node.
+    """
+    hostnames = get_cluster_hostnames(juju, app)
+    client = create_sentinel_client(
+        hostnames=hostnames,
+        valkey_user=CharmUsers.VALKEY_ADMIN.value,
+        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        sentinel_user=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+    )
+    return client.discover_master("primary")[0]
+
+
+def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
+    """Retrieve the password for a given internal user from Juju secrets.
+
+    Args:
+        juju: The Juju client instance.
+        user: The internal user whose password to retrieve.
+
+    Returns:
+        The password for the specified internal user.
+    """
+    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
+    return secret.get(f"{user.value}-password", "")
+
+
+def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
+    # Connect to Valkey
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    client = valkey.Valkey(
+        host=primary_ip,
+        port=CLIENT_PORT,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+
+    # Configuration
+    value_size_bytes = 1024  # 1KB per value
+    batch_size = 5000  # Commands per pipeline
+    total_bytes_target = target_gb * 1024 * 1024 * 1024
+    total_keys = total_bytes_target // value_size_bytes
+
+    logger.debug(
+        f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
+    )
+
+    start_time = time.time()
+    keys_added = 0
+
+    # Generate a fixed random block to reuse (saves CPU cycles on generation)
+    random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
+
+    try:
+        while keys_added < total_keys:
+            pipe = client.pipeline(transaction=False)
+
+            # Fill the batch
+            for i in range(batch_size):
+                key_idx = keys_added + i
+                pipe.set(f"{SEED_KEY_PREFIX}{key_idx}", random_data)
+
+                if keys_added + i >= total_keys:
+                    break
+
+            pipe.execute()
+            keys_added += batch_size
+
+            # Progress reporting
+            elapsed = time.time() - start_time
+            percent = (keys_added / total_keys) * 100
+            logger.info(
+                f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+            )
+
+    except Exception as e:
+        logger.error(f"\nError: {e}")
+    finally:
+        total_time = time.time() - start_time
+        logger.info(f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds.")

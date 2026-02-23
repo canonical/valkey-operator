@@ -4,15 +4,27 @@
 
 """Base objects for workload operations across different substrates."""
 
+import logging
 from abc import ABC, abstractmethod
 
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
 
+logger = logging.getLogger(__name__)
+
 
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
+
+    root_dir: pathops.PathProtocol
+    config_file: pathops.PathProtocol
+    sentinel_config_file: pathops.PathProtocol
+    acl_file: pathops.PathProtocol
+    sentinel_acl_file: pathops.PathProtocol
+    working_dir: pathops.PathProtocol
+    cli: str
+    user: str
 
     @property
     @abstractmethod
@@ -22,23 +34,50 @@ class WorkloadBase(ABC):
 
     @abstractmethod
     def start(self) -> None:
-        """Start the workload service."""
+        """Start the workload service.
+
+        Raises:
+            ValkeyServicesFailedToStartError: If the service fails to start.
+            ValkeyServiceNotAliveError: If the service is not alive after start.
+        """
         pass
 
     @abstractmethod
-    def exec(self, command: list[str]) -> str:
+    def exec(self, command: list[str]) -> tuple[str, str | None]:
         """Run a command on the workload substrate."""
         pass
 
-    def write_file(self, content: str, path: pathops.PathProtocol) -> None:
+    @abstractmethod
+    def alive(self) -> bool:
+        """Check if the Valkey services are running.
+
+        Returns:
+            bool: True if the services are active, False otherwise.
+        """
+        pass
+
+    def write_file(
+        self,
+        content: str,
+        path: pathops.PathProtocol,
+        mode: int | None = None,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
         """Write content to a file on disk.
+
+        Note:
+            mode, user, and group are optional parameters used only on k8s workloads.
 
         Args:
             content (str): The content to be written.
-            path (str): The file path where the content should be written.
+            path (pathops.PathProtocol): The file path where the content should be written.
+            mode (int, optional): The file mode (permissions). Defaults to None.
+            user (str, optional): The user name. Defaults to None.
+            group (str, optional): The group name. Defaults to None.
         """
         try:
-            path.write_text(content)
+            path.write_text(content, mode=mode, user=user, group=group)
         except (
             FileNotFoundError,
             LookupError,
@@ -59,7 +98,7 @@ class WorkloadBase(ABC):
 
         path = self.config_file
         try:
-            path.write_text(config_string)
+            path.write_text(config_string, user=self.user, group=self.user)
         except (
             FileNotFoundError,
             LookupError,

@@ -9,10 +9,21 @@ from typing import override
 
 import ops
 from charmlibs import pathops
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyServiceNotAliveError,
+    ValkeyServicesFailedToStartError,
+    ValkeyWorkloadCommandError,
+)
 from core.base_workload import WorkloadBase
-from literals import ACL_FILE, CHARM, CHARM_USER, CONFIG_FILE
+from literals import (
+    ACL_FILE,
+    CHARM,
+    CONFIG_FILE,
+    SENTINEL_ACL_FILE,
+    SENTINEL_CONFIG_FILE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +36,18 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise AttributeError("Container is required.")
 
         self.container = container
-        self.root = pathops.ContainerPath("/", container=self.container)
-        self.config_file = self.root / CONFIG_FILE
-        self.acl_file = self.root / ACL_FILE
+        self.root_dir = pathops.ContainerPath("/", container=self.container)
+        self.config_file = self.root_dir / CONFIG_FILE
+        self.sentinel_config_file = self.root_dir / SENTINEL_CONFIG_FILE
+        self.acl_file = self.root_dir / ACL_FILE
+        self.sentinel_acl_file = self.root_dir / SENTINEL_ACL_FILE
         # todo: update this path once directories in the rock are complying with the standard
-        self.working_dir = self.root / "var/lib/valkey"
+        self.working_dir = self.root_dir / "var/lib/valkey"
         self.valkey_service = "valkey"
+        self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
+        self.cli = "valkey-cli"
+        self.user = "_daemon_"
 
     @property
     @override
@@ -49,16 +65,24 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "override": "replace",
                     "summary": "Valkey service",
                     "command": f"valkey-server {self.config_file.as_posix()}",
-                    "user": CHARM_USER,
-                    "group": CHARM_USER,
+                    "user": self.user,
+                    "group": self.user,
+                    "startup": "enabled",
+                },
+                self.sentinel_service: {
+                    "override": "replace",
+                    "summary": "Valkey sentinel service",
+                    "command": f"valkey-sentinel {self.sentinel_config_file.as_posix()}",
+                    "user": self.user,
+                    "group": self.user,
                     "startup": "enabled",
                 },
                 self.metric_service: {
                     "override": "replace",
                     "summary": "Valkey metric exporter",
                     "command": "bin/redis_exporter",
-                    "user": CHARM_USER,
-                    "group": CHARM_USER,
+                    "user": self.user,
+                    "group": self.user,
                     "startup": "enabled",
                 },
             },
@@ -67,18 +91,39 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def start(self) -> None:
-        self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-        self.container.restart(self.valkey_service, self.metric_service)
+        try:
+            self.container.add_layer(CHARM, self.pebble_layer, combine=True)
+            self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
+        except ops.pebble.ChangeError as e:
+            raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
+        if not self.alive():
+            raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
-    def exec(self, command: list[str]) -> str:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_result(lambda healthy: not healthy),
+        retry_error_callback=lambda _: False,
+    )
+    def alive(self) -> bool:
+        for service_name in [
+            self.valkey_service,
+            self.sentinel_service,
+            self.metric_service,
+        ]:
+            service = self.container.get_service(service_name)
+            if not service.is_running():
+                return False
+        return True
+
+    @override
+    def exec(self, command: list[str]) -> tuple[str, str | None]:
         try:
             process = self.container.exec(
                 command=command,
-                combine_stderr=True,
             )
-            output, _ = process.wait_output()
-            return output
+            return process.wait_output()
         except ops.pebble.ExecError as e:
             logger.error("Command failed with %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
