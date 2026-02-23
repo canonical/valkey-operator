@@ -90,9 +90,7 @@ class BaseEvents(ops.Object):
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle the on start event."""
-        self.charm.state.unit_server.update(
-            {"start_state": StartState.NOT_STARTED.value}
-        )
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
         if not self.charm.workload.can_connect:
             logger.warning("Workload not ready yet")
@@ -126,10 +124,7 @@ class BaseEvents(ops.Object):
             return
 
         if not (primary_ip := self.charm.sentinel_manager.get_primary_ip()):
-            if (
-                self.charm.state.number_units_started == 0
-                and self.charm.unit.is_leader()
-            ):
+            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
                 primary_ip = self.charm.state.bind_address
             else:
                 logger.debug(
@@ -171,9 +166,7 @@ class BaseEvents(ops.Object):
             component_name=self.charm.cluster_manager.name,
         )
 
-        self.unit_fully_started.emit(
-            is_primary=primary_ip == self.charm.state.bind_address
-        )
+        self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -196,13 +189,8 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if (
-            not event.is_primary
-            and not self.charm.sentinel_manager.is_sentinel_discovered()
-        ):
-            logger.info(
-                "Sentinel service not yet discovered by other units. Deferring event."
-            )
+        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
+            logger.info("Sentinel service not yet discovered by other units. Deferring event.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
             )
@@ -266,9 +254,7 @@ class BaseEvents(ops.Object):
             return
 
         if units_requesting_start:
-            self.charm.state.cluster.update(
-                {"starting_member": units_requesting_start[0]}
-            )
+            self.charm.state.cluster.update({"starting_member": units_requesting_start[0]})
             logger.debug(f"Updated starting member to {units_requesting_start[0]}")
             return
 
@@ -357,9 +343,7 @@ class BaseEvents(ops.Object):
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
-        if not (
-            admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)
-        ):
+        if not (admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)):
             return
 
         if self.charm.unit.is_leader():
@@ -377,9 +361,7 @@ class BaseEvents(ops.Object):
             return
 
         # from here, code is only relevant for non-leader units
-        if event.secret.label and event.secret.label.endswith(
-            INTERNAL_USERS_SECRET_LABEL_SUFFIX
-        ):
+        if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
                 self.charm.config_manager.set_acl_file()
@@ -443,9 +425,7 @@ class BaseEvents(ops.Object):
             return
 
         # merge the credentials, replacing those which have been updated
-        new_passwords = (
-            self.charm.state.cluster.internal_users_credentials | secret_content
-        )
+        new_passwords = self.charm.state.cluster.internal_users_credentials | secret_content
         if new_passwords != self.charm.state.cluster.internal_users_credentials:
             logger.info("Password(s) for internal users have changed")
             try:
@@ -453,9 +433,7 @@ class BaseEvents(ops.Object):
                 self.charm.cluster_manager.reload_acl_file()
                 self.charm.state.cluster.update(
                     {
-                        f"{user.value.replace('-', '_')}_password": new_passwords[
-                            user.value
-                        ]
+                        f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
                         for user in CharmUsers
                     }
                 )

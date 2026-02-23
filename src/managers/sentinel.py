@@ -53,8 +53,7 @@ class SentinelManager(ManagerStatusProtocol):
         active_sentinels = [
             unit.model.private_ip
             for unit in self.state.servers
-            if unit.is_started
-            and unit.model.private_ip != self.state.unit_server.model.private_ip
+            if unit.is_started and unit.model.private_ip != self.state.unit_server.model.private_ip
         ]
 
         client = ValkeyClient(
@@ -71,14 +70,10 @@ class SentinelManager(ManagerStatusProtocol):
                     hostname=sentinel_ip,
                 )
                 if self.state.unit_server.model.private_ip not in output:
-                    logger.info(
-                        f"Sentinel at {sentinel_ip} has not discovered this sentinel"
-                    )
+                    logger.info(f"Sentinel at {sentinel_ip} has not discovered this sentinel")
                     return False
             except ValkeyWorkloadCommandError:
-                logger.warning(
-                    f"Could not query sentinel at {sentinel_ip} for primary discovery."
-                )
+                logger.warning(f"Could not query sentinel at {sentinel_ip} for primary discovery.")
                 return False
         return True
 
@@ -94,9 +89,7 @@ class SentinelManager(ManagerStatusProtocol):
         )
 
         for unit in started_servers:
-            if primary_ip := client.sentinel_get_primary_ip(
-                hostname=unit.model.private_ip
-            ):
+            if primary_ip := client.sentinel_get_primary_ip(hostname=unit.model.private_ip):
                 logger.info(f"Primary IP address is {primary_ip}")
                 return primary_ip
         logger.warning(
@@ -125,9 +118,7 @@ class SentinelManager(ManagerStatusProtocol):
             return False
 
         if not client.sentinel_get_master_info(hostname=self.state.bind_address):
-            logger.warning(
-                "Health check failed: Could not query sentinel for master information."
-            )
+            logger.warning("Health check failed: Could not query sentinel for master information.")
             return False
 
         return True
