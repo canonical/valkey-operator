@@ -170,6 +170,8 @@ class ConfigManager(ManagerStatusProtocol):
                     continue
                 elif line.startswith("sentinel "):
                     try:
+                        # some config options for sentinel start with "sentinel" followed by the
+                        # directive and its arguments, for example "sentinel monitor mymaster
                         key, value = line.split(" ", 2)[1:]
                     except ValueError:
                         key = line.strip().split(" ", 1)[1]
@@ -179,6 +181,9 @@ class ConfigManager(ManagerStatusProtocol):
                     )
                 else:
                     try:
+                        # other config options that are not specific to sentinel
+                        # just have the format "keyword argument1 argument2 ... argumentN",
+                        # for example "port 6379"
                         key, value = line.split(" ", 1)
                     except ValueError:
                         key = line.strip()

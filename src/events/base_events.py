@@ -119,8 +119,7 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        if not primary_ip:
+        if not (primary_ip := self.charm.sentinel_manager.get_primary_ip()):
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
                 primary_ip = self.charm.state.bind_address
             else:
