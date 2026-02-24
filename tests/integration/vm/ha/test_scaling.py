@@ -14,7 +14,7 @@ from tests.integration.helpers import (
     APP_NAME,
     are_apps_active_and_agents_idle,
     get_cluster_hostnames,
-    get_nbr_connected_slaves,
+    get_number_connected_slaves,
     get_password,
     seed_valkey,
 )
@@ -62,7 +62,7 @@ async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     # check if all units have been added to the cluster
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
-    connected_slaves = await get_nbr_connected_slaves(
+    connected_slaves = await get_number_connected_slaves(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),

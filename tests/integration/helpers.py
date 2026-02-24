@@ -490,7 +490,7 @@ async def ping_cluster(
         return await client.ping() == "PONG".encode()
 
 
-async def get_nbr_connected_slaves(
+async def get_number_connected_slaves(
     hostnames: list[str],
     username: str,
     password: str,
