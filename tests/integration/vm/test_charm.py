@@ -60,7 +60,8 @@ async def test_authentication(juju: jubilant.Juju) -> None:
 
     for hostname in hostnames:
         assert (
-            "PONG" in exec_valkey_cli(hostname, CharmUsers.VALKEY_ADMIN.value, password, "ping")[0]
+            "PONG"
+            in exec_valkey_cli(hostname, CharmUsers.VALKEY_ADMIN.value, password, "ping").stdout
         ), "Failed to authenticate with Valkey cluster using CLI"
 
 
@@ -123,7 +124,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         assert (
             exec_valkey_cli(
                 hostname, CharmUsers.VALKEY_ADMIN.value, new_password, f"get {TEST_KEY}"
-            )[0]
+            ).stdout
             == TEST_VALUE
         ), f"Failed to read data after admin password update on host {hostname}"
 
@@ -244,7 +245,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
         assert (
             exec_valkey_cli(
                 hostname, CharmUsers.VALKEY_ADMIN.value, new_password, f"get {TEST_KEY}"
-            )[0]
+            ).stdout
             == TEST_VALUE
         ), f"Failed to read data after admin password update on host {hostname}"
 
