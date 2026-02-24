@@ -4,7 +4,6 @@
 import logging
 
 import jubilant
-import valkey
 
 from literals import CharmUsers
 from tests.integration.cw_helpers import (
@@ -16,6 +15,7 @@ from tests.integration.helpers import (
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
     get_cluster_hostnames,
+    get_number_connected_slaves,
     get_password,
     seed_valkey,
 )
@@ -40,12 +40,12 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     )
 
 
-def test_seed_data(juju: jubilant.Juju) -> None:
+async def test_seed_data(juju: jubilant.Juju) -> None:
     """Seed some data to the cluster."""
-    seed_valkey(juju, target_gb=1)
+    await seed_valkey(juju, target_gb=1)
 
 
-def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
+async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
 
@@ -61,35 +61,26 @@ def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     assert num_units == NUM_UNITS, f"Expected {NUM_UNITS} units, got {num_units}."
 
     # check if all units have been added to the cluster
-    endpoints = ",".join(get_cluster_hostnames(juju, APP_NAME))
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
 
-    sentinel_client = valkey.Sentinel(
-        [(host, 26379) for host in endpoints.split(",")],
+    connected_slaves = await get_number_connected_slaves(
+        hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        sentinel_kwargs={
-            "password": get_password(juju, user=CharmUsers.SENTINEL_ADMIN),
-            "username": CharmUsers.SENTINEL_ADMIN.value,
-        },
     )
-    master = sentinel_client.master_for("primary")
-    info = master.info("replication")
-    connected_slaves = info.get("connected_slaves", 0)
     assert connected_slaves == NUM_UNITS - 1, (
         f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
     )
 
-    assert_continuous_writes_increasing(
-        endpoints=endpoints,
-        valkey_user=CharmUsers.VALKEY_ADMIN.value,
-        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        sentinel_user=CharmUsers.SENTINEL_ADMIN.value,
-        sentinel_password=get_password(juju, user=CharmUsers.SENTINEL_ADMIN),
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     logger.info("Stopping continuous writes after scale up test.")
-    logger.info(c_writes.stop())
+    logger.info(await c_writes.async_stop())
     assert_continuous_writes_consistent(
-        endpoints=endpoints,
-        valkey_user=CharmUsers.VALKEY_ADMIN.value,
-        valkey_password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
