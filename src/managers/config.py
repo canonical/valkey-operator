@@ -223,13 +223,20 @@ class ConfigManager(ManagerStatusProtocol):
             primary_ip=primary_ip
         )
 
+        # tls config
+        tls_config = self.generate_tls_config()
+        # for sentinel, we do not overwrite the ports
+        tls_config.pop("port")
+        tls_config.pop("tls-port")
+        config_properties.update(tls_config)
+
         return config_properties
 
     def _generate_sentinel_configs(self, primary_ip: str) -> dict[str, str]:
         """Generate the sentinel config properties based on the current cluster state."""
         sentinel_configs = {}
         # TODO consider adding quorum calculation based on number of planned_units and the parity of the number of units
-        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}"
+        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {TLS_PORT} {QUORUM_NUMBER}"
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_configs["auth-user"] = f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"

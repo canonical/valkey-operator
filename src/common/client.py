@@ -228,19 +228,13 @@ class ValkeyClient:
         """Trigger Valkey to load the TLS settings."""
         cmd = ["CONFIG", "SET"]
 
-        # avoid "bind: Address already in use" by advancing the disabled port
-        if tls_config["tls-port"] == "0":
-            cmd.append("tls-port")
-            cmd.append("0")
-            tls_config.pop("tls-port")
-
         for key, value in tls_config.items():
             cmd.append(key)
-            cmd.append(value.strip("'"))
+            cmd.append(value)
         logger.debug("Loading TLS settings: %s", cmd)
 
         try:
-            result = self.exec_cli_command(["acl", "load"], hostname=hostname)
+            result = self.exec_cli_command(command=cmd, hostname=hostname)
             logger.debug("Loading TLS settings: %s", result)
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Error loading TLS settings: {e}")

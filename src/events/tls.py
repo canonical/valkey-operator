@@ -19,7 +19,7 @@ from common.exceptions import (
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import CLIENT_TLS_RELATION_NAME, PEER_RELATION, TLSState
+from literals import CLIENT_PORT, CLIENT_TLS_RELATION_NAME, PEER_RELATION, TLSState
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -169,6 +169,7 @@ class TLSEvents(ops.Object):
 
         self.charm.tls_manager.set_cert_state(is_ready=False)
         self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
+        self.charm.unit.open_port("tcp", CLIENT_PORT)
 
     def _enable_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""
@@ -182,3 +183,4 @@ class TLSEvents(ops.Object):
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.tls_manager.set_tls_state(TLSState.TLS)
+        self.charm.unit.close_port("tcp", CLIENT_PORT)

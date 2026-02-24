@@ -61,12 +61,13 @@ def test_enable_internal_tls_by_default(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    state_out = ctx.run(ctx.on.relation_created(relation=peer_relation), state_in)
-    secret_out = state_out.get_secret(
-        label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNET_CERTS_SECRET_LABEL_SUFFIX}"
-    )
-    assert secret_out.latest_content.get("internal-ca-certificate")
-    assert secret_out.latest_content.get("internal-ca-private-key")
+    with patch("charmlibs.pathops.ContainerPath.mkdir"):
+        state_out = ctx.run(ctx.on.relation_created(relation=peer_relation), state_in)
+        secret_out = state_out.get_secret(
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNET_CERTS_SECRET_LABEL_SUFFIX}"
+        )
+        assert secret_out.latest_content.get("internal-ca-certificate")
+        assert secret_out.latest_content.get("internal-ca-private-key")
 
 
 def test_enable_internal_tls_no_ca_cert_available(cloud_spec):
@@ -130,6 +131,7 @@ def test_client_tls_relation_broken(cloud_spec):
     )
 
     with (
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
     ):
@@ -168,6 +170,7 @@ def test_client_tls_relation_broken_disabling_tls_fails(cloud_spec):
     )
 
     with (
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch(
             "managers.config.ConfigManager.set_config_properties", side_effect=ValueError("failed")
@@ -236,6 +239,7 @@ def test_client_tls_relation_broken_writing_internal_cert_fails(cloud_spec):
     )
 
     with (
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
         patch("core.base_workload.WorkloadBase.write_file", side_effect=PermissionError("failed")),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
     ):

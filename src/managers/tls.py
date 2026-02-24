@@ -150,7 +150,7 @@ class TLSManager(ManagerStatusProtocol):
             csr=certificate_signing_request,
             ca=self.state.cluster.internal_ca_certificate,
             ca_private_key=self.state.cluster.internal_ca_private_key,
-            validity=timedelta(days=3650),
+            validity=timedelta(days=10950),
             is_ca=False,
         )
 
@@ -162,6 +162,9 @@ class TLSManager(ManagerStatusProtocol):
         private_key = self._generate_private_key()
         certificate = self._generate_self_signed_certificate(private_key)
         ca_cert = self.state.cluster.internal_ca_certificate
+
+        self.workload.tls_dir.mkdir(exist_ok=True)
+        self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
 
         self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
         self.workload.write_file(certificate.raw, self.workload.tls_paths.client_cert)

@@ -17,11 +17,13 @@ import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from dateutil.parser import parse
 from glide import (
+    AdvancedGlideClientConfiguration,
     GlideClient,
     GlideClientConfiguration,
     InfoSection,
     NodeAddress,
     ServerCredentials,
+    TlsAdvancedConfiguration,
 )
 from ops import SecretNotFoundError, StatusBase
 
@@ -30,6 +32,7 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    TLS_PORT,
     CharmUsers,
 )
 
@@ -267,15 +270,34 @@ async def create_valkey_client(
     Returns:
         A Valkey client instance connected to the cluster.
     """
-    addresses = [NodeAddress(host=host, port=CLIENT_PORT) for host in hostnames]
+    addresses = [
+        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT) for host in hostnames
+    ]
 
     credentials = None
     if username or password:
         credentials = ServerCredentials(username=username, password=password)
 
+    if tls_enabled:
+        # Read locally stored certificate files
+        with open("client.pem", "rb") as f:
+            tls_cert = f.read()
+        with open("client.key", "rb") as f:
+            tls_key = f.read()
+        with open("client_ca.pem", "rb") as f:
+            tls_ca_cert = f.read()
+
+    tls_config = TlsAdvancedConfiguration(
+        client_cert_pem=tls_cert if tls_enabled else None,
+        client_key_pem=tls_key if tls_enabled else None,
+        root_pem_cacerts=tls_ca_cert if tls_enabled else None,
+    )
+
     client_config = GlideClientConfiguration(
         addresses,
         credentials=credentials,
+        use_tls=True if tls_enabled else False,
+        advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
     )
 
     client = await GlideClient.create(client_config)
@@ -447,6 +469,7 @@ async def set_key(
     password: str,
     key: str,
     value: str,
+    tls_enabled: bool = False,
 ) -> bytes | None:
     """Write a key-value pair to the Valkey cluster.
 
@@ -456,9 +479,10 @@ async def set_key(
         value: The value to write.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
     """
     async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password
+        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
     ) as client:
         return await client.set(key, value)
 
@@ -468,6 +492,7 @@ async def get_key(
     username: str,
     password: str,
     key: str,
+    tls_enabled: bool = False,
 ) -> bytes | None:
     """Read a value from the Valkey cluster by key.
 
@@ -476,9 +501,10 @@ async def get_key(
         key: The key to read.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
     """
     async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password
+        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
     ) as client:
         return await client.get(key)
 

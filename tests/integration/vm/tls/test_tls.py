@@ -12,7 +12,7 @@ from tests.integration.helpers import (
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
-    create_valkey_client,
+    auth_test,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
     get_key,
@@ -70,10 +70,7 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
 
     logger.info("Check access without certs fails when TLS enabled")
     with pytest.raises(Exception) as exc_info:
-        no_ssl_client = await create_valkey_client(
-            hostnames=hostnames, username=None, password=None, tls_enabled=False
-        )
-        await no_ssl_client.ping()
+        await auth_test(hostnames, username=None, password=None)
     assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
 
 
@@ -150,8 +147,5 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
 
     logger.info("Check access without certs fails when TLS enabled")
     with pytest.raises(Exception) as exc_info:
-        no_ssl_client = await create_valkey_client(
-            hostnames=hostnames, username=None, password=None, tls_enabled=False
-        )
-        await no_ssl_client.ping()
+        await auth_test(hostnames, username=None, password=None)
     assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
