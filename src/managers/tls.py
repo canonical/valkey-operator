@@ -5,8 +5,12 @@
 """Manager for handling TLS-related operations."""
 
 import logging
+from datetime import timedelta
 
 from charmlibs.interfaces.tls_certificates import (
+    Certificate,
+    CertificateRequestAttributes,
+    CertificateSigningRequest,
     PrivateKey,
     ProviderCertificate,
 )
@@ -105,12 +109,77 @@ class TLSManager(ManagerStatusProtocol):
 
         return frozenset(sans_dns)
 
+    def _generate_private_key(self) -> PrivateKey:
+        """Generate a private key for use in peer TLS."""
+        return PrivateKey.generate()
+
+    def generate_ca_certificate(self) -> None:
+        """Generate a CA certificate for use in peer TLS and store it to peer relation data."""
+        private_key = self._generate_private_key()
+        ca_attributes = CertificateRequestAttributes(
+            common_name="Valkey Operator",
+            is_ca=True,
+            add_unique_id_to_subject_name=False,
+        )
+
+        ca_cert = Certificate.generate_self_signed_ca(
+            attributes=ca_attributes,
+            private_key=private_key,
+            validity=timedelta(days=10950),
+        )
+
+        self.state.cluster.update({"internal_ca_certificate": ca_cert.raw})
+        self.state.cluster.update({"internal_ca_private_key": private_key.raw})
+        logger.info("Generated new self-signed CA certificate")
+
+    def _generate_self_signed_certificate(self, private_key: PrivateKey) -> Certificate:
+        """Generate a self-signed certificate for use in peer TLS."""
+        cert_attributes = CertificateRequestAttributes(
+            common_name=self.build_common_name(),
+            sans_ip=self.build_sans_ip(),
+            sans_dns=self.build_sans_dns(),
+            is_ca=False,
+            add_unique_id_to_subject_name=False,
+        )
+        certificate_signing_request = CertificateSigningRequest.generate(
+            attributes=cert_attributes,
+            private_key=private_key,
+        )
+
+        cert = Certificate.generate(
+            csr=certificate_signing_request,
+            ca=self.state.cluster.internal_ca_certificate,
+            ca_private_key=self.state.cluster.internal_ca_private_key,
+            validity=timedelta(days=3650),
+            is_ca=False,
+        )
+
+        logger.info("Generated new self-signed certificate")
+        return cert
+
+    def create_and_store_self_signed_certificate(self) -> None:
+        """Generate certificate files and store them for peer-TLS by default."""
+        private_key = self._generate_private_key()
+        certificate = self._generate_self_signed_certificate(private_key)
+        ca_cert = self.state.cluster.internal_ca_certificate
+
+        self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
+        self.workload.write_file(certificate.raw, self.workload.tls_paths.client_cert)
+        self.workload.write_file(ca_cert.raw, self.workload.tls_paths.client_ca)
+        self.rehash_ca_certificates()
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)
+
+        if (
+            self.state.unit_server.tls_client_state == TLSState.TLS
+            and not self.state.client_tls_relation
+        ):
+            status_list.append(TLSStatuses.DISABLING_CLIENT_TLS_FAILED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)

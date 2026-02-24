@@ -19,7 +19,7 @@ from common.exceptions import (
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import CLIENT_TLS_RELATION_NAME, TLSState
+from literals import CLIENT_TLS_RELATION_NAME, PEER_RELATION, TLSState
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -56,16 +56,38 @@ class TLSEvents(ops.Object):
 
         # --- EVENTS TO OBSERVE ---
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created, self._on_relation_created
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created, self._on_tls_relation_created
         )
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken, self._on_relation_broken
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken, self._on_tls_relation_broken
         )
         self.framework.observe(
             self.client_certificate.on.certificate_available, self._on_certificate_available
         )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
+        )
 
-    def _on_relation_created(self, event: ops.RelationCreatedEvent) -> None:
+    def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
+        """Set up self-signed certificates for peer TLS by default."""
+        if self.charm.state.client_tls_relation:
+            return
+
+        if self.charm.unit.is_leader():
+            self.charm.tls_manager.generate_ca_certificate()
+
+        # in case a non-leader unit gets the event before the leader unit has processed it
+        if not self.charm.state.cluster.internal_ca_certificate:
+            logger.warning("Self-signed CA certificate not yet available")
+            event.defer()
+            return
+
+        try:
+            self.charm.tls_manager.create_and_store_self_signed_certificate()
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Failed to create certificate for peer-TLS, startup will fail: %s", e)
+
+    def _on_tls_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Handle the `relation-created` event."""
         self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
@@ -109,9 +131,27 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-    def _on_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
+    def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
-        tls_state = self.charm.state.unit_server.tls_client_state
+        if self.charm.app.planned_units() == 0:
+            return
+
+        if not self.charm.state.cluster.internal_ca_certificate:
+            if self.charm.unit.is_leader():
+                self.charm.tls_manager.generate_ca_certificate()
+            else:
+                logger.warning("Self-signed CA certificate not yet available")
+                event.defer()
+                return
+
+        if (tls_state := self.charm.state.unit_server.tls_client_state) == TLSState.TLS:
+            # only create self-signed certs once, in case disabling TLS gets deferred
+            try:
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+            except ValkeyWorkloadCommandError as e:
+                logger.error("Failed to create certificate for peer-TLS: %s", e)
+                event.defer()
+                return
 
         if tls_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
             logger.info("Disabling client TLS")
@@ -127,7 +167,6 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-        self.charm.tls_manager.remove_certificate()
         self.charm.tls_manager.set_cert_state(is_ready=False)
         self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
 

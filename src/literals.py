@@ -32,12 +32,14 @@ CLIENT_TLS_RELATION_NAME = "client-certificates"
 
 
 CLIENT_PORT = 6379
+TLS_PORT = 6380
 SENTINEL_PORT = 26379
 
 PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
+INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 
 
 # As per the valkey users spec

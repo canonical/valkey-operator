@@ -23,6 +23,7 @@ from literals import (
     PRIMARY_NAME,
     QUORUM_NUMBER,
     SENTINEL_PORT,
+    TLS_PORT,
     CharmUsers,
     StartState,
     Substrate,
@@ -103,7 +104,7 @@ class ConfigManager(ManagerStatusProtocol):
         if primary_ip != self.state.unit_server.model.private_ip:
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
-            replica_config["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
+            replica_config["replicaof"] = f"{primary_ip} {TLS_PORT}"
         return replica_config
 
     def set_config_properties(self, primary_ip: str) -> None:
@@ -115,25 +116,19 @@ class ConfigManager(ManagerStatusProtocol):
         """Return the TLS configuration based on the current state."""
         tls_config = {
             "port": str(CLIENT_PORT),
-            "tls-port": "0",
-            "tls-cert-file": "''",
-            "tls-key-file": "''",
-            "tls-ca-cert-dir": "''",
-            "tls-replication": "no",
+            "tls-port": str(TLS_PORT),
+            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
+            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
+            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
+            "tls-replication": "yes",
         }
 
-        if not (
+        if (
             self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
             and self.state.unit_server.client_cert_ready
         ):
-            return tls_config
-
-        tls_config["port"] = "0"
-        tls_config["tls-port"] = str(CLIENT_PORT)
-        tls_config["tls-cert-file"] = self.workload.tls_paths.client_cert.as_posix()
-        tls_config["tls-key-file"] = self.workload.tls_paths.client_key.as_posix()
-        tls_config["tls-ca-cert-dir"] = self.workload.tls_paths.ca_certs_dir.as_posix()
-        tls_config["tls-replication"] = "yes"
+            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            tls_config["port"] = "0"
 
         return tls_config
 

@@ -80,3 +80,6 @@ class TLSStatuses(Enum):
 
     ENABLING_CLIENT_TLS = StatusObject(status="maintenance", message="Enabling client TLS...")
     DISABLING_CLIENT_TLS = StatusObject(status="maintenance", message="Disabling client TLS...")
+    DISABLING_CLIENT_TLS_FAILED = StatusObject(
+        status="blocked", message="Failed to disable client TLS..."
+    )

@@ -8,7 +8,7 @@ from typing import Literal
 
 from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
+from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, TLS_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,9 @@ class ValkeyClient:
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        port = CLIENT_PORT if self.connect_to == "valkey" else SENTINEL_PORT
+        valkey_port = TLS_PORT if self.tls else CLIENT_PORT
+        port = valkey_port if self.connect_to == "valkey" else SENTINEL_PORT
+
         cli_command: list[str] = [
             self.workload.cli,
             "-h",
