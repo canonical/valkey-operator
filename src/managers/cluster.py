@@ -18,8 +18,8 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, StartState
-from statuses import CharmStatuses, StartStatuses
+from literals import CharmUsers, ScaleDownState, StartState
+from statuses import CharmStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -119,38 +119,44 @@ class ClusterManager(ManagerStatusProtocol):
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        match self.state.unit_server.model.start_state:
-            case StartState.NOT_STARTED.value:
-                status_list.append(
-                    StartStatuses.SERVICE_NOT_STARTED.value,
-                )
-            case StartState.WAITING_FOR_PRIMARY_START.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_PRIMARY_START.value,
-                )
-            case StartState.WAITING_TO_START.value:
-                status_list.append(
-                    StartStatuses.WAITING_TO_START.value,
-                )
-            case StartState.CONFIGURATION_ERROR.value:
-                status_list.append(
-                    StartStatuses.CONFIGURATION_ERROR.value,
-                )
-            case StartState.STARTING_WAITING_VALKEY.value:
-                status_list.append(
-                    StartStatuses.SERVICE_STARTING.value,
-                )
-            case StartState.STARTING_WAITING_SENTINEL.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
-                )
-            case StartState.STARTING_WAITING_REPLICA_SYNC.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_REPLICA_SYNC.value,
-                )
-            case StartState.ERROR_ON_START.value:
-                status_list.append(
-                    StartStatuses.ERROR_ON_START.value,
-                )
+        if start_status := self._get_start_status():
+            status_list.append(start_status)
+
+        if scale_down_status := self._get_scale_down_status():
+            status_list.append(scale_down_status)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+    def _get_start_status(self) -> StatusObject | None:
+        """Get the current start status of the unit."""
+        match self.state.unit_server.model.start_state:
+            case StartState.NOT_STARTED.value:
+                if (
+                    self.state.unit_server.model.scale_down_state
+                    == ScaleDownState.NO_SCALE_DOWN.value
+                ):
+                    return StartStatuses.SERVICE_NOT_STARTED.value
+            case StartState.WAITING_FOR_PRIMARY_START.value:
+                return StartStatuses.WAITING_FOR_PRIMARY_START.value
+            case StartState.WAITING_TO_START.value:
+                return StartStatuses.WAITING_TO_START.value
+            case StartState.CONFIGURATION_ERROR.value:
+                return StartStatuses.CONFIGURATION_ERROR.value
+            case StartState.STARTING_WAITING_VALKEY.value:
+                return StartStatuses.SERVICE_STARTING.value
+            case StartState.STARTING_WAITING_SENTINEL.value:
+                return StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value
+            case StartState.STARTING_WAITING_REPLICA_SYNC.value:
+                return StartStatuses.WAITING_FOR_REPLICA_SYNC.value
+            case StartState.ERROR_ON_START.value:
+                return StartStatuses.ERROR_ON_START.value
+
+        return None
+
+    def _get_scale_down_status(self) -> StatusObject | None:
+        """Get the current scale down status of the unit."""
+        match self.state.unit_server.model.scale_down_state:
+            case ScaleDownState.GOING_AWAY.value:
+                return ScaleDownStatuses.GOING_AWAY.value
+
+        return None

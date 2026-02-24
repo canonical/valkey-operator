@@ -136,6 +136,26 @@ class ValkeyClient:
             logger.error(f"Failed to set key {key} on Valkey server at {hostname}: {e}")
             return False
 
+    def get_value(self, hostname: str, key: str) -> str | None:
+        """Get the value of a key from the Valkey server.
+
+        Args:
+            hostname (str): The hostname to connect to.
+            key (str): The key to retrieve.
+
+        Returns:
+            str | None: The value of the key if retrieved successfully, None otherwise.
+        """
+        try:
+            output, err = self.exec_cli_command(["get", key], hostname=hostname)
+            if not output.strip():
+                logger.warning(f"Key {key} not found on Valkey server at {hostname}.")
+                return None
+            return output.strip()
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to get key {key} from Valkey server at {hostname}: {e}")
+            return None
+
     def is_replica_synced(self, hostname: str) -> bool:
         """Check if the replica is synced with the primary.
 
@@ -335,7 +355,7 @@ class ValkeyClient:
             raise
 
     @retry(
-        stop=stop_after_attempt(3),
+        stop=stop_after_attempt(5),
         wait=wait_fixed(1),
         reraise=True,
     )

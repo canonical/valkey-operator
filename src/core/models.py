@@ -18,7 +18,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from pydantic import Field
 from typing_extensions import Annotated
 
-from literals import CharmUsers, StartState
+from literals import CharmUsers, ScaleDownState, StartState
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,20 @@ class ValkeyServer(RelationState):
     def is_started(self) -> bool:
         """Check if the unit has started."""
         return self.model.start_state == StartState.STARTED.value if self.model else False
+
+    @property
+    def is_being_removed(self) -> bool:
+        """Check if the unit is being removed from the cluster."""
+        return (
+            self.model.scale_down_state != ScaleDownState.NO_SCALE_DOWN.value
+            if self.model
+            else False
+        )
+
+    @property
+    def is_active(self) -> bool:
+        """Check if the unit is started and not being removed."""
+        return self.is_started and not self.is_being_removed
 
     @property
     def valkey_admin_password(self) -> str:

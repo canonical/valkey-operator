@@ -51,11 +51,11 @@ class SentinelManager(ManagerStatusProtocol):
     )
     def is_sentinel_discovered(self) -> bool:
         """Check if the sentinel of the local unit was discovered by the other sentinels in the cluster."""
-        # list of active sentinels: units with started flag true
+        # list of active sentinels: units with started flag true and not being removed
         active_sentinels = [
             unit.model.private_ip
             for unit in self.state.servers
-            if unit.is_started and unit.model.private_ip != self.state.unit_server.model.private_ip
+            if unit.is_active and unit.model.private_ip != self.state.bind_address
         ]
 
         client = ValkeyClient(
@@ -71,7 +71,7 @@ class SentinelManager(ManagerStatusProtocol):
                     command=["sentinel", "sentinels", PRIMARY_NAME],
                     hostname=sentinel_ip,
                 )
-                if self.state.unit_server.model.private_ip not in output:
+                if self.state.bind_address not in output:
                     logger.info(f"Sentinel at {sentinel_ip} has not discovered this sentinel")
                     return False
             except ValkeyWorkloadCommandError:
@@ -81,7 +81,7 @@ class SentinelManager(ManagerStatusProtocol):
 
     def get_primary_ip(self) -> str | None:
         """Get the IP address of the primary node in the cluster."""
-        started_servers = [unit for unit in self.state.servers if unit.is_started]
+        started_servers = [unit for unit in self.state.servers if unit.is_active]
 
         client = ValkeyClient(
             username=self.admin_user,
@@ -148,7 +148,7 @@ class SentinelManager(ManagerStatusProtocol):
             connect_to="sentinel",
         )
 
-        active_sentinels = [unit for unit in self.state.servers if unit.is_started]
+        active_sentinels = [unit for unit in self.state.servers if unit.is_active]
         logger.debug(
             "Resetting sentinel states on %s", str([unit.unit_name for unit in active_sentinels])
         )
@@ -187,7 +187,7 @@ class SentinelManager(ManagerStatusProtocol):
         other_active_sentinels = [
             unit.model.private_ip
             for unit in self.state.servers
-            if unit.is_started and unit.model.private_ip != target_sentinel_ip
+            if unit.is_active and unit.model.private_ip != target_sentinel_ip
         ]
 
         logger.debug(
@@ -223,7 +223,7 @@ class SentinelManager(ManagerStatusProtocol):
             connect_to="sentinel",
         )
 
-        units_started = [unit for unit in self.state.servers if unit.is_started]
+        units_started = [unit for unit in self.state.servers if unit.is_active]
         # all started servers except primary are expected to be replicas
         expected_replicas = len(units_started) - 1
         logger.debug(

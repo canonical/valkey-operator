@@ -73,3 +73,22 @@ class StartStatuses(Enum):
         status="blocked",
         message="Error occurred during service start, check logs for details",
     )
+
+
+class ScaleDownStatuses(Enum):
+    """Collection of possible statuses related to scale down operations."""
+
+    WAIT_FOR_LOCK = StatusObject(
+        status="maintenance",
+        message="Waiting for lock to perform scale down operations...",
+        running="async",
+    )
+    SCALING_DOWN = StatusObject(
+        status="maintenance",
+        message="Performing scale down operations...",
+        running="async",
+    )
+    GOING_AWAY = StatusObject(
+        status="maintenance",
+        message="Waiting for unit to be removed by juju...",
+    )

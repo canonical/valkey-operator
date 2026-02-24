@@ -96,3 +96,4 @@ class ScaleDownState(StrEnum):
     STOP_SERVICES = "stopped_services"
     RESET_SENTINEL = "reset_sentinel"
     HEALTH_CHECK = "health_check"
+    GOING_AWAY = "going_away"

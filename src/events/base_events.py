@@ -6,6 +6,7 @@
 
 import logging
 import socket
+import time
 from typing import TYPE_CHECKING
 
 import ops
@@ -33,7 +34,7 @@ from literals import (
     StartState,
     Substrate,
 )
-from statuses import CharmStatuses, ClusterStatuses, StartStatuses
+from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -122,7 +123,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.WAITING_TO_START.value})
         start_lock.request_lock()
 
-        if not start_lock.do_i_hold_lock():
+        if not start_lock.do_i_hold_lock:
             logger.info("Waiting for lock to start")
             event.defer()
             return
@@ -231,7 +232,7 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
-        for lock in [StartLock(self.charm.state), ScaleDownLock(self.charm.state)]:
+        for lock in [StartLock(self.charm.state)]:
             lock.process()
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
@@ -438,16 +439,33 @@ class BaseEvents(ops.Object):
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
         """Handle removal of the data storage mount, e.g. when removing a unit."""
         # get scale down lock
-        scale_down_lock = ScaleDownLock(self.charm.state)
+        scale_down_lock = ScaleDownLock(self.charm)
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.WAIT_FOR_LOCK})
+        self.charm.status.set_running_status(
+            ScaleDownStatuses.WAIT_FOR_LOCK.value,
+            scope="unit",
+            component_name=self.charm.cluster_manager.name,
+            statuses_state=self.charm.state.statuses,
+        )
         scale_down_lock.request_lock()
-        if not scale_down_lock.do_i_hold_lock():
+        while not scale_down_lock.do_i_hold_lock:
             logger.debug("Waiting for lock to scale down")
-            event.defer()
-            return
+            time.sleep(5)
 
+        self.charm.state.statuses.delete(
+            ScaleDownStatuses.WAIT_FOR_LOCK.value,
+            scope="unit",
+            component=self.charm.cluster_manager.name,
+        )
         # TODO consider quorom when removing unit
+
+        self.charm.status.set_running_status(
+            ScaleDownStatuses.SCALING_DOWN.value,
+            scope="unit",
+            component_name=self.charm.cluster_manager.name,
+            statuses_state=self.charm.state.statuses,
+        )
 
         # if unit has primary then failover
         if self.charm.sentinel_manager.get_primary_ip() == self.charm.state.bind_address:
@@ -466,8 +484,7 @@ class BaseEvents(ops.Object):
                 )
             except SentinelFailoverError:
                 logger.error("Failed to trigger failover before scale down")
-                event.defer()
-                return
+                raise
 
         # stop valkey and sentinel processes
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
@@ -475,8 +492,7 @@ class BaseEvents(ops.Object):
             self.charm.workload.stop()
         except ValkeyServicesCouldNotBeStoppedError:
             logger.error("Failed to stop Valkey services before scale down")
-            event.defer()
-            return
+            raise
 
         # reset sentinel states on other units
         self.charm.state.unit_server.update(
@@ -489,15 +505,14 @@ class BaseEvents(ops.Object):
             self.charm.sentinel_manager.reset_sentinel_states()
         except (ValkeyWorkloadCommandError, CannotSeeAllActiveSentinelsError):
             logger.error("Failed to reset sentinel states before scale down")
-            event.defer()
-            return
+            raise
 
         # check health after scale down
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
         if not self.charm.sentinel_manager.verify_expected_replica_count():
             logger.error("Not all sentinels see the expected number of replicas after scale down")
-            event.defer()
-            return
+            raise
 
         # release lock
+        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
         scale_down_lock.release_lock()

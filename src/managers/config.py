@@ -94,7 +94,7 @@ class ConfigManager(ManagerStatusProtocol):
                 CharmUsers.VALKEY_REPLICA.value, ""
             ),
         }
-        if primary_ip != self.state.unit_server.model.private_ip:
+        if primary_ip != self.state.bind_address:
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
             replica_config["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
