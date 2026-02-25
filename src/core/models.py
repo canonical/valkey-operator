@@ -66,6 +66,7 @@ class RelationState:
         self.relation = relation
         self.data_interface = data_interface
         self.component = component
+        self.model = self.data_interface.build_model(self.relation.id) if self.relation else None
 
     def update(self, items: dict[str, Any]) -> None:
         """Write to relation data."""
@@ -78,14 +79,13 @@ class RelationState:
         delete_fields = [key for key in items if not items[key]]
         update_content = {k: items[k] for k in items if k not in delete_fields}
 
-        model = self.data_interface.build_model(self.relation.id)
         for field, value in update_content.items():
-            setattr(model, field.replace("-", "_"), value)
+            setattr(self.model, field.replace("-", "_"), value)
 
         for field in delete_fields:
-            setattr(model, field.replace("-", "_"), None)
+            setattr(self.model, field.replace("-", "_"), None)
 
-        self.data_interface.write_model(self.relation.id, model)
+        self.data_interface.write_model(self.relation.id, self.model)
 
 
 @final
@@ -102,11 +102,6 @@ class ValkeyServer(RelationState):
         super().__init__(relation, data_interface, component)
         self.data_interface = data_interface
         self.unit = component
-
-    @property
-    def model(self) -> PeerUnitModel | None:
-        """The peer relation model for this unit."""
-        return self.data_interface.build_model(self.relation.id) if self.relation else None
 
     @property
     def unit_id(self) -> int:
@@ -158,11 +153,6 @@ class ValkeyCluster(RelationState):
         super().__init__(relation, data_interface, component)
         self.app = component
         self.data_interface = data_interface
-
-    @property
-    def model(self) -> PeerAppModel | None:
-        """The peer relation model for this application."""
-        return self.data_interface.build_model(self.relation.id) if self.relation else None
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:
