@@ -155,13 +155,14 @@ class ValkeyClient(CliClient):
             values[values_parts[0]] = values_parts[1]
         return values
 
-    def set_value(self, hostname: str, key: str, value: str) -> bool:
+    def set(self, hostname: str, key: str, value: str, additional_args: list[str] = []) -> bool:
         """Set a key-value pair on the Valkey server.
 
         Args:
             hostname (str): The hostname to connect to.
             key (str): The key to set.
             value (str): The value to set for the key.
+            additional_args (list[str]): Additional arguments to include in the CLI command. Default is an empty list.
 
         Returns:
             bool: True if the command executed successfully, False otherwise.
@@ -169,9 +170,11 @@ class ValkeyClient(CliClient):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        return self.exec_cli_command(["set", key, value], hostname=hostname) == "OK"
+        return (
+            self.exec_cli_command(["set", key, value] + additional_args, hostname=hostname) == "OK"
+        )
 
-    def get_value(self, hostname: str, key: str) -> str:
+    def get(self, hostname: str, key: str) -> str:
         """Get the value of a key from the Valkey server.
 
         Args:
@@ -185,6 +188,22 @@ class ValkeyClient(CliClient):
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
         return self.exec_cli_command(["get", key], hostname=hostname)
+
+    def delifeq(self, hostname: str, key: str, value: str) -> str:
+        """Delete a key from the Valkey server if it is equal to a specific value.
+
+        Args:
+            hostname (str): The hostname to connect to.
+            key (str): The key to delete if the value matches.
+            value (str): The value to compare against before deleting the key.
+
+        Returns:
+            str: The result of the delifeq command.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(["delifeq", key, value], hostname=hostname, json_output=False)
 
     def is_replica_synced(self, hostname: str) -> bool:
         """Check if the replica is synced with the primary.
@@ -247,6 +266,20 @@ class SentinelClient(CliClient):
     ):
         super().__init__(username, password, workload)
 
+    def ping(self, hostname: str) -> bool:
+        """Ping the Valkey server to check if it's responsive.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            bool: True if the server responds to the ping command, False otherwise.
+        """
+        try:
+            return "PONG" in self.exec_cli_command(["ping"], hostname=hostname, json_output=False)
+        except ValkeyWorkloadCommandError:
+            return False
+
     def get_primary_ip(self, hostname: str) -> str:
         """Get the primary IP address from the sentinel.
 
@@ -270,7 +303,7 @@ class SentinelClient(CliClient):
             hostname (str): The hostname to connect to.
 
         Returns:
-            dict[str, str]: The primary info if retrieved successfully.
+            (dict[str, str]): The primary info if retrieved successfully.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
@@ -347,10 +380,11 @@ class SentinelClient(CliClient):
         Returns:
             (list[dict[str, str]]): The list of replicas with their information.
         """
-        return self.exec_cli_command(
-            command=["sentinel", "replicas", PRIMARY_NAME],
-            hostname=hostname,
+        replicas = self.exec_cli_command(
+            command=["sentinel", "replicas", PRIMARY_NAME], hostname=hostname
         )
+        logger.debug("Retrieved replicas information from sentinel at %s: %s", hostname, replicas)
+        return replicas
 
     def sentinels_primary(self, hostname: str) -> list[dict[str, str]]:
         """Get the list of sentinels that see the same primary from the sentinel.
