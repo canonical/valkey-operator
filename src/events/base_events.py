@@ -6,15 +6,14 @@
 
 import logging
 import socket
-import time
 from typing import TYPE_CHECKING
 
 import ops
 
 from common.exceptions import (
-    CannotSeeAllActiveSentinelsError,
     SentinelFailoverError,
     ValkeyACLLoadError,
+    ValkeyCannotGetPrimaryIPError,
     ValkeyConfigSetError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
@@ -127,9 +126,9 @@ class BaseEvents(ops.Object):
             logger.info("Waiting for lock to start")
             event.defer()
             return
-
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        if not primary_ip:
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
                 primary_ip = self.charm.state.bind_address
             else:
@@ -448,10 +447,8 @@ class BaseEvents(ops.Object):
             component_name=self.charm.cluster_manager.name,
             statuses_state=self.charm.state.statuses,
         )
+        # blocks until the lock is acquired
         scale_down_lock.request_lock()
-        while not scale_down_lock.do_i_hold_lock:
-            logger.debug("Waiting for lock to scale down")
-            time.sleep(5)
 
         self.charm.state.statuses.delete(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
@@ -466,9 +463,10 @@ class BaseEvents(ops.Object):
             component_name=self.charm.cluster_manager.name,
             statuses_state=self.charm.state.statuses,
         )
-
         # if unit has primary then failover
-        if self.charm.sentinel_manager.get_primary_ip() == self.charm.state.bind_address:
+        if (
+            primary_ip := self.charm.sentinel_manager.get_primary_ip()
+        ) == self.charm.state.bind_address:
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
@@ -477,10 +475,12 @@ class BaseEvents(ops.Object):
                 self.charm.state.bind_address,
             )
             try:
+                logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
                 self.charm.sentinel_manager.failover()
+                primary_ip = self.charm.sentinel_manager.get_primary_ip()
                 logger.debug(
                     "Failover completed, new primary ip %s",
-                    self.charm.sentinel_manager.get_primary_ip(),
+                    primary_ip,
                 )
             except SentinelFailoverError:
                 logger.error("Failed to trigger failover before scale down")
@@ -501,17 +501,17 @@ class BaseEvents(ops.Object):
                 "start_state": StartState.NOT_STARTED.value,
             }
         )
-        try:
-            self.charm.sentinel_manager.reset_sentinel_states()
-        except (ValkeyWorkloadCommandError, CannotSeeAllActiveSentinelsError):
-            logger.error("Failed to reset sentinel states before scale down")
-            raise
+        active_units = [
+            ip
+            for ip in self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
+            if ip != self.charm.state.bind_address
+        ]
+        logger.debug("Resetting sentinel states on active units: %s", active_units)
+        self.charm.sentinel_manager.reset_sentinel_states(active_units)
 
         # check health after scale down
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
-        if not self.charm.sentinel_manager.verify_expected_replica_count():
-            logger.error("Not all sentinels see the expected number of replicas after scale down")
-            raise
+        self.charm.sentinel_manager.verify_expected_replica_count(active_units)
 
         # release lock
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
