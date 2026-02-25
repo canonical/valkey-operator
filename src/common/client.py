@@ -383,7 +383,6 @@ class SentinelClient(CliClient):
         replicas = self.exec_cli_command(
             command=["sentinel", "replicas", PRIMARY_NAME], hostname=hostname
         )
-        logger.debug("Retrieved replicas information from sentinel at %s: %s", hostname, replicas)
         return replicas
 
     def sentinels_primary(self, hostname: str) -> list[dict[str, str]]:
