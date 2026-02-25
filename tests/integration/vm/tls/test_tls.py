@@ -12,6 +12,7 @@ from tests.integration.helpers import (
     INTERNAL_USERS_SECRET_LABEL,
     TLS_NAME,
     are_agents_idle,
+    are_apps_active_and_agents_idle,
     auth_test,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
@@ -71,6 +72,18 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
     with pytest.raises(Exception) as exc_info:
         await auth_test(hostnames, username=None, password=None)
     assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
+
+
+def test_scale_up_with_tls_enabled(juju: jubilant.Juju) -> None:
+    """Ensure a new unit can be added to a cluster with client TLS enabled."""
+    logger.info("Add a unit to the cluster")
+    juju.add_unit(APP_NAME, num_units=1)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1
+        ),
+        timeout=1200,
+    )
 
 
 async def test_disable_tls(juju: jubilant.Juju) -> None:
