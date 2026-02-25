@@ -93,7 +93,7 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
     juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1),
         timeout=600,
     )
 
@@ -127,7 +127,7 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
     logger.info("Enabling client TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1),
         timeout=600,
     )
 
