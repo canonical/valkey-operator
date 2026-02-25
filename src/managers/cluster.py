@@ -92,6 +92,8 @@ class ClusterManager(ManagerStatusProtocol):
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
+            # restart to pick up updated TLS certs if available
+            self.workload.restart(self.workload.valkey_service)
             return False
 
         if (

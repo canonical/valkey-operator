@@ -67,6 +67,8 @@ class WorkloadBase(ABC):
     working_dir: pathops.PathProtocol
     tls_dir: pathops.PathProtocol
     tls_paths: TLSPaths
+    valkey_service: str
+    sentinel_service: str
     cli: str
     user: str
 
@@ -84,6 +86,11 @@ class WorkloadBase(ABC):
             ValkeyServicesFailedToStartError: If the service fails to start.
             ValkeyServiceNotAliveError: If the service is not alive after start.
         """
+        pass
+
+    @abstractmethod
+    def restart(self, service: str) -> None:
+        """Restart a workload service."""
         pass
 
     @abstractmethod

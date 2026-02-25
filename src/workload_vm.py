@@ -57,6 +57,8 @@ class ValkeyVmWorkload(WorkloadBase):
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
         self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
+        self.valkey_service = SNAP_SERVICE
+        self.sentinel_service = SNAP_SENTINEL_SERVICE
         self.cli = "charmed-valkey.cli"
         self.user = "snap_daemon"
 
@@ -64,7 +66,7 @@ class ValkeyVmWorkload(WorkloadBase):
     @override
     def can_connect(self) -> bool:
         try:
-            return bool(self.valkey.services[SNAP_SERVICE])
+            return bool(self.valkey.services[self.valkey_service])
         except KeyError:
             return False
 
@@ -104,7 +106,7 @@ class ValkeyVmWorkload(WorkloadBase):
     @override
     def start(self) -> None:
         try:
-            self.valkey.start(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
+            self.valkey.start(services=[self.valkey_service, self.sentinel_service])
         except snap.SnapError as e:
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
@@ -115,6 +117,16 @@ class ValkeyVmWorkload(WorkloadBase):
         if not self.wait_for_services_to_be_alive(duration=3):
             logger.error("Valkey service is not alive after start.")
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
+
+    @override
+    def restart(self, service: str) -> None:
+        try:
+            self.valkey.restart(services=[service])
+        except snap.SnapError as e:
+            logger.exception(str(e))
+            raise ValkeyServicesFailedToStartError(
+                "Failed to restart service %s: %s", service, e
+            ) from e
 
     @override
     def exec(self, command: List[str]) -> tuple[str, str | None]:
@@ -131,7 +143,7 @@ class ValkeyVmWorkload(WorkloadBase):
             logger.error("Command failed with %s, %s", e.returncode, e.stderr)
             raise ValkeyWorkloadCommandError(e)
         except subprocess.TimeoutExpired as e:
-            logger.error("Command '%s' timed out: %s", command, str(e.stderr))
+            logger.error("Command timed out: %s", str(e.stderr))
             raise ValkeyWorkloadCommandError(e)
 
     @override
@@ -143,8 +155,8 @@ class ValkeyVmWorkload(WorkloadBase):
     )
     def alive(self) -> bool:
         try:
-            return bool(self.valkey.services[SNAP_SERVICE]["active"]) and bool(
-                self.valkey.services[SNAP_SENTINEL_SERVICE]["active"]
+            return bool(self.valkey.services[self.valkey_service]["active"]) and bool(
+                self.valkey.services[self.sentinel_service]["active"]
             )
         except KeyError:
             return False

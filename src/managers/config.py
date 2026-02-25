@@ -132,6 +132,27 @@ class ConfigManager(ManagerStatusProtocol):
 
         return tls_config
 
+    def generate_sentinel_tls_config(self) -> dict[str, str]:
+        """Return the TLS configuration for sentinel based on the current state."""
+        tls_config = {
+            "port": str(SENTINEL_PORT),
+            "tls-port": "0",
+            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
+            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
+            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
+            "tls-replication": "yes",
+        }
+
+        if (
+            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            and self.state.unit_server.client_cert_ready
+        ):
+            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            tls_config["port"] = "0"
+            tls_config["tls-port"] = str(SENTINEL_PORT)
+
+        return tls_config
+
     def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.
 
@@ -224,10 +245,7 @@ class ConfigManager(ManagerStatusProtocol):
         )
 
         # tls config
-        tls_config = self.generate_tls_config()
-        # for sentinel, we do not overwrite the ports
-        tls_config.pop("port")
-        tls_config.pop("tls-port")
+        tls_config = self.generate_sentinel_tls_config()
         config_properties.update(tls_config)
 
         return config_properties

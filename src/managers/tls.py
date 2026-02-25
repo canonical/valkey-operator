@@ -179,7 +179,8 @@ class TLSManager(ManagerStatusProtocol):
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)
 
         if (
-            self.state.unit_server.tls_client_state == TLSState.TLS
+            self.state.unit_server.is_started
+            and self.state.unit_server.tls_client_state == TLSState.TLS
             and not self.state.client_tls_relation
         ):
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS_FAILED.value)

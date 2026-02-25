@@ -112,6 +112,8 @@ class SentinelManager(ManagerStatusProtocol):
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
+            # restart to pick up updated TLS certs if available
+            self.restart_service()
             return False
 
         if not client.sentinel_get_master_info(hostname=self.state.bind_address):
@@ -119,6 +121,11 @@ class SentinelManager(ManagerStatusProtocol):
             return False
 
         return True
+
+    def restart_service(self) -> None:
+        """Restart the sentinel service to load configuration."""
+        logger.info("Restarting sentinel service")
+        self.workload.restart(self.workload.sentinel_service)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

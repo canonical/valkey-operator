@@ -16,6 +16,7 @@ from charmlibs.interfaces.tls_certificates import (
 
 from common.exceptions import (
     ValkeyCertificatesNotReadyError,
+    ValkeyServicesFailedToStartError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
@@ -70,9 +71,6 @@ class TLSEvents(ops.Object):
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
-        if self.charm.state.client_tls_relation:
-            return
-
         if self.charm.unit.is_leader():
             self.charm.tls_manager.generate_ca_certificate()
 
@@ -93,6 +91,22 @@ class TLSEvents(ops.Object):
 
     def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
         """Handle the `certificate-available` event from TLS provider."""
+        if not self.charm.state.peer_relation:
+            logger.info("Peer relation not ready")
+            event.defer()
+            return
+
+        if len(
+            [server for server in self.charm.state.servers if server.is_started]
+        ) != self.charm.app.planned_units() and not any(
+            server
+            for server in self.charm.state.servers
+            if server.tls_client_state == TLSState.TLS
+        ):
+            logger.info("Wait for all units to start before enabling client TLS")
+            event.defer()
+            return
+
         cert = event.certificate
         client_certificates, client_private_key = (
             self.client_certificate.get_assigned_certificates()
@@ -121,8 +135,13 @@ class TLSEvents(ops.Object):
 
         if tls_state == TLSState.TO_TLS:
             try:
-                self._enable_tls()
-            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
+                self._enable_client_tls()
+            except (
+                ValkeyWorkloadCommandError,
+                ValkeyServicesFailedToStartError,
+                ValkeyTLSLoadError,
+                ValueError,
+            ):
                 logger.error("Failed to enable client TLS")
                 event.defer()
                 return
@@ -144,43 +163,60 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-        if (tls_state := self.charm.state.unit_server.tls_client_state) == TLSState.TLS:
-            # only create self-signed certs once, in case disabling TLS gets deferred
-            try:
-                self.charm.tls_manager.create_and_store_self_signed_certificate()
-            except ValkeyWorkloadCommandError as e:
-                logger.error("Failed to create certificate for peer-TLS: %s", e)
-                event.defer()
-                return
-
-        if tls_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
+        if self.charm.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
-                self.charm.config_manager.set_config_properties(
-                    self.charm.sentinel_manager.get_primary_ip()
-                )
+                primary_ip = self.charm.sentinel_manager.get_primary_ip()
+                self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
+                self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+                self.charm.sentinel_manager.restart_service()
+            except (
+                ValkeyWorkloadCommandError,
+                ValkeyServicesFailedToStartError,
+                ValkeyTLSLoadError,
+                ValueError,
+            ):
                 logger.error("Failed to disable client TLS")
                 event.defer()
                 return
 
-        self.charm.tls_manager.set_cert_state(is_ready=False)
-        self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
-        self.charm.unit.open_port("tcp", CLIENT_PORT)
+            self.charm.tls_manager.set_cert_state(is_ready=False)
+            self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
+            self.charm.unit.open_port("tcp", CLIENT_PORT)
 
-    def _enable_tls(self) -> None:
+        try:
+            self.charm.tls_manager.create_and_store_self_signed_certificate()
+            tls_config = self.charm.config_manager.generate_tls_config()
+            self.charm.cluster_manager.reload_tls_settings(tls_config)
+            self.charm.config_manager.set_sentinel_config_properties(
+                self.charm.sentinel_manager.get_primary_ip()
+            )
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyWorkloadCommandError,
+            ValkeyServicesFailedToStartError,
+            ValkeyTLSLoadError,
+            ValueError,
+        ) as e:
+            logger.error("Failed to setup peer-TLS: %s", e)
+            event.defer()
+            return
+
+    def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""
         if not all(server.client_cert_ready for server in self.charm.state.servers):
             raise ValkeyCertificatesNotReadyError
 
-        logger.info("Enabling TLS in Valkey")
-        self.charm.config_manager.set_config_properties(
-            self.charm.sentinel_manager.get_primary_ip()
-        )
+        logger.info("Enabling client TLS in Valkey")
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
+        self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
-        self.charm.cluster_manager.reload_tls_settings(tls_config)
+        if self.charm.state.unit_server.is_started:
+            self.charm.cluster_manager.reload_tls_settings(tls_config)
+            self.charm.sentinel_manager.restart_service()
         self.charm.tls_manager.set_tls_state(TLSState.TLS)
         self.charm.unit.close_port("tcp", CLIENT_PORT)

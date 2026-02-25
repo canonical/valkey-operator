@@ -88,25 +88,6 @@ def test_enable_internal_tls_no_ca_cert_available(cloud_spec):
         assert "valkey_peers_relation_created" in [e.name for e in state_out.deferred]
 
 
-def test_no_internal_tls_if_client_tls(cloud_spec):
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peer_relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
-    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    state_in = testing.State(
-        leader=True,
-        relations={peer_relation, status_peer_relation, client_tls_relation},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-    )
-
-    with patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls:
-        ctx.run(ctx.on.relation_created(relation=client_tls_relation), state_in)
-        reload_tls.assert_not_called()
-
-
 def test_client_tls_relation_broken(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
@@ -134,9 +115,10 @@ def test_client_tls_relation_broken(cloud_spec):
         patch("charmlibs.pathops.ContainerPath.mkdir"),
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("managers.sentinel.SentinelManager.restart_service"),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        reload_tls.assert_called_once()
+        assert reload_tls.call_count == 2
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
@@ -242,12 +224,13 @@ def test_client_tls_relation_broken_writing_internal_cert_fails(cloud_spec):
         patch("charmlibs.pathops.ContainerPath.mkdir"),
         patch("core.base_workload.WorkloadBase.write_file", side_effect=PermissionError("failed")),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("managers.sentinel.SentinelManager.restart_service"),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        reload_tls.assert_not_called()
+        reload_tls.assert_called_once()
         assert "client_certificates_relation_broken" in [e.name for e in state_out.deferred]
-        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
-        assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "tls"
+        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
+        assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
 
 def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
@@ -272,9 +255,12 @@ def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    with patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls:
+    with (
+        patch("managers.cluster.ClusterManager.reload_tls_settings"),
+        patch("managers.sentinel.SentinelManager.restart_service"),
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
+    ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        reload_tls.assert_called_once()
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
@@ -315,6 +301,7 @@ def test_client_certificate_available(cloud_spec):
                 return_value=([certificate], None),
             ),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("managers.sentinel.SentinelManager.restart_service"),
             patch("managers.tls.TLSManager.write_certificate"),
         ):
             event.certificate = certificate.certificate
@@ -409,6 +396,7 @@ def test_client_certificate_available_not_all_units_ready(cloud_spec):
     state_in = testing.State(
         leader=True,
         relations={peer_relation, status_peer_relation, client_tls_relation},
+        planned_units=2,
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
@@ -430,4 +418,62 @@ def test_client_certificate_available_not_all_units_ready(cloud_spec):
 
             reload_tls.assert_not_called()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
+            assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"
+
+
+def test_client_certificate_available_not_all_units_in_peer_relation(cloud_spec):
+    ca = MagicMock("my_ca")
+    client_csr = MagicMock("my_csr")
+    client_cert = MagicMock("my_cert")
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "tls-client-state": "to-tls",
+        },
+        peers_data={1: {"start-state": "started", "client-cert-ready": "False"}},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=4,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    client_certificate = ProviderCertificate(
+        relation_id=4,
+        certificate=client_cert,
+        certificate_signing_request=client_csr,
+        ca=ca,
+        chain=[client_cert, ca],
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        planned_units=3,
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
+
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                side_effect=[([client_certificate], None)],
+            ),
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("managers.tls.TLSManager.write_certificate") as write_certs,
+        ):
+            event.certificate = client_certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
+
+            reload_tls.assert_not_called()
+            write_certs.assert_not_called()
+            assert not state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"

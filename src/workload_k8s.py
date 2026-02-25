@@ -102,6 +102,15 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
+    def restart(self, service: str) -> None:
+        try:
+            self.container.restart(service)
+        except ops.pebble.ChangeError as e:
+            raise ValkeyServicesFailedToStartError(
+                "Failed to start service %s: %s", service, e
+            ) from e
+
+    @override
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
