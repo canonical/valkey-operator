@@ -36,21 +36,6 @@ class TLSPaths:
         return self.tls_root / "client.key"
 
     @property
-    def peer_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer CA."""
-        return self.ca_certs_dir / "peer_ca.pem"
-
-    @property
-    def peer_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer cert."""
-        return self.tls_root / "peer.pem"
-
-    @property
-    def peer_key(self) -> pathops.LocalPath or pathops.ContainerPath:
-        """Path to the peer key."""
-        return self.tls_root / "peer.key"
-
-    @property
     def ca_certs_dir(self) -> pathops.LocalPath or pathops.ContainerPath:
         """Path to the directory for CA certs."""
         return self.tls_root / "ca_certs"
@@ -157,21 +142,6 @@ class WorkloadBase(ABC):
             PermissionError,
             pathops.PebbleConnectionError,
             ValueError,
-        ) as e:
-            raise ValkeyWorkloadCommandError(e)
-
-    def read_raw_file(self, path: pathops.PathProtocol) -> bytes:
-        """Read a file and return the binary content.
-
-        Args:
-            path (PathProtocol): The file path to read.
-        """
-        try:
-            return path.read_bytes()
-        except (
-            FileNotFoundError,
-            PermissionError,
-            pathops.PebbleConnectionError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 

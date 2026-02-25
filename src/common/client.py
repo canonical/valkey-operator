@@ -214,13 +214,7 @@ class ValkeyClient:
 
     def reload_tls(self, tls_config: dict[str, str], hostname: str) -> None:
         """Trigger to load the TLS settings."""
-        cmd = []
-
-        if self.connect_to == "sentinel":
-            cmd.append("SENTINEL")
-
-        cmd.append("CONFIG")
-        cmd.append("SET")
+        cmd = ["CONFIG", "SET"]
 
         for key, value in tls_config.items():
             cmd.append(key)
