@@ -11,15 +11,16 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
-from common.client import ValkeyClient
+from common.client import SentinelClient
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     SentinelFailoverError,
+    ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import PRIMARY_NAME, CharmUsers
+from literals import CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class SentinelManager(ManagerStatusProtocol):
 
     @retry(
         wait=wait_fixed(5),
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(6),
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
@@ -58,68 +59,80 @@ class SentinelManager(ManagerStatusProtocol):
             if unit.is_active and unit.model.private_ip != self.state.bind_address
         ]
 
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
         for sentinel_ip in active_sentinels:
             try:
-                output, _ = client.exec_cli_command(
-                    command=["sentinel", "sentinels", PRIMARY_NAME],
-                    hostname=sentinel_ip,
-                )
-                if self.state.bind_address not in output:
-                    logger.info(f"Sentinel at {sentinel_ip} has not discovered this sentinel")
+                discovered_sentinels = {
+                    sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_ip)
+                }
+                if self.state.bind_address not in discovered_sentinels:
+                    logger.warning(
+                        f"Sentinel at {sentinel_ip} does not see local sentinel at {self.state.bind_address}."
+                    )
                     return False
+
             except ValkeyWorkloadCommandError:
                 logger.warning(f"Could not query sentinel at {sentinel_ip} for primary discovery.")
                 return False
         return True
 
-    def get_primary_ip(self) -> str | None:
-        """Get the IP address of the primary node in the cluster."""
-        started_servers = [unit for unit in self.state.servers if unit.is_active]
+    def get_primary_ip(self) -> str:
+        """Get the IP address of the primary node in the cluster.
 
-        client = ValkeyClient(
+        This method queries the sentinels in the cluster for the primary information and returns the primary's IP address.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command to get primary information fails on all sentinels.
+        """
+        started_servers = [unit.model.private_ip for unit in self.state.servers if unit.is_active]
+
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
-        for unit in started_servers:
-            if primary_ip := client.sentinel_get_primary_ip(hostname=unit.model.private_ip):
-                logger.info(f"Primary IP address is {primary_ip}")
-                return primary_ip
+        for unit_ip in started_servers:
+            try:
+                return client.get_primary_ip(hostname=unit_ip)
+            except ValkeyWorkloadCommandError:
+                logger.warning(
+                    "Could not query sentinel for primary information from server at %s.",
+                    unit_ip,
+                )
+                continue
         logger.error(
-            "Could not determine primary IP from sentinels. Number of started servers: %d.",
-            len(started_servers),
+            "Could not determine primary IP from sentinels: %s.",
+            started_servers,
         )
-        return None
+        raise ValkeyCannotGetPrimaryIPError("Could not determine primary IP from sentinels.")
 
     @retry(
         wait=wait_fixed(5),
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(6),
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
     def is_healthy(self) -> bool:
         """Check if the sentinel service is healthy."""
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
             return False
 
-        if not client.sentinel_get_master_info(hostname=self.state.bind_address):
+        try:
+            client.get_primary_info(hostname=self.state.bind_address)
+        except ValkeyWorkloadCommandError:
             logger.warning("Health check failed: Could not query sentinel for master information.")
             return False
 
@@ -127,68 +140,59 @@ class SentinelManager(ManagerStatusProtocol):
 
     def failover(self) -> None:
         """Trigger a failover in the cluster."""
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
         try:
-            client.sentinel_failover(self.state.bind_address)
+            client.trigger_failover(self.state.bind_address)
+            # check if failover is in progress every second for 5 seconds, if it is not then assume failover failed
+            client.is_failover_in_progress(hostname=self.state.bind_address)
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to trigger failover: {e}")
             raise SentinelFailoverError from e
 
-    def reset_sentinel_states(self) -> None:
+    def reset_sentinel_states(self, sentinel_ips: list[str]) -> None:
         """Reset the sentinel states on all sentinels in the cluster."""
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
-        active_sentinels = [unit for unit in self.state.servers if unit.is_active]
-        logger.debug(
-            "Resetting sentinel states on %s", str([unit.unit_name for unit in active_sentinels])
-        )
-        for unit in active_sentinels:
+        for sentinel_ip in sentinel_ips:
             try:
-                client.sentinel_reset_state(hostname=unit.model.private_ip)
+                client.reset(hostname=sentinel_ip)
             except ValkeyWorkloadCommandError:
-                logger.warning(
-                    f"Could not reset sentinel state on {unit.unit_name} ({unit.model.private_ip})."
-                )
+                logger.warning("Could not reset sentinel state on %s.", sentinel_ip)
                 raise
 
-            if not self.sentinel_sees_all_others(target_sentinel_ip=unit.model.private_ip):
+            if not self.target_sees_all_others(
+                target_sentinel_ip=sentinel_ip, sentinel_ips=sentinel_ips
+            ):
                 logger.warning(
-                    f"Sentinel at {unit.model.private_ip} does not see all other sentinels after reset."
+                    "Sentinel at %s does not see all other sentinels after reset.", sentinel_ip
                 )
                 raise CannotSeeAllActiveSentinelsError(
-                    f"Sentinel at {unit.model.private_ip} does not see all other sentinels after reset."
+                    "Sentinel at %s does not see all other sentinels after reset." % sentinel_ip
                 )
 
     @retry(
-        wait=wait_fixed(1),
-        stop=stop_after_attempt(5),
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(6),
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def sentinel_sees_all_others(self, target_sentinel_ip: str) -> bool:
+    def target_sees_all_others(self, target_sentinel_ip: str, sentinel_ips: list[str]) -> bool:
         """Check if the sentinel of the local unit sees all the other sentinels in the cluster."""
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
-        other_active_sentinels = [
-            unit.model.private_ip
-            for unit in self.state.servers
-            if unit.is_active and unit.model.private_ip != target_sentinel_ip
-        ]
+        other_active_sentinels = [ip for ip in sentinel_ips if ip != target_sentinel_ip]
 
         logger.debug(
             "Checking if sentinel at %s sees all other sentinels: %s",
@@ -198,11 +202,10 @@ class SentinelManager(ManagerStatusProtocol):
 
         for sentinel_ip in other_active_sentinels:
             try:
-                output, _ = client.exec_cli_command(
-                    command=["sentinel", "sentinels", PRIMARY_NAME],
-                    hostname=target_sentinel_ip,
-                )
-                if sentinel_ip not in output:
+                if sentinel_ip not in {
+                    sentinel["ip"]
+                    for sentinel in client.sentinels_primary(hostname=target_sentinel_ip)
+                }:
                     logger.debug(
                         f"Sentinel at {target_sentinel_ip} does not see sentinel at {sentinel_ip}"
                     )
@@ -214,35 +217,51 @@ class SentinelManager(ManagerStatusProtocol):
                 return False
         return True
 
-    def verify_expected_replica_count(self) -> bool:
+    @retry(
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(6),
+        retry=retry_if_result(lambda result: result is False),
+        retry_error_callback=lambda _: False,
+    )
+    def verify_expected_replica_count(self, sentinel_ips: list[str]) -> bool:
         """Verify that the sentinels in the cluster see the expected number of replicas."""
-        client = ValkeyClient(
+        client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
             workload=self.workload,
-            connect_to="sentinel",
         )
 
-        units_started = [unit for unit in self.state.servers if unit.is_active]
         # all started servers except primary are expected to be replicas
-        expected_replicas = len(units_started) - 1
+        expected_replicas = len(sentinel_ips) - 1
         logger.debug(
-            "Verifying expected replica count. Expected replicas: %d, started servers: %s",
+            "Verifying expected replica count. Expected replicas: %d, active servers: %s",
             expected_replicas,
-            str([unit.unit_name for unit in units_started]),
+            sentinel_ips,
         )
         try:
-            for unit in units_started:
-                replica_info = client.sentinel_get_replica_info(hostname=unit.model.private_ip)
-                if expected_replicas != (nbr_replicas := replica_info.count("name")):
+            for sentinel_ip in sentinel_ips:
+                if expected_replicas != (
+                    number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
+                ):
                     logger.warning(
-                        f"Sentinel at {unit.model.private_ip} sees {nbr_replicas} replicas, expected {expected_replicas}."
+                        f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
                     )
                     return False
         except ValkeyWorkloadCommandError:
             logger.warning("Could not query sentinel for replica information.")
             return False
         return True
+
+    def get_active_sentinelips(self, hostname: str) -> list[str]:
+        """Get a list of IP addresses of the active sentinels in the cluster."""
+        client = SentinelClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            workload=self.workload,
+        )
+        return [client.get_primary_ip(hostname=hostname)] + [
+            sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
+        ]
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""
