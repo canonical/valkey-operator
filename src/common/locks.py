@@ -4,10 +4,12 @@
 """Collection of lock names for cluster operations."""
 
 import logging
+import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol, override
 
 from common.client import ValkeyClient
+from common.exceptions import ValkeyWorkloadCommandError
 from core.cluster_state import ClusterState
 from literals import CharmUsers
 
@@ -29,12 +31,12 @@ class Lockable(Protocol):
         return self.__class__.__name__.lower()
 
     @abstractmethod
-    def request_lock(self) -> None:
+    def request_lock(self) -> bool:
         """Request the lock for the local unit."""
         raise NotImplementedError
 
     @abstractmethod
-    def release_lock(self) -> None:
+    def release_lock(self) -> bool:
         """Release the lock from the local unit."""
         raise NotImplementedError
 
@@ -94,7 +96,7 @@ class DataBagLock(Lockable):
             self.state.cluster.model, self.member_with_lock_atr_name, ""
         )
 
-    def request_lock(self) -> None:
+    def request_lock(self) -> bool:
         """Request the lock for the local unit."""
         self.state.unit_server.update(
             {
@@ -107,7 +109,9 @@ class DataBagLock(Lockable):
             )
             self.process()
 
-    def release_lock(self) -> None:
+        return self.do_i_hold_lock
+
+    def release_lock(self) -> bool:
         """Release the lock from the local unit."""
         self.state.unit_server.update(
             {
@@ -119,6 +123,8 @@ class DataBagLock(Lockable):
                 f"Leader unit releasing {self.name} lock. Triggering lock request processing."
             )
             self.process()
+
+        return True
 
     def process(self) -> None:
         """Process the lock requests and update the unit with the lock."""
@@ -172,49 +178,80 @@ class ScaleDownLock(Lockable):
             workload=self.charm.workload,
         )
 
-    @property
-    def unit_with_lock(self) -> str | None:
+    def get_unit_with_lock(self, primary_ip: str | None = None) -> str | None:
         """Get the unit that currently holds the start lock."""
-        return self.client.get_value(self.charm.sentinel_manager.get_primary_ip(), self.lock_key)
+        return self.client.get(
+            primary_ip or self.charm.sentinel_manager.get_primary_ip(), self.lock_key
+        )
 
     @override
-    def request_lock(self) -> None:
+    def request_lock(self, timeout: int | None = None) -> bool:
         """Request the lock for the local unit."""
-        if not self.unit_with_lock:
-            self.client.set_value(
-                hostname=self.charm.sentinel_manager.get_primary_ip(),
-                key=self.lock_key,
-                value=self.charm.state.unit_server.unit_name,
+        logger.debug(f"{self.charm.state.unit_server.unit_name} is requesting {self.name} lock.")
+        retry_until = time.time() + timeout if timeout else None
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        if self.get_unit_with_lock(primary_ip) == self.charm.state.unit_server.unit_name:
+            logger.debug(
+                f"{self.charm.state.unit_server.unit_name} already holds {self.name} lock. No need to request it again."
             )
-            logger.info(f"{self.charm.state.unit_server.unit_name} requested {self.name} lock.")
-        else:
+            return True
+
+        while True:
+            try:
+                if self.client.set(
+                    hostname=primary_ip,
+                    key=self.lock_key,
+                    value=self.charm.state.unit_server.unit_name,
+                    additional_args=[
+                        "NX",
+                        "PX",
+                        str(
+                            5 * 60 * 1000
+                        ),  # Set the lock with a TTL of 5 minutes to prevent deadlocks
+                    ],
+                ):
+                    logger.debug(
+                        f"{self.charm.state.unit_server.unit_name} acquired {self.name} lock."
+                    )
+                    return True
+            except ValkeyWorkloadCommandError:
+                logger.warning(
+                    f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock due to a workload command error. Retrying..."
+                )
+            if retry_until and time.time() > retry_until:
+                logger.warning(
+                    f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock within timeout. Giving up."
+                )
+                return False
             logger.info(
-                f"{self.charm.state.unit_server.unit_name} attempted to request {self.name} lock, but it is currently held by {self.unit_with_lock}."
+                f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock. Retrying in 5 seconds."
             )
+            time.sleep(5)
+            # update the primary ip in case a failover happens when we are waiting to acquire the lock
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
 
     @property
     def do_i_hold_lock(self) -> bool:
         """Check if the local unit holds the lock."""
+        unit_with_lock = self.get_unit_with_lock()
         return (
-            self.unit_with_lock is not None
-            and self.unit_with_lock == self.charm.state.unit_server.unit_name
+            unit_with_lock is not None and unit_with_lock == self.charm.state.unit_server.unit_name
         )
 
-    def release_lock(self) -> None:
+    def release_lock(self) -> bool:
         """Release the lock from the local unit."""
-        if self.do_i_hold_lock:
-            self.client.set_value(
+        if (
+            self.client.delifeq(
                 hostname=self.charm.sentinel_manager.get_primary_ip(),
                 key=self.lock_key,
-                value="",
+                value=self.charm.state.unit_server.unit_name,
             )
-            logger.info(f"{self.charm.state.unit_server.unit_name} released {self.name} lock.")
+            == "1"
+        ):
+            logger.debug(f"{self.charm.state.unit_server.unit_name} released {self.name} lock.")
+            return True
         else:
-            logger.info(
-                f"{self.charm.state.unit_server.unit_name} attempted to release {self.name} lock, but it is currently held by {self.unit_with_lock if self.unit_with_lock else 'no one'}."
+            logger.warning(
+                f"{self.charm.state.unit_server.unit_name} failed to release {self.name} lock. It may not have held the lock or it may have already been released."
             )
-
-    @property
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the lock has completed its operation."""
-        return not self.unit_with_lock
+            return False

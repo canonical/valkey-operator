@@ -20,6 +20,10 @@ class ValkeyConfigSetError(ValkeyClientError):
     """Custom Exception if setting configuration on valkey cluster fails."""
 
 
+class ValkeyCannotGetPrimaryIPError(ValkeyClientError):
+    """Custom Exception if the primary IP cannot be determined from the sentinels."""
+
+
 class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
 
