@@ -3,10 +3,11 @@
 
 """ValkeyClient utility class to connect to valkey servers."""
 
+import json
 import logging
-from typing import Literal
+from typing import Any
 
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -15,53 +16,96 @@ from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
 logger = logging.getLogger(__name__)
 
 
-class ValkeyClient:
+class CliClient:
     """Handle valkey client connections."""
+
+    port: int = CLIENT_PORT
 
     def __init__(
         self,
         username: str,
         password: str,
         workload: WorkloadBase,
-        connect_to: Literal["valkey", "sentinel"] = "valkey",
     ):
         self.username = username
         self.password = password
         self.workload = workload
-        self.connect_to = connect_to
 
     def exec_cli_command(
         self,
         command: list[str],
         hostname: str,
-    ) -> tuple[str, str | None]:
+        json_output: bool = True,
+    ) -> Any:
         """Execute a Valkey CLI command on the server.
 
         Args:
             command (list[str]): The CLI command to execute, as a list of arguments.
             hostname (str): The hostname to connect to.
+            json_output (bool): Whether to parse the output as JSON.
 
         Returns:
-            tuple[str, str | None]: The standard output and standard error from the command execution.
+            Any: The output from the command execution, parsed as JSON if requested.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        port = CLIENT_PORT if self.connect_to == "valkey" else SENTINEL_PORT
-        cli_command: list[str] = [
-            self.workload.cli,
-            "-h",
-            hostname,
-            "-p",
-            str(port),
-            "--user",
-            self.username,
-            "--pass",
-            self.password,
-        ] + command
-        logger.debug(f"Executing CLI command on {hostname}: {cli_command}")
+        port = self.port
+        cli_command: list[str] = (
+            [
+                self.workload.cli,
+                "--no-auth-warning",
+                "-h",
+                hostname,
+                "-p",
+                str(port),
+                "--user",
+                self.username,
+                "--pass",
+                self.password,
+            ]
+            + (["--json"] if json_output else [])
+            + command
+        )
         output, error = self.workload.exec(cli_command)
-        return output.strip(), error
+        output = output.strip()
+        if error:
+            logger.error(
+                "Error executing CLI command on Valkey server at %s: stderr: %s",
+                hostname,
+                error,
+            )
+            raise ValkeyWorkloadCommandError(
+                f"Error executing CLI command on Valkey server at {hostname}: stderr: {error}"
+            )
+
+        if json_output:
+            try:
+                output = json.loads(output)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "Failed to parse JSON output from CLI command on Valkey server at %s: %s",
+                    hostname,
+                    output,
+                )
+                raise ValkeyWorkloadCommandError(
+                    f"Failed to parse JSON output from CLI command on Valkey server at {hostname}: {output}"
+                ) from e
+        return output
+
+
+class ValkeyClient(CliClient):
+    """Handle valkey client connections."""
+
+    port: int = CLIENT_PORT
+
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        workload: WorkloadBase,
+    ):
+        super().__init__(username, password, workload)
 
     def ping(self, hostname: str) -> bool:
         """Ping the Valkey server to check if it's responsive.
@@ -73,8 +117,7 @@ class ValkeyClient:
             bool: True if the server responds to the ping command, False otherwise.
         """
         try:
-            output, _ = self.exec_cli_command(["ping"], hostname=hostname)
-            return "PONG" in output
+            return "PONG" in self.exec_cli_command(["ping"], hostname=hostname, json_output=False)
         except ValkeyWorkloadCommandError:
             return False
 
@@ -90,7 +133,10 @@ class ValkeyClient:
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        output, _ = self.exec_cli_command(["info", "persistence"], hostname=hostname)
+        # command does not have a JSON output format, so we need to parse the raw output
+        output = self.exec_cli_command(
+            ["info", "persistence"], hostname=hostname, json_output=False
+        )
         values = {}
         if not output.strip():
             logger.warning(f"No persistence info found on Valkey server at {hostname}.")
@@ -119,24 +165,13 @@ class ValkeyClient:
 
         Returns:
             bool: True if the command executed successfully, False otherwise.
-        """
-        try:
-            output, err = self.exec_cli_command(["set", key, value], hostname=hostname)
-            if output.strip() == "OK":
-                return True
-            logger.error(
-                "Failed to set key %s on Valkey server at %s: stdout: %s, stderr: %s",
-                key,
-                hostname,
-                output,
-                err,
-            )
-            return False
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to set key {key} on Valkey server at {hostname}: {e}")
-            return False
 
-    def get_value(self, hostname: str, key: str) -> str | None:
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(["set", key, value], hostname=hostname) == "OK"
+
+    def get_value(self, hostname: str, key: str) -> str:
         """Get the value of a key from the Valkey server.
 
         Args:
@@ -144,17 +179,12 @@ class ValkeyClient:
             key (str): The key to retrieve.
 
         Returns:
-            str | None: The value of the key if retrieved successfully, None otherwise.
+            str: The value of the key if retrieved successfully.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        try:
-            output, err = self.exec_cli_command(["get", key], hostname=hostname)
-            if not output.strip():
-                logger.warning(f"Key {key} not found on Valkey server at {hostname}.")
-                return None
-            return output.strip()
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to get key {key} from Valkey server at {hostname}: {e}")
-            return None
+        return self.exec_cli_command(["get", key], hostname=hostname)
 
     def is_replica_synced(self, hostname: str) -> bool:
         """Check if the replica is synced with the primary.
@@ -164,20 +194,12 @@ class ValkeyClient:
 
         Returns:
             bool: True if the replica is synced with the primary, False otherwise.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        try:
-            output, _ = self.exec_cli_command(["role"], hostname=hostname)
-            output_parts = output.strip().split()
-            return (
-                bool(output_parts)
-                and output_parts[0] == "slave"
-                and output_parts[3] == "connected"
-            )
-        except ValkeyWorkloadCommandError:
-            logger.warning(
-                "Could not determine replica sync status from Valkey server at %s.", hostname
-            )
-            return False
+        output = self.exec_cli_command(["role"], hostname=hostname)
+        return output[0] == "slave" and output[3] == "connected"
 
     def config_set(self, hostname: str, parameter: str, value: str) -> bool:
         """Set a runtime configuration parameter on the Valkey server.
@@ -189,26 +211,15 @@ class ValkeyClient:
 
         Returns:
             bool: True if the command executed successfully, False otherwise.
-        """
-        try:
-            output, err = self.exec_cli_command(
-                ["config", "set", parameter, value], hostname=hostname
-            )
-            if output.strip() == "OK":
-                return True
-            logger.error(
-                "Failed to set config %s on Valkey server at %s: stdout: %s, stderr: %s",
-                parameter,
-                hostname,
-                output,
-                err,
-            )
-            return False
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to set config {parameter} on Valkey server at {hostname}: {e}")
-            return False
 
-    def load_acl(self, hostname: str) -> bool:
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return (
+            self.exec_cli_command(["config", "set", parameter, value], hostname=hostname) == "OK"
+        )
+
+    def acl_load(self, hostname: str) -> bool:
         """Load the ACL file into the Valkey server.
 
         Args:
@@ -216,88 +227,59 @@ class ValkeyClient:
 
         Returns:
             bool: True if the ACL file was loaded successfully, False otherwise.
-        """
-        try:
-            output, err = self.exec_cli_command(["acl", "load"], hostname=hostname)
-            if output.strip() == "OK":
-                return True
-            logger.error(
-                "Failed to load ACL file on Valkey server at %s: stdout: %s, stderr: %s",
-                hostname,
-                output,
-                err,
-            )
-            return False
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to load ACL file on Valkey server at {hostname}: {e}")
-            return False
 
-    def sentinel_get_primary_ip(self, hostname: str) -> str | None:
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(["acl", "load"], hostname=hostname) == "OK"
+
+
+class SentinelClient(CliClient):
+    """Handle sentinel-specific client connections."""
+
+    port: int = SENTINEL_PORT
+
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        workload: WorkloadBase,
+    ):
+        super().__init__(username, password, workload)
+
+    def get_primary_ip(self, hostname: str) -> str:
         """Get the primary IP address from the sentinel.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            str | None: The primary IP address if retrieved successfully, None otherwise.
-        """
-        if not self.connect_to == "sentinel":
-            logger.error(
-                "Attempted to get primary IP from sentinel while client is configured to connect to valkey."
-            )
-            raise ValueError("Client is not configured to connect to sentinel.")
-        try:
-            output, _ = self.exec_cli_command(
-                command=["sentinel", "get-master-addr-by-name", PRIMARY_NAME], hostname=hostname
-            )
-            output_parts = output.strip().split()
-            if len(output_parts) != 2:
-                logger.error(
-                    "Unexpected output format when getting primary IP from sentinel at %s: %s",
-                    hostname,
-                    output,
-                )
-                return None
-            return output_parts[0]
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to get primary IP from sentinel at {hostname}: {e}")
-            return None
+            str: The primary IP address if retrieved successfully.
 
-    def sentinel_get_master_info(self, hostname: str) -> dict[str, str] | None:
-        """Get the master info from the sentinel.
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(
+            command=["sentinel", "get-primary-addr-by-name", PRIMARY_NAME], hostname=hostname
+        )[0]
+
+    def get_primary_info(self, hostname: str) -> dict[str, str]:
+        r"""Get the primary info from the sentinel.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            dict[str, str] | None: The master info if retrieved successfully, None otherwise.
-        """
-        if not self.connect_to == "sentinel":
-            logger.error(
-                "Attempted to get master info from sentinel while client is configured to connect to valkey."
-            )
-            raise ValueError("Client is not configured to connect to sentinel.")
-        try:
-            output, _ = self.exec_cli_command(
-                command=["sentinel", "master", PRIMARY_NAME], hostname=hostname
-            )
-            if not output.strip():
-                logger.warning(f"No master info found in sentinel at {hostname}.")
-                return None
-            info_parts = output.strip().split()
-            if len(info_parts) % 2 != 0:
-                logger.error(
-                    "Unexpected output format when getting master info from sentinel at %s: %s",
-                    hostname,
-                    output,
-                )
-                return None
-            return {info_parts[i]: info_parts[i + 1] for i in range(0, len(info_parts), 2)}
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to get master info from sentinel at {hostname}: {e}")
-            return None
+            dict[str, str]: The primary info if retrieved successfully.
 
-    def sentinel_failover(self, hostname: str):
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(
+            command=["sentinel", "primary", PRIMARY_NAME], hostname=hostname
+        )
+
+    def trigger_failover(self, hostname: str) -> bool:
         """Trigger a failover through the sentinel.
 
         Args:
@@ -305,90 +287,83 @@ class ValkeyClient:
 
         Returns:
             bool: True if the failover command was executed successfully, False otherwise.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        if not self.connect_to == "sentinel":
-            logger.error(
-                "Attempted to trigger failover through sentinel while client is configured to connect to valkey."
-            )
-            raise ValueError("Client is not configured to connect to sentinel.")
-        try:
-            output, err = self.exec_cli_command(
+        return (
+            self.exec_cli_command(
                 command=["sentinel", "failover", PRIMARY_NAME, "coordinated"],
                 hostname=hostname,
             )
-            if "OK" not in output.strip():
-                logger.error(
-                    "Failed to trigger failover through sentinel at %s: stdout: %s, stderr: %s",
-                    hostname,
-                    output,
-                    err,
-                )
-                raise ValkeyWorkloadCommandError(
-                    f"Failed to trigger failover through sentinel at {hostname}: stdout, stderr: {(output, err)}"
-                )
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to trigger failover through sentinel at {hostname}: {e}")
-            raise
+            == "OK"
+        )
 
-    def sentinel_reset_state(self, hostname: str) -> None:
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(1),
+        retry=retry_if_result(lambda in_progress: in_progress),
+        retry_error_callback=lambda _: True,
+    )
+    def is_failover_in_progress(self, hostname: str) -> bool:
+        """Check if a failover is in progress through the sentinel.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            bool: True if a failover is in progress, False otherwise.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return "failover_in_progress" in self.get_primary_info(hostname=hostname).get("flags", "")
+
+    def reset(self, hostname: str) -> None:
         """Reset the sentinel state for the primary.
 
         Args:
             hostname (str): The hostname to connect to.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output
         """
-        if not self.connect_to == "sentinel":
-            logger.error(
-                "Attempted to reset sentinel state through sentinel while client is configured to connect to valkey."
-            )
-            raise ValueError("Client is not configured to connect to sentinel.")
-        try:
-            output, err = self.exec_cli_command(
-                command=["sentinel", "reset", PRIMARY_NAME],
-                hostname=hostname,
-            )
-            if output != "1":
-                raise ValkeyWorkloadCommandError(
-                    f"Failed to reset sentinel state through sentinel at {hostname}: stdout, stderr: {(output, err)}"
-                )
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to reset sentinel state through sentinel at {hostname}: {e}")
-            raise
+        self.exec_cli_command(
+            command=["sentinel", "reset", PRIMARY_NAME],
+            hostname=hostname,
+        )
 
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_fixed(1),
         reraise=True,
     )
-    def sentinel_get_replica_info(self, hostname: str) -> str:
+    def replicas_primary(self, hostname: str) -> list[dict[str, str]]:
         """Get the replicas information of the primary from sentinel.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            str | None: The output of the "sentinel replicas" command if retrieved successfully, None otherwise.
+            (list[dict[str, str]]): The list of replicas with their information.
         """
-        if not self.connect_to == "sentinel":
-            logger.error(
-                "Attempted to get replica info from sentinel while client is configured to connect to valkey."
-            )
-            raise ValueError("Client is not configured to connect to sentinel.")
-        try:
-            output, err = self.exec_cli_command(
-                command=["sentinel", "replicas", PRIMARY_NAME],
-                hostname=hostname,
-            )
-            logger.debug(
-                "Output of 'sentinel replicas' command from sentinel at %s: stdout, stderr: %s",
-                hostname,
-                (output, err),
-            )
-            if not output.strip():
-                logger.warning(f"No replica info found in sentinel at {hostname}.")
-                raise ValkeyWorkloadCommandError(
-                    f"No replica info found in sentinel at {hostname}."
-                )
-            return output.strip()
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to get replica info from sentinel at {hostname}: {e}")
-            raise
+        return self.exec_cli_command(
+            command=["sentinel", "replicas", PRIMARY_NAME],
+            hostname=hostname,
+        )
+
+    def sentinels_primary(self, hostname: str) -> list[dict[str, str]]:
+        """Get the list of sentinels that see the same primary from the sentinel.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            (list[dict[str, str]]): result of `sentinel sentinels primary` structured into a list of dicts
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        return self.exec_cli_command(
+            command=["sentinel", "sentinels", PRIMARY_NAME], hostname=hostname
+        )
