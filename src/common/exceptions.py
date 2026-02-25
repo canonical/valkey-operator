@@ -50,3 +50,7 @@ class ValkeyServicesCouldNotBeStoppedError(Exception):
 
 class CannotSeeAllActiveSentinelsError(Exception):
     """Custom Exception if the local sentinel cannot see all active sentinels in the cluster."""
+
+
+class SentinelIncorrectReplicaCountError(Exception):
+    """Custom Exception if the sentinel sees an incorrect number of replicas."""

@@ -15,6 +15,7 @@ from common.client import SentinelClient
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     SentinelFailoverError,
+    SentinelIncorrectReplicaCountError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
@@ -220,11 +221,17 @@ class SentinelManager(ManagerStatusProtocol):
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(6),
-        retry=retry_if_result(lambda result: result is False),
-        retry_error_callback=lambda _: False,
+        reraise=True,
     )
-    def verify_expected_replica_count(self, sentinel_ips: list[str]) -> bool:
-        """Verify that the sentinels in the cluster see the expected number of replicas."""
+    def verify_expected_replica_count(self, sentinel_ips: list[str]) -> None:
+        """Verify that the sentinels in the cluster see the expected number of replicas.
+
+        The expected number of replicas is the number of active sentinels minus one (the primary).
+
+        Raises:
+            SentinelIncorrectReplicaCountError: If any sentinel sees an incorrect number of replicas.
+            ValkeyWorkloadCommandError: If the CLI command to get replica information fails on any sentinel.
+        """
         client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
@@ -238,21 +245,23 @@ class SentinelManager(ManagerStatusProtocol):
             expected_replicas,
             sentinel_ips,
         )
-        try:
-            for sentinel_ip in sentinel_ips:
+
+        for sentinel_ip in sentinel_ips:
+            try:
                 if expected_replicas != (
                     number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
                 ):
                     logger.warning(
                         f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
                     )
-                    return False
-        except ValkeyWorkloadCommandError:
-            logger.warning("Could not query sentinel for replica information.")
-            return False
-        return True
+                    raise SentinelIncorrectReplicaCountError(
+                        f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
+                    )
+            except ValkeyWorkloadCommandError:
+                logger.warning("Could not query sentinel for replica information.")
+                raise
 
-    def get_active_sentinelips(self, hostname: str) -> list[str]:
+    def get_active_sentinel_ips(self, hostname: str) -> list[str]:
         """Get a list of IP addresses of the active sentinels in the cluster."""
         client = SentinelClient(
             username=self.admin_user,
