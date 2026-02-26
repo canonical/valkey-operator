@@ -14,7 +14,6 @@ from tests.unit.helpers import status_is
 
 
 def get_3_unit_peer_relation():
-    """Helper function to create a peer relation with 3 units."""
     return testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
