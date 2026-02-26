@@ -437,7 +437,9 @@ def test_config_changed_non_leader_unit(cloud_spec):
 
 def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -459,7 +461,9 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
 
 def test_config_changed_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -564,7 +568,9 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     statuses_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
