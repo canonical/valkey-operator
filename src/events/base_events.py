@@ -12,13 +12,11 @@ import ops
 
 from common.exceptions import (
     RequestingLockTimedOutError,
-    SentinelFailoverError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyConfigSetError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
-    ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
@@ -456,29 +454,17 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
+            logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
+            self.charm.sentinel_manager.failover()
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
             logger.debug(
-                "Unit with IP %s is primary, triggering failover before scale down",
-                self.charm.state.bind_address,
+                "Failover completed, new primary ip %s",
+                primary_ip,
             )
-            try:
-                logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
-                self.charm.sentinel_manager.failover()
-                primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                logger.debug(
-                    "Failover completed, new primary ip %s",
-                    primary_ip,
-                )
-            except SentinelFailoverError:
-                logger.error("Failed to trigger failover before scale down")
-                raise
 
         # stop valkey and sentinel processes
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
-        try:
-            self.charm.workload.stop()
-        except ValkeyServicesCouldNotBeStoppedError:
-            logger.error("Failed to stop Valkey services before scale down")
-            raise
+        self.charm.workload.stop()
 
         # reset sentinel states on other units
         self.charm.state.unit_server.update(
