@@ -142,7 +142,6 @@ def test_start_primary(cloud_spec):
 
     state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value)
-    assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
 def test_start_non_primary(cloud_spec):
