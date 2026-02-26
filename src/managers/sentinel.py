@@ -100,7 +100,7 @@ class SentinelManager(ManagerStatusProtocol):
 
         for unit_ip in started_servers:
             try:
-                return client.get_primary_ip(hostname=unit_ip)
+                return client.get_primary_addr_by_name(hostname=unit_ip)
             except ValkeyWorkloadCommandError:
                 logger.warning(
                     "Could not query sentinel for primary information from server at %s.",
@@ -132,7 +132,7 @@ class SentinelManager(ManagerStatusProtocol):
             return False
 
         try:
-            client.get_primary_info(hostname=self.state.bind_address)
+            client.primary(hostname=self.state.bind_address)
         except ValkeyWorkloadCommandError:
             logger.warning("Health check failed: Could not query sentinel for master information.")
             return False
@@ -154,7 +154,7 @@ class SentinelManager(ManagerStatusProtocol):
             workload=self.workload,
         )
         try:
-            client.trigger_failover(self.state.bind_address)
+            client.failover_primary_coordinated(self.state.bind_address)
             client.is_failover_in_progress(hostname=self.state.bind_address)
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to trigger failover: {e}")
@@ -300,7 +300,7 @@ class SentinelManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        return [client.get_primary_ip(hostname=hostname)] + [
+        return [client.get_primary_addr_by_name(hostname=hostname)] + [
             sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
         ]
 

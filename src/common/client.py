@@ -116,7 +116,7 @@ class ValkeyClient(CliClient):
         except ValkeyWorkloadCommandError:
             return False
 
-    def get_persistence_info(self, hostname: str) -> dict[str, str] | None:
+    def info_persistence(self, hostname: str) -> dict[str, str] | None:
         """Get the persistence information of the Valkey server.
 
         Args:
@@ -168,7 +168,7 @@ class ValkeyClient(CliClient):
             self.exec_cli_command(["set", key, value] + additional_args, hostname=hostname) == "OK"
         )
 
-    def get(self, hostname: str, key: str) -> str:
+    def get(self, hostname: str, key: str) -> Any:
         """Get the value of a key from the Valkey server.
 
         Args:
@@ -176,7 +176,7 @@ class ValkeyClient(CliClient):
             key (str): The key to retrieve.
 
         Returns:
-            str: The value of the key if retrieved successfully.
+            Any: The value of the key if retrieved successfully.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
@@ -199,7 +199,7 @@ class ValkeyClient(CliClient):
         """
         return self.exec_cli_command(["delifeq", key, value], hostname=hostname, json_output=False)
 
-    def is_replica_synced(self, hostname: str) -> bool:
+    def role(self, hostname: str) -> list[str | Any]:
         """Check if the replica is synced with the primary.
 
         Args:
@@ -211,8 +211,7 @@ class ValkeyClient(CliClient):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        output = self.exec_cli_command(["role"], hostname=hostname)
-        return output[0] == "slave" and output[3] == "connected"
+        return self.exec_cli_command(["role"], hostname=hostname)
 
     def config_set(self, hostname: str, parameter: str, value: str) -> bool:
         """Set a runtime configuration parameter on the Valkey server.
@@ -274,7 +273,7 @@ class SentinelClient(CliClient):
         except ValkeyWorkloadCommandError:
             return False
 
-    def get_primary_ip(self, hostname: str) -> str:
+    def get_primary_addr_by_name(self, hostname: str) -> str:
         """Get the primary IP address from the sentinel.
 
         Args:
@@ -290,7 +289,7 @@ class SentinelClient(CliClient):
             command=["sentinel", "get-primary-addr-by-name", PRIMARY_NAME], hostname=hostname
         )[0]
 
-    def get_primary_info(self, hostname: str) -> dict[str, str]:
+    def primary(self, hostname: str) -> dict[str, str]:
         r"""Get the primary info from the sentinel.
 
         Args:
@@ -306,7 +305,7 @@ class SentinelClient(CliClient):
             command=["sentinel", "primary", PRIMARY_NAME], hostname=hostname
         )
 
-    def trigger_failover(self, hostname: str) -> bool:
+    def failover_primary_coordinated(self, hostname: str) -> bool:
         """Trigger a failover through the sentinel.
 
         Args:
@@ -344,7 +343,7 @@ class SentinelClient(CliClient):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
-        return "failover_in_progress" in self.get_primary_info(hostname=hostname).get("flags", "")
+        return "failover_in_progress" in self.primary(hostname=hostname).get("flags", "")
 
     def reset(self, hostname: str) -> None:
         """Reset the sentinel state for the primary.

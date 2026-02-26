@@ -79,7 +79,8 @@ class ClusterManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        return client.is_replica_synced(hostname=self.state.bind_address)
+        role_info = client.role(hostname=self.state.bind_address)
+        return role_info[0] == "slave" and role_info[3] == "connected"
 
     @retry(
         wait=wait_fixed(5),
@@ -100,7 +101,7 @@ class ClusterManager(ManagerStatusProtocol):
             return False
 
         if (
-            persistence_info := client.get_persistence_info(hostname=self.state.bind_address)
+            persistence_info := client.info_persistence(hostname=self.state.bind_address)
         ) and persistence_info.get("loading", "") != "0":
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import ops
 
 from common.exceptions import (
+    RequestingLockTimedOutError,
     SentinelFailoverError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
@@ -432,7 +433,8 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
         # blocks until the lock is acquired
-        scale_down_lock.request_lock()
+        if not scale_down_lock.request_lock():
+            raise RequestingLockTimedOutError("Failed to acquire scale down lock within timeout")
 
         self.charm.state.statuses.delete(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,

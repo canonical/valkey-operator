@@ -186,7 +186,16 @@ class ScaleDownLock(Lockable):
 
     @override
     def request_lock(self, timeout: int | None = None) -> bool:
-        """Request the lock for the local unit."""
+        """Request the lock for the local unit.
+
+        This method will keep trying to acquire the lock until it is acquired or until the timeout is reached (if provided).
+
+        Args:
+            timeout (int | None): The maximum time to keep trying to acquire the lock, in seconds. If None, it will keep trying indefinitely.
+
+        Returns:
+            bool: True if the lock was acquired, False if the timeout was reached before acquiring the lock.
+        """
         logger.debug(f"{self.charm.state.unit_server.unit_name} is requesting {self.name} lock.")
         retry_until = time.time() + timeout if timeout else None
         primary_ip = self.charm.sentinel_manager.get_primary_ip()

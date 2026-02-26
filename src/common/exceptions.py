@@ -54,3 +54,7 @@ class CannotSeeAllActiveSentinelsError(Exception):
 
 class SentinelIncorrectReplicaCountError(Exception):
     """Custom Exception if the sentinel sees an incorrect number of replicas."""
+
+
+class RequestingLockTimedOutError(Exception):
+    """Custom Exception if requesting a lock times out."""
