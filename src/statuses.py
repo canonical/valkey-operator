@@ -80,15 +80,15 @@ class ScaleDownStatuses(Enum):
 
     WAIT_FOR_LOCK = StatusObject(
         status="maintenance",
-        message="Waiting for lock to perform scale down operations...",
+        message="Waiting for lock to scale down ...",
         running="async",
     )
     SCALING_DOWN = StatusObject(
         status="maintenance",
-        message="Performing scale down operations...",
+        message="Scaling down ...",
         running="async",
     )
     GOING_AWAY = StatusObject(
         status="maintenance",
-        message="Waiting for unit to be removed by juju...",
+        message="Waiting for juju to remove the unit ...",
     )
