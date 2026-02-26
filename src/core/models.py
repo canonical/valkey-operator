@@ -122,11 +122,11 @@ class ValkeyServer(RelationState):
     @property
     def is_being_removed(self) -> bool:
         """Check if the unit is being removed from the cluster."""
-        return (
-            self.model.scale_down_state != ScaleDownState.NO_SCALE_DOWN.value
-            if self.model
-            else False
-        )
+        return self.model.scale_down_state not in {
+            ScaleDownState.NO_SCALE_DOWN.value,
+            ScaleDownState.WAIT_FOR_LOCK.value,
+            ScaleDownState.WAIT_TO_FAILOVER.value,
+        }
 
     @property
     def is_active(self) -> bool:

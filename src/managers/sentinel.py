@@ -175,6 +175,7 @@ class SentinelManager(ManagerStatusProtocol):
 
         for sentinel_ip in sentinel_ips:
             try:
+                logger.debug("Resetting sentinel state on %s.", sentinel_ip)
                 client.reset(hostname=sentinel_ip)
             except ValkeyWorkloadCommandError:
                 logger.warning("Could not reset sentinel state on %s.", sentinel_ip)
@@ -212,29 +213,29 @@ class SentinelManager(ManagerStatusProtocol):
             workload=self.workload,
         )
 
-        other_active_sentinels = [ip for ip in sentinel_ips if ip != target_sentinel_ip]
+        sentinel_ips_set = set(sentinel_ips) - {target_sentinel_ip}
 
         logger.debug(
             "Checking if sentinel at %s sees all other sentinels: %s",
             target_sentinel_ip,
-            other_active_sentinels,
+            sentinel_ips_set,
         )
 
-        for sentinel_ip in other_active_sentinels:
-            try:
-                if sentinel_ip not in {
-                    sentinel["ip"]
-                    for sentinel in client.sentinels_primary(hostname=target_sentinel_ip)
-                }:
-                    logger.debug(
-                        f"Sentinel at {target_sentinel_ip} does not see sentinel at {sentinel_ip}"
-                    )
-                    return False
-            except ValkeyWorkloadCommandError:
+        try:
+            discovered_sentinels = {
+                sentinel["ip"]
+                for sentinel in client.sentinels_primary(hostname=target_sentinel_ip)
+            }
+            if discovered_sentinels != sentinel_ips_set:
                 logger.warning(
-                    f"Could not query sentinel at {target_sentinel_ip} for sentinel discovery."
+                    f"Sentinel at {target_sentinel_ip} sees sentinels {discovered_sentinels}, expected {sentinel_ips_set}."
                 )
                 return False
+        except ValkeyWorkloadCommandError:
+            logger.warning(
+                f"Could not query sentinel at {target_sentinel_ip} for sentinel discovery."
+            )
+            return False
         return True
 
     @retry(

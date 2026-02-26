@@ -205,6 +205,10 @@ class ScaleDownLock(Lockable):
             )
             return True
 
+        if len(self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)) == 1:
+            logger.debug("Last unit in the cluster scaling down. Lock will be skipped.")
+            return True
+
         while True:
             try:
                 if self.client.set(

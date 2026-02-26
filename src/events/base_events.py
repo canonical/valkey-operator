@@ -452,9 +452,9 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
         # if unit has primary then failover
-        if (
-            primary_ip := self.charm.sentinel_manager.get_primary_ip()
-        ) == self.charm.state.bind_address:
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
+        if primary_ip == self.charm.state.bind_address and len(active_sentinels) > 1:
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
@@ -469,6 +469,7 @@ class BaseEvents(ops.Object):
         # stop valkey and sentinel processes
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
         self.charm.workload.stop()
+        active_sentinels = [ip for ip in active_sentinels if ip != self.charm.state.bind_address]
 
         # reset sentinel states on other units
         self.charm.state.unit_server.update(
@@ -477,18 +478,14 @@ class BaseEvents(ops.Object):
                 "start_state": StartState.NOT_STARTED.value,
             }
         )
-        active_units = [
-            ip
-            for ip in self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-            if ip != self.charm.state.bind_address
-        ]
-        logger.debug("Resetting sentinel states on active units: %s", active_units)
-        self.charm.sentinel_manager.reset_sentinel_states(active_units)
+        if active_sentinels:
+            logger.debug("Resetting sentinel states on active units: %s", active_sentinels)
+            self.charm.sentinel_manager.reset_sentinel_states(active_sentinels)
 
-        # check health after scale down
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
-        self.charm.sentinel_manager.verify_expected_replica_count(active_units)
+            # check health after scale down
+            self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
+            self.charm.sentinel_manager.verify_expected_replica_count(active_sentinels)
+            scale_down_lock.release_lock()
 
         # release lock
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
-        scale_down_lock.release_lock()

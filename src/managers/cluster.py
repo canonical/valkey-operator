@@ -120,11 +120,12 @@ class ClusterManager(ManagerStatusProtocol):
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        if start_status := self._get_start_status():
-            status_list.append(start_status)
+        if scope == "unit":
+            if start_status := self._get_start_status():
+                status_list.append(start_status)
 
-        if scale_down_status := self._get_scale_down_status():
-            status_list.append(scale_down_status)
+            if scale_down_status := self._get_scale_down_status():
+                status_list.append(scale_down_status)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
