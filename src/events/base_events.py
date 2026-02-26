@@ -267,11 +267,6 @@ class BaseEvents(ops.Object):
         )
         # update local unit admin password
         self.charm.config_manager.update_local_valkey_admin_password()
-        try:
-            self.charm.config_manager.set_acl_file()
-        except ValkeyWorkloadCommandError:
-            logger.error("Failed to write acl file")
-            raise
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""

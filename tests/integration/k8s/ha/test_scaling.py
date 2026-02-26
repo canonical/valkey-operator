@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
+import asyncio
 import logging
 
 import jubilant
@@ -101,7 +102,7 @@ async def test_scale_down(juju: jubilant.Juju) -> None:
     juju.remove_unit(APP_NAME, num_units=1)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=60
+            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
         )
     )
     num_units = len(juju.status().get_units(APP_NAME))
@@ -141,7 +142,7 @@ async def test_scale_down_multiple_units(juju: jubilant.Juju) -> None:
     juju.remove_unit(APP_NAME, num_units=2)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=60
+            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
         )
     )
     num_units = len(juju.status().get_units(APP_NAME))
@@ -154,4 +155,46 @@ async def test_scale_down_multiple_units(juju: jubilant.Juju) -> None:
     )
     assert number_of_slaves == NUM_UNITS - 2, (
         f"Expected {NUM_UNITS - 2} connected slaves, got {number_of_slaves}."
+    )
+
+
+async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
+    """Make sure that removing all units and then adding them again works."""
+    # remove all remaining units
+    juju.remove_unit(APP_NAME, num_units=len(juju.status().apps[APP_NAME].units))
+    juju.wait(lambda status: len(juju.status().get_units(APP_NAME)) == 0)
+
+    # scale up again
+    juju.add_unit(APP_NAME, num_units=NUM_UNITS)
+
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=NUM_UNITS, idle_period=10
+        ),
+        timeout=1200,
+    )
+
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+
+    connected_slaves = await get_number_connected_slaves(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+    assert connected_slaves == NUM_UNITS - 1, (
+        f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
+    )
+    c_writes.start()
+    await asyncio.sleep(10)  # let the continuous writes write some data
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+    logger.info("Stopping continuous writes after scale up test.")
+    logger.info(await c_writes.async_stop())
+    assert_continuous_writes_consistent(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
