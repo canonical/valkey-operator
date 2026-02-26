@@ -321,10 +321,12 @@ class BaseEvents(ops.Object):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
                 self.charm.config_manager.set_acl_file()
-                self.charm.cluster_manager.reload_acl_file()
+                if self.charm.state.unit_server.is_started:
+                    self.charm.cluster_manager.reload_acl_file()
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
-                self.charm.cluster_manager.update_primary_auth()
+                if self.charm.state.unit_server.is_started:
+                    self.charm.cluster_manager.update_primary_auth()
             except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
@@ -382,7 +384,8 @@ class BaseEvents(ops.Object):
             logger.info("Password(s) for internal users have changed")
             try:
                 self.charm.config_manager.set_acl_file(passwords=new_passwords)
-                self.charm.cluster_manager.reload_acl_file()
+                if self.charm.state.unit_server.is_started:
+                    self.charm.cluster_manager.reload_acl_file()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -391,7 +394,8 @@ class BaseEvents(ops.Object):
                 )
                 # update the local unit admin password
                 self.charm.config_manager.update_local_valkey_admin_password()
-                self.charm.cluster_manager.update_primary_auth()
+                if self.charm.state.unit_server.is_started:
+                    self.charm.cluster_manager.update_primary_auth()
             except (
                 ValkeyACLLoadError,
                 ValueError,
