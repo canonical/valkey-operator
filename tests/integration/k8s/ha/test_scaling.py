@@ -184,6 +184,7 @@ async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
     assert connected_slaves == NUM_UNITS - 1, (
         f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
     )
+    await c_writes.async_clear()
     c_writes.start()
     await asyncio.sleep(10)  # let the continuous writes write some data
     await assert_continuous_writes_increasing(
@@ -198,3 +199,4 @@ async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
+    await c_writes.async_clear()
