@@ -5,7 +5,6 @@
 
 import json
 import logging
-from typing import Any
 
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
@@ -76,20 +75,15 @@ class CliClient:
                 error,
             )
             raise ValkeyWorkloadCommandError(
-                f"Error executing CLI command on Valkey server at {hostname}: stderr: {error}"
+                f"Error executing CLI command on Valkey server at {hostname}"
             )
 
         if json_output:
             try:
                 output = json.loads(output)
             except json.JSONDecodeError as e:
-                logger.error(
-                    "Failed to parse JSON output from CLI command on Valkey server at %s: %s",
-                    hostname,
-                    output,
-                )
                 raise ValkeyWorkloadCommandError(
-                    f"Failed to parse JSON output from CLI command on Valkey server at {hostname}: {output}"
+                    f"Failed to parse JSON output from CLI command on Valkey server at {hostname}"
                 ) from e
         return output
 
@@ -147,9 +141,8 @@ class ValkeyClient(CliClient):
             values_parts = line.split(":", 1)
             if len(values_parts) != 2:
                 logger.error(
-                    "Unexpected output format when getting persistence info from Valkey server at %s: %s",
+                    "Unexpected output format when getting persistence info from Valkey server at %s",
                     hostname,
-                    output,
                 )
                 return None
             values[values_parts[0]] = values_parts[1]
@@ -334,7 +327,7 @@ class SentinelClient(CliClient):
 
     @retry(
         stop=stop_after_attempt(5),
-        wait=wait_fixed(1),
+        wait=wait_fixed(2),
         retry=retry_if_result(lambda in_progress: in_progress),
         retry_error_callback=lambda _: True,
     )

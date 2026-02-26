@@ -48,7 +48,6 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
-    request_scale_down_lock: bool = Field(default=False)
     scale_down_state: str = Field(default="")
 
 
@@ -91,6 +90,8 @@ class RelationState:
 @final
 class ValkeyServer(RelationState):
     """State/Relation data collection for a unit."""
+
+    model: PeerUnitModel
 
     def __init__(
         self,
@@ -143,6 +144,8 @@ class ValkeyServer(RelationState):
 @final
 class ValkeyCluster(RelationState):
     """State/Relation data collection for the Valkey application."""
+
+    model: PeerAppModel
 
     def __init__(
         self,

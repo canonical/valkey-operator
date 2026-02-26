@@ -77,8 +77,8 @@ def assert_continuous_writes_consistent(
         raise ValueError("Could not read last written value from file.")
 
     for endpoint in hostnames:
-        last_value = int(exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 0")[0])
-        count = int(exec_valkey_cli(endpoint, username, password, f"LLEN {KEY}")[0])
+        last_value = int(exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 0").stdout)
+        count = int(exec_valkey_cli(endpoint, username, password, f"LLEN {KEY}").stdout)
         assert last_written_value == last_value, (
             f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
         )

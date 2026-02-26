@@ -10,7 +10,7 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
+from typing import List, NamedTuple
 
 import jubilant
 import yaml
@@ -398,7 +398,14 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
             )
 
 
-def exec_valkey_cli(hostname: str, username: str, password: str, command: str) -> tuple[str, str]:
+valkey_cli_result = NamedTuple(
+    "ValkeyCliResult", [("stdout", str), ("stderr", str), ("returncode", int)]
+)
+
+
+def exec_valkey_cli(
+    hostname: str, username: str, password: str, command: str
+) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
     command = (
         f"valkey-cli -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
@@ -406,7 +413,9 @@ def exec_valkey_cli(hostname: str, username: str, password: str, command: str) -
     result = subprocess.run(
         command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
-    return result.stdout.strip(), result.stderr.strip()
+    return valkey_cli_result(
+        stdout=result.stdout.strip(), stderr=result.stderr.strip(), returncode=result.returncode
+    )
 
 
 async def set_key(
@@ -466,7 +475,7 @@ def ping(
     Returns:
         True if the node responds to a ping, False otherwise.
     """
-    return exec_valkey_cli(hostname, username, password, "ping")[0] == "PONG"
+    return exec_valkey_cli(hostname, username, password, "ping").stdout == "PONG"
 
 
 async def ping_cluster(
@@ -490,7 +499,7 @@ async def ping_cluster(
         return await client.ping() == "PONG".encode()
 
 
-async def get_nbr_connected_slaves(
+async def get_number_connected_slaves(
     hostnames: list[str],
     username: str,
     password: str,

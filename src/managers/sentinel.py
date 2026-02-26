@@ -140,7 +140,14 @@ class SentinelManager(ManagerStatusProtocol):
         return True
 
     def failover(self) -> None:
-        """Trigger a failover in the cluster."""
+        """Trigger a failover in the cluster.
+
+        This method triggers a failover through the sentinel client and then checks if the failover is in progress.
+
+        Raises:
+            SentinelFailoverError: If triggering failover fails or if failover does not start after triggering.
+            ValkeyWorkloadCommandError: If the CLI command to trigger failover or check failover status fails.
+        """
         client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
@@ -148,14 +155,18 @@ class SentinelManager(ManagerStatusProtocol):
         )
         try:
             client.trigger_failover(self.state.bind_address)
-            # check if failover is in progress every second for 5 seconds, if it is not then assume failover failed
             client.is_failover_in_progress(hostname=self.state.bind_address)
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to trigger failover: {e}")
             raise SentinelFailoverError from e
 
     def reset_sentinel_states(self, sentinel_ips: list[str]) -> None:
-        """Reset the sentinel states on all sentinels in the cluster."""
+        """Reset the sentinel states on all sentinels in the cluster.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command to reset sentinel state fails on any sentinel.
+            CannotSeeAllActiveSentinelsError: If any sentinel does not see all other active sentinels after reset.
+        """
         client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
@@ -186,7 +197,15 @@ class SentinelManager(ManagerStatusProtocol):
         retry_error_callback=lambda _: False,
     )
     def target_sees_all_others(self, target_sentinel_ip: str, sentinel_ips: list[str]) -> bool:
-        """Check if the sentinel of the local unit sees all the other sentinels in the cluster."""
+        """Check if the sentinel of the local unit sees all the other sentinels in the cluster.
+
+        Args:
+            target_sentinel_ip: The IP address of the sentinel to check.
+            sentinel_ips: The list of IP addresses of all active sentinels in the cluster.
+
+        Returns:
+            bool: True if the target sentinel sees all other sentinels, False otherwise.
+        """
         client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
@@ -228,6 +247,9 @@ class SentinelManager(ManagerStatusProtocol):
 
         The expected number of replicas is the number of active sentinels minus one (the primary).
 
+        Args:
+            sentinel_ips: The list of IP addresses of all active sentinels in the cluster.
+
         Raises:
             SentinelIncorrectReplicaCountError: If any sentinel sees an incorrect number of replicas.
             ValkeyWorkloadCommandError: If the CLI command to get replica information fails on any sentinel.
@@ -262,7 +284,17 @@ class SentinelManager(ManagerStatusProtocol):
                 raise
 
     def get_active_sentinel_ips(self, hostname: str) -> list[str]:
-        """Get a list of IP addresses of the active sentinels in the cluster."""
+        """Get a list of IP addresses of the active sentinels in the cluster.
+
+        Args:
+            hostname: The hostname to query the sentinels from.
+
+        Returns:
+            list[str]: A list of IP addresses of the active sentinels.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command to get sentinel information fails.
+        """
         client = SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
