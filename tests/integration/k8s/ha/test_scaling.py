@@ -200,3 +200,14 @@ async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     await c_writes.async_clear()
+
+
+def test_remove_application(juju: jubilant.Juju) -> None:
+    """Make sure the application can be removed."""
+    juju.remove_application(APP_NAME)
+
+    juju.wait(
+        lambda status: APP_NAME not in status.apps,
+        timeout=600,
+        delay=5,
+    )
