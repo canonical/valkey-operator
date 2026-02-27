@@ -85,7 +85,7 @@ backends:
       sudo systemctl start ssh
 
       # Needed for IS-hosted runners
-      sudo passwd --delete ubuntu
+      # sudo passwd --delete ubuntu
 
       ADDRESS localhost
     # HACK: spread does not pass environment variables set on runner
@@ -98,7 +98,7 @@ backends:
       DOCKERHUB_MIRROR: "$(HOST: echo $DOCKERHUB_MIRROR)"
     systems:
       - ubuntu-24.04:
-          username: ubuntu
+          username: runner
 
 suites:
   tests/spread/k8s/:
