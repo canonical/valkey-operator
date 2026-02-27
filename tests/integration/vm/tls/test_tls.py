@@ -9,7 +9,7 @@ import pytest
 from literals import CharmUsers
 from tests.integration.helpers import (
     APP_NAME,
-    INTERNAL_USERS_SECRET_LABEL,
+    TLS_CHANNEL,
     TLS_NAME,
     are_agents_idle,
     are_apps_active_and_agents_idle,
@@ -17,7 +17,7 @@ from tests.integration.helpers import (
     download_client_certificate_from_unit,
     get_cluster_hostnames,
     get_key,
-    get_secret_by_label,
+    get_password,
     set_key,
 )
 
@@ -31,7 +31,7 @@ TEST_VALUE = "test_value"
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Deploy the charm under test and a TLS provider."""
     juju.deploy(charm, num_units=NUM_UNITS, trust=True)
-    juju.deploy(TLS_NAME, channel="1/edge")
+    juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
@@ -45,15 +45,11 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
-    assert password is not None, "Admin password secret not found"
-
     logger.info("Check access with TLS enabled")
     result = await set_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
         key=TEST_KEY,
         value=TEST_VALUE,
@@ -63,7 +59,7 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
     assert await get_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
@@ -97,15 +93,11 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
     )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
-    assert password is not None, "Admin password secret not found"
-
     logger.info("Check access with TLS disabled")
     result = await set_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,
         key=TEST_KEY,
         value=TEST_VALUE,
@@ -115,7 +107,7 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
     assert await get_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after TLS was disabled"
@@ -134,15 +126,11 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
-    secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
-    password = secret.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
-    assert password is not None, "Admin password secret not found"
-
     logger.info("Check access with TLS enabled")
     result = await set_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
         key=TEST_KEY,
         value=TEST_VALUE,
@@ -152,7 +140,7 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
     assert await get_key(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
-        password=password,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
         key=TEST_KEY,
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"

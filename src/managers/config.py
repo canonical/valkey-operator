@@ -104,6 +104,7 @@ class ConfigManager(ManagerStatusProtocol):
         if primary_ip != self.state.unit_server.model.private_ip:
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
+            # internal communication always uses peer TLS (`tls-replication=yes`)
             replica_config["replicaof"] = f"{primary_ip} {TLS_PORT}"
         return replica_config
 
@@ -125,7 +126,7 @@ class ConfigManager(ManagerStatusProtocol):
 
         if (
             self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
-            and self.state.unit_server.client_cert_ready
+            and self.state.unit_server.model.client_cert_ready
         ):
             # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
             tls_config["port"] = "0"
@@ -145,7 +146,7 @@ class ConfigManager(ManagerStatusProtocol):
 
         if (
             self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
-            and self.state.unit_server.client_cert_ready
+            and self.state.unit_server.model.client_cert_ready
         ):
             # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
             tls_config["port"] = "0"

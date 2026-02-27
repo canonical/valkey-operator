@@ -133,11 +133,6 @@ class ValkeyServer(RelationState):
         return self.unit.name
 
     @property
-    def hostname(self) -> str:
-        """The server's hostname."""
-        return self.model.hostname if self.model else ""
-
-    @property
     def is_started(self) -> bool:
         """Check if the unit has started."""
         return self.model.start_state == StartState.STARTED.value if self.model else False
@@ -156,11 +151,6 @@ class ValkeyServer(RelationState):
             return TLSState.NO_TLS
 
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
-
-    @property
-    def client_cert_ready(self) -> bool:
-        """Flag to indicate if the unit has stored client TLS certificates."""
-        return self.model.client_cert_ready if self.model else False
 
 
 @final

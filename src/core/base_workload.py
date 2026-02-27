@@ -17,26 +17,26 @@ logger = logging.getLogger(__name__)
 class TLSPaths:
     """Object to store the TLS paths."""
 
-    def __init__(self, tls_root: pathops.LocalPath or pathops.ContainerPath):
+    def __init__(self, tls_root: pathops.LocalPath | pathops.ContainerPath):
         self.tls_root = tls_root
 
     @property
-    def client_ca(self) -> pathops.LocalPath or pathops.ContainerPath:
+    def client_ca(self) -> pathops.LocalPath | pathops.ContainerPath:
         """Path to the client CA."""
         return self.ca_certs_dir / "client_ca.pem"
 
     @property
-    def client_cert(self) -> pathops.LocalPath or pathops.ContainerPath:
+    def client_cert(self) -> pathops.LocalPath | pathops.ContainerPath:
         """Path to the client cert."""
         return self.tls_root / "client.pem"
 
     @property
-    def client_key(self) -> pathops.LocalPath or pathops.ContainerPath:
+    def client_key(self) -> pathops.LocalPath | pathops.ContainerPath:
         """Path to the client key."""
         return self.tls_root / "client.key"
 
     @property
-    def ca_certs_dir(self) -> pathops.LocalPath or pathops.ContainerPath:
+    def ca_certs_dir(self) -> pathops.LocalPath | pathops.ContainerPath:
         """Path to the directory for CA certs."""
         return self.tls_root / "ca_certs"
 

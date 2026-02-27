@@ -47,6 +47,7 @@ INTERNAL_USERS_SECRET_LABEL = (
 )
 SEED_KEY_PREFIX = "seed:key:"
 TLS_NAME = "self-signed-certificates"
+TLS_CHANNEL = "1/edge"
 TLS_CERT_FILE = "client.pem"
 TLS_KEY_FILE = "client.key"
 TLS_CA_FILE = "client_ca.pem"

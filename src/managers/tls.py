@@ -105,7 +105,11 @@ class TLSManager(ManagerStatusProtocol):
         """
         sans_dns = set()
         sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
-        sans_dns.add(self.state.unit_server.hostname)
+
+        if not self.state.peer_relation:
+            return frozenset(sans_dns)
+
+        sans_dns.add(self.state.unit_server.model.hostname)
 
         return frozenset(sans_dns)
 
@@ -117,7 +121,7 @@ class TLSManager(ManagerStatusProtocol):
         """Generate a CA certificate for use in peer TLS and store it to peer relation data."""
         private_key = self._generate_private_key()
         ca_attributes = CertificateRequestAttributes(
-            common_name="Valkey Operator",
+            common_name="Valkey-Operator",
             is_ca=True,
             add_unique_id_to_subject_name=False,
         )

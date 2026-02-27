@@ -207,7 +207,7 @@ class TLSEvents(ops.Object):
 
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""
-        if not all(server.client_cert_ready for server in self.charm.state.servers):
+        if not all(server.model.client_cert_ready for server in self.charm.state.servers):
             raise ValkeyCertificatesNotReadyError
 
         logger.info("Enabling client TLS in Valkey")
