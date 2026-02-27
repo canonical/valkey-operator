@@ -84,8 +84,7 @@ backends:
       sudo systemctl daemon-reload
       sudo systemctl start ssh
 
-      # Needed for IS-hosted runners
-      # sudo passwd --delete ubuntu
+      sudo passwd --delete runner
 
       ADDRESS localhost
     # HACK: spread does not pass environment variables set on runner
