@@ -5,7 +5,7 @@ import logging
 
 import jubilant
 
-from literals import CharmUsers
+from literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
@@ -27,9 +27,14 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
+def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=1, trust=True)
+    juju.deploy(
+        charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+        num_units=1,
+        trust=True,
+    )
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
