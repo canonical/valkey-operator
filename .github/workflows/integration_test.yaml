@@ -4,7 +4,7 @@ on:
       artifact-prefix:
         description: |
           Prefix for charm package GitHub artifact(s)
-          
+
           Use canonical/data-platform-workflows build_charm.yaml to build the charm(s)
         required: true
         type: string
@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v5
       - name: Set up environment
         run: |
+          sudo apt update
           sudo snap install charmcraft --classic
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
@@ -99,7 +100,7 @@ jobs:
     needs:
       - collect-integration-tests
     runs-on: ${{ matrix.job.runner }}
-    timeout-minutes: 226  # Sum of steps `timeout-minutes` + 5
+    timeout-minutes: 226 # Sum of steps `timeout-minutes` + 5
     steps:
       - name: Disk usage
         timeout-minutes: 5
