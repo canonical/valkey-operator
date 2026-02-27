@@ -84,8 +84,7 @@ backends:
       sudo systemctl daemon-reload
       sudo systemctl start ssh
 
-      # Needed for IS-hosted runners
-      sudo passwd --delete ubuntu
+      sudo passwd --delete runner
 
       ADDRESS localhost
     # HACK: spread does not pass environment variables set on runner
@@ -97,8 +96,8 @@ backends:
       CONCIERGE_EXTRA_DEBS: pipx
       DOCKERHUB_MIRROR: "$(HOST: echo $DOCKERHUB_MIRROR)"
     systems:
-      - self-hosted-linux-amd64-noble-medium:
-          username: ubuntu
+      - ubuntu-24.04:
+          username: runner
 
 suites:
   tests/spread/k8s/:
@@ -117,7 +116,7 @@ prepare: |
   chown -R root:root "$SPREAD_PATH"
   cd "$SPREAD_PATH"
   snap install --classic concierge
-  
+
   if [[ -n "$DOCKERHUB_MIRROR" ]] && [[ $SPREAD_SUITE == *"k8s"* ]]
   then
     # Running on IS-hosted runner; configure microk8s to use Docker Hub mirror
@@ -147,7 +146,7 @@ prepare: |
   then
     concierge prepare --trace -c concierge-vm.yaml
   fi
-  
+
   if [[ $SPREAD_SUITE == *"k8s"* ]]
   then
     concierge prepare --trace -c concierge-k8s.yaml
@@ -162,7 +161,7 @@ prepare-each: |
   then
     concierge prepare --trace -c concierge-vm.yaml
   fi
-  
+
   if [[ $SPREAD_SUITE == *"k8s"* ]]
   then
     concierge prepare --trace -c concierge-k8s.yaml
