@@ -102,15 +102,27 @@ jobs:
     runs-on: ${{ matrix.job.runner }}
     timeout-minutes: 226 # Sum of steps `timeout-minutes` + 5
     steps:
-      - name: Disk usage
-        timeout-minutes: 5
-        run: df --human-readable
+      - name: Free up disk space
+        timeout-minutes: 10
+        run: |
+          printf '\nDisk usage before cleanup\n'
+          df --human-readable
+          # Based on https://github.com/actions/runner-images/issues/2840#issuecomment-790492173
+          rm -r /opt/hostedtoolcache/
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/julia*
+          sudo apt purge -y firefox google-chrome-stable microsoft-edge-stable
+          printf '\nDisk usage after cleanup\n'
+          df --human-readable
       - name: Checkout
         timeout-minutes: 3
         uses: actions/checkout@v5
       - name: Set up environment
         timeout-minutes: 5
         run: |
+          sudo apt update
           sudo snap install charmcraft --classic
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
