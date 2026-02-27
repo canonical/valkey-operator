@@ -6,12 +6,23 @@ from platform import machine
 
 import jubilant
 import pytest
+from _pytest.config.argparsing import Parser
 
 from literals import Substrate
 from tests.integration.continuous_writes import ContinuousWrites
 from tests.integration.helpers import APP_NAME
 
 logger = logging.getLogger(__name__)
+
+
+def pytest_addoption(parser: Parser):
+    parser.addoption(
+        "--substrate",
+        action="store",
+        help="Substrate to test, either vm or k8s",
+        choices=("vm", "k8s"),
+        default="k8s",
+    )
 
 
 @pytest.fixture(scope="function")
