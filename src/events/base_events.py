@@ -438,7 +438,7 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
-        # TODO consider quorom when removing unit
+        # TODO consider quorum when removing unit
 
         self.charm.status.set_running_status(
             ScaleDownStatuses.SCALING_DOWN.value,

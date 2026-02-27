@@ -149,7 +149,9 @@ class ValkeyClient(CliClient):
             values[values_parts[0]] = values_parts[1]
         return values
 
-    def set(self, hostname: str, key: str, value: str, additional_args: list[str] = []) -> bool:
+    def set(
+        self, hostname: str, key: str, value: str, additional_args: list[str] | None = None
+    ) -> bool:
         """Set a key-value pair on the Valkey server.
 
         Args:
@@ -164,6 +166,8 @@ class ValkeyClient(CliClient):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
+        if additional_args is None:
+            additional_args = []
         return (
             self.exec_cli_command(["set", key, value] + additional_args, hostname=hostname) == "OK"
         )
@@ -200,13 +204,13 @@ class ValkeyClient(CliClient):
         return self.exec_cli_command(["delifeq", key, value], hostname=hostname, json_output=False)
 
     def role(self, hostname: str) -> list[str | Any]:
-        """Check if the replica is synced with the primary.
+        """Get the role information of the Valkey server.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            bool: True if the replica is synced with the primary, False otherwise.
+            list[str | Any]: The role information retrieved from the server.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
@@ -290,7 +294,7 @@ class SentinelClient(CliClient):
         )[0]
 
     def primary(self, hostname: str) -> dict[str, str]:
-        r"""Get the primary info from the sentinel.
+        """Get the primary info from the sentinel.
 
         Args:
             hostname (str): The hostname to connect to.

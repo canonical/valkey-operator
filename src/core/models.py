@@ -37,7 +37,6 @@ class PeerAppModel(PeerModel):
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
     start_member: str = Field(default="")
-    scale_down_member: str = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
