@@ -224,7 +224,7 @@ class BaseEvents(ops.Object):
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
-        if not self.charm.state.peer_relation:
+        if not (self.charm.state.peer_relation and self.charm.workload.can_connect):
             event.defer()
             return
 
