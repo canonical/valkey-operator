@@ -6,7 +6,7 @@ import logging
 import jubilant
 import pytest
 
-from literals import CharmUsers
+from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
@@ -29,9 +29,14 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
+def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Deploy the charm under test and a TLS provider."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
+    juju.deploy(
+        charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+        num_units=NUM_UNITS,
+        trust=True,
+    )
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
