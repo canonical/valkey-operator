@@ -11,7 +11,7 @@ on:
     paths-ignore:
       - "docs/**"
   schedule:
-    - cron: '53 0 * * *'  # Daily at 00:53 UTC
+    - cron: "53 0 * * *" # Daily at 00:53 UTC
   # Triggered on push to branch "dpe" by .github/workflows/release.yaml
   workflow_call:
     outputs:
@@ -38,6 +38,7 @@ jobs:
       # to build Valkey-glide during tests
       - name: Install dependencies
         run: |
+          sudo apt update
           sudo apt install libprotobuf-dev protobuf-compiler
       - name: Run tests
         run: tox run -e unit
