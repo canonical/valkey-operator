@@ -71,12 +71,6 @@ class TLSManager(ManagerStatusProtocol):
         cmd = ["c_rehash", self.workload.tls_paths.ca_certs_dir.as_posix()]
         self.workload.exec(cmd)
 
-    def remove_certificate(self) -> None:
-        """Remove the certificate from the unit."""
-        self.workload.remove_file(self.workload.tls_paths.client_key)
-        self.workload.remove_file(self.workload.tls_paths.client_cert)
-        self.workload.remove_file(self.workload.tls_paths.client_ca)
-
     def build_common_name(self) -> str:
         """Build the Common Name for the TLS certificate."""
         # default common name, as per DA-166

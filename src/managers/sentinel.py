@@ -112,8 +112,6 @@ class SentinelManager(ManagerStatusProtocol):
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
-            # restart to pick up updated TLS certs if available
-            self.restart_service()
             return False
 
         if not client.sentinel_get_master_info(hostname=self.state.bind_address):
