@@ -105,6 +105,14 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        if (
+            self.charm.state.client_tls_relation
+            and not self.charm.state.unit_server.model.client_cert_ready
+        ):
+            logger.warning("Waiting for client TLS certificates before starting")
+            event.defer()
+            return
+
         self.charm.state.unit_server.update(
             {"start_state": StartState.WAITING_TO_START.value, "request_start_lock": True}
         )
