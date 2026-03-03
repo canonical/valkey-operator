@@ -13,6 +13,7 @@ from literals import (
 from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
     NoAuthError,
     WrongPassError,
@@ -39,7 +40,7 @@ TEST_VALUE = "test_value"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, num_units=NUM_UNITS, trust=True)
+    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=NUM_UNITS, trust=True)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,

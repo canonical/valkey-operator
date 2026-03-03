@@ -6,7 +6,7 @@ import logging
 
 import jubilant
 
-from literals import CharmUsers
+from literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
@@ -18,6 +18,7 @@ from tests.integration.helpers import (
     get_cluster_hostnames,
     get_number_connected_slaves,
     get_password,
+    remove_number_units,
     seed_valkey,
 )
 
@@ -28,9 +29,14 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju) -> None:
+def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    juju.deploy(charm, resources=IMAGE_RESOURCE, num_units=1, trust=True)
+    juju.deploy(
+        charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+        num_units=1,
+        trust=True,
+    )
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
@@ -87,7 +93,7 @@ async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     )
 
 
-async def test_scale_down(juju: jubilant.Juju) -> None:
+async def test_scale_down(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Make sure scale down operations complete successfully."""
     number_of_slaves = await get_number_connected_slaves(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
@@ -99,7 +105,7 @@ async def test_scale_down(juju: jubilant.Juju) -> None:
     )
 
     # scale down
-    juju.remove_unit(APP_NAME, num_units=1)
+    remove_number_units(juju, APP_NAME, num_units=1, substrate=substrate)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
@@ -139,7 +145,8 @@ async def test_scale_down_multiple_units(juju: jubilant.Juju) -> None:
     )
 
     # scale down multiple units
-    juju.remove_unit(APP_NAME, num_units=2)
+    remove_number_units(juju, APP_NAME, num_units=2, substrate=Substrate.K8S)
+
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
@@ -161,7 +168,9 @@ async def test_scale_down_multiple_units(juju: jubilant.Juju) -> None:
 async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
     """Make sure that removing all units and then adding them again works."""
     # remove all remaining units
-    juju.remove_unit(APP_NAME, num_units=len(juju.status().apps[APP_NAME].units))
+    remove_number_units(
+        juju, APP_NAME, num_units=len(juju.status().apps[APP_NAME].units), substrate=Substrate.K8S
+    )
     juju.wait(lambda status: len(juju.status().get_units(APP_NAME)) == 0)
 
     # scale up again

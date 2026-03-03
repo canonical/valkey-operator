@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import json
 import logging
 import os
 import re
@@ -10,7 +11,7 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, NamedTuple
+from typing import List, Literal, NamedTuple
 
 import jubilant
 import yaml
@@ -31,6 +32,7 @@ from literals import (
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     CharmUsers,
+    Substrate,
 )
 
 logger = logging.getLogger(__name__)
@@ -556,3 +558,60 @@ async def auth_test(hostnames: list[str], username: str | None, password: str | 
             raise WrongPassError("Authentication failed: WRONGPASS error") from e
         else:
             raise e
+
+
+def remove_number_units(
+    juju: jubilant.Juju, app: str, num_units: int, substrate: Substrate
+) -> None:
+    """Remove a specified number of units from an application.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app: The name of the application from which to remove units
+        num_units: The number of units to remove
+        substrate: The substrate type ("k8s" or "vm")
+    """
+    match substrate:
+        case "k8s":
+            juju.remove_unit(app, num_units=num_units)
+        case "vm":
+            # get units names
+            unit_names = list(juju.status().get_units(app))
+            # remove units by name until num_units have been removed
+            juju.remove_unit(*unit_names[:num_units])
+
+
+def get_data_bag(
+    juju: jubilant.Juju,
+    app_name: str,
+    relation_name: str,
+    scope: Literal["app", "unit"] = "unit",
+) -> dict:
+    """Get the data bag for a given unit.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app_name: The name of the application whose data bag to retrieve
+        relation_name: The name of the relation for which to retrieve the data bag
+        scope: Specify whether to get the data bag for the app or unit
+    =
+    Returns:
+        The data bag for the specified unit.
+    """
+    unit_name = next(iter(juju.status().get_units(app_name)))
+    unit_info = juju.cli("show-unit", unit_name, "--format", "json")
+    json_info = json.loads(unit_info)
+    relation = next(
+        rel for rel in json_info[unit_name]["relation-info"] if rel["endpoint"] == relation_name
+    )
+    if not relation:
+        raise ValueError(f"Relation {relation_name} not found for unit {unit_name}")
+    if scope == "app":
+        return relation["application-data"]
+    local_data = relation["local-unit"]["data"]
+    remote_data = (
+        {u_name: data["data"] for u_name, data in relation["related-units"].items()}
+        if relation.get("related-units")
+        else {}
+    )
+    return {unit_name: local_data} | remote_data
