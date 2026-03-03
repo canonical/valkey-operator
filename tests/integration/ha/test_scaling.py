@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 import jubilant
+import pytest
 
 from literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
@@ -18,6 +19,7 @@ from tests.integration.helpers import (
     get_cluster_hostnames,
     get_number_connected_slaves,
     get_password,
+    get_primary_ip,
     remove_number_units,
     seed_valkey,
 )
@@ -249,6 +251,49 @@ async def test_scale_down_to_zero_and_back(
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     logger.info("Stopping continuous writes after scale up test.")
+    logger.info(await c_writes.async_stop())
+    assert_continuous_writes_consistent(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+    await c_writes.async_clear()
+
+
+async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
+    """Make sure that removing the primary unit triggers a new primary to be elected and the cluster remains available."""
+    if substrate == Substrate.K8S:
+        pytest.skip("Primary unit can only targeted on VM")
+
+    await c_writes.async_clear()
+    c_writes.start()
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    primary_unit = next(
+        unit
+        for unit, unit_value in juju.status().get_units(APP_NAME).items()
+        if unit_value.public_address == primary_ip
+    )
+    assert primary_unit is not None, "Failed to identify primary unit for scale down test."
+    logger.debug(
+        f"Identified primary unit {primary_unit} with IP {primary_ip} for scale down test."
+    )
+    juju.remove_unit(primary_unit)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
+        )
+    )
+    c_writes.update()
+    new_primary_ip = get_primary_ip(juju, APP_NAME)
+    assert new_primary_ip != primary_ip, "Primary IP did not change after removing primary unit."
+    logger.debug(f"New primary IP after scale down is {new_primary_ip}.")
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+    )
+    logger.info("Stopping continuous writes after primary scale down test.")
     logger.info(await c_writes.async_stop())
     assert_continuous_writes_consistent(
         hostnames=hostnames,

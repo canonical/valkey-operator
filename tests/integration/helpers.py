@@ -323,19 +323,27 @@ def fast_forward(juju: jubilant.Juju):
         juju.model_config({"update-status-hook-interval": old})
 
 
-async def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    async with create_valkey_client([hostnames[0]], password=get_password(juju)) as client:
-        info = await client.custom_command(["client", "info"])
-    match = re.search(r"laddr=([\d\.]+):", info.decode())
-    if match:
-        return match.group(1)
-    raise RuntimeError("Primary IP not found in client info output")
+    replication_info = exec_valkey_cli(
+        hostnames[0],
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+        command="info replication",
+    ).stdout
+    # if master then we return the hostname
+    if "role:master" in replication_info:
+        return hostnames[0]
+    # extract ip
+    match = re.search(r"master_host:([^\s]+)", replication_info)
+    if not match:
+        raise ValueError("Could not find master_host in replication info")
+    return match.group(1)
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
@@ -409,9 +417,7 @@ def exec_valkey_cli(
     hostname: str, username: str, password: str, command: str
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = (
-        f"valkey-cli -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
-    )
+    command = f"valkey-cli --no-auth-warning -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
     result = subprocess.run(
         command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
