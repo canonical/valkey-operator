@@ -15,6 +15,7 @@ from typing import Optional
 
 import jubilant
 from glide import (
+    BackoffStrategy,
     GlideClient,
     GlideClientConfiguration,
     NodeAddress,
@@ -90,6 +91,7 @@ class ContinuousWrites:
             client_name="continuous_writes_client",
             request_timeout=250,
             credentials=credentials,
+            reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
         )
 
         return await GlideClient.create(glide_config)
@@ -253,6 +255,7 @@ class ContinuousWrites:
                 client_name="continuous_writes_worker",
                 request_timeout=250,
                 credentials=credentials,
+                reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
             )
             return await GlideClient.create(glide_config)
 
