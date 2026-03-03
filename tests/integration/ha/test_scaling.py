@@ -210,7 +210,7 @@ async def test_scale_down_multiple_units(
     )
 
 
-async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
+async def test_scale_down_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
     """Make sure that removing all units and then adding them again works."""
     # remove all remaining units
     remove_number_units(
@@ -256,7 +256,7 @@ async def test_scale_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
     await c_writes.async_clear()
 
 
-def test_remove_application(juju: jubilant.Juju) -> None:
+def test_scale_down_remove_application(juju: jubilant.Juju) -> None:
     """Make sure the application can be removed."""
     juju.remove_application(APP_NAME)
 
