@@ -210,11 +210,13 @@ async def test_scale_down_multiple_units(
     )
 
 
-async def test_scale_down_to_zero_and_back(juju: jubilant.Juju, c_writes) -> None:
+async def test_scale_down_to_zero_and_back(
+    juju: jubilant.Juju, substrate: Substrate, c_writes
+) -> None:
     """Make sure that removing all units and then adding them again works."""
     # remove all remaining units
     remove_number_units(
-        juju, APP_NAME, num_units=len(juju.status().apps[APP_NAME].units), substrate=Substrate.K8S
+        juju, APP_NAME, num_units=len(juju.status().apps[APP_NAME].units), substrate=substrate
     )
     juju.wait(lambda status: len(juju.status().get_units(APP_NAME)) == 0)
 
