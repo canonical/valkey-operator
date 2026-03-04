@@ -8,6 +8,10 @@ import logging
 from typing import Any, final
 
 import ops
+from charmlibs.interfaces.tls_certificates import (
+    Certificate,
+    PrivateKey,
+)
 from charms.data_platform_libs.v1.data_interfaces import (
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
@@ -18,12 +22,22 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from pydantic import Field
 from typing_extensions import Annotated
 
-from literals import CharmUsers, ScaleDownState, StartState
+from literals import (
+    INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    INTERNET_CERTS_SECRET_LABEL_SUFFIX,
+    CharmUsers,
+    ScaleDownState,
+    StartState,
+    TLSState,
+)
 
 logger = logging.getLogger(__name__)
 
 InternalUsersSecret = Annotated[
-    OptionalSecretStr, Field(exclude=True, default=None), "internal_users_secret"
+    OptionalSecretStr, Field(exclude=True, default=None), INTERNAL_USERS_SECRET_LABEL_SUFFIX
+]
+InternalCertificatesSecret = Annotated[
+    OptionalSecretStr, Field(exclude=True, default=None), INTERNET_CERTS_SECRET_LABEL_SUFFIX
 ]
 
 
@@ -37,6 +51,8 @@ class PeerAppModel(PeerModel):
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
     start_member: str = Field(default="")
+    internal_ca_certificate: InternalCertificatesSecret = Field(default="")
+    internal_ca_private_key: InternalCertificatesSecret = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -48,6 +64,8 @@ class PeerUnitModel(PeerModel):
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
     scale_down_state: str = Field(default="")
+    tls_client_state: str = Field(default="")
+    client_cert_ready: bool = Field(default=False)
 
 
 class RelationState:
@@ -140,6 +158,14 @@ class ValkeyServer(RelationState):
             return ""
         return self.model.charmed_operator_password_local_unit_copy or ""
 
+    @property
+    def tls_client_state(self) -> TLSState:
+        """The current TLS state of the Valkey server for client TLS."""
+        if not self.model:
+            return TLSState.NO_TLS
+
+        return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
+
 
 @final
 class ValkeyCluster(RelationState):
@@ -168,3 +194,19 @@ class ValkeyCluster(RelationState):
             if password := getattr(self.model, f"{user.value.replace('-', '_')}_password", ""):
                 passwords[user.value] = password
         return passwords
+
+    @property
+    def internal_ca_certificate(self) -> Certificate | None:
+        """Retrieve the internal CA certificate."""
+        if not self.model or not self.model.internal_ca_certificate:
+            return None
+
+        return Certificate.from_string(self.model.internal_ca_certificate)
+
+    @property
+    def internal_ca_private_key(self) -> PrivateKey | None:
+        """Retrieve the internal CA private key."""
+        if not self.model or not self.model.internal_ca_private_key:
+            return None
+
+        return PrivateKey.from_string(self.model.internal_ca_private_key)

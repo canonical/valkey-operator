@@ -15,7 +15,12 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
-from literals import PEER_RELATION, STATUS_PEERS_RELATION, Substrate
+from literals import (
+    CLIENT_TLS_RELATION_NAME,
+    PEER_RELATION,
+    STATUS_PEERS_RELATION,
+    Substrate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,11 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return servers
 
     @property
+    def client_tls_relation(self) -> ops.Relation | None:
+        """Get the client certificates relation."""
+        return self.model.get_relation(CLIENT_TLS_RELATION_NAME)
+
+    @property
     def bind_address(self) -> str:
         """The network binding address from the peer relation."""
         if not (binding := self.model.get_binding(self.peer_relation)):
@@ -109,6 +119,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         if not (address := binding.network.bind_address):
             raise ValueError
+
+        return str(address)
+
+    @property
+    def ingress_address(self) -> str | None:
+        """The network ingress address from the peer relation."""
+        if not (binding := self.model.get_binding(self.peer_relation)):
+            raise ValueError
+
+        if not (address := binding.network.ingress_address):
+            return None
 
         return str(address)
 

@@ -14,6 +14,33 @@ from common.exceptions import ValkeyWorkloadCommandError
 logger = logging.getLogger(__name__)
 
 
+class TLSPaths:
+    """Object to store the TLS paths."""
+
+    def __init__(self, tls_root: pathops.LocalPath | pathops.ContainerPath):
+        self.tls_root = tls_root
+
+    @property
+    def client_ca(self) -> pathops.LocalPath | pathops.ContainerPath:
+        """Path to the client CA."""
+        return self.ca_certs_dir / "client_ca.pem"
+
+    @property
+    def client_cert(self) -> pathops.LocalPath | pathops.ContainerPath:
+        """Path to the client cert."""
+        return self.tls_root / "client.pem"
+
+    @property
+    def client_key(self) -> pathops.LocalPath | pathops.ContainerPath:
+        """Path to the client key."""
+        return self.tls_root / "client.key"
+
+    @property
+    def ca_certs_dir(self) -> pathops.LocalPath | pathops.ContainerPath:
+        """Path to the directory for CA certs."""
+        return self.tls_root / "ca_certs"
+
+
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
 
@@ -23,6 +50,10 @@ class WorkloadBase(ABC):
     acl_file: pathops.PathProtocol
     sentinel_acl_file: pathops.PathProtocol
     working_dir: pathops.PathProtocol
+    tls_dir: pathops.PathProtocol
+    tls_paths: TLSPaths
+    valkey_service: str
+    sentinel_service: str
     cli: str
     user: str
 
@@ -45,6 +76,10 @@ class WorkloadBase(ABC):
     @abstractmethod
     def stop(self) -> None:
         """Stop the workload service."""
+        pass
+
+    def restart(self, service: str) -> None:
+        """Restart a workload service."""
         pass
 
     @abstractmethod
@@ -111,5 +146,20 @@ class WorkloadBase(ABC):
             PermissionError,
             pathops.PebbleConnectionError,
             ValueError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    def remove_file(self, path: pathops.PathProtocol) -> None:
+        """Delete a file on disk.
+
+        Args:
+            path (PathProtocol): The file path where the content should be written.
+        """
+        try:
+            path.unlink(missing_ok=True)
+        except (
+            IsADirectoryError,
+            PermissionError,
+            pathops.PebbleConnectionError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)

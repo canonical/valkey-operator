@@ -18,7 +18,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, ScaleDownState, StartState
+from literals import CharmUsers, ScaleDownState, StartState, TLSState
 from statuses import CharmStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
@@ -40,23 +40,26 @@ class ClusterManager(ManagerStatusProtocol):
         """Get the password of the admin user for the Valkey cluster."""
         return self.state.unit_server.valkey_admin_password
 
-    def reload_acl_file(self) -> None:
-        """Reload the ACL file into the cluster."""
-        client = ValkeyClient(
+    def _get_valkey_client(self) -> ValkeyClient:
+        """Get a client connection to Valkey."""
+        return ValkeyClient(
             username=self.admin_user,
             password=self.admin_password,
+            tls=True
+            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+            else False,
             workload=self.workload,
         )
-        if not client.acl_load(hostname=self.state.bind_address):
+
+    def reload_acl_file(self) -> None:
+        """Reload the ACL file into the cluster."""
+        client = self._get_valkey_client()
+        if not client.load_acl(hostname=self.state.bind_address):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_valkey_client()
         if not client.config_set(
             hostname=self.state.bind_address,
             parameter="primaryauth",
@@ -74,11 +77,7 @@ class ClusterManager(ManagerStatusProtocol):
     )
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_valkey_client()
         role_info = client.role(hostname=self.state.bind_address)
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
@@ -94,11 +93,7 @@ class ClusterManager(ManagerStatusProtocol):
     )
     def is_healthy(self, is_primary: bool = False, check_replica_sync: bool = True) -> bool:
         """Check if a valkey instance is healthy."""
-        client = ValkeyClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_valkey_client()
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
@@ -115,6 +110,11 @@ class ClusterManager(ManagerStatusProtocol):
             return False
 
         return True
+
+    def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
+        """Update TLS by loading the TLS settings."""
+        client = self._get_valkey_client()
+        client.reload_tls(tls_config, hostname=self.state.bind_address)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

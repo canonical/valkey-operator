@@ -28,15 +28,18 @@ SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
+CLIENT_TLS_RELATION_NAME = "client-certificates"
 
 
 CLIENT_PORT = 6379
+TLS_PORT = 6380
 SENTINEL_PORT = 26379
 
 PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
+INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 
 DATA_STORAGE = "data"
 
@@ -97,3 +100,12 @@ class ScaleDownState(StrEnum):
     RESET_SENTINEL = "reset_sentinel"
     HEALTH_CHECK = "health_check"
     GOING_AWAY = "going_away"
+
+
+class TLSState(StrEnum):
+    """TLS states."""
+
+    NO_TLS = "no-tls"
+    TO_TLS = "to-tls"
+    TLS = "tls"
+    TO_NO_TLS = "to-no-tls"

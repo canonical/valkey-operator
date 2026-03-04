@@ -21,7 +21,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers
+from literals import CharmUsers, TLSState
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,17 @@ class SentinelManager(ManagerStatusProtocol):
             CharmUsers.SENTINEL_CHARM_ADMIN.value, ""
         )
 
+    def _get_sentinel_client(self) -> SentinelClient:
+        """Get a client connection to Sentinel."""
+        return SentinelClient(
+            username=self.admin_user,
+            password=self.admin_password,
+            tls=True
+            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+            else False,
+            workload=self.workload,
+        )
+
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(6),
@@ -60,11 +71,7 @@ class SentinelManager(ManagerStatusProtocol):
             if unit.is_active and unit.model.private_ip != self.state.bind_address
         ]
 
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         for sentinel_ip in active_sentinels:
             try:
@@ -92,11 +99,7 @@ class SentinelManager(ManagerStatusProtocol):
         """
         started_servers = [unit.model.private_ip for unit in self.state.servers if unit.is_active]
 
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         for unit_ip in started_servers:
             try:
@@ -121,11 +124,7 @@ class SentinelManager(ManagerStatusProtocol):
     )
     def is_healthy(self) -> bool:
         """Check if the sentinel service is healthy."""
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         if not client.ping(hostname=self.state.bind_address):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
@@ -146,13 +145,8 @@ class SentinelManager(ManagerStatusProtocol):
 
         Raises:
             SentinelFailoverError: If triggering failover fails or if failover does not start after triggering.
-            ValkeyWorkloadCommandError: If the CLI command to trigger failover or check failover status fails.
         """
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
         try:
             client.failover_primary_coordinated(self.state.bind_address)
             client.is_failover_in_progress(hostname=self.state.bind_address)
@@ -167,11 +161,7 @@ class SentinelManager(ManagerStatusProtocol):
             ValkeyWorkloadCommandError: If the CLI command to reset sentinel state fails on any sentinel.
             CannotSeeAllActiveSentinelsError: If any sentinel does not see all other active sentinels after reset.
         """
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         for sentinel_ip in sentinel_ips:
             logger.debug("Resetting sentinel state on %s.", sentinel_ip)
@@ -203,11 +193,7 @@ class SentinelManager(ManagerStatusProtocol):
         Returns:
             bool: True if the target sentinel sees all other sentinels, False otherwise.
         """
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         sentinel_ips_set = set(sentinel_ips) - {target_sentinel_ip}
 
@@ -251,11 +237,7 @@ class SentinelManager(ManagerStatusProtocol):
             SentinelIncorrectReplicaCountError: If any sentinel sees an incorrect number of replicas.
             ValkeyWorkloadCommandError: If the CLI command to get replica information fails on any sentinel.
         """
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
 
         # all started servers except primary are expected to be replicas
         expected_replicas = len(sentinel_ips) - 1
@@ -288,14 +270,15 @@ class SentinelManager(ManagerStatusProtocol):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command to get sentinel information fails.
         """
-        client = SentinelClient(
-            username=self.admin_user,
-            password=self.admin_password,
-            workload=self.workload,
-        )
+        client = self._get_sentinel_client()
         return [hostname] + [
             sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
         ]
+
+    def restart_service(self) -> None:
+        """Restart the sentinel service to load configuration."""
+        logger.info("Restarting sentinel service")
+        self.workload.restart(self.workload.sentinel_service)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

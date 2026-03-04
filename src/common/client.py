@@ -11,7 +11,7 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
+from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, TLS_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,12 @@ class CliClient:
         self,
         username: str,
         password: str,
+        tls: bool,
         workload: WorkloadBase,
     ):
         self.username = username
         self.password = password
+        self.tls = tls
         self.workload = workload
 
     def exec_cli_command(
@@ -64,9 +66,20 @@ class CliClient:
                 "--pass",
                 self.password,
             ]
-            + (["--json"] if json_output else [])
-            + command
+            + ["--json"]
+            if json_output
+            else []
         )
+        if self.tls:
+            cli_command.append("--tls")
+            cli_command.append("--cert")
+            cli_command.append(self.workload.tls_paths.client_cert.as_posix())
+            cli_command.append("--key")
+            cli_command.append(self.workload.tls_paths.client_key.as_posix())
+            cli_command.append("--cacertdir")
+            cli_command.append(self.workload.tls_paths.ca_certs_dir.as_posix())
+
+        cli_command = cli_command + command
         output, error = self.workload.exec(cli_command)
         output = output.strip()
         if error:
@@ -92,16 +105,15 @@ class CliClient:
 class ValkeyClient(CliClient):
     """Handle valkey client connections."""
 
-    # TODO Handle TLS port when TLS is merged
-    port: int = CLIENT_PORT
-
     def __init__(
         self,
         username: str,
         password: str,
+        tls: bool,
         workload: WorkloadBase,
     ):
-        super().__init__(username, password, workload)
+        super().__init__(username, password, tls, workload)
+        self.port = TLS_PORT if tls else CLIENT_PORT
 
     def ping(self, hostname: str) -> bool:
         """Ping the Valkey server to check if it's responsive.
@@ -254,9 +266,10 @@ class SentinelClient(CliClient):
         self,
         username: str,
         password: str,
+        tls: bool,
         workload: WorkloadBase,
     ):
-        super().__init__(username, password, workload)
+        super().__init__(username, password, tls, workload)
 
     def ping(self, hostname: str) -> bool:
         """Ping the Sentinel server to check if it's responsive.
