@@ -121,7 +121,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.WAITING_TO_START.value})
         start_lock.request_lock()
 
-        if not start_lock.do_i_hold_lock:
+        if not start_lock.is_held_by_this_unit:
             logger.info("Waiting for lock to start")
             event.defer()
             return
@@ -137,6 +137,7 @@ class BaseEvents(ops.Object):
                 self.charm.state.unit_server.update(
                     {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
                 )
+                start_lock.release_lock()
                 event.defer()
                 return
 

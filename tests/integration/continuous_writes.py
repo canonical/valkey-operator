@@ -269,7 +269,6 @@ class ContinuousWrites:
 
         current_val = starting_number
         config = initial_config
-        # client = await _make_client(config)
 
         proc_logger.info(f"Starting continuous async writes from {current_val}")
 

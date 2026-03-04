@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def c_writes(juju: jubilant.Juju):
     """Create instance of the ContinuousWrites."""
     app = APP_NAME
-    logger.debug(f"Creating ContinuousWrites instance for app with name {app}")
+    logger.info(f"Creating ContinuousWrites instance for app with name {app}")
     return ContinuousWrites(juju, app)
 
 

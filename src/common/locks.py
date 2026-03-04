@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Collection of lock names for cluster operations."""
+"""Collection of locks for cluster operations."""
 
 import logging
 import time
@@ -42,7 +42,7 @@ class Lockable(Protocol):
 
     @property
     @abstractmethod
-    def do_i_hold_lock(self) -> bool:
+    def is_held_by_this_unit(self) -> bool:
         """Check if the local unit holds the lock."""
         raise NotImplementedError
 
@@ -90,7 +90,7 @@ class DataBagLock(Lockable):
         raise NotImplementedError
 
     @property
-    def do_i_hold_lock(self) -> bool:
+    def is_held_by_this_unit(self) -> bool:
         """Check if the local unit holds the start lock."""
         return self.state.unit_server.unit_name == getattr(
             self.state.cluster.model, self.member_with_lock_atr_name, ""
@@ -109,7 +109,7 @@ class DataBagLock(Lockable):
             )
             self.process()
 
-        return self.do_i_hold_lock
+        return self.is_held_by_this_unit
 
     def release_lock(self) -> bool:
         """Release the lock from the local unit."""
@@ -135,10 +135,10 @@ class DataBagLock(Lockable):
         if self.is_lock_free_to_give:
             next_unit = self.next_unit_to_give_lock
             self.state.cluster.update({self.member_with_lock_atr_name: next_unit})
-            logger.debug(f"Gave {self.name} lock to {next_unit}")
-        logger.debug(
-            f"{self.name} lock is currently held by {getattr(self.state.cluster.model, self.member_with_lock_atr_name)}"
-        )
+            logger.debug("Gave %s to %s", self.name, next_unit)
+
+        if unit_with_lock := self.state.cluster.model[self.member_with_lock_atr_name]:
+            logger.debug("%s is currently held by %s", self.name, unit_with_lock)
 
 
 class StartLock(DataBagLock):
@@ -164,10 +164,9 @@ class ScaleDownLock(Lockable):
     This will use valkey to store the lock state and will check if the unit with the lock has completed its scale down operation
     """
 
-    lock_key = "scale_down_lock"
-
     def __init__(self, charm: "ValkeyCharm") -> None:
         self.charm = charm
+        self.lock_key = f"scale_down_lock_{self.charm.app.name}"
 
     @property
     def client(self) -> ValkeyClient:
@@ -244,7 +243,7 @@ class ScaleDownLock(Lockable):
             primary_ip = self.charm.sentinel_manager.get_primary_ip()
 
     @property
-    def do_i_hold_lock(self) -> bool:
+    def is_held_by_this_unit(self) -> bool:
         """Check if the local unit holds the lock."""
         unit_with_lock = self.get_unit_with_lock()
         return (

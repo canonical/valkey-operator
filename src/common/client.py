@@ -264,7 +264,7 @@ class SentinelClient(CliClient):
         super().__init__(username, password, workload)
 
     def ping(self, hostname: str) -> bool:
-        """Ping the Valkey server to check if it's responsive.
+        """Ping the Sentinel server to check if it's responsive.
 
         Args:
             hostname (str): The hostname to connect to.

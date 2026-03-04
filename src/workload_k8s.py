@@ -133,7 +133,12 @@ class ValkeyK8sWorkload(WorkloadBase):
     def stop(self) -> None:
         try:
             self.container.stop(self.valkey_service, self.sentinel_service, self.metric_service)
-        except ops.pebble.ChangeError as e:
+        except (
+            ops.pebble.ChangeError,
+            ops.pebble.TimeoutError,
+            ops.pebble.ConnectionError,
+            ops.pebble.APIError,
+        ) as e:
             logger.error("Failed to stop Valkey services: %s", e)
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"

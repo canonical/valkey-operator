@@ -93,7 +93,7 @@ class ScaleDownState(StrEnum):
     NO_SCALE_DOWN = ""
     WAIT_FOR_LOCK = "wait_for_lock"
     WAIT_TO_FAILOVER = "wait_to_failover"
-    STOP_SERVICES = "stopped_services"
+    STOP_SERVICES = "stopping_services"
     RESET_SENTINEL = "reset_sentinel"
     HEALTH_CHECK = "health_check"
     GOING_AWAY = "going_away"

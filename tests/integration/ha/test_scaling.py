@@ -17,7 +17,7 @@ from tests.integration.helpers import (
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
     get_cluster_hostnames,
-    get_number_connected_slaves,
+    get_number_connected_replicas,
     get_password,
     get_primary_ip,
     remove_number_units,
@@ -72,13 +72,13 @@ async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
     # check if all units have been added to the cluster
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
-    connected_slaves = await get_number_connected_slaves(
+    connected_replicas = await get_number_connected_replicas(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert connected_slaves == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
+    assert connected_replicas == NUM_UNITS - 1, (
+        f"Expected {NUM_UNITS - 1} connected replicas, got {connected_replicas}."
     )
 
     await assert_continuous_writes_increasing(
@@ -97,13 +97,13 @@ async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
 
 async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
     """Make sure scale down operations complete successfully."""
-    number_of_slaves = await get_number_connected_slaves(
+    number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_slaves == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected slaves, got {number_of_slaves}."
+    assert number_of_replicas == NUM_UNITS - 1, (
+        f"Expected {NUM_UNITS - 1} connected replicas, got {number_of_replicas}."
     )
 
     await c_writes.async_clear()
@@ -120,13 +120,13 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     num_units = len(juju.status().get_units(APP_NAME))
     assert num_units == NUM_UNITS - 1, f"Expected {NUM_UNITS - 1} units, got {num_units}."
 
-    number_of_slaves = await get_number_connected_slaves(
+    number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_slaves == NUM_UNITS - 2, (
-        f"Expected {NUM_UNITS - 2} connected slaves, got {number_of_slaves}."
+    assert number_of_replicas == NUM_UNITS - 2, (
+        f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
     )
 
     # update hostnames after scale down
@@ -161,13 +161,13 @@ async def test_scale_down_multiple_units(
         timeout=1200,
     )
 
-    number_of_slaves = await get_number_connected_slaves(
+    number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_slaves == NUM_UNITS, (
-        f"Expected {NUM_UNITS} connected slaves, got {number_of_slaves}."
+    assert number_of_replicas == NUM_UNITS, (
+        f"Expected {NUM_UNITS} connected replicas, got {number_of_replicas}."
     )
 
     await c_writes.async_clear()
@@ -185,13 +185,13 @@ async def test_scale_down_multiple_units(
     num_units = len(juju.status().get_units(APP_NAME))
     assert num_units == NUM_UNITS - 1, f"Expected {NUM_UNITS - 1} units, got {num_units}."
 
-    number_of_slaves = await get_number_connected_slaves(
+    number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_slaves == NUM_UNITS - 2, (
-        f"Expected {NUM_UNITS - 2} connected slaves, got {number_of_slaves}."
+    assert number_of_replicas == NUM_UNITS - 2, (
+        f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
     )
 
     c_writes.update()
@@ -234,13 +234,13 @@ async def test_scale_down_to_zero_and_back(
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
 
-    connected_slaves = await get_number_connected_slaves(
+    connected_replicas = await get_number_connected_replicas(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert connected_slaves == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected slaves, got {connected_slaves}."
+    assert connected_replicas == NUM_UNITS - 1, (
+        f"Expected {NUM_UNITS - 1} connected replicas, got {connected_replicas}."
     )
     await c_writes.async_clear()
     c_writes.start()
@@ -274,7 +274,7 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
         if unit_value.public_address == primary_ip
     )
     assert primary_unit is not None, "Failed to identify primary unit for scale down test."
-    logger.debug(
+    logger.info(
         f"Identified primary unit {primary_unit} with IP {primary_ip} for scale down test."
     )
     juju.remove_unit(primary_unit)
@@ -286,7 +286,7 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
     c_writes.update()
     new_primary_ip = get_primary_ip(juju, APP_NAME)
     assert new_primary_ip != primary_ip, "Primary IP did not change after removing primary unit."
-    logger.debug(f"New primary IP after scale down is {new_primary_ip}.")
+    logger.info(f"New primary IP after scale down is {new_primary_ip}.")
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     await assert_continuous_writes_increasing(
         hostnames=hostnames,

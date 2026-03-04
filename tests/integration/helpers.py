@@ -370,7 +370,7 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     total_bytes_target = target_gb * 1024 * 1024 * 1024
     total_keys = total_bytes_target // value_size_bytes
 
-    logger.debug(
+    logger.info(
         f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
     )
 
@@ -507,12 +507,12 @@ async def ping_cluster(
         return await client.ping() == "PONG".encode()
 
 
-async def get_number_connected_slaves(
+async def get_number_connected_replicas(
     hostnames: list[str],
     username: str,
     password: str,
 ) -> int:
-    """Get the number of connected slaves in the Valkey cluster.
+    """Get the number of connected replicas in the Valkey cluster.
 
     Args:
         hostnames: List of hostnames of the Valkey cluster nodes.
@@ -520,7 +520,7 @@ async def get_number_connected_slaves(
         password: The password for authentication.
 
     Returns:
-        The number of connected slaves.
+        The number of connected replicas.
     """
     async with create_valkey_client(
         hostnames=hostnames, username=username, password=password
@@ -528,7 +528,7 @@ async def get_number_connected_slaves(
         info = (await client.info([InfoSection.REPLICATION])).decode()
     search_result = re.search(r"connected_slaves:([\d+])", info)
     if not search_result:
-        raise ValueError("Could not parse number of connected slaves from info output")
+        raise ValueError("Could not parse number of connected replicas from info output")
     return int(search_result.group(1))
 
 
