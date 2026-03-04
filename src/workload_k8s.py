@@ -136,8 +136,11 @@ class ValkeyK8sWorkload(WorkloadBase):
                 command=command,
             )
             return process.wait_output()
-        except (ops.pebble.ExecError, ops.pebble.APIError) as e:
-            logger.error("Command failed with %s, %s", e.exit_code, e.stdout)
+        except ops.pebble.APIError as e:
+            logger.error("Command failed with %s, %s", e.code, e.body)
+            raise ValkeyWorkloadCommandError(e)
+        except ops.pebble.ExecError as e:
+            logger.error("Command failed with: %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
 
     @override

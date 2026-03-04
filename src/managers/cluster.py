@@ -54,7 +54,7 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         client = self._get_valkey_client()
-        if not client.load_acl(hostname=self.state.bind_address):
+        if not client.acl_load(hostname=self.state.bind_address):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:

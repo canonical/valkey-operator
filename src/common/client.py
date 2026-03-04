@@ -53,23 +53,19 @@ class CliClient:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
         port = self.port
-        cli_command: list[str] = (
-            [
-                self.workload.cli,
-                "--no-auth-warning",
-                "-h",
-                hostname,
-                "-p",
-                str(port),
-                "--user",
-                self.username,
-                "--pass",
-                self.password,
-            ]
-            + ["--json"]
-            if json_output
-            else []
-        )
+        cli_command: list[str] = [
+            self.workload.cli,
+            "--no-auth-warning",
+            "-h",
+            hostname,
+            "-p",
+            str(port),
+            "--user",
+            self.username,
+            "--pass",
+            self.password,
+        ] + (["--json"] if json_output else [])
+
         if self.tls:
             cli_command.append("--tls")
             cli_command.append("--cert")
@@ -255,6 +251,22 @@ class ValkeyClient(CliClient):
             ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
         return self.exec_cli_command(["acl", "load"], hostname=hostname) == "OK"
+
+    def reload_tls(self, tls_config: dict[str, str], hostname: str) -> None:
+        """Trigger to load the TLS settings."""
+        cmd = ["CONFIG", "SET"]
+
+        for key, value in tls_config.items():
+            cmd.append(key)
+            cmd.append(value)
+        logger.debug("Loading TLS settings: %s", cmd)
+
+        try:
+            result = self.exec_cli_command(command=cmd, hostname=hostname)
+            logger.debug("Loading TLS settings: %s", result)
+        except ValkeyWorkloadCommandError:
+            logger.error("Error loading TLS settings")
+            raise ValkeyTLSLoadError("Could not load TLS settings")
 
 
 class SentinelClient(CliClient):
