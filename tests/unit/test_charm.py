@@ -2,7 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
 from ops import ActiveStatus, pebble, testing
@@ -215,9 +215,45 @@ def test_start_non_primary(cloud_spec):
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
 
-        # sentinel not yet discovered
+        # sentinel not yet discovered error raised
         with (
-            patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=False),
+            patch(
+                "core.cluster_state.ClusterState.bind_address",
+                new_callable=PropertyMock(return_value="10.0.1.0"),
+            ),
+            patch(
+                "common.client.SentinelClient.sentinels_primary",
+                side_effect=ValkeyWorkloadCommandError("errored out"),
+            ),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        ):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"start-member": "valkey/0"},
+                peers_data={1: {"start-state": "started"}},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+
+        # sentinel not yet discovered sentinel not seeing other sentinel
+        with (
+            patch(
+                "core.cluster_state.ClusterState.bind_address",
+                new_callable=PropertyMock(return_value="10.0.1.0"),
+            ),
+            patch(
+                "common.client.SentinelClient.sentinels_primary",
+                return_value=[{"ip": "10.0.1.1"}, {"ip": "10.0.1.2"}],
+            ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):

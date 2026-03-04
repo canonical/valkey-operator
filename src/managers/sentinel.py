@@ -174,12 +174,8 @@ class SentinelManager(ManagerStatusProtocol):
         )
 
         for sentinel_ip in sentinel_ips:
-            try:
-                logger.debug("Resetting sentinel state on %s.", sentinel_ip)
-                client.reset(hostname=sentinel_ip)
-            except ValkeyWorkloadCommandError:
-                logger.warning("Could not reset sentinel state on %s.", sentinel_ip)
-                raise
+            logger.debug("Resetting sentinel state on %s.", sentinel_ip)
+            client.reset(hostname=sentinel_ip)
 
             if not self.target_sees_all_others(
                 target_sentinel_ip=sentinel_ip, sentinel_ips=sentinel_ips
@@ -270,19 +266,15 @@ class SentinelManager(ManagerStatusProtocol):
         )
 
         for sentinel_ip in sentinel_ips:
-            try:
-                if expected_replicas != (
-                    number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
-                ):
-                    logger.warning(
-                        f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
-                    )
-                    raise SentinelIncorrectReplicaCountError(
-                        f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
-                    )
-            except ValkeyWorkloadCommandError:
-                logger.warning("Could not query sentinel for replica information.")
-                raise
+            if expected_replicas != (
+                number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
+            ):
+                logger.warning(
+                    f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
+                )
+                raise SentinelIncorrectReplicaCountError(
+                    f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
+                )
 
     def get_active_sentinel_ips(self, hostname: str) -> list[str]:
         """Get a list of IP addresses of the active sentinels in the cluster.
@@ -301,7 +293,7 @@ class SentinelManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        return [client.get_primary_addr_by_name(hostname=hostname)[0]] + [
+        return [hostname] + [
             sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
         ]
 

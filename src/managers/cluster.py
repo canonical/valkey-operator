@@ -80,7 +80,11 @@ class ClusterManager(ManagerStatusProtocol):
             workload=self.workload,
         )
         role_info = client.role(hostname=self.state.bind_address)
-        return role_info[0] == "slave" and role_info[3] == "connected"
+        try:
+            return role_info[0] == "slave" and role_info[3] == "connected"
+        except IndexError as e:
+            logger.warning(f"Unexpected role information format: {role_info}. Error: {e}")
+            return False
 
     @retry(
         wait=wait_fixed(5),
