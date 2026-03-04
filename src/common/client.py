@@ -92,6 +92,7 @@ class CliClient:
 class ValkeyClient(CliClient):
     """Handle valkey client connections."""
 
+    # TODO Handle TLS port when TLS is merged
     port: int = CLIENT_PORT
 
     def __init__(
