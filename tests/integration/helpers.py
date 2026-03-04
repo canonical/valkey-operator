@@ -370,9 +370,7 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     total_bytes_target = target_gb * 1024 * 1024 * 1024
     total_keys = total_bytes_target // value_size_bytes
 
-    logger.info(
-        f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
-    )
+    logger.info(f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)")
 
     start_time = time.time()
     keys_added = 0

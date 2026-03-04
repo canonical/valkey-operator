@@ -54,9 +54,11 @@ async def test_seed_data(juju: jubilant.Juju) -> None:
     await seed_valkey(juju, target_gb=1)
 
 
-async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
+async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
+    await c_writes.async_clear()
+    c_writes.start()
 
     # scale up
     juju.add_unit(APP_NAME, num_units=NUM_UNITS - init_units_count)
@@ -93,6 +95,7 @@ async def test_scale_up(juju: jubilant.Juju, c_writes, c_writes_runner) -> None:
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
+    await c_writes.async_clear()
 
 
 async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
@@ -146,6 +149,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
+    await c_writes.async_clear()
 
 
 async def test_scale_down_multiple_units(
@@ -210,6 +214,7 @@ async def test_scale_down_multiple_units(
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
+    await c_writes.async_clear()
 
 
 async def test_scale_down_to_zero_and_back(
