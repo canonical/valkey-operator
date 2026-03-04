@@ -100,7 +100,7 @@ class SentinelManager(ManagerStatusProtocol):
 
         for unit_ip in started_servers:
             try:
-                return client.get_primary_addr_by_name(hostname=unit_ip)
+                return client.get_primary_addr_by_name(hostname=unit_ip)[0]
             except ValkeyWorkloadCommandError:
                 logger.warning(
                     "Could not query sentinel for primary information from server at %s.",
@@ -301,7 +301,7 @@ class SentinelManager(ManagerStatusProtocol):
             password=self.admin_password,
             workload=self.workload,
         )
-        return [client.get_primary_addr_by_name(hostname=hostname)] + [
+        return [client.get_primary_addr_by_name(hostname=hostname)[0]] + [
             sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
         ]
 

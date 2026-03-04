@@ -141,12 +141,6 @@ class ValkeyClient(CliClient):
             if line.startswith("#"):
                 continue
             values_parts = line.split(":", 1)
-            if len(values_parts) != 2:
-                logger.error(
-                    "Unexpected output format when getting persistence info from Valkey server at %s",
-                    hostname,
-                )
-                return None
             values[values_parts[0]] = values_parts[1]
         return values
 
@@ -292,7 +286,7 @@ class SentinelClient(CliClient):
         """
         return self.exec_cli_command(
             command=["sentinel", "get-primary-addr-by-name", PRIMARY_NAME], hostname=hostname
-        )[0]
+        )
 
     def primary(self, hostname: str) -> dict[str, str]:
         """Get the primary info from the sentinel.
@@ -378,10 +372,9 @@ class SentinelClient(CliClient):
         Returns:
             (list[dict[str, str]]): The list of replicas with their information.
         """
-        replicas = self.exec_cli_command(
+        return self.exec_cli_command(
             command=["sentinel", "replicas", PRIMARY_NAME], hostname=hostname
         )
-        return replicas
 
     def sentinels_primary(self, hostname: str) -> list[dict[str, str]]:
         """Get the list of sentinels that see the same primary from the sentinel.
