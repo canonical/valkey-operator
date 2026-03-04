@@ -452,7 +452,10 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with patch("core.models.RelationState.update") as mock_update:
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+        patch("core.models.RelationState.update") as mock_update,
+    ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_update.assert_called_once()
 

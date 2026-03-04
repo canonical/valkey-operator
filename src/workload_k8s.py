@@ -16,7 +16,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from core.base_workload import WorkloadBase
+from core.base_workload import TLSPaths, WorkloadBase
 from literals import (
     ACL_FILE,
     CHARM,
@@ -43,6 +43,8 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root_dir / SENTINEL_ACL_FILE
         # todo: update this path once directories in the rock are complying with the standard
         self.working_dir = self.root_dir / "var/lib/valkey"
+        self.tls_dir = self.root_dir / "var/lib/valkey/tls"
+        self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
         self.valkey_service = "valkey"
         self.sentinel_service = "valkey-sentinel"
         self.metric_service = "metric_exporter"
@@ -100,6 +102,15 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
+    def restart(self, service: str) -> None:
+        try:
+            self.container.restart(service)
+        except ops.pebble.ChangeError as e:
+            raise ValkeyServicesFailedToStartError(
+                "Failed to start service %s: %s", service, e
+            ) from e
+
+    @override
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
@@ -124,6 +135,6 @@ class ValkeyK8sWorkload(WorkloadBase):
                 command=command,
             )
             return process.wait_output()
-        except ops.pebble.ExecError as e:
+        except (ops.pebble.ExecError, ops.pebble.APIError) as e:
             logger.error("Command failed with %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)

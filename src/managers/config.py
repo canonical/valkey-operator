@@ -23,9 +23,11 @@ from literals import (
     PRIMARY_NAME,
     QUORUM_NUMBER,
     SENTINEL_PORT,
+    TLS_PORT,
     CharmUsers,
     StartState,
     Substrate,
+    TLSState,
 )
 from statuses import CharmStatuses
 
@@ -71,7 +73,6 @@ class ConfigManager(ManagerStatusProtocol):
                 config_properties[key.strip()] = value.strip()
 
         # Adjust default values
-        config_properties["port"] = str(CLIENT_PORT)
         config_properties["loglevel"] = "verbose"
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
         config_properties["dir"] = self.workload.working_dir.as_posix()
@@ -86,6 +87,10 @@ class ConfigManager(ManagerStatusProtocol):
         replica_config = self._generate_replica_config(primary_ip=primary_ip)
         config_properties.update(replica_config)
 
+        # TLS related configuration
+        tls_config = self.generate_tls_config()
+        config_properties.update(tls_config)
+
         return config_properties
 
     def _generate_replica_config(self, primary_ip: str) -> dict[str, str]:
@@ -99,13 +104,55 @@ class ConfigManager(ManagerStatusProtocol):
         if primary_ip != self.state.unit_server.model.private_ip:
             # set replicaof
             logger.debug("Setting replicaof to primary %s", primary_ip)
-            replica_config["replicaof"] = f"{primary_ip} {CLIENT_PORT}"
+            # internal communication always uses peer TLS (`tls-replication=yes`)
+            replica_config["replicaof"] = f"{primary_ip} {TLS_PORT}"
         return replica_config
 
     def set_config_properties(self, primary_ip: str) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
         self.workload.write_config_file(config=self.get_config_properties(primary_ip=primary_ip))
+
+    def generate_tls_config(self) -> dict[str, str]:
+        """Return the TLS configuration based on the current state."""
+        tls_config = {
+            "port": str(CLIENT_PORT),
+            "tls-port": str(TLS_PORT),
+            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
+            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
+            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
+            "tls-replication": "yes",
+        }
+
+        if (
+            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            and self.state.unit_server.model.client_cert_ready
+        ):
+            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            tls_config["port"] = "0"
+
+        return tls_config
+
+    def generate_sentinel_tls_config(self) -> dict[str, str]:
+        """Return the TLS configuration for sentinel based on the current state."""
+        tls_config = {
+            "port": str(SENTINEL_PORT),
+            "tls-port": "0",
+            "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
+            "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
+            "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
+            "tls-replication": "yes",
+        }
+
+        if (
+            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            and self.state.unit_server.model.client_cert_ready
+        ):
+            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            tls_config["port"] = "0"
+            tls_config["tls-port"] = str(SENTINEL_PORT)
+
+        return tls_config
 
     def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the ACL file with appropriate user permissions.
@@ -198,13 +245,17 @@ class ConfigManager(ManagerStatusProtocol):
             primary_ip=primary_ip
         )
 
+        # tls config
+        tls_config = self.generate_sentinel_tls_config()
+        config_properties.update(tls_config)
+
         return config_properties
 
     def _generate_sentinel_configs(self, primary_ip: str) -> dict[str, str]:
         """Generate the sentinel config properties based on the current cluster state."""
         sentinel_configs = {}
         # TODO consider adding quorum calculation based on number of planned_units and the parity of the number of units
-        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {CLIENT_PORT} {QUORUM_NUMBER}"
+        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {TLS_PORT} {QUORUM_NUMBER}"
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_configs["auth-user"] = f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"

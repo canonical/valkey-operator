@@ -6,9 +6,9 @@
 import logging
 from typing import Literal
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT
+from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, TLS_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,13 @@ class ValkeyClient:
         self,
         username: str,
         password: str,
+        tls: bool,
         workload: WorkloadBase,
         connect_to: Literal["valkey", "sentinel"] = "valkey",
     ):
         self.username = username
         self.password = password
+        self.tls = tls
         self.workload = workload
         self.connect_to = connect_to
 
@@ -45,7 +47,9 @@ class ValkeyClient:
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        port = CLIENT_PORT if self.connect_to == "valkey" else SENTINEL_PORT
+        valkey_port = TLS_PORT if self.tls else CLIENT_PORT
+        port = valkey_port if self.connect_to == "valkey" else SENTINEL_PORT
+
         cli_command: list[str] = [
             self.workload.cli,
             "-h",
@@ -56,7 +60,18 @@ class ValkeyClient:
             self.username,
             "--pass",
             self.password,
-        ] + command
+        ]
+
+        if self.tls:
+            cli_command.append("--tls")
+            cli_command.append("--cert")
+            cli_command.append(self.workload.tls_paths.client_cert.as_posix())
+            cli_command.append("--key")
+            cli_command.append(self.workload.tls_paths.client_key.as_posix())
+            cli_command.append("--cacertdir")
+            cli_command.append(self.workload.tls_paths.ca_certs_dir.as_posix())
+
+        cli_command = cli_command + command
         output, error = self.workload.exec(cli_command)
         return output, error
 
@@ -97,11 +112,7 @@ class ValkeyClient:
                 continue
             values_parts = line.split(":", 1)
             if len(values_parts) != 2:
-                logger.error(
-                    "Unexpected output format when getting persistence info from Valkey server at %s: %s",
-                    hostname,
-                    output,
-                )
+                logger.error("Failed to get persistence info from Valkey server")
                 return None
             values[values_parts[0]] = values_parts[1]
         return values
@@ -121,16 +132,10 @@ class ValkeyClient:
             output, err = self.exec_cli_command(["set", key, value], hostname=hostname)
             if output.strip() == "OK":
                 return True
-            logger.error(
-                "Failed to set key %s on Valkey server at %s: stdout: %s, stderr: %s",
-                key,
-                hostname,
-                output,
-                err,
-            )
+            logger.error("Failed to set key %s on Valkey server at %s: %s", key, hostname, err)
             return False
         except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to set key {key} on Valkey server at {hostname}: {e}")
+            logger.error("Failed to set key %s on Valkey server at %s: %s", key, hostname, e)
             return False
 
     def is_replica_synced(self, hostname: str) -> bool:
@@ -174,10 +179,9 @@ class ValkeyClient:
             if output.strip() == "OK":
                 return True
             logger.error(
-                "Failed to set config %s on Valkey server at %s: stdout: %s, stderr: %s",
+                "Failed to set config %s on Valkey server at %s: stderr: %s",
                 parameter,
                 hostname,
-                output,
                 err,
             )
             return False
@@ -199,15 +203,30 @@ class ValkeyClient:
             if output.strip() == "OK":
                 return True
             logger.error(
-                "Failed to load ACL file on Valkey server at %s: stdout: %s, stderr: %s",
+                "Failed to load ACL file on Valkey server at %s: stderr: %s",
                 hostname,
-                output,
                 err,
             )
             return False
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to load ACL file on Valkey server at {hostname}: {e}")
             return False
+
+    def reload_tls(self, tls_config: dict[str, str], hostname: str) -> None:
+        """Trigger to load the TLS settings."""
+        cmd = ["CONFIG", "SET"]
+
+        for key, value in tls_config.items():
+            cmd.append(key)
+            cmd.append(value)
+        logger.debug("Loading TLS settings: %s", cmd)
+
+        try:
+            result = self.exec_cli_command(command=cmd, hostname=hostname)
+            logger.debug("Loading TLS settings: %s", result)
+        except ValkeyWorkloadCommandError:
+            logger.error("Error loading TLS settings")
+            raise ValkeyTLSLoadError("Could not load TLS settings")
 
     def sentinel_get_primary_ip(self, hostname: str) -> str | None:
         """Get the primary IP address from the sentinel.
@@ -229,15 +248,11 @@ class ValkeyClient:
             )
             output_parts = output.strip().split()
             if len(output_parts) != 2:
-                logger.error(
-                    "Unexpected output format when getting primary IP from sentinel at %s: %s",
-                    hostname,
-                    output,
-                )
+                logger.error("Failed to get primary IP from sentinel")
                 return None
             return output_parts[0]
-        except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to get primary IP from sentinel at {hostname}: {e}")
+        except ValkeyWorkloadCommandError:
+            logger.error("Failed to get primary IP from sentinel at %s", hostname)
             return None
 
     def sentinel_get_master_info(self, hostname: str) -> dict[str, str] | None:
@@ -263,11 +278,7 @@ class ValkeyClient:
                 return None
             info_parts = output.strip().split()
             if len(info_parts) % 2 != 0:
-                logger.error(
-                    "Unexpected output format when getting master info from sentinel at %s: %s",
-                    hostname,
-                    output,
-                )
+                logger.error("Failed to get master info from sentinel")
                 return None
             return {info_parts[i]: info_parts[i + 1] for i in range(0, len(info_parts), 2)}
         except ValkeyWorkloadCommandError as e:

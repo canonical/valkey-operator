@@ -27,10 +27,16 @@ resources:
   valkey-image:
     type: oci-image
     description: OCI Image for Valkey
-    upstream-source: ghcr.io/canonical/valkey@sha256:bb8166ff96c5159ed0ab04e49a7b3e5b6a074cbd90ec66baf96e4d03e2fd7c90
+    upstream-source: ghcr.io/canonical/valkey:9.0.1-26.04-edge
 
 peers:
   valkey-peers:
     interface: valkey_peers
   status-peers:
     interface: status_peers
+
+requires:
+  client-certificates:
+    interface: tls-certificates
+    limit: 1
+    optional: true

@@ -23,9 +23,11 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    TLS_PORT,
     CharmUsers,
     StartState,
     Substrate,
+    TLSState,
 )
 from statuses import CharmStatuses, ClusterStatuses, StartStatuses
 
@@ -100,6 +102,14 @@ class BaseEvents(ops.Object):
             logger.info(
                 "Internal users' credentials not set yet. Deferring start event until credentials are set."
             )
+            event.defer()
+            return
+
+        if (
+            self.charm.state.client_tls_relation
+            and not self.charm.state.unit_server.model.client_cert_ready
+        ):
+            logger.warning("Waiting for client TLS certificates before starting")
             event.defer()
             return
 
@@ -203,7 +213,9 @@ class BaseEvents(ops.Object):
         if self.charm.unit.is_leader():
             self._process_lock_requests()
 
-        self.charm.unit.open_port("tcp", CLIENT_PORT)
+        if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
+            self.charm.unit.open_port("tcp", CLIENT_PORT)
+        self.charm.unit.open_port("tcp", TLS_PORT)
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
@@ -258,7 +270,8 @@ class BaseEvents(ops.Object):
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
-        if not self.charm.state.peer_relation:
+        if not (self.charm.state.peer_relation and self.charm.workload.can_connect):
+            logger.info("Workload not ready")
             event.defer()
             return
 

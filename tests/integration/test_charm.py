@@ -50,6 +50,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
+        delay=5,
+        successes=3,
     )
 
 

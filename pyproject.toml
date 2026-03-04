@@ -10,6 +10,7 @@ python = "^3.12"                  # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 charmlibs-snap = "^1.0.1"
+charmlibs-interfaces-tls-certificates = ">=1.6.0"
 tenacity = "*"
 data-platform-helpers = ">=0.1.7"
 
@@ -51,7 +52,8 @@ data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
 python-dateutil = "*"
 tenacity = "^9.1.2"
-valkey-glide = "^2.2.7"
+# https://github.com/valkey-io/valkey-glide/pull/5124 not yet released
+valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs-to-async-client" }
 
 [tool.coverage.run]
 branch = true
