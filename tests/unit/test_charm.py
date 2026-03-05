@@ -309,8 +309,9 @@ def test_update_status_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.update_status(), state_in)
-    assert state_out.unit_status == ActiveStatus()
+    with patch("managers.tls.TLSManager.check_certificate_validity"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+        assert state_out.unit_status == ActiveStatus()
 
 
 def test_update_status_non_leader_unit(cloud_spec):
@@ -327,8 +328,9 @@ def test_update_status_non_leader_unit(cloud_spec):
         relations={relation, status_peer_relation},
         containers={container},
     )
-    state_out = ctx.run(ctx.on.update_status(), state_in)
-    assert state_out.unit_status == ActiveStatus()
+    with patch("managers.tls.TLSManager.check_certificate_validity"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+        assert state_out.unit_status == ActiveStatus()
 
 
 def test_internal_user_creation(cloud_spec):

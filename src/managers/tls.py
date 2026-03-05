@@ -20,7 +20,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import TLSState
+from literals import TLSCARotationState, TLSState
 from statuses import CharmStatuses, TLSStatuses
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,15 @@ class TLSManager(ManagerStatusProtocol):
         """Set the certificate state."""
         self.state.unit_server.update({"client_cert_ready": is_ready})
 
+    def set_ca_rotation_state(self, state: TLSCARotationState) -> None:
+        """Set the CA rotation state.
+
+        Args:
+            state (TLSCARotationState): The CA rotation state.
+        """
+        logger.debug(f"Setting TLS CA rotation state to {state}")
+        self.state.unit_server.update({"tls_ca_rotation": state.value})
+
     def write_certificate(self, certificate: ProviderCertificate, private_key: PrivateKey) -> None:
         """Store the certificate on the unit.
 
@@ -63,6 +72,39 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(certificate.certificate.raw, self.workload.tls_paths.client_cert)
         self.workload.write_file(certificate.ca.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
+
+    def start_ca_rotation_if_required(self, ca_cert: Certificate | None = None) -> bool:
+        """Check a CA certificate if new and if so, start the CA rotation on this unit.
+
+        Args:
+            ca_cert (Certificate): The CA certificate to check. If not given, the internal CA cert
+                from the peer relation will be used.
+
+        Returns:
+            True if CA rotation was started, False if not
+        """
+        if not ca_cert:
+            ca_cert = self.state.cluster.internal_ca_certificate
+
+        if not (current_ca_cert := self.workload.read_file(self.workload.tls_paths.client_ca)):
+            logger.debug("No CA rotation, no previous CA cert stored")
+            return False
+
+        if ca_cert.raw == current_ca_cert:
+            logger.debug("No CA rotation, CA cert is up-to-date")
+            return False
+
+        if len(self.state.servers) == 1:
+            # no orchestration in case of a single unit
+            return False
+
+        logger.info("New CA certificate detected")
+        self.workload.write_file(
+            current_ca_cert, self.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
+        )
+
+        self.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
+        return True
 
     def rehash_ca_certificates(self) -> None:
         """Generate hashed certificate names according to x509 format."""
@@ -169,6 +211,25 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(ca_cert.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
 
+    def check_certificate_validity(self) -> None:
+        """Check if the certificates installed on the unit will soon expire."""
+        for cert_file in [
+            self.workload.tls_paths.client_cert.as_posix(),
+            self.workload.tls_paths.client_ca.as_posix(),
+        ]:
+            # will raise if cert expires in less than 24h (=86400s)
+            self.workload.exec(
+                [
+                    "openssl",
+                    "x509",
+                    "-checkend",
+                    "86400",
+                    "-noout",
+                    "-in",
+                    cert_file,
+                ]
+            )
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
@@ -185,5 +246,16 @@ class TLSManager(ManagerStatusProtocol):
 
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)
+
+        if self.state.unit_server.model.tls_certificate_expiring:
+            status_list.append(TLSStatuses.CERTIFICATE_EXPIRING.value)
+
+        match self.state.unit_server.tls_ca_rotation_state:
+            case TLSCARotationState.NEW_CA_DETECTED:
+                status_list.append(TLSStatuses.CA_ROTATION_DETECTED.value)
+            case TLSCARotationState.NEW_CA_ADDED:
+                status_list.append(TLSStatuses.CA_ROTATION_CA_ADDED.value)
+            case TLSCARotationState.CA_UPDATED:
+                status_list.append(TLSStatuses.CA_ROTATION_UPDATED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
