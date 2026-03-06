@@ -12,6 +12,8 @@ from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    TLS_CA_FILE,
+    TLS_CERT_FILE,
     TLS_CHANNEL,
     TLS_NAME,
     are_agents_idle,
@@ -41,7 +43,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         trust=True,
     )
 
-    tls_config = {"certificate-validity": "5m"}
+    tls_config = {"certificate-validity": "5m", "ca-common-name": "valkey"}
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL, config=tls_config)
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
@@ -76,7 +78,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
 
     logger.info("Store current certificate before expiration")
-    with open("client.pem", "r") as file:
+    with open(TLS_CERT_FILE, "r") as file:
         old_client_certificate = file.read()
     assert old_client_certificate, "Failed to get current client certificate"
 
@@ -97,7 +99,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
 
     logger.info("Store new certificate after rotation")
     download_client_certificate_from_unit(juju, APP_NAME)
-    with open("client.pem", "r") as file:
+    with open(TLS_CERT_FILE, "r") as file:
         new_client_certificate = file.read()
     assert new_client_certificate, "Failed to get new client certificate"
 
@@ -132,3 +134,52 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
         ),
         timeout=100,
     )
+
+
+async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
+    """Test the CA rotation.
+
+    The CA certificate should be rotated and the cluster should still be accessible.
+    The rotation is triggered by updating the config for `ca-common-name` on the TLS provider side.
+    """
+    # Rotate the CA certificate
+    logger.info("Getting the current CA certificates")
+    download_client_certificate_from_unit(juju, APP_NAME)
+    with open(TLS_CA_FILE, "r") as file:
+        old_ca_certificate = file.read()
+    assert old_ca_certificate, "Failed to get current ca certificate"
+
+    logger.info("Rotating the CA certificate")
+    tls_config = {"certificate-validity": "10d", "ca-common-name": "new-valkey-ca"}
+    juju.config(app=TLS_NAME, values=tls_config)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
+
+    logger.info("Checking if the CA certificates are rotated")
+    download_client_certificate_from_unit(juju, APP_NAME)
+    with open(TLS_CA_FILE, "r") as file:
+        new_ca_certificate = file.read()
+    assert new_ca_certificate, "Failed to get updated ca certificate"
+    assert old_ca_certificate != new_ca_certificate, "CA certificate was not updated"
+
+    logger.info("Check access with updated certificate")
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=True,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data with updated certificate"
+
+    assert await get_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=True,
+        key=TEST_KEY,
+    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with updated certificate"

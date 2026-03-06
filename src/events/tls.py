@@ -321,7 +321,8 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
             case TLSCARotationState.NEW_CA_ADDED:
                 if not all(
-                    server.tls_ca_rotation_state == TLSCARotationState.NEW_CA_ADDED
+                    server.tls_ca_rotation_state
+                    in [TLSCARotationState.NEW_CA_ADDED, TLSCARotationState.CA_UPDATED]
                     for server in self.charm.state.servers
                 ):
                     raise ValkeyCertificatesNotReadyError
@@ -333,7 +334,8 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
             case TLSCARotationState.CA_UPDATED:
                 if not all(
-                    server.model.tls_ca_rotation == TLSCARotationState.CA_UPDATED
+                    server.model.tls_ca_rotation
+                    in [TLSCARotationState.CA_UPDATED, TLSCARotationState.NO_ROTATION]
                     for server in self.charm.state.servers
                 ):
                     raise ValkeyCertificatesNotReadyError
