@@ -99,7 +99,7 @@ class TLSEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to create certificate for peer-TLS, startup will fail: %s", e)
 
-    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:  # noqa: C901
         """Handle TLS related changes to the peer relation."""
         if self.charm.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
             try:
@@ -115,7 +115,8 @@ class TLSEvents(ops.Object):
         try:
             # will raise if cert expires soon
             self.charm.tls_manager.check_certificate_validity()
-            self.charm.state.unit_server.update({"tls_certificate_expiring": False})
+            if self.charm.state.unit_server.model.tls_certificate_expiring:
+                self.charm.state.unit_server.update({"tls_certificate_expiring": False})
             return
         except ValkeyWorkloadCommandError:
             self.charm.state.unit_server.update({"tls_certificate_expiring": True})
@@ -275,7 +276,8 @@ class TLSEvents(ops.Object):
         try:
             # will raise if cert expires soon
             self.charm.tls_manager.check_certificate_validity()
-            self.charm.state.unit_server.update({"tls_certificate_expiring": False})
+            if self.charm.state.unit_server.model.tls_certificate_expiring:
+                self.charm.state.unit_server.update({"tls_certificate_expiring": False})
             return
         except ValkeyWorkloadCommandError:
             self.charm.state.unit_server.update({"tls_certificate_expiring": True})

@@ -73,49 +73,6 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(certificate.ca.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
 
-    def start_ca_rotation_if_required(
-        self, certificate: ProviderCertificate | None = None
-    ) -> bool:
-        """Check a certificate if the CA is new and if so, start the CA rotation on this unit.
-
-        Args:
-            certificate (ProviderCertificate): The certificate to check. If not given,
-                the internal CA cert from the peer relation will be used.
-
-        Returns:
-            True if CA rotation was started, False if not
-        """
-        if self.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
-            # safeguard in case another new certificate arrives during a CA rotation
-            logger.debug("CA rotation already in progress")
-            return True
-
-        if not self.workload.tls_paths.client_ca.exists():
-            logger.debug("No CA rotation, no previous CA cert stored")
-            return False
-
-        if len(self.state.servers) == 1:
-            logger.debug("No CA rotation orchestration in case of a single unit")
-            return False
-
-        if certificate:
-            ca_cert = certificate.ca
-        else:
-            ca_cert = self.state.cluster.internal_ca_certificate
-        current_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
-
-        if ca_cert.raw == current_ca_cert:
-            logger.debug("No CA rotation, CA cert is up-to-date")
-            return False
-
-        logger.info("New CA certificate detected")
-        self.workload.write_file(
-            current_ca_cert, self.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
-        )
-
-        self.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
-        return True
-
     def rehash_ca_certificates(self) -> None:
         """Generate hashed certificate names according to x509 format."""
         # using a CA directory for TLS requires hashed file links, see:
@@ -239,6 +196,48 @@ class TLSManager(ManagerStatusProtocol):
                     cert_file,
                 ]
             )
+
+    def start_ca_rotation_if_required(
+        self, certificate: ProviderCertificate | None = None
+    ) -> bool:
+        """Check a certificate if the CA is new and if so, start the CA rotation on this unit.
+
+        Args:
+            certificate (ProviderCertificate): The certificate to check. If not given,
+                the internal CA cert from the peer relation will be used.
+
+        Returns:
+            True if CA rotation was started, False if not
+        """
+        if self.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
+            # safeguard in case another new certificate arrives during a CA rotation
+            logger.debug("CA rotation already in progress")
+            return True
+
+        if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
+            return False
+
+        if len(self.state.servers) == 1:
+            logger.debug("No CA rotation orchestration in case of a single unit")
+            return False
+
+        if certificate:
+            ca_cert = certificate.ca
+        else:
+            ca_cert = self.state.cluster.internal_ca_certificate
+        current_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
+
+        if ca_cert.raw == current_ca_cert:
+            logger.debug("No CA rotation, CA cert is up-to-date")
+            return False
+
+        logger.info("New CA certificate detected")
+        self.workload.write_file(
+            current_ca_cert, self.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
+        )
+
+        self.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
+        return True
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
