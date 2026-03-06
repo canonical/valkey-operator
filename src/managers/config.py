@@ -136,21 +136,13 @@ class ConfigManager(ManagerStatusProtocol):
     def generate_sentinel_tls_config(self) -> dict[str, str]:
         """Return the TLS configuration for sentinel based on the current state."""
         tls_config = {
-            "port": str(SENTINEL_PORT),
-            "tls-port": "0",
+            "port": "0",
+            "tls-port": str(SENTINEL_PORT),
             "tls-cert-file": self.workload.tls_paths.client_cert.as_posix(),
             "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
             "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
             "tls-replication": "yes",
         }
-
-        if (
-            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
-            and self.state.unit_server.model.client_cert_ready
-        ):
-            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
-            tls_config["port"] = "0"
-            tls_config["tls-port"] = str(SENTINEL_PORT)
 
         return tls_config
 
@@ -237,7 +229,6 @@ class ConfigManager(ManagerStatusProtocol):
                         value = ""
                     config_properties[key.strip()] = value.strip()
 
-        config_properties["port"] = str(SENTINEL_PORT)
         config_properties["aclfile"] = self.workload.sentinel_acl_file.as_posix()
 
         # sentinel configs
