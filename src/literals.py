@@ -103,4 +103,4 @@ class TLSCARotationState(StrEnum):
     NO_ROTATION = "no-rotation"
     NEW_CA_DETECTED = "new-ca-detected"
     NEW_CA_ADDED = "new-ca-added"
-    CA_UPDATED = "cert-updated"
+    CA_UPDATED = "ca-updated"

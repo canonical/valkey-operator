@@ -73,29 +73,39 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(certificate.ca.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
 
-    def start_ca_rotation_if_required(self, ca_cert: Certificate | None = None) -> bool:
-        """Check a CA certificate if new and if so, start the CA rotation on this unit.
+    def start_ca_rotation_if_required(
+        self, certificate: ProviderCertificate | None = None
+    ) -> bool:
+        """Check a certificate if the CA is new and if so, start the CA rotation on this unit.
 
         Args:
-            ca_cert (Certificate): The CA certificate to check. If not given, the internal CA cert
-                from the peer relation will be used.
+            certificate (ProviderCertificate): The certificate to check. If not given,
+                the internal CA cert from the peer relation will be used.
 
         Returns:
             True if CA rotation was started, False if not
         """
-        if not ca_cert:
-            ca_cert = self.state.cluster.internal_ca_certificate
+        if self.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
+            # safeguard in case another new certificate arrives during a CA rotation
+            logger.debug("CA rotation already in progress")
+            return True
 
-        if not (current_ca_cert := self.workload.read_file(self.workload.tls_paths.client_ca)):
+        if not self.workload.tls_paths.client_ca.exists():
             logger.debug("No CA rotation, no previous CA cert stored")
             return False
 
-        if ca_cert.raw == current_ca_cert:
-            logger.debug("No CA rotation, CA cert is up-to-date")
+        if len(self.state.servers) == 1:
+            logger.debug("No CA rotation orchestration in case of a single unit")
             return False
 
-        if len(self.state.servers) == 1:
-            # no orchestration in case of a single unit
+        if certificate:
+            ca_cert = certificate.ca
+        else:
+            ca_cert = self.state.cluster.internal_ca_certificate
+        current_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
+
+        if ca_cert.raw == current_ca_cert:
+            logger.debug("No CA rotation, CA cert is up-to-date")
             return False
 
         logger.info("New CA certificate detected")
@@ -233,6 +243,10 @@ class TLSManager(ManagerStatusProtocol):
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
+
+        # Peer relation not established yet, or model not built yet for unit or app
+        if not self.state.cluster.model or not self.state.unit_server.model:
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)

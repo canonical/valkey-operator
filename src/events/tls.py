@@ -74,6 +74,9 @@ class TLSEvents(ops.Object):
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
         )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+        )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
@@ -103,7 +106,6 @@ class TLSEvents(ops.Object):
                 self._orchestrate_ca_rotation()
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
-                event.defer()
             except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
@@ -113,10 +115,10 @@ class TLSEvents(ops.Object):
         try:
             # will raise if cert expires soon
             self.charm.tls_manager.check_certificate_validity()
-            self.charm.state.unit_server.update({"tls_certificates_expiring": False})
+            self.charm.state.unit_server.update({"tls_certificate_expiring": False})
             return
         except ValkeyWorkloadCommandError:
-            self.charm.state.unit_server.update({"tls_certificates_expiring": True})
+            self.charm.state.unit_server.update({"tls_certificate_expiring": True})
 
         if self.charm.state.client_tls_relation:
             return
@@ -137,7 +139,6 @@ class TLSEvents(ops.Object):
             self._orchestrate_ca_rotation()
         except ValkeyCertificatesNotReadyError:
             logger.debug("Not all units ready")
-            event.defer()
             return
         except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError, ValkeyWorkloadCommandError):
             logger.error("Failed to reload TLS certificates")
@@ -169,7 +170,7 @@ class TLSEvents(ops.Object):
 
         logger.info("Storing client certificate")
         try:
-            rotate_ca = self.charm.tls_manager.start_ca_rotation_if_required(cert.ca)
+            rotate_ca = self.charm.tls_manager.start_ca_rotation_if_required(cert)
             self.charm.tls_manager.write_certificate(cert, private_key)
             self.charm.tls_manager.set_cert_state(is_ready=True)
         except ValkeyWorkloadCommandError as e:
@@ -190,7 +191,6 @@ class TLSEvents(ops.Object):
                 self.charm.sentinel_manager.restart_service()
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
-                event.defer()
             except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
@@ -275,10 +275,10 @@ class TLSEvents(ops.Object):
         try:
             # will raise if cert expires soon
             self.charm.tls_manager.check_certificate_validity()
-            self.charm.state.unit_server.update({"tls_certificates_expiring": False})
+            self.charm.state.unit_server.update({"tls_certificate_expiring": False})
             return
         except ValkeyWorkloadCommandError:
-            self.charm.state.unit_server.update({"tls_certificates_expiring": True})
+            self.charm.state.unit_server.update({"tls_certificate_expiring": True})
 
         if self.charm.state.client_tls_relation:
             return
@@ -311,6 +311,12 @@ class TLSEvents(ops.Object):
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""
         match self.charm.state.unit_server.tls_ca_rotation_state:
+            case TLSCARotationState.NEW_CA_DETECTED:
+                if self.charm.state.client_tls_relation:
+                    # new client TLS CA is stored in certificate_available event
+                    return
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
             case TLSCARotationState.NEW_CA_ADDED:
                 if not all(
                     server.tls_ca_rotation_state == TLSCARotationState.NEW_CA_ADDED
