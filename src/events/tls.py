@@ -99,7 +99,7 @@ class TLSEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to create certificate for peer-TLS, startup will fail: %s", e)
 
-    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:  # noqa: C901
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle TLS related changes to the peer relation."""
         if self.charm.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
             try:
@@ -130,13 +130,10 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.generate_ca_certificate()
 
         try:
-            rotate_ca = self.charm.tls_manager.start_ca_rotation_if_required()
+            # internal certs: new cert always means a CA rotation because of same expiration
+            self.charm.tls_manager.start_ca_rotation_if_required()
             self.charm.tls_manager.create_and_store_self_signed_certificate()
-            if rotate_ca:
-                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
-            else:
-                # in no need to orchestrate the workflow, skip to the last step
-                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
+            self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
             self._orchestrate_ca_rotation()
         except ValkeyCertificatesNotReadyError:
             logger.debug("Not all units ready")
@@ -332,6 +329,11 @@ class TLSEvents(ops.Object):
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
                 self.charm.sentinel_manager.restart_service()
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
+
+                if len(self.charm.state.servers) == 1:
+                    self.charm.on[PEER_RELATION].relation_changed.emit(
+                        self.charm.state.peer_relation
+                    )
             case TLSCARotationState.CA_UPDATED:
                 if not all(
                     server.model.tls_ca_rotation

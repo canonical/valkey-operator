@@ -217,10 +217,6 @@ class TLSManager(ManagerStatusProtocol):
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             return False
 
-        if len(self.state.servers) == 1:
-            logger.debug("No CA rotation orchestration in case of a single unit")
-            return False
-
         if certificate:
             ca_cert = certificate.ca
         else:
@@ -260,9 +256,6 @@ class TLSManager(ManagerStatusProtocol):
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)
 
-        if self.state.unit_server.model.tls_certificate_expiring:
-            status_list.append(TLSStatuses.CERTIFICATE_EXPIRING.value)
-
         match self.state.unit_server.tls_ca_rotation_state:
             case TLSCARotationState.NEW_CA_DETECTED:
                 status_list.append(TLSStatuses.CA_ROTATION_DETECTED.value)
@@ -270,5 +263,8 @@ class TLSManager(ManagerStatusProtocol):
                 status_list.append(TLSStatuses.CA_ROTATION_CA_ADDED.value)
             case TLSCARotationState.CA_UPDATED:
                 status_list.append(TLSStatuses.CA_ROTATION_UPDATED.value)
+
+        if self.state.unit_server.model.tls_certificate_expiring:
+            status_list.append(TLSStatuses.CERTIFICATE_EXPIRING.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
