@@ -578,8 +578,8 @@ def test_new_client_ca_single_unit(cloud_spec):
             reload_tls.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert (
-                    state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
-                    == TLSCARotationState.NEW_CA_ADDED.value
+                state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
+                == TLSCARotationState.NEW_CA_ADDED.value
             )
 
 

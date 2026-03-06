@@ -82,7 +82,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
         old_client_certificate = file.read()
     assert old_client_certificate, "Failed to get current client certificate"
 
-    logger.info("Waiting for certificates to expire")
+    logger.info("Waiting for certificate to expire")
     sleep(CERTIFICATE_EXPIRY_TIME)
 
     logger.info("Check access with previous certificate fails after expiration")
