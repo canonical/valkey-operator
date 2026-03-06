@@ -17,7 +17,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import PRIMARY_NAME, CharmUsers, TLSState
+from literals import PRIMARY_NAME, CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,7 @@ class SentinelManager(ManagerStatusProtocol):
         return ValkeyClient(
             username=self.admin_user,
             password=self.admin_password,
-            tls=True
-            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
-            else False,
+            tls=True,
             workload=self.workload,
             connect_to="sentinel",
         )
