@@ -84,7 +84,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=1200,
     )
 
@@ -120,7 +120,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
 
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=1200,
     )
 
@@ -164,7 +164,7 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     set_password(juju, username=CharmUsers.VALKEY_ADMIN.value, password=new_password)
     # wait for config-changed hook to finish executing
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=1200,
     )
 
@@ -224,7 +224,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     with fast_forward(juju):
         juju.grant_secret(identifier=secret_name, app=APP_NAME)
         juju.wait(
-            lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+            lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
             timeout=1200,
         )
 
@@ -271,7 +271,7 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     )
 
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=1200,
     )
 
