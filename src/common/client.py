@@ -9,7 +9,7 @@ from typing import Any
 
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, SENTINEL_TLS_PORT, TLS_PORT
 
