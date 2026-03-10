@@ -185,20 +185,21 @@ class ScaleDownLock(Lockable):
         )
 
     @override
-    def request_lock(self, timeout: int | None = None) -> bool:
+    def request_lock(self, timeout: int | None = None, primary_ip: str | None = None) -> bool:
         """Request the lock for the local unit.
 
         This method will keep trying to acquire the lock until it is acquired or until the timeout is reached (if provided).
 
         Args:
             timeout (int | None): The maximum time to keep trying to acquire the lock, in seconds. If None, it will keep trying indefinitely.
+            primary_ip (str | None): The primary IP to use for the lock. If None, it will get the current primary IP from the sentinel manager.
 
         Returns:
             bool: True if the lock was acquired, False if the timeout was reached before acquiring the lock.
         """
         logger.debug(f"{self.charm.state.unit_server.unit_name} is requesting {self.name} lock.")
         retry_until = time.time() + timeout if timeout else None
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
         if self.get_unit_with_lock(primary_ip) == self.charm.state.unit_server.unit_name:
             logger.debug(
                 f"{self.charm.state.unit_server.unit_name} already holds {self.name} lock. No need to request it again."
@@ -251,11 +252,12 @@ class ScaleDownLock(Lockable):
             unit_with_lock is not None and unit_with_lock == self.charm.state.unit_server.unit_name
         )
 
-    def release_lock(self) -> bool:
+    def release_lock(self, primary_ip: str | None = None) -> bool:
         """Release the lock from the local unit."""
+        primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
         if (
             self.client.delifeq(
-                hostname=self.charm.sentinel_manager.get_primary_ip(),
+                hostname=primary_ip,
                 key=self.lock_key,
                 value=self.charm.state.unit_server.unit_name,
             )
