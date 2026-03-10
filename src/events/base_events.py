@@ -9,6 +9,7 @@ import socket
 from typing import TYPE_CHECKING
 
 import ops
+import tenacity
 
 from common.exceptions import (
     RequestingLockTimedOutError,
@@ -443,8 +444,26 @@ class BaseEvents(ops.Object):
             component_name=self.charm.cluster_manager.name,
             statuses_state=self.charm.state.statuses,
         )
+
+        # retry to get the primary ip until 2x restart delay is reached.
+        # Pebble uses backoff and is maxed at 30s
+        # Snap delay is set at 20s
+        # 40s should be enough to cover both substrates
+        try:
+            primary_ip = self._get_primary_ip_for_scale_down()
+        except ValkeyCannotGetPrimaryIPError as e:
+            logger.error(e)
+            self.charm.state.cluster.update(
+                {
+                    "internal_ca_certificate": None,
+                    "internal_ca_private_key": None,
+                }
+            )
+            self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+            return
+
         # blocks until the lock is acquired
-        if not scale_down_lock.request_lock():
+        if not scale_down_lock.request_lock(primary_ip=primary_ip):
             raise RequestingLockTimedOutError("Failed to acquire scale down lock within timeout")
 
         self.charm.state.statuses.delete(
@@ -494,7 +513,21 @@ class BaseEvents(ops.Object):
             # check health after scale down
             self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
             self.charm.sentinel_manager.verify_expected_replica_count(active_sentinels)
-            scale_down_lock.release_lock()
+            # release lock
+            scale_down_lock.release_lock(primary_ip=primary_ip)
 
-        # release lock
+        if self.charm.app.planned_units() == 0 and self.charm.unit.is_leader():
+            # clear app data bag
+            self.charm.state.cluster.update(
+                {
+                    "internal_ca_certificate": None,
+                    "internal_ca_private_key": None,
+                }
+            )
+
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+
+    @tenacity.retry(wait=tenacity.wait_fixed(5), stop=tenacity.stop_after_delay(40), reraise=True)
+    def _get_primary_ip_for_scale_down(self) -> str:
+        """Get the primary IP to use for scale down operations."""
+        return self.charm.sentinel_manager.get_primary_ip()
