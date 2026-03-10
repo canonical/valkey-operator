@@ -103,7 +103,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "start_state": StartState.NOT_STARTED.value,
-                "hostname": socket.gethostname(),
+                "hostname": socket.getfqdn(),
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -137,10 +137,14 @@ class BaseEvents(ops.Object):
             event.defer()
             return
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
-                primary_ip = self.charm.state.bind_address
+                primary_endpoint = (
+                    self.charm.state.bind_address
+                    if self.charm.state.substrate == Substrate.VM
+                    else self.charm.state.unit_server.model.hostname
+                )
             else:
                 logger.debug(
                     "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
@@ -153,7 +157,7 @@ class BaseEvents(ops.Object):
                 return
 
         try:
-            self.charm.config_manager.configure_services(primary_ip)
+            self.charm.config_manager.configure_services(primary_endpoint)
             self.charm.workload.start()
         except ValkeyConfigurationError:
             self.charm.state.unit_server.update(
@@ -175,8 +179,12 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
             component_name=self.charm.cluster_manager.name,
         )
-
-        self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
+        local_unit_endpoint = (
+            self.charm.state.bind_address
+            if self.charm.state.substrate == Substrate.VM
+            else self.charm.state.unit_server.model.hostname
+        )
+        self.unit_fully_started.emit(is_primary=primary_endpoint == local_unit_endpoint)
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -245,7 +253,7 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.gethostname(),
+                "hostname": socket.getfqdn(),
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -287,7 +295,7 @@ class BaseEvents(ops.Object):
         """Handle the config_changed event."""
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.gethostname(),
+                "hostname": socket.getfqdn(),
                 "private_ip": self.charm.state.bind_address,
             }
         )

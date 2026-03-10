@@ -19,6 +19,7 @@ from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
+from common.helpers import is_valid_ip
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -269,9 +270,19 @@ class SentinelManager(ManagerStatusProtocol):
             ValkeyWorkloadCommandError: If the CLI command to get sentinel information fails.
         """
         client = self._get_sentinel_client()
-        return [hostname] + [
-            sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
-        ]
+        # if the hostname is a hostname and not an IP get the ip from the servers
+        ip = hostname
+        if not is_valid_ip(ip):
+            ip = next(
+                (
+                    unit.model.private_ip
+                    for unit in self.state.servers
+                    if unit.model.hostname == hostname
+                ),
+                "",
+            )
+
+        return [ip] + [sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)]
 
     def restart_service(self) -> None:
         """Restart the sentinel service to load configuration."""

@@ -158,10 +158,12 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
                 primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_sentinel_config_properties(
+                    primary_endpoint=primary_ip
+                )
                 self.charm.sentinel_manager.restart_service()
             except (
                 ValkeyWorkloadCommandError,
@@ -206,8 +208,8 @@ class TLSEvents(ops.Object):
 
         logger.info("Enabling client TLS in Valkey")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
-        self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.sentinel_manager.restart_service()
