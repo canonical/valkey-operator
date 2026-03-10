@@ -1,6 +1,6 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
-
+"""Helper functions for the charm."""
 
 import ipaddress
 

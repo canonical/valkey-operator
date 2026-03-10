@@ -493,7 +493,12 @@ class BaseEvents(ops.Object):
         # if unit has primary then failover
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        if primary_ip == self.charm.state.bind_address and len(active_sentinels) > 1:
+        local_unit_endpoint = (
+            self.charm.state.bind_address
+            if self.charm.state.substrate == Substrate.VM
+            else self.charm.state.unit_server.model.hostname
+        )
+        if primary_ip == local_unit_endpoint and len(active_sentinels) > 1:
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
