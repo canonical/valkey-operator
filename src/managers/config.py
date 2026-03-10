@@ -79,10 +79,7 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["dir"] = self.workload.working_dir.as_posix()
 
         # bind to all interfaces
-        if self.state.substrate == Substrate.VM:
-            config_properties["bind"] = self.state.bind_address
-        else:
-            config_properties["bind"] = self.state.unit_server.model.hostname
+        config_properties["bind"] = self.state.endpoint
 
         # replica related config
         replica_config = self._generate_replica_config(primary_endpoint=primary_endpoint)
@@ -96,16 +93,13 @@ class ConfigManager(ManagerStatusProtocol):
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""
-        local_unit_endpoint = (
-            self.state.bind_address
-            if self.state.substrate == Substrate.VM
-            else self.state.unit_server.model.hostname
-        )
+        local_unit_endpoint = self.state.unit_server.get_endpoint(self.state.substrate)
         replica_config = {
             "primaryuser": CharmUsers.VALKEY_REPLICA.value,
             "primaryauth": self.state.cluster.internal_users_credentials.get(
                 CharmUsers.VALKEY_REPLICA.value, ""
             ),
+            "replica-announce-ip": local_unit_endpoint,
         }
         if primary_endpoint != local_unit_endpoint:
             # set replicaof
@@ -281,8 +275,10 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} 30000"
         sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 180000"
         sentinel_configs["parallel-syncs"] = f"{PRIMARY_NAME} 1"
-        sentinel_configs["resolve-hostnames"] = "yes"
-        sentinel_configs["announce-hostnames"] = "yes"
+        if self.state.substrate == Substrate.K8S:
+            sentinel_configs["resolve-hostnames"] = "yes"
+            sentinel_configs["announce-hostnames"] = "yes"
+            sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
         return sentinel_configs
 
     def set_sentinel_config_properties(self, primary_endpoint: str) -> None:

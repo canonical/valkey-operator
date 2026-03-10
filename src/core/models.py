@@ -28,6 +28,7 @@ from literals import (
     CharmUsers,
     ScaleDownState,
     StartState,
+    Substrate,
     TLSState,
 )
 
@@ -170,6 +171,14 @@ class ValkeyServer(RelationState):
     def is_tls_enabled(self) -> bool:
         """Check if TLS is enabled for client connections."""
         return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+
+    def get_endpoint(self, substrate: Substrate) -> str:
+        """Return the endpoint to be used by other units to connect to this unit.
+
+        On VM-based substrates, this should be the private IP address.
+        On Kubernetes, this should be the fully qualified domain name of the unit.
+        """
+        return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
 
 @final

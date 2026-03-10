@@ -140,10 +140,8 @@ class BaseEvents(ops.Object):
             primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
-                primary_endpoint = (
-                    self.charm.state.bind_address
-                    if self.charm.state.substrate == Substrate.VM
-                    else self.charm.state.unit_server.model.hostname
+                primary_endpoint = self.charm.state.unit_server.get_endpoint(
+                    self.charm.state.substrate
                 )
             else:
                 logger.debug(
@@ -179,12 +177,10 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
             component_name=self.charm.cluster_manager.name,
         )
-        local_unit_endpoint = (
-            self.charm.state.bind_address
-            if self.charm.state.substrate == Substrate.VM
-            else self.charm.state.unit_server.model.hostname
+        self.unit_fully_started.emit(
+            is_primary=primary_endpoint
+            == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
         )
-        self.unit_fully_started.emit(is_primary=primary_endpoint == local_unit_endpoint)
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -493,12 +489,10 @@ class BaseEvents(ops.Object):
         # if unit has primary then failover
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        local_unit_endpoint = (
-            self.charm.state.bind_address
-            if self.charm.state.substrate == Substrate.VM
-            else self.charm.state.unit_server.model.hostname
-        )
-        if primary_ip == local_unit_endpoint and len(active_sentinels) > 1:
+        if (
+            primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            and len(active_sentinels) > 1
+        ):
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
@@ -513,7 +507,11 @@ class BaseEvents(ops.Object):
         # stop valkey and sentinel processes
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
         self.charm.workload.stop()
-        active_sentinels = [ip for ip in active_sentinels if ip != self.charm.state.bind_address]
+        active_sentinels = [
+            ip
+            for ip in active_sentinels
+            if ip != self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+        ]
 
         # reset sentinel states on other units
         self.charm.state.unit_server.update(

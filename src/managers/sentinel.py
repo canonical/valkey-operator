@@ -19,7 +19,6 @@ from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
-from common.helpers import is_valid_ip
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -65,9 +64,9 @@ class SentinelManager(ManagerStatusProtocol):
         """Check if the sentinel of the local unit was discovered by the other sentinels in the cluster."""
         # list of active sentinels: units with started flag true and not being removed
         active_sentinels = [
-            unit.model.private_ip
+            unit.get_endpoint(self.state.substrate)
             for unit in self.state.servers
-            if unit.is_active and unit.model.private_ip != self.state.bind_address
+            if unit.is_active and unit.get_endpoint(self.state.substrate) != self.state.endpoint
         ]
 
         client = self._get_sentinel_client()
@@ -77,9 +76,9 @@ class SentinelManager(ManagerStatusProtocol):
                 discovered_sentinels = {
                     sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_ip)
                 }
-                if self.state.bind_address not in discovered_sentinels:
+                if self.state.endpoint not in discovered_sentinels:
                     logger.warning(
-                        f"Sentinel at {sentinel_ip} does not see local sentinel at {self.state.bind_address}."
+                        f"Sentinel at {sentinel_ip} does not see local sentinel at {self.state.endpoint}."
                     )
                     return False
 
@@ -96,7 +95,11 @@ class SentinelManager(ManagerStatusProtocol):
         Raises:
             ValkeyWorkloadCommandError: If the CLI command to get primary information fails on all sentinels.
         """
-        started_servers = [unit.model.private_ip for unit in self.state.servers if unit.is_active]
+        started_servers = [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
 
         client = self._get_sentinel_client()
 
@@ -125,12 +128,12 @@ class SentinelManager(ManagerStatusProtocol):
         """Check if the sentinel service is healthy."""
         client = self._get_sentinel_client()
 
-        if not client.ping(hostname=self.state.bind_address):
+        if not client.ping(hostname=self.state.endpoint):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
             return False
 
         try:
-            client.primary(hostname=self.state.bind_address)
+            client.primary(hostname=self.state.endpoint)
         except ValkeyWorkloadCommandError:
             logger.warning("Health check failed: Could not query sentinel for master information.")
             return False
@@ -147,8 +150,8 @@ class SentinelManager(ManagerStatusProtocol):
         """
         client = self._get_sentinel_client()
         try:
-            client.failover_primary_coordinated(self.state.bind_address)
-            client.is_failover_in_progress(hostname=self.state.bind_address)
+            client.failover_primary_coordinated(self.state.endpoint)
+            client.is_failover_in_progress(self.state.endpoint)
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to trigger failover: {e}")
             raise SentinelFailoverError from e
@@ -270,19 +273,10 @@ class SentinelManager(ManagerStatusProtocol):
             ValkeyWorkloadCommandError: If the CLI command to get sentinel information fails.
         """
         client = self._get_sentinel_client()
-        # if the hostname is a hostname and not an IP get the ip from the servers
-        ip = hostname
-        if not is_valid_ip(ip):
-            ip = next(
-                (
-                    unit.model.private_ip
-                    for unit in self.state.servers
-                    if unit.model.hostname == hostname
-                ),
-                "",
-            )
 
-        return [ip] + [sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)]
+        return [hostname] + [
+            sentinel["ip"] for sentinel in client.sentinels_primary(hostname=hostname)
+        ]
 
     def restart_service(self) -> None:
         """Restart the sentinel service to load configuration."""

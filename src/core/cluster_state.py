@@ -5,6 +5,7 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
+import socket
 
 import ops
 from charms.data_platform_libs.v1.data_interfaces import (
@@ -132,6 +133,15 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             return None
 
         return str(address)
+
+    @property
+    def endpoint(self) -> str:
+        """The endpoint to be used by other units to connect to this unit.
+
+        On VM-based substrates, this should be the bind address.
+        On Kubernetes, this should be the fully qualified domain name of the unit.
+        """
+        return self.bind_address if self.substrate == Substrate.VM else socket.getfqdn()
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
