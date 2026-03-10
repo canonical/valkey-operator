@@ -174,6 +174,7 @@ class ScaleDownLock(Lockable):
         return ValkeyClient(
             username=CharmUsers.VALKEY_ADMIN.value,
             password=self.charm.state.unit_server.valkey_admin_password,
+            tls=self.charm.state.unit_server.is_tls_enabled,
             workload=self.charm.workload,
         )
 

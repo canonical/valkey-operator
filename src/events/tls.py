@@ -153,7 +153,7 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-        if self.charm.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
+        if self.charm.state.unit_server.is_tls_enabled:
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:

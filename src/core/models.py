@@ -166,6 +166,11 @@ class ValkeyServer(RelationState):
 
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
 
+    @property
+    def is_tls_enabled(self) -> bool:
+        """Check if TLS is enabled for client connections."""
+        return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+
 
 @final
 class ValkeyCluster(RelationState):

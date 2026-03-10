@@ -21,7 +21,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, TLSState
+from literals import CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,7 @@ class SentinelManager(ManagerStatusProtocol):
         return SentinelClient(
             username=self.admin_user,
             password=self.admin_password,
-            tls=True
-            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
-            else False,
+            tls=self.state.unit_server.is_tls_enabled,
             workload=self.workload,
         )
 
