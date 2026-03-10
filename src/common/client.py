@@ -11,7 +11,7 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, TLS_PORT
+from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, SENTINEL_TLS_PORT, TLS_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -272,8 +272,6 @@ class ValkeyClient(CliClient):
 class SentinelClient(CliClient):
     """Handle sentinel-specific client connections."""
 
-    port: int = SENTINEL_PORT
-
     def __init__(
         self,
         username: str,
@@ -282,6 +280,7 @@ class SentinelClient(CliClient):
         workload: WorkloadBase,
     ):
         super().__init__(username, password, tls, workload)
+        self.port = SENTINEL_TLS_PORT if tls else SENTINEL_PORT
 
     def ping(self, hostname: str) -> bool:
         """Ping the Sentinel server to check if it's responsive.
