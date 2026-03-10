@@ -8,7 +8,7 @@ import pytest
 from ops import testing
 
 from charm import ValkeyCharm
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
 from literals import CONTAINER, PEER_RELATION
 from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
@@ -50,6 +50,13 @@ def test_other_unit_has_lock(cloud_spec):
 
     with (
         patch("common.locks.ScaleDownLock.request_lock", return_value=False),
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            side_effect=[
+                ValkeyWorkloadCommandError("errored out"),
+                ("10.0.1.1", 6379),
+            ],
+        ),
     ):
         # expect raised exception due to lock not being acquired
         with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
@@ -80,10 +87,7 @@ def test_non_primary(cloud_spec):
         patch("common.locks.ScaleDownLock.release_lock", return_value=True),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
-            side_effect=[
-                ValkeyWorkloadCommandError("errored out"),
-                ("10.0.1.1", 6379),
-            ],
+            return_value=("10.0.1.1", 6379),
         ),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.reset") as mock_reset,
@@ -153,3 +157,87 @@ def test_primary(cloud_spec):
         mock_stop.assert_called_once()
         assert mock_reset.call_count == 2
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
+
+
+def test_last_leader_unit_going_down(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "hostname": "valkey-0",
+            "private-ip": "10.0.1.0",
+            "start-state": "started",
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_strorage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_strorage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch("common.locks.ScaleDownLock.request_lock", return_value=True),
+        patch("common.locks.ScaleDownLock.release_lock", return_value=True),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="10.0.1.0"),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
+        patch("core.models.ValkeyCluster.update") as cluster_update,
+        patch("ops.model.Application.planned_units", return_value=0),
+    ):
+        state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
+        mock_stop.assert_called_once()
+        status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
+        cluster_update.assert_called_once_with(
+            {"internal_ca_certificate": None, "internal_ca_private_key": None}
+        )
+
+
+def test_cannot_get_primary_ip_leader(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "hostname": "valkey-0",
+            "private-ip": "10.0.1.0",
+            "start-state": "started",
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_strorage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_strorage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip",
+            side_effect=ValkeyCannotGetPrimaryIPError("errored out"),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("core.models.ValkeyCluster.update") as cluster_update,
+        patch("ops.model.Application.planned_units", return_value=0),
+    ):
+        state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
+        mock_stop.assert_not_called()
+        status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
+        cluster_update.assert_called_once_with(
+            {"internal_ca_certificate": None, "internal_ca_private_key": None}
+        )
