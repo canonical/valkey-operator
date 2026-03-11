@@ -204,11 +204,11 @@ class TLSManager(ManagerStatusProtocol):
             except ValkeyWorkloadCommandError:
                 logger.warning("Certificate will expire in less than 24h")
                 self.state.unit_server.update({"tls_certificate_expiring": True})
-                return False
+                return True
 
         if self.state.unit_server.model.tls_certificate_expiring:
             self.state.unit_server.update({"tls_certificate_expiring": False})
-        return True
+        return False
 
     def start_ca_rotation_if_required(
         self, certificate: ProviderCertificate | None = None
