@@ -87,16 +87,16 @@ def test_non_primary(cloud_spec):
         patch("common.locks.ScaleDownLock.release_lock", return_value=True),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
-            return_value=("10.0.1.1", 6379),
+            return_value=("valkey-1", 6379),
         ),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.reset") as mock_reset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
             side_effect=[
-                [{"ip": "10.0.1.0"}, {"ip": "10.0.1.2"}],  # for get_active_sentinel_ips
-                [{"ip": "10.0.1.2"}],  # for target_sees_all_others unit 10.0.1.1
-                [{"ip": "10.0.1.1"}],  # for target_sees_all_others unit 10.0.1.2
+                [{"ip": "valkey-0"}, {"ip": "valkey-2"}],  # for get_active_sentinel_ips
+                [{"ip": "valkey-2"}],  # for target_sees_all_others unit valkey-1
+                [{"ip": "valkey-1"}],  # for target_sees_all_others unit valkey-2
             ],
         ),
         patch(
@@ -187,7 +187,7 @@ def test_last_leader_unit_going_down(cloud_spec):
         ),
         patch("common.locks.ScaleDownLock.request_lock", return_value=True),
         patch("common.locks.ScaleDownLock.release_lock", return_value=True),
-        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="10.0.1.0"),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
         patch("core.models.ValkeyCluster.update") as cluster_update,

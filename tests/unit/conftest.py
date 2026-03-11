@@ -28,6 +28,15 @@ def mock_bind_address(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_endpoint(mocker):
+    mocker.patch(
+        "core.cluster_state.ClusterState.endpoint",
+        new_callable=PropertyMock,
+        return_value="valkey-0",
+    )
+
+
+@pytest.fixture(autouse=True)
 def tenacity_wait(mocker):
     mocker.patch("tenacity.nap.time")
 

@@ -641,7 +641,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(["acl", "load"], hostname="127.1.1.1")
+        mock_exec_command.assert_called_once_with(["acl", "load"], hostname="valkey-0")
         cluster_statuses = charm.state.statuses.get(
             scope="unit",
             component=charm.cluster_manager.name,
