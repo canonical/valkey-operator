@@ -6,6 +6,7 @@
 
 import logging
 
+import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -285,3 +286,14 @@ class SentinelManager(ManagerStatusProtocol):
         ).root
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+    @tenacity.retry(wait=tenacity.wait_fixed(5), stop=tenacity.stop_after_attempt(8), reraise=True)
+    def get_primary_ip_for_scale_down(self) -> str:
+        """Get the primary IP to use for scale down operations.
+
+        Retry to get the primary ip until 2x restart delay is reached.
+        Pebble uses backoff and is maxed at 30s
+        Snap delay is set at 20s
+        40s covers both substrates
+        """
+        return self.get_primary_ip()

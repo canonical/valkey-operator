@@ -142,7 +142,7 @@ class TLSEvents(ops.Object):
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
-        if self.charm.app.planned_units() == 0:
+        if self.charm.app.planned_units() == 0 or self.charm.state.unit_server.is_being_removed:
             return
 
         if not self.charm.state.cluster.internal_ca_certificate:

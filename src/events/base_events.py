@@ -9,7 +9,6 @@ import socket
 from typing import TYPE_CHECKING
 
 import ops
-import tenacity
 
 from common.exceptions import (
     RequestingLockTimedOutError,
@@ -445,24 +444,11 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
 
-        # retry to get the primary ip until 2x restart delay is reached.
-        # Pebble uses backoff and is maxed at 30s
-        # Snap delay is set at 20s
-        # 40s should be enough to cover both substrates
         try:
-            primary_ip = self._get_primary_ip_for_scale_down()
+            primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
-            if self.charm.app.planned_units() == 0 and self.charm.unit.is_leader():
-                # clear app data bag
-                self.charm.state.cluster.update(
-                    {
-                        "internal_ca_certificate": None,
-                        "internal_ca_private_key": None,
-                    }
-                )
-
-            self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+            self._set_state_for_going_away()
             return
 
         # blocks until the lock is acquired
@@ -483,7 +469,13 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
         # if unit has primary then failover
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
+        except ValkeyCannotGetPrimaryIPError as e:
+            logger.error(e)
+            self._set_state_for_going_away()
+            return
+
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
         if primary_ip == self.charm.state.bind_address and len(active_sentinels) > 1:
             self.charm.state.unit_server.update(
@@ -519,6 +511,10 @@ class BaseEvents(ops.Object):
             # release lock
             scale_down_lock.release_lock(primary_ip=primary_ip)
 
+        self._set_state_for_going_away()
+
+    def _set_state_for_going_away(self) -> None:
+        """Set the state to going away when the unit is going down."""
         if self.charm.app.planned_units() == 0 and self.charm.unit.is_leader():
             # clear app data bag
             self.charm.state.cluster.update(
@@ -529,8 +525,3 @@ class BaseEvents(ops.Object):
             )
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
-
-    @tenacity.retry(wait=tenacity.wait_fixed(5), stop=tenacity.stop_after_attempt(8), reraise=True)
-    def _get_primary_ip_for_scale_down(self) -> str:
-        """Get the primary IP to use for scale down operations."""
-        return self.charm.sentinel_manager.get_primary_ip()
