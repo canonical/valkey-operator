@@ -305,7 +305,7 @@ def test_client_certificate_available(cloud_spec):
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.sentinel.SentinelManager.restart_service"),
             patch("managers.tls.TLSManager.write_certificate"),
-            patch("managers.tls.TLSManager.check_certificate_validity"),
+            patch("managers.tls.TLSManager.will_certificate_expire"),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)
@@ -357,7 +357,7 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
             ),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
-            patch("managers.tls.TLSManager.check_certificate_validity"),
+            patch("managers.tls.TLSManager.will_certificate_expire"),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)
@@ -415,7 +415,7 @@ def test_client_certificate_available_not_all_units_ready(cloud_spec):
             ),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
-            patch("managers.tls.TLSManager.check_certificate_validity"),
+            patch("managers.tls.TLSManager.will_certificate_expire"),
         ):
             event.certificate = client_certificate.certificate
             charm.tls_events._on_certificate_available(event)
@@ -663,10 +663,7 @@ def test_internal_peer_ca_rotation_single_unit(cloud_spec):
     )
 
     with (
-        patch(
-            "core.base_workload.WorkloadBase.exec",
-            side_effect=ValkeyWorkloadCommandError("failed"),
-        ),
+        patch("managers.tls.TLSManager.will_certificate_expire", return_value=True),
         patch("managers.tls.TLSManager.generate_ca_certificate") as generate_ca,
         patch("core.models.ValkeyCluster.internal_ca_certificate", return_value="my_new_ca"),
         patch("managers.tls.TLSManager.create_and_store_self_signed_certificate") as create_certs,
@@ -707,10 +704,7 @@ def test_internal_peer_ca_rotation_started(cloud_spec):
     )
 
     with (
-        patch(
-            "core.base_workload.WorkloadBase.exec",
-            side_effect=ValkeyWorkloadCommandError("failed"),
-        ),
+        patch("managers.tls.TLSManager.will_certificate_expire", return_value=True),
         patch("managers.tls.TLSManager.generate_ca_certificate") as generate_ca,
         patch("core.models.ValkeyCluster.internal_ca_certificate", return_value="my_new_ca"),
         patch("managers.tls.TLSManager.create_and_store_self_signed_certificate") as create_certs,

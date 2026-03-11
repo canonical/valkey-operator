@@ -18,6 +18,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
+from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import TLSCARotationState, TLSState
@@ -178,24 +179,36 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(ca_cert.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
 
-    def check_certificate_validity(self) -> None:
-        """Check if the certificates installed on the unit will soon expire."""
+    def will_certificate_expire(self) -> bool:
+        """Check if the certificates installed on the unit will soon expire.
+
+        Returns:
+            True if certificate expires in less than 24h, False if not.
+        """
         for cert_file in [
             self.workload.tls_paths.client_cert.as_posix(),
             self.workload.tls_paths.client_ca.as_posix(),
         ]:
-            # will raise if cert expires in less than 24h (=86400s)
-            self.workload.exec(
-                [
-                    "openssl",
-                    "x509",
-                    "-checkend",
-                    "86400",
-                    "-noout",
-                    "-in",
-                    cert_file,
-                ]
-            )
+            try:
+                self.workload.exec(
+                    [
+                        "openssl",
+                        "x509",
+                        "-checkend",
+                        "86400",
+                        "-noout",
+                        "-in",
+                        cert_file,
+                    ]
+                )
+            except ValkeyWorkloadCommandError:
+                logger.warning("Certificate will expire in less than 24h")
+                self.state.unit_server.update({"tls_certificate_expiring": True})
+                return False
+
+        if self.state.unit_server.model.tls_certificate_expiring:
+            self.state.unit_server.update({"tls_certificate_expiring": False})
+        return True
 
     def start_ca_rotation_if_required(
         self, certificate: ProviderCertificate | None = None

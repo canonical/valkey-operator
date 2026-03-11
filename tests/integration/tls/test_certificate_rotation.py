@@ -145,9 +145,12 @@ async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     # Rotate the CA certificate
     logger.info("Getting the current CA certificates")
     download_client_certificate_from_unit(juju, APP_NAME)
-    with open(TLS_CA_FILE, "r") as file:
-        old_ca_certificate = file.read()
+    with open(TLS_CA_FILE, "r") as ca_file:
+        old_ca_certificate = ca_file.read()
     assert old_ca_certificate, "Failed to get current ca certificate"
+    with open(TLS_CERT_FILE, "r") as cert_file:
+        old_certificate = cert_file.read()
+    assert old_certificate, "Failed to get current certificate"
 
     logger.info("Rotating the CA certificate")
     tls_config = {"certificate-validity": "10d", "ca-common-name": "new-valkey-ca"}
@@ -159,10 +162,14 @@ async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
 
     logger.info("Checking if the CA certificates are rotated")
     download_client_certificate_from_unit(juju, APP_NAME)
-    with open(TLS_CA_FILE, "r") as file:
-        new_ca_certificate = file.read()
+    with open(TLS_CA_FILE, "r") as ca_file:
+        new_ca_certificate = ca_file.read()
     assert new_ca_certificate, "Failed to get updated ca certificate"
+    with open(TLS_CERT_FILE, "r") as cert_file:
+        new_certificate = cert_file.read()
+    assert new_certificate, "Failed to get updated certificate"
     assert old_ca_certificate != new_ca_certificate, "CA certificate was not updated"
+    assert old_certificate != new_certificate, "Certificate was not updated"
 
     logger.info("Check access with updated certificate")
     hostnames = get_cluster_hostnames(juju, APP_NAME)

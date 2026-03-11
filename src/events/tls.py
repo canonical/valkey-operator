@@ -112,14 +112,8 @@ class TLSEvents(ops.Object):
             finally:
                 return
 
-        try:
-            # will raise if cert expires soon
-            self.charm.tls_manager.check_certificate_validity()
-            if self.charm.state.unit_server.model.tls_certificate_expiring:
-                self.charm.state.unit_server.update({"tls_certificate_expiring": False})
+        if not self.charm.tls_manager.will_certificate_expire():
             return
-        except ValkeyWorkloadCommandError:
-            self.charm.state.unit_server.update({"tls_certificate_expiring": True})
 
         if self.charm.state.client_tls_relation:
             return
@@ -270,14 +264,8 @@ class TLSEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle TLS related parts of update_status event."""
-        try:
-            # will raise if cert expires soon
-            self.charm.tls_manager.check_certificate_validity()
-            if self.charm.state.unit_server.model.tls_certificate_expiring:
-                self.charm.state.unit_server.update({"tls_certificate_expiring": False})
+        if not self.charm.tls_manager.will_certificate_expire():
             return
-        except ValkeyWorkloadCommandError:
-            self.charm.state.unit_server.update({"tls_certificate_expiring": True})
 
         if self.charm.state.client_tls_relation:
             return
