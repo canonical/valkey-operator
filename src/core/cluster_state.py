@@ -137,8 +137,12 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def fqdn(self) -> str:
         """The fully qualified domain name of this unit."""
-        # We add a training dot to reduce usage of coredns
-        return dotappend(get_k8s_fqdn(self.get_unit_hostname()))
+        # We add a trailing dot to reduce usage of coredns
+        return (
+            dotappend(get_k8s_fqdn(self.get_unit_hostname()))
+            if self.substrate == Substrate.K8S
+            else self.get_unit_hostname()
+        )
 
     @property
     def endpoint(self) -> str:
