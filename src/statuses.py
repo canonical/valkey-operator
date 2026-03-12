@@ -97,3 +97,10 @@ class TLSStatuses(Enum):
     CA_ROTATION_UPDATED = StatusObject(
         status="maintenance", message="TLS CA rotation: certificates updated"
     )
+    PRIVATE_KEY_BUT_NO_TLS = StatusObject(
+        status="blocked", message="Private Key provided, but client TLS not enabled"
+    )
+    PRIVATE_KEY_INVALID = StatusObject(
+        status="blocked",
+        message="The private key provided is not valid. Please provide a valid private key",
+    )
