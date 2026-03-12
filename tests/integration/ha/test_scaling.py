@@ -20,6 +20,7 @@ from tests.integration.helpers import (
     get_number_connected_replicas,
     get_password,
     get_primary_ip,
+    get_quorum,
     remove_number_units,
     seed_valkey,
 )
@@ -54,6 +55,11 @@ async def test_seed_data(juju: jubilant.Juju) -> None:
     await seed_valkey(juju, target_gb=1)
 
 
+async def test_check_quorum(juju: jubilant.Juju) -> None:
+    """Check quorum value."""
+    assert get_quorum(juju, f"{APP_NAME}/0") == 1, "Unexpected quorum value after initial deploy"
+
+
 async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     """Make sure new units are added to the valkey downtime."""
     init_units_count = len(juju.status().apps[APP_NAME].units)
@@ -70,6 +76,9 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     )
     num_units = len(juju.status().apps[APP_NAME].units)
     assert num_units == NUM_UNITS, f"Expected {NUM_UNITS} units, got {num_units}."
+
+    for unit in juju.status().apps[APP_NAME].units:
+        assert get_quorum(juju, unit) == (NUM_UNITS // 2) + 1
 
     # check if all units have been added to the cluster
     hostnames = get_cluster_hostnames(juju, APP_NAME)
@@ -122,6 +131,9 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     )
     num_units = len(juju.status().get_units(APP_NAME))
     assert num_units == NUM_UNITS - 1, f"Expected {NUM_UNITS - 1} units, got {num_units}."
+
+    for unit in juju.status().apps[APP_NAME].units:
+        assert get_quorum(juju, unit) == (num_units // 2) + 1
 
     number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, APP_NAME),
@@ -197,6 +209,9 @@ async def test_scale_down_multiple_units(
     assert number_of_replicas == NUM_UNITS - 2, (
         f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
     )
+
+    for unit in juju.status().apps[APP_NAME].units:
+        assert get_quorum(juju, unit) == (num_units // 2) + 1
 
     c_writes.update()
 

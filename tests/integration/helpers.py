@@ -33,6 +33,7 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    SENTINEL_PORT,
     TLS_PORT,
     CharmUsers,
     Substrate,
@@ -458,16 +459,40 @@ valkey_cli_result = NamedTuple(
 
 
 def exec_valkey_cli(
-    hostname: str, username: str, password: str, command: str
+    hostname: str,
+    username: str,
+    password: str,
+    command: str,
+    port: int = CLIENT_PORT,
+    json: bool = False,
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = f"valkey-cli --no-auth-warning -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
+    command = f"valkey-cli --no-auth-warning -h {hostname} -p {port} --user {username} --pass {password} {'--json' if json else ''} {command}"
     result = subprocess.run(
         command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
     return valkey_cli_result(
         stdout=result.stdout.strip(), stderr=result.stderr.strip(), returncode=result.returncode
     )
+
+
+def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
+    """Get the currently configured sentinel quorum."""
+    status = juju.status()
+    model_info = juju.show_model()
+    units = status.get_units(APP_NAME)
+    unit_endpoint = (
+        units[unit_name].public_address if model_info.type != "kubernetes" else units[unit_name].address
+    )
+    result = exec_valkey_cli(
+        hostname=unit_endpoint,
+        username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+        command="SENTINEL primary primary",
+        port=SENTINEL_PORT,
+        json=True,
+    )
+    return int(json.loads(result.stdout)["quorum"])
 
 
 async def set_key(

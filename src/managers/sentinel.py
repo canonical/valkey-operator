@@ -22,7 +22,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers
+from literals import PRIMARY_NAME, CharmUsers
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -297,3 +297,13 @@ class SentinelManager(ManagerStatusProtocol):
         40s covers both substrates
         """
         return self.get_primary_ip()
+
+    def get_configured_quorum(self) -> int:
+        """Get the currently configured quorum for the sentinel cluster."""
+        client = self._get_sentinel_client()
+        return int(client.primary(self.state.bind_address)["quorum"])
+
+    def set_quorum(self, quorum: int) -> None:
+        """Set the quorum for the sentinel cluster."""
+        client = self._get_sentinel_client()
+        client.set(self.state.bind_address, PRIMARY_NAME, "quorum", str(quorum))

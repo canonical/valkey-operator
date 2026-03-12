@@ -77,6 +77,9 @@ class BaseEvents(ops.Object):
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_departed, self._on_peer_relation_departed
+        )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
@@ -224,11 +227,17 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
+        self._reconfigure_quorum_if_necessary()
+
         if not self.charm.unit.is_leader():
             return
 
         for lock in [StartLock(self.charm.state)]:
             lock.process()
+
+    def _on_peer_relation_departed(self, event: ops.RelationDepartedEvent) -> None:
+        """Handle event received by all units when a unit departs."""
+        self._reconfigure_quorum_if_necessary()
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
@@ -525,3 +534,24 @@ class BaseEvents(ops.Object):
             )
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+
+    def _reconfigure_quorum_if_necessary(self) -> None:
+        """Reconfigure the sentinel quorum if it does not match the current cluster size."""
+        # if the unit / all units are being removed, we do not need to reconfigure the quorum
+        if (
+            not self.charm.state.unit_server.is_active
+            or self.charm.state.unit_server.is_being_removed
+            or self.model.app.planned_units() == 0
+        ):
+            return
+
+        if self.charm.sentinel_manager.get_configured_quorum() != self.charm.config_manager.quorum:
+            logger.debug("Updating sentinel quorum to match current cluster size")
+            try:
+                self.charm.sentinel_manager.set_quorum(self.charm.config_manager.quorum)
+                self.charm.config_manager.set_sentinel_config_properties(
+                    self.charm.sentinel_manager.get_primary_ip()
+                )
+            except ValkeyWorkloadCommandError as e:
+                logger.error(f"Failed to update sentinel quorum: {e}")
+                # not critical to defer here, we can wait for the next relation change or config change to try again
