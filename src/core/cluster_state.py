@@ -5,7 +5,6 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
-import socket
 
 import ops
 from charms.data_platform_libs.v1.data_interfaces import (
@@ -15,6 +14,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 )
 from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
+from common.helpers import dotappend, get_k8s_fqdn
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
     CLIENT_TLS_RELATION_NAME,
@@ -135,13 +135,19 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
+    def fqdn(self) -> str:
+        """The fully qualified domain name of this unit."""
+        # We add a training dot to reduce usage of coredns
+        return dotappend(get_k8s_fqdn(self.get_unit_hostname()))
+
+    @property
     def endpoint(self) -> str:
         """The endpoint to be used by other units to connect to this unit.
 
         On VM-based substrates, this should be the bind address.
         On Kubernetes, this should be the fully qualified domain name of the unit.
         """
-        return self.bind_address if self.substrate == Substrate.VM else socket.getfqdn()
+        return self.bind_address if self.substrate == Substrate.VM else self.fqdn
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
@@ -160,6 +166,20 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             raise
 
         return secret_content
+
+    def get_unit_hostname(self, unit_name: str | None = None) -> str:
+        """Get the hostname.localdomain for a unit.
+
+        Translate juju unit name to hostname.localdomain, necessary
+        for correct name resolution under k8s.
+
+        Args:
+            unit_name: unit name
+        Returns:
+            A string representing the hostname.localdomain of the unit.
+        """
+        unit_name = unit_name or self.charm.unit.name
+        return f"{unit_name.replace('/', '-')}.{self.charm.app.name}-endpoints"
 
     @property
     def number_units_started(self) -> int:

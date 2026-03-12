@@ -5,7 +5,6 @@
 """Valkey base event handlers."""
 
 import logging
-import socket
 from typing import TYPE_CHECKING
 
 import ops
@@ -103,7 +102,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "start_state": StartState.NOT_STARTED.value,
-                "hostname": socket.getfqdn(),
+                "hostname": self.charm.state.fqdn,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -249,7 +248,7 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.getfqdn(),
+                "hostname": self.charm.state.fqdn,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -291,7 +290,7 @@ class BaseEvents(ops.Object):
         """Handle the config_changed event."""
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.getfqdn(),
+                "hostname": self.charm.state.fqdn,
                 "private_ip": self.charm.state.bind_address,
             }
         )
