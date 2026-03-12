@@ -482,7 +482,9 @@ def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
     model_info = juju.show_model()
     units = status.get_units(APP_NAME)
     unit_endpoint = (
-        units[unit_name].public_address if model_info.type != "kubernetes" else units[unit_name].address
+        units[unit_name].public_address
+        if model_info.type != "kubernetes"
+        else units[unit_name].address
     )
     result = exec_valkey_cli(
         hostname=unit_endpoint,
