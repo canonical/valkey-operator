@@ -28,11 +28,11 @@ def mock_bind_address(mocker):
 
 
 @pytest.fixture(autouse=True)
-def mock_endpoint(mocker):
+def mock_fqdn(mocker):
     mocker.patch(
-        "core.cluster_state.ClusterState.endpoint",
+        "socket.getaddrinfo",
         new_callable=PropertyMock,
-        return_value="valkey-0",
+        return_value=[(None, None, None, "valkey-0.valkey-endpoints.testing.svc.cluster.local")],
     )
 
 
