@@ -642,7 +642,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
         mock_exec_command.assert_called_once_with(
-            ["acl", "load"], hostname="valkey-0.valkey-endpoints.testing.svc.cluster.local."
+            ["acl", "load"], hostname="valkey-0.valkey-endpoints"
         )
         cluster_statuses = charm.state.statuses.get(
             scope="unit",

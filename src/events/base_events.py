@@ -102,7 +102,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "start_state": StartState.NOT_STARTED.value,
-                "hostname": self.charm.state.fqdn,
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -248,7 +248,7 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update(
             {
-                "hostname": self.charm.state.fqdn,
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -290,7 +290,7 @@ class BaseEvents(ops.Object):
         """Handle the config_changed event."""
         self.charm.state.unit_server.update(
             {
-                "hostname": self.charm.state.fqdn,
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )

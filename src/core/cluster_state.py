@@ -14,7 +14,6 @@ from charms.data_platform_libs.v1.data_interfaces import (
 )
 from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
-from common.helpers import dotappend, get_k8s_fqdn
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
     CLIENT_TLS_RELATION_NAME,
@@ -135,14 +134,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
-    def fqdn(self) -> str:
-        """The fully qualified domain name of this unit."""
-        # We add a trailing dot to reduce usage of coredns
-        return (
-            dotappend(get_k8s_fqdn(self.get_unit_hostname()))
-            if self.substrate == Substrate.K8S
-            else self.get_unit_hostname()
-        )
+    def hostname(self) -> str:
+        """The hostname of the unit."""
+        return self.get_unit_hostname(self.model.unit.name)
 
     @property
     def endpoint(self) -> str:
@@ -151,7 +145,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         On VM-based substrates, this should be the bind address.
         On Kubernetes, this should be the fully qualified domain name of the unit.
         """
-        return self.bind_address if self.substrate == Substrate.VM else self.fqdn
+        return self.bind_address if self.substrate == Substrate.VM else self.hostname
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

@@ -28,15 +28,6 @@ def mock_bind_address(mocker):
 
 
 @pytest.fixture(autouse=True)
-def mock_fqdn(mocker):
-    mocker.patch(
-        "socket.getaddrinfo",
-        new_callable=PropertyMock,
-        return_value=[(None, None, None, "valkey-0.valkey-endpoints.testing.svc.cluster.local")],
-    )
-
-
-@pytest.fixture(autouse=True)
 def tenacity_wait(mocker):
     mocker.patch("tenacity.nap.time")
 

@@ -176,7 +176,7 @@ class ValkeyServer(RelationState):
         """Return the endpoint to be used by other units to connect to this unit.
 
         On VM-based substrates, this should be the private IP address.
-        On Kubernetes, this should be the fully qualified domain name of the unit.
+        On Kubernetes, this should be the hostname of the unit.
         """
         return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
