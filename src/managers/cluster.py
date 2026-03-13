@@ -52,14 +52,14 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         client = self._get_valkey_client()
-        if not client.acl_load(hostname=self.state.bind_address):
+        if not client.acl_load(hostname=self.state.endpoint):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()
         if not client.config_set(
-            hostname=self.state.bind_address,
+            hostname=self.state.endpoint,
             parameter="primaryauth",
             value=self.state.cluster.internal_users_credentials.get(
                 CharmUsers.VALKEY_REPLICA.value, ""
@@ -76,7 +76,7 @@ class ClusterManager(ManagerStatusProtocol):
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
         client = self._get_valkey_client()
-        role_info = client.role(hostname=self.state.bind_address)
+        role_info = client.role(hostname=self.state.endpoint)
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
         except IndexError as e:
@@ -93,12 +93,12 @@ class ClusterManager(ManagerStatusProtocol):
         """Check if a valkey instance is healthy."""
         client = self._get_valkey_client()
 
-        if not client.ping(hostname=self.state.bind_address):
+        if not client.ping(hostname=self.state.endpoint):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
 
         if (
-            persistence_info := client.info_persistence(hostname=self.state.bind_address)
+            persistence_info := client.info_persistence(hostname=self.state.endpoint)
         ) and persistence_info.get("loading", "") != "0":
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False
@@ -112,7 +112,7 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()
-        client.reload_tls(tls_config, hostname=self.state.bind_address)
+        client.reload_tls(tls_config, hostname=self.state.endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

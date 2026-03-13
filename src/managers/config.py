@@ -46,7 +46,7 @@ class ConfigManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
 
-    def get_config_properties(self, primary_ip: str) -> dict[str, str]:
+    def get_config_properties(self, primary_endpoint: str) -> dict[str, str]:
         """Assemble the config properties.
 
         Returns:
@@ -78,13 +78,10 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["dir"] = self.workload.working_dir.as_posix()
 
         # bind to all interfaces
-        if self.state.substrate == Substrate.VM:
-            config_properties["bind"] = self.state.bind_address
-        else:
-            config_properties["bind"] = "0.0.0.0 -::1"
+        config_properties["bind"] = self.state.endpoint
 
         # replica related config
-        replica_config = self._generate_replica_config(primary_ip=primary_ip)
+        replica_config = self._generate_replica_config(primary_endpoint=primary_endpoint)
         config_properties.update(replica_config)
 
         # TLS related configuration
@@ -93,25 +90,29 @@ class ConfigManager(ManagerStatusProtocol):
 
         return config_properties
 
-    def _generate_replica_config(self, primary_ip: str) -> dict[str, str]:
+    def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""
+        local_unit_endpoint = self.state.unit_server.get_endpoint(self.state.substrate)
         replica_config = {
             "primaryuser": CharmUsers.VALKEY_REPLICA.value,
             "primaryauth": self.state.cluster.internal_users_credentials.get(
                 CharmUsers.VALKEY_REPLICA.value, ""
             ),
+            "replica-announce-ip": local_unit_endpoint,
         }
-        if primary_ip != self.state.bind_address:
+        if primary_endpoint != local_unit_endpoint:
             # set replicaof
-            logger.debug("Setting replicaof to primary %s", primary_ip)
+            logger.debug("Setting replicaof to primary %s", primary_endpoint)
             # internal communication always uses peer TLS (`tls-replication=yes`)
-            replica_config["replicaof"] = f"{primary_ip} {TLS_PORT}"
+            replica_config["replicaof"] = f"{primary_endpoint} {TLS_PORT}"
         return replica_config
 
-    def set_config_properties(self, primary_ip: str) -> None:
+    def set_config_properties(self, primary_endpoint: str) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
-        self.workload.write_config_file(config=self.get_config_properties(primary_ip=primary_ip))
+        self.workload.write_config_file(
+            config=self.get_config_properties(primary_endpoint=primary_endpoint)
+        )
 
     def generate_tls_config(self) -> dict[str, str]:
         """Return the TLS configuration based on the current state."""
@@ -192,7 +193,9 @@ class ConfigManager(ManagerStatusProtocol):
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
-    def get_sentinel_config_properties(self, primary_ip: str) -> dict[str, str | dict[str, str]]:
+    def get_sentinel_config_properties(
+        self, primary_endpoint: str
+    ) -> dict[str, str | dict[str, str]]:
         """Assemble the sentinel config properties.
 
         Returns:
@@ -240,7 +243,7 @@ class ConfigManager(ManagerStatusProtocol):
 
         # sentinel configs
         config_properties["sentinel"] = sentinel_properties | self._generate_sentinel_configs(
-            primary_ip=primary_ip
+            primary_endpoint=primary_endpoint
         )
 
         # tls config
@@ -249,10 +252,10 @@ class ConfigManager(ManagerStatusProtocol):
 
         return config_properties
 
-    def _generate_sentinel_configs(self, primary_ip: str) -> dict[str, str]:
+    def _generate_sentinel_configs(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the sentinel config properties based on the current cluster state."""
         sentinel_configs = {}
-        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_ip} {TLS_PORT} {self.quorum}"
+        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_endpoint} {TLS_PORT} {self.quorum}"
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_configs["auth-user"] = f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"
@@ -268,13 +271,17 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} 30000"
         sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 180000"
         sentinel_configs["parallel-syncs"] = f"{PRIMARY_NAME} 1"
+        if self.state.substrate == Substrate.K8S:
+            sentinel_configs["resolve-hostnames"] = "yes"
+            sentinel_configs["announce-hostnames"] = "yes"
+            sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
         return sentinel_configs
 
-    def set_sentinel_config_properties(self, primary_ip: str) -> None:
+    def set_sentinel_config_properties(self, primary_endpoint: str) -> None:
         """Write sentinel configuration file."""
         logger.debug("Writing Sentinel configuration")
 
-        sentinel_config = self.get_sentinel_config_properties(primary_ip=primary_ip)
+        sentinel_config = self.get_sentinel_config_properties(primary_endpoint=primary_endpoint)
 
         sentinel_config_string = "\n".join(
             f"sentinel {key} {value}" for key, value in sentinel_config["sentinel"].items()
@@ -333,7 +340,7 @@ class ConfigManager(ManagerStatusProtocol):
             }
         )
 
-    def configure_services(self, primary_ip: str) -> None:
+    def configure_services(self, primary_endpoint: str) -> None:
         """Start Valkey and Sentinel services.
 
         Raises:
@@ -341,9 +348,9 @@ class ConfigManager(ManagerStatusProtocol):
         """
         try:
             self.update_local_valkey_admin_password()
-            self.set_config_properties(primary_ip=primary_ip)
+            self.set_config_properties(primary_endpoint=primary_endpoint)
             self.set_acl_file()
-            self.set_sentinel_config_properties(primary_ip=primary_ip)
+            self.set_sentinel_config_properties(primary_endpoint=primary_endpoint)
             self.set_sentinel_acl_file()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)

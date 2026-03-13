@@ -133,6 +133,20 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         return str(address)
 
+    @property
+    def hostname(self) -> str:
+        """The hostname of the unit."""
+        return self.get_unit_hostname(self.model.unit.name)
+
+    @property
+    def endpoint(self) -> str:
+        """The endpoint to be used by other units to connect to this unit.
+
+        On VM-based substrates, this should be the bind address.
+        On Kubernetes, this should be the fully qualified domain name of the unit.
+        """
+        return self.bind_address if self.substrate == Substrate.VM else self.hostname
+
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
 
@@ -150,6 +164,20 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             raise
 
         return secret_content
+
+    def get_unit_hostname(self, unit_name: str | None = None) -> str:
+        """Get the hostname.localdomain for a unit.
+
+        Translate juju unit name to hostname.localdomain, necessary
+        for correct name resolution under k8s.
+
+        Args:
+            unit_name: unit name
+        Returns:
+            A string representing the hostname.localdomain of the unit.
+        """
+        unit_name = unit_name or self.charm.unit.name
+        return f"{unit_name.replace('/', '-')}.{self.charm.app.name}-endpoints"
 
     @property
     def number_units_started(self) -> int:

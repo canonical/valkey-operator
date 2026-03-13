@@ -5,7 +5,6 @@
 """Valkey base event handlers."""
 
 import logging
-import socket
 from typing import TYPE_CHECKING
 
 import ops
@@ -105,7 +104,7 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {
                 "start_state": StartState.NOT_STARTED.value,
-                "hostname": socket.gethostname(),
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -139,10 +138,12 @@ class BaseEvents(ops.Object):
             event.defer()
             return
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
-                primary_ip = self.charm.state.bind_address
+                primary_endpoint = self.charm.state.unit_server.get_endpoint(
+                    self.charm.state.substrate
+                )
             else:
                 logger.debug(
                     "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
@@ -155,7 +156,7 @@ class BaseEvents(ops.Object):
                 return
 
         try:
-            self.charm.config_manager.configure_services(primary_ip)
+            self.charm.config_manager.configure_services(primary_endpoint)
             self.charm.workload.start()
         except ValkeyConfigurationError:
             self.charm.state.unit_server.update(
@@ -177,8 +178,10 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
             component_name=self.charm.cluster_manager.name,
         )
-
-        self.unit_fully_started.emit(is_primary=primary_ip == self.charm.state.bind_address)
+        self.unit_fully_started.emit(
+            is_primary=primary_endpoint
+            == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+        )
 
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
@@ -253,7 +256,7 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.gethostname(),
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -295,7 +298,7 @@ class BaseEvents(ops.Object):
         """Handle the config_changed event."""
         self.charm.state.unit_server.update(
             {
-                "hostname": socket.gethostname(),
+                "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
             }
         )
@@ -486,7 +489,10 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        if primary_ip == self.charm.state.bind_address and len(active_sentinels) > 1:
+        if (
+            primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            and len(active_sentinels) > 1
+        ):
             self.charm.state.unit_server.update(
                 {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
             )
@@ -501,7 +507,11 @@ class BaseEvents(ops.Object):
         # stop valkey and sentinel processes
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
         self.charm.workload.stop()
-        active_sentinels = [ip for ip in active_sentinels if ip != self.charm.state.bind_address]
+        active_sentinels = [
+            ip
+            for ip in active_sentinels
+            if ip != self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+        ]
 
         # reset sentinel states on other units
         self.charm.state.unit_server.update(
