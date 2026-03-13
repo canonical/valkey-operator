@@ -35,6 +35,19 @@ CERTIFICATE_EXPIRY_TIME = 320
 CA_EXPIRY_TIME = 500
 
 
+def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
+    """Prepare the units for the CA expiration test."""
+    for unit_name in juju.status().get_units(APP_NAME):
+        logger.info("Updating renewal relative time to 0.6 for unit %s", unit_name)
+        search_expression = "\\(refresh_events=\\[self.refresh_tls_certificates_event\\],\\)"
+        replace_expression = "\\1renewal_relative_time=0.6,"
+        file = f"/var/lib/juju/agents/unit-{unit_name.replace('/', '-')}/charm/src/events/tls.py"
+        juju.ssh(
+            command=f"sudo sed -i 's|{search_expression}|{replace_expression}|' {file}",
+            target=unit_name,
+        )
+
+
 def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Deploy the charm under test and a TLS provider."""
     juju.deploy(
@@ -55,6 +68,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
 
 async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     """Test the TLS certificate expiration and renewal on a running cluster."""
+    _prepare_units_for_ca_expiration_test(juju)
+
     logger.info("Downloading TLS certificate from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
 
@@ -193,19 +208,6 @@ async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with updated certificate"
 
 
-def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
-    """Prepare the units for the CA expiration test."""
-    for unit_name in juju.status().get_units(APP_NAME):
-        logger.info("Updating renewal relative time to 0.6 for unit %s", unit_name)
-        search_expression = "\\(refresh_events=\\[self.refresh_tls_certificates_event\\],\\)"
-        replace_expression = "\\1renewal_relative_time=0.6,"
-        file = f"/var/lib/juju/agents/unit-{unit_name.replace('/', '-')}/charm/src/events/tls.py"
-        juju.ssh(
-            command=f"sudo sed -i 's|{search_expression}|{replace_expression}|' {file}",
-            target=unit_name,
-        )
-
-
 async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     """Test the CA rotation.
 
@@ -218,8 +220,6 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=100,
     )
-
-    _prepare_units_for_ca_expiration_test(juju)
 
     logger.info("Adjust CA and certificate validity on TLS provider")
     tls_config = {"certificate-validity": "4m", "root-ca-validity": "10m"}
