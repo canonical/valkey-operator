@@ -123,7 +123,7 @@ class DataBagLock(Lockable):
 
     def release_lock(self) -> bool:
         """Release the lock from the local unit."""
-        if not self.state.unit_server.model[self.unit_request_lock_atr_name]:
+        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
             self.state.unit_server.update(
                 {
                     self.unit_request_lock_atr_name: False,
