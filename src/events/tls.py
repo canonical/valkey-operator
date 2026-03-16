@@ -142,7 +142,7 @@ class TLSEvents(ops.Object):
         """Handle the `relation-created` event."""
         self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
-    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
+    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:  # noqa: C901
         """Handle the `certificate-available` event from TLS provider."""
         cert = event.certificate
         client_certificates, client_private_key = (
