@@ -9,8 +9,9 @@ machines and bare metal, using the Juju orchestration framework.
 [Valkey](https://valkey.io) is a community-driven, open-source, high-performance
 key-value data store compatible with Redis® clients and ecosystem tooling.
 
-The charm aims to simplify Valkey operations from Day 0 to Day 2, offering secure
-defaults integration interfaces, and lifecycle automation.
+The charm can be deployed on Kubernetes and VM clouds and aims to simplify Valkey
+operations from Day 0 to Day 2, offering secure defaults integration interfaces,
+and lifecycle automation.
 
 ## Basic usage
 
@@ -24,13 +25,13 @@ juju add-model sample-model
 To deploy a single unit of Valkey, run the following command:
 
 ```shell
-juju deploy valkey --channel 9/edge
+juju deploy valkey --channel 9/edge --trust
 ```
 
 To deploy Valkey with multiple units, specify the number of desired units with the `-n` option:
 
 ```shell
-juju deploy valkey -n 3 --channel 9/edge
+juju deploy valkey -n 3 --channel 9/edge --trust
 ```
 
 Valkey can be scaled out using the `juju add-unit` command:
