@@ -352,9 +352,11 @@ def fast_forward(juju: jubilant.Juju):
         juju.model_config({"update-status-hook-interval": old})
 
 
-def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = APP_NAME) -> None:
+def download_client_certificate_from_unit(
+    juju: jubilant.Juju, app_name: str = APP_NAME, unit_name: str | None = None
+) -> None:
     """Copy the client certificate files from a unit to the host's filesystem."""
-    unit = next(iter(juju.status().get_units(app_name)))
+    unit = unit_name or next(iter(juju.status().get_units(app_name)))
     model_info = juju.show_model()
 
     if model_info.type == "kubernetes":
@@ -369,7 +371,7 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
         juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
-def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+def get_primary_ip(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
@@ -383,6 +385,7 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
                 username=CharmUsers.VALKEY_ADMIN.value,
                 password=get_password(juju),
                 command="info replication",
+                tls_enabled=tls_enabled,
             ).stdout
             # if master then we return the hostname
             if "role:master" in replication_info:
@@ -459,12 +462,20 @@ valkey_cli_result = NamedTuple(
 
 
 def exec_valkey_cli(
-    hostname: str, username: str, password: str, command: str
+    hostname: str,
+    username: str,
+    password: str,
+    command: str,
+    tls_enabled: bool = False,
+    json: bool = False,
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = f"valkey-cli --no-auth-warning -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
+    pre_command = f"valkey-cli --no-auth-warning -h {hostname} -p {TLS_PORT if tls_enabled else CLIENT_PORT} --user {username} --pass {password} {'--json' if json else ''}"
+    if tls_enabled:
+        pre_command += " --tls --cert client.pem --key client.key --cacert client_ca.pem"
+    exec_command = f"{pre_command} {command}"
     result = subprocess.run(
-        command.split(),
+        exec_command.split(),
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -565,6 +576,7 @@ async def get_number_connected_replicas(
     hostnames: list[str],
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> int:
     """Get the number of connected replicas in the Valkey cluster.
 
@@ -577,7 +589,10 @@ async def get_number_connected_replicas(
         The number of connected replicas.
     """
     async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password
+        hostnames=hostnames,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
     ) as client:
         info = (await client.info([InfoSection.REPLICATION])).decode()
     search_result = re.search(r"connected_slaves:([\d+])", info)

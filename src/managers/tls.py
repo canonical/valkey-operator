@@ -169,6 +169,53 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(ca_cert.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
 
+    def get_current_sans(self) -> dict[str, set[str]]:
+        """Get the current SANs for a unit's cert."""
+        cert_file = self.workload.tls_paths.client_cert
+
+        sans_ip = set()
+        sans_dns = set()
+        if not (
+            san_lines := self.workload.exec(
+                [
+                    "openssl",
+                    "x509",
+                    "-ext",
+                    "subjectAltName",
+                    "-noout",
+                    "-in",
+                    cert_file.as_posix(),
+                ]
+            )[0].splitlines()
+        ):
+            return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+        for line in san_lines:
+            for sans in line.split(", "):
+                san_type, san_value = sans.split(":")
+
+                if san_type.strip() == "DNS":
+                    sans_dns.add(san_value)
+                if san_type.strip() == "IP Address":
+                    sans_ip.add(san_value)
+
+        return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+    def certificate_sans_require_update(self) -> bool:
+        """Check current certificate sans and determine if certificate requires update.
+
+        Returns:
+            bool: True if certificate sans have changed, False if they are still the same.
+        """
+        current_sans = self.get_current_sans()
+        new_sans_ip = self.build_sans_ip()
+        new_sans_dns = self.build_sans_dns()
+
+        if new_sans_ip ^ current_sans["sans_ip"] or new_sans_dns ^ current_sans["sans_dns"]:
+            return True
+
+        return False
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []

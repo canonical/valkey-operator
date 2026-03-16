@@ -5,8 +5,12 @@ import asyncio
 import logging
 
 import jubilant
+import pytest
 
 from literals import Substrate
+from tests.integration.cw_helpers import (
+    assert_continuous_writes_increasing,
+)
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
     get_unit_name_from_primary_ip,
@@ -17,8 +21,11 @@ from tests.integration.ha.helpers.helpers import (
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    TLS_CHANNEL,
+    TLS_NAME,
     CharmUsers,
     are_apps_active_and_agents_idle,
+    download_client_certificate_from_unit,
     get_cluster_hostnames,
     get_number_connected_replicas,
     get_password,
@@ -30,7 +37,10 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+@pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
+def test_build_and_deploy(
+    tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
+) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(
         charm,
@@ -38,6 +48,11 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=NUM_UNITS,
         trust=True,
     )
+
+    if tls_enabled:
+        juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
+        juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
         timeout=600,
@@ -48,15 +63,29 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
 
-async def test_network_cut_primary(juju: jubilant.Juju, substrate: Substrate, chaos_mesh) -> None:
+@pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
+async def test_network_cut_primary(
+    tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate, chaos_mesh, c_writes
+) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
+    if tls_enabled:
+        download_client_certificate_from_unit(juju, APP_NAME)
+    c_writes.tls_enabled = tls_enabled
+    await c_writes.async_clear()
+    c_writes.start()
+
     # Get the current primary unit
-    primary_ip = get_primary_ip(juju, APP_NAME)
+    primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from Juju status."
 
     # Cut the network to the primary unit
     logger.info("Cutting network to primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
+    if tls_enabled:
+        logger.info(
+            "TLS is enabled, ensuring client certificates are downloaded before network cut."
+        )
+        download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
     primary_hostname = hostname_from_unit(juju, primary_unit_name)
     machine_name = primary_hostname
     if substrate == Substrate.K8S:
@@ -68,7 +97,7 @@ async def test_network_cut_primary(juju: jubilant.Juju, substrate: Substrate, ch
         if unit == primary_unit_name:
             continue
         assert not is_unit_reachable(
-            hostname_from_unit(juju, unit), primary_hostname, substrate
+            juju, hostname_from_unit(juju, unit), primary_hostname, substrate
         ), f"Unit {unit} can still reach the primary unit {primary_hostname} after network cut."
 
     logger.info(
@@ -78,7 +107,7 @@ async def test_network_cut_primary(juju: jubilant.Juju, substrate: Substrate, ch
     )
     while True:
         try:
-            new_primary_ip = get_primary_ip(juju, APP_NAME)
+            new_primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
             break
         except ValueError as e:
             logger.warning(f"Error getting primary IP after network cut: {e}")
@@ -92,14 +121,22 @@ async def test_network_cut_primary(juju: jubilant.Juju, substrate: Substrate, ch
         "New primary IP after network cut: %s vs old primary IP: %s", new_primary_ip, primary_ip
     )
 
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is down to NUM_UNITS - 2
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=tls_enabled,
     )
     assert number_of_replicas == NUM_UNITS - 2, (
         f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
+    )
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=tls_enabled,
     )
 
     # restore network to the original primary unit
@@ -110,20 +147,36 @@ async def test_network_cut_primary(juju: jubilant.Juju, substrate: Substrate, ch
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
         )
     )
+    c_writes.update()
 
     for unit in juju.status().apps[APP_NAME].units:
         if unit == primary_unit_name:
             continue
-        assert is_unit_reachable(hostname_from_unit(juju, unit), primary_hostname, substrate), (
+        assert is_unit_reachable(
+            juju, hostname_from_unit(juju, unit), primary_hostname, substrate
+        ), (
             f"Unit {unit} cannot reach the original primary unit {primary_hostname} after network restoration."
         )
 
+    if tls_enabled:
+        download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=tls_enabled,
     )
     assert number_of_replicas == NUM_UNITS - 1, (
         f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
     )
+
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=tls_enabled,
+    )
+    await c_writes.async_clear()

@@ -50,12 +50,14 @@ async def assert_continuous_writes_increasing(
     hostnames: list[str],
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> None:
     """Assert that the continuous writes are increasing."""
     async with create_valkey_client(
         hostnames,
         username=username,
         password=password,
+        tls_enabled=tls_enabled,
     ) as client:
         writes_count = await client.llen(KEY)
         await asyncio.sleep(10)

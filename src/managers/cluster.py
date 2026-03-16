@@ -67,6 +67,15 @@ class ClusterManager(ManagerStatusProtocol):
         ):
             raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
 
+    def update_endpoint(self) -> None:
+        """Update the bind address runtime configuration on the Valkey server."""
+        client = self._get_valkey_client()
+        for parameter in ["bind", "replica-announce-ip"]:
+            if not client.config_set(
+                hostname=self.state.endpoint, parameter=parameter, value=self.state.endpoint
+            ):
+                raise ValkeyConfigSetError(f"Could not set {parameter} on Valkey server.")
+
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),

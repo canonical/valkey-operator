@@ -78,7 +78,6 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
         config_properties["dir"] = self.workload.working_dir.as_posix()
 
-        # bind to all interfaces
         config_properties["bind"] = self.state.endpoint
 
         # replica related config

@@ -198,8 +198,8 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
                 client.V1Container(
                     name="netshoot",
                     image="nicolaka/netshoot",
-                    # Ping once (-c 1), wait up to 2 seconds for a response (-W 2)
-                    command=["ping", "-c", "1", "-W", "2", to_host],
+                    # Ping five times (-c 5), wait up to 2 seconds for a response (-W 2)
+                    command=["ping", "-c", "5", "-W", "2", to_host],
                 )
             ],
         ),
@@ -256,7 +256,7 @@ def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
         for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
             with attempt:
                 ping = subprocess.call(
-                    f"lxc exec {from_host} -- ping -c 5 {to_host}".split(),
+                    f"lxc exec {from_host} -- ping -c 5 -W 2 {to_host}".split(),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -269,11 +269,14 @@ def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
     return False
 
 
-def is_unit_reachable(from_host: str, to_host: str, substrate: Substrate) -> bool:
+def is_unit_reachable(
+    juju: jubilant.Juju, from_host: str, to_host: str, substrate: Substrate
+) -> bool:
     """Test network reachability to a unit based on the substrate."""
+    assert juju.model, "Juju client must be connected to a model before checking unit reachability"
     match substrate:
         case Substrate.K8S:
-            return is_unit_reachable_k8s("testing", from_host, to_host)
+            return is_unit_reachable_k8s(juju.model, from_host, to_host)
         case Substrate.VM:
             return is_unit_reachable_lxd(from_host, to_host)
 
