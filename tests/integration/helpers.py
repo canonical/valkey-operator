@@ -376,20 +376,21 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    replication_info = exec_valkey_cli(
-        hostnames[0],
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju),
-        command="info replication",
-    ).stdout
-    # if master then we return the hostname
-    if "role:master" in replication_info:
-        return hostnames[0]
-    # extract ip
-    match = re.search(r"master_host:([^\s]+)", replication_info)
-    if not match:
-        raise ValueError("Could not find master_host in replication info")
-    return match.group(1)
+    for hostname in hostnames:
+        try:
+            replication_info = exec_valkey_cli(
+                hostname,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju),
+                command="info replication",
+            ).stdout
+            # if master then we return the hostname
+            if "role:master" in replication_info:
+                return hostname
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning(f"Error executing Valkey CLI on {hostname}: {e}")
+
+    raise ValueError("No primary node found in the cluster")
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
@@ -463,7 +464,12 @@ def exec_valkey_cli(
     """Execute a Valkey CLI command and returns the output as a string."""
     command = f"valkey-cli --no-auth-warning -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
     result = subprocess.run(
-        command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        command.split(),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
     )
     return valkey_cli_result(
         stdout=result.stdout.strip(), stderr=result.stderr.strip(), returncode=result.returncode

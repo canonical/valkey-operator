@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+"""High availability helpers."""
+
+import os
+import string
+import subprocess
+import tempfile
+import time
+from logging import getLogger
+
+import jubilant
+import kubernetes as kubernetes
+import urllib3
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
+
+from literals import Substrate
+from tests.integration.helpers import APP_NAME
+
+logger = getLogger(__name__)
+
+
+def cut_network_from_unit(juju: jubilant.Juju, substrate: Substrate, machine_name: str) -> None:
+    """Cut network from a lxc container.
+
+    Args:
+        juju: Juju client
+        substrate: The substrate the test is running on
+        machine_name: lxc container hostname or k8s pod name
+    """
+    if substrate == Substrate.VM:
+        # apply a mask (device type `none`)
+        cut_network_command = f"lxc config device add {machine_name} eth0 none"
+        subprocess.check_call(cut_network_command.split())
+    else:
+        # Apply a NetworkChaos file to use chaos-mesh to simulate a network cut.
+        with tempfile.NamedTemporaryFile(dir=".") as temp_file:
+            # Generates a manifest for chaosmesh to simulate network failure for a pod
+            with open(
+                "tests/integration/ha/helpers/chaos_network_loss.yml"
+            ) as chaos_network_loss_file:
+                logger.info(
+                    f"Calling network loss on ns={juju.model} and pod={machine_name.replace('/', '-')}"
+                )
+                template = string.Template(chaos_network_loss_file.read())
+                chaos_network_loss = template.substitute(
+                    namespace=juju.model,
+                    pod=machine_name.replace("/", "-"),
+                )
+
+                temp_file.write(str.encode(chaos_network_loss))
+                temp_file.flush()
+
+            # Apply the generated manifest, chaosmesh would then make the pod inaccessible
+            env = os.environ
+            env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
+            try:
+                command_result = subprocess.check_output(
+                    " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
+                    shell=True,
+                    env=env,
+                    stderr=subprocess.STDOUT,
+                )
+            except subprocess.CalledProcessError as err:
+                logger.error(
+                    f"Failed to apply network isolation: [{err.returncode}] {err.stderr=}, {err.stdout=}"
+                )
+                raise
+            logger.info("Result of isolating unit from cluster is '%s'", command_result)
+
+
+def restore_network_to_unit(juju: jubilant.Juju, substrate: Substrate, machine_name: str) -> None:
+    """Restore network from a lxc container.
+
+    Args:
+        juju: Juju client
+        substrate: The substrate the test is running on
+        machine_name: lxc container hostname or k8s pod name
+    """
+    if substrate == Substrate.VM:
+        # remove mask from eth0
+        restore_network_command = f"lxc config device remove {machine_name} eth0"
+        subprocess.check_call(restore_network_command.split())
+    else:
+        env = os.environ
+        env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
+        subprocess.check_output(
+            f"microk8s kubectl -n {juju.model} delete networkchaos network-loss-primary",
+            shell=True,
+            env=env,
+        )
+
+
+def deploy_chaos_mesh(namespace: str) -> None:
+    """Deploy chaos mesh to the provided namespace.
+
+    Chaos mesh can them be used by the tests to simulate a variety of failures.
+
+    Args:
+        namespace: The namespace to deploy chaos mesh to
+    """
+    env = os.environ
+    env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
+
+    subprocess.check_output(
+        " ".join(
+            [
+                "tests/integration/ha/helpers/deploy_chaos_mesh.sh",
+                namespace,
+            ]
+        ),
+        shell=True,
+        env=env,
+    )
+
+
+def destroy_chaos_mesh(namespace: str) -> None:
+    """Destroy chaos mesh on a provided namespace.
+
+    Cleans up the test K8S from test related dependencies.
+
+    Args:
+        namespace: The namespace to deploy chaos mesh to
+    """
+    env = os.environ
+    env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
+
+    subprocess.check_output(
+        f"tests/integration/ha/helpers/destroy_chaos_mesh.sh {namespace}",
+        shell=True,
+        env=env,
+    )
+
+
+def get_unit_name_from_primary_ip(
+    juju: jubilant.Juju, primary_ip: str, substrate: Substrate
+) -> str:
+    """Get the container name from the primary endpoint.
+
+    Args:
+        juju: Juju client
+        primary_ip: The primary endpoint in the form of "ip:port"
+        substrate: The substrate the test is running on
+
+    Returns:
+        The container name corresponding to the primary endpoint.
+    """
+    ip_address_attribute = "public_address" if substrate == Substrate.VM else "address"
+    for unit_name, unit in juju.status().apps[APP_NAME].units.items():
+        if getattr(unit, ip_address_attribute) == primary_ip:
+            return unit_name
+    raise ValueError(f"No unit found with IP address {primary_ip}")
+
+
+def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) -> bool:
+    """Test network reachability to a unit in k8s by creating a temporary pod with the same labels as the source pod and trying to ping the destination IP."""
+    # ---------------------------------------------------------
+    # 1. Setup Client and Bypass SSL (for local/testing clusters)
+    # ---------------------------------------------------------
+    config.load_kube_config()
+
+    configuration = client.Configuration.get_default_copy()
+    configuration.verify_ssl = False
+    client.Configuration.set_default(configuration)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    v1 = client.CoreV1Api()
+
+    # ---------------------------------------------------------
+    # 2. Fetch Labels from the Source Pod
+    # ---------------------------------------------------------
+    try:
+        source_pod = v1.read_namespaced_pod(name=source_pod_name, namespace=namespace)
+        source_labels = source_pod.metadata.labels or {}
+        logger.info(f"Fetched labels from {source_pod_name}: {source_labels}")
+    except ApiException as e:
+        logger.error(f"Failed to read source pod {source_pod_name}: {e}")
+        return False
+
+    # ---------------------------------------------------------
+    # 3. Define the Temporary Test Pod
+    # ---------------------------------------------------------
+    temp_pod_name = f"netshoot-test-{int(time.time())}"
+
+    pod_manifest = client.V1Pod(
+        metadata=client.V1ObjectMeta(
+            name=temp_pod_name,
+            namespace=namespace,
+            labels=source_labels,  # <--- Injecting the source pod's labels here
+        ),
+        spec=client.V1PodSpec(
+            restart_policy="Never",
+            containers=[
+                client.V1Container(
+                    name="netshoot",
+                    image="nicolaka/netshoot",
+                    # Ping once (-c 1), wait up to 2 seconds for a response (-W 2)
+                    command=["ping", "-c", "1", "-W", "2", to_host],
+                )
+            ],
+        ),
+    )
+
+    # ---------------------------------------------------------
+    # 4. Execute and Wait for Results
+    # ---------------------------------------------------------
+    try:
+        logger.info(f"Creating test pod '{temp_pod_name}' to ping {to_host}...")
+        v1.create_namespaced_pod(namespace=namespace, body=pod_manifest)
+
+        # Poll the pod status until it completes
+        while True:
+            pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
+            phase = pod_status.status.phase
+
+            if phase in ["Succeeded", "Failed"]:
+                break
+            time.sleep(1)  # Wait a second before checking again
+
+        # Optional: Fetch the actual ping output logs for debugging
+        logs = v1.read_namespaced_pod_log(name=temp_pod_name, namespace=namespace)
+        logger.info(f"Ping Output:\n{logs.strip()}")
+
+        # If phase is Succeeded, the ping command returned exit code 0
+        is_reachable = phase == "Succeeded"
+
+        if is_reachable:
+            logger.info(f"Success: {to_host} is reachable from {source_pod_name}.")
+        else:
+            logger.error(f"Failure: {to_host} is NOT reachable from {source_pod_name}.")
+
+        return is_reachable
+
+    except ApiException as e:
+        logger.error(f"Exception during pod creation/execution: {e}")
+        return False
+
+    # ---------------------------------------------------------
+    # 5. Clean Up (Always runs, even if errors occur above)
+    # ---------------------------------------------------------
+    finally:
+        logger.info(f"Cleaning up pod '{temp_pod_name}'...")
+        try:
+            v1.delete_namespaced_pod(name=temp_pod_name, namespace=namespace)
+        except ApiException as e:
+            logger.error(f"Failed to delete temporary pod {temp_pod_name}: {e}")
+
+
+def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
+    """Test network reachability between LXD hosts."""
+    try:
+        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+            with attempt:
+                ping = subprocess.call(
+                    f"lxc exec {from_host} -- ping -c 5 {to_host}".split(),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if ping == 0:
+                    return True
+                else:
+                    raise ValueError
+    except RetryError:
+        return False
+    return False
+
+
+def is_unit_reachable(from_host: str, to_host: str, substrate: Substrate) -> bool:
+    """Test network reachability to a unit based on the substrate."""
+    match substrate:
+        case Substrate.K8S:
+            return is_unit_reachable_k8s("testing", from_host, to_host)
+        case Substrate.VM:
+            return is_unit_reachable_lxd(from_host, to_host)
+
+
+def hostname_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
+    """Get the machine hostname from a specific unit.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        unit_name: The name of the unit to get the machine
+
+    Returns:
+        The hostname of the machine.
+    """
+    task_result = juju.exec(command="hostname", unit=unit_name)
+
+    return task_result.stdout.strip()
