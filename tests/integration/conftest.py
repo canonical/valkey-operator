@@ -31,6 +31,14 @@ def c_writes_runner(juju: jubilant.Juju, c_writes: ContinuousWrites):
     logger.info(c_writes.clear())
 
 
+@pytest.fixture(scope="function")
+async def c_writes_async_clean(c_writes: ContinuousWrites):
+    """Clear continuous write operations at the end of the test."""
+    yield
+    logger.info("Clearing continuous writes after test completion")
+    logger.info(await c_writes.async_clear())
+
+
 @pytest.fixture(scope="session")
 def substrate(request) -> Substrate:
     """Substrate that we are testing."""

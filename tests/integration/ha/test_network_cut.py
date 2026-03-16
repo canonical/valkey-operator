@@ -68,7 +68,12 @@ def test_build_and_deploy(
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 async def test_network_cut_primary(  # noqa: C901
-    tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate, chaos_mesh, c_writes
+    tls_enabled: bool,
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    chaos_mesh,
+    c_writes,
+    c_writes_async_clean,
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if tls_enabled:
@@ -184,4 +189,3 @@ async def test_network_cut_primary(  # noqa: C901
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=tls_enabled,
     )
-    await c_writes.async_clear()
