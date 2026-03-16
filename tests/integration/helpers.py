@@ -584,6 +584,7 @@ async def get_number_connected_replicas(
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         The number of connected replicas.
