@@ -91,3 +91,25 @@ $ valkey-cli -h 10.1.44.126 -p 6379
 10.1.44.126:6379> AUTH charmed-operator moresecurepassword
 OK
 ```
+
+## Handle multiple passwords
+
+Charmed Valkey maintains multiple internal users with different permissions for
+different scopes:
+* `charmed-operator`: the user that manages the database instances
+* `charmed-replication`: the user performs replication between primary and replica instances of Valkey
+* `charmed-sentinel-operator`: the user that manages Sentinel for Valkey
+* `charmed-sentinel-peers`: the user for communication between Sentinel instances
+* `charmed-sentinel-valkey`: the user that Sentinel uses to connect to Valkey
+* `charmed-stats`: the user for monitoring and observability
+
+It is possible to manage the passwords for all of above's users with a Juju secret, 
+or just for some of them.
+
+To set the password for the `charmed-operator` and `charmed-sentinel-operator` users, 
+but keeping the automatically generated passwords for all other users, run the following
+command:
+
+```text
+juju update-secret passwords charmed-operator=moresecurepassword charmed-sentinel-operator=sentinelpassword
+```
