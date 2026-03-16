@@ -13,7 +13,7 @@ Contact Canonical Data Platform team in
 
 Report your ideas/issues on GitHub:
 
-- Charm issues: <https://github.com/canonical/charmed-valkey-operator/issues>
+- Charm issues: <https://github.com/canonical/valkey-operator/issues>
 - Snap packaging: <https://github.com/canonical/charmed-valkey-snap/issues>
 - Rock packaging: <https://github.com/canonical/charmed-valkey-rock/issues>
 
@@ -29,8 +29,6 @@ When filing an issue, please include:
 More resources:
 
 - [Canonical Data Fabric](https://ubuntu.com/data/)
-- [Git sources](https://github.com/canonical/charmed-valkey-operator/)
-- [Canonical Data on Launchpad](https://launchpad.net/~data-platform)
+- [Git sources](https://github.com/canonical/valkey-operator/)
 - [Canonical Data on Matrix](https://matrix.to/#/#charmhub-data-platform:ubuntu.com)
-
-<!-- Charmed Valkey - add link to charmhub.io -->
+- [Valkey in Charmhub](https://charmhub.io/valkey)
