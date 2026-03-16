@@ -42,6 +42,9 @@ def test_build_and_deploy(
     tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
 ) -> None:
     """Build the charm-under-test and deploy it with three units."""
+    if tls_enabled and substrate == Substrate.K8S:
+        pytest.skip("Tests on k8s is the same as no IP will change")
+
     juju.deploy(
         charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
@@ -64,11 +67,13 @@ def test_build_and_deploy(
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_network_cut_primary(
+async def test_network_cut_primary(  # noqa: C901
     tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate, chaos_mesh, c_writes
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if tls_enabled:
+        if substrate == Substrate.K8S:
+            pytest.skip("Tests on k8s is the same as no IP will change")
         download_client_certificate_from_unit(juju, APP_NAME)
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
