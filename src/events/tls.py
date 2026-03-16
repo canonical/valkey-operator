@@ -126,6 +126,7 @@ class TLSEvents(ops.Object):
         try:
             # internal certs: new cert always means a CA rotation because of same expiration
             self.charm.tls_manager.start_ca_rotation_if_required()
+            self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
             self.charm.tls_manager.create_and_store_self_signed_certificate()
             self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
             self._orchestrate_ca_rotation()
@@ -163,6 +164,7 @@ class TLSEvents(ops.Object):
         logger.info("Storing client certificate")
         try:
             rotate_ca = self.charm.tls_manager.start_ca_rotation_if_required(cert)
+            self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
             self.charm.tls_manager.write_certificate(cert, private_key)
             self.charm.tls_manager.set_cert_state(is_ready=True)
         except ValkeyWorkloadCommandError as e:
