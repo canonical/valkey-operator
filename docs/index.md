@@ -20,7 +20,10 @@ integration interfaces, and lifecycle automation.
 
 ## In this documentation
 
-This documentation contains only basic information and will be expanded later.
+|                                                                                                  |                                                                                                      |
+|--------------------------------------------------------------------------------------------------| ---------------------------------------------------------------------------------------------------- |
+| [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to etcd for new users </br> | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
+| [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics | <!--[Reference](/reference/index) </br> Technical information - specifications, APIs, architecture -->|
 
 ## How this documentation is organised
 
@@ -61,5 +64,7 @@ for more information.
 :hidden:
 
 Home <self>
-reference/contact.md
+Tutorial <tutorial>
+/how-to/index
+/reference/index
 ```

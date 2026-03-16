@@ -87,7 +87,7 @@ juju deploy valkey --channel 9/edge --trust
 ```
 
 Juju will now fetch Charmed Valkey from [Charmhub](https://charmhub.io/valkey) and
-deploy it to the local MicroK8s. This process can take several minutes depending
+deploy it to the local MicroK8s. This process can take a few minutes depending
 on how provisioned (RAM, CPU, etc.) your machine is. 
 
 You can track the progress by running:
@@ -140,7 +140,7 @@ Unit       Workload  Agent  Address      Ports  Message
 valkey/0*  active    idle   10.1.44.126         
 ```
 
-The user we will connect to in this tutorial will be the internal 'charmed-operator'
+The user we will connect to in this tutorial will be the internal `charmed-operator`
 user of Charmed Valkey. To retrieve its associated password, run the following command:
 
 ```text
@@ -278,10 +278,9 @@ a highly available database and client/server applications requires a high level
 of expertise. This has all been encoded into Charmed Valkey so that configuring
 TLS requires minimal effort on your end.
 
-TLS is enabled by integrating Charmed Valkey with the [Self-signed certificates charm]
-(https://charmhub.io/self-signed-certificates). This charm centralises TLS certificate
-management consistently and handles operations like providing, requesting, and renewing
-TLS certificates.
+TLS is enabled by integrating Charmed Valkey with the [Self-signed certificates charm](https://charmhub.io/self-signed-certificates). 
+This charm centralises TLS certificate management consistently and handles operations
+like providing, requesting, and renewing TLS certificates.
 
 ```{caution}
 **[Self-signed certificates](https://en.wikipedia.org/wiki/Self-signed_certificate) are not recommended for a production environment.**
