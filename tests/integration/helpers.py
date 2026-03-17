@@ -678,3 +678,16 @@ def get_data_bag(
         else {}
     )
     return {unit_name: local_data} | remote_data
+
+
+def existing_app(juju: jubilant.Juju) -> str | None:
+    """Return the name of an existing valkey cluster.
+
+    Returns:
+        str | None: name of an application deployment for `valkey` if it exists, None otherwise.
+    """
+    for app_name, app_status in juju.status().apps.items():
+        if "valkey" == app_status.charm_name:
+            return app_name
+
+    return None
