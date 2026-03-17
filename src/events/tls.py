@@ -68,6 +68,7 @@ class TLSEvents(ops.Object):
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
         )
+        self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
@@ -212,4 +213,17 @@ class TLSEvents(ops.Object):
         self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
+        self.charm.sentinel_manager.restart_service()
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle the `config-changed` event."""
+        if self.charm.tls_manager.certificate_sans_require_update():
+            if not self.charm.state.client_tls_relation:
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+            else:
+                self.charm.tls_events.refresh_tls_certificates_event.emit()
+                event.defer()
+
+        # TODO rolling ops
+        self.charm.workload.restart(self.charm.workload.valkey_service)
         self.charm.sentinel_manager.restart_service()

@@ -11,7 +11,6 @@ import ops
 
 from common.exceptions import (
     RequestingLockTimedOutError,
-    TLSCertificatesRequireRefreshError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyConfigSetError,
@@ -292,12 +291,9 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.model.private_ip
             and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
         ):
-            try:
-                self._on_ip_change()
-            except (ValkeyCannotGetPrimaryIPError, TLSCertificatesRequireRefreshError) as e:
-                logger.error(e)
-                event.defer()
-                return
+            self.charm.config_manager.configure_services(
+                self.charm.sentinel_manager.get_primary_ip()
+            )
 
         self.charm.state.unit_server.update(
             {
@@ -536,30 +532,3 @@ class BaseEvents(ops.Object):
             )
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
-
-    def _on_ip_change(self) -> None:
-        """Handle changes to the unit's IP address."""
-        # ip changed regenerate certs
-        if self.charm.tls_manager.certificate_sans_require_update():
-            if not self.charm.state.client_tls_relation:
-                self.charm.tls_manager.create_and_store_self_signed_certificate()
-            else:
-                self.charm.tls_events.refresh_tls_certificates_event.emit()
-                raise TLSCertificatesRequireRefreshError(
-                    "Certificate SANs require update, emitted event to refresh certificates"
-                )
-
-        # reconfigure services with new IP
-        self.charm.config_manager.configure_services(self.charm.sentinel_manager.get_primary_ip())
-
-        # try to hot reload the new configuration, if it fails, restart the workload to apply the new IP address
-        try:
-            self.charm.cluster_manager.update_endpoint()
-            tls_config = self.charm.config_manager.generate_tls_config()
-            self.charm.cluster_manager.reload_tls_settings(tls_config)
-        except ValkeyWorkloadCommandError as e:
-            logger.warning("Failed to update endpoint configuration on workload: %s", e)
-            logger.warning("Restarting valkey")
-            self.charm.workload.restart(self.charm.workload.valkey_service)
-
-        self.charm.sentinel_manager.restart_service()
