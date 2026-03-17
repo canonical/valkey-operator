@@ -463,38 +463,9 @@ def test_config_changed_non_leader_unit(cloud_spec):
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with (
-        patch("events.base_events.BaseEvents._update_internal_users_password") as mock_update,
-    ):
+    with patch("events.base_events.BaseEvents._update_internal_users_password") as mock_update:
         ctx.run(ctx.on.config_changed(), state_in)
         mock_update.assert_not_called()
-
-
-def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(
-        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    password_secret = testing.Secret(
-        tracked_content={user.value: "secure-password" for user in CharmUsers},
-        remote_grants=APP_NAME,
-    )
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
-        secrets={password_secret},
-        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-    )
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
-        patch("core.models.RelationState.update") as mock_update,
-    ):
-        ctx.run(ctx.on.config_changed(), state_in)
-        mock_update.assert_called_once()
 
 
 def test_config_changed_leader_unit(cloud_spec):
@@ -563,6 +534,51 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
         )
         assert ClusterStatuses.PASSWORD_UPDATE_FAILED.value in cluster_statuses
         mock_set_acl_file.assert_not_called()
+
+
+def test_config_changed_ip_change_no_tls_relation(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "private-ip": "127.0.1.1"},
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    password_secret = testing.Secret(
+        tracked_content={user.value: "secure-password" for user in CharmUsers},
+        remote_grants=APP_NAME,
+    )
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        secrets={password_secret},
+        config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with (
+        patch("managers.config.ConfigManager.configure_services"),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
+        patch("managers.sentinel.SentinelManager.restart_service") as mock_restart_sentinel,
+        patch(
+            "workload_k8s.ValkeyK8sWorkload.exec",
+            return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.restart") as mock_workload_restart,
+        patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
+        patch(
+            "managers.tls.TLSManager.build_sans_dns", return_value=frozenset({"www.example.com"})
+        ),
+        patch("events.base_events.BaseEvents._update_internal_users_password"),
+        patch(
+            "managers.tls.TLSManager.create_and_store_self_signed_certificate"
+        ) as mock_create_certificate,
+    ):
+        ctx.run(ctx.on.config_changed(), state_in)
+        mock_create_certificate.assert_called_once()
+        mock_restart_sentinel.assert_called_once()
+        mock_workload_restart.assert_called_once()
 
 
 def test_change_password_secret_changed_non_leader_unit(cloud_spec):

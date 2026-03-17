@@ -217,13 +217,24 @@ class TLSEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the `config-changed` event."""
-        if self.charm.tls_manager.certificate_sans_require_update():
-            if not self.charm.state.client_tls_relation:
-                self.charm.tls_manager.create_and_store_self_signed_certificate()
-            else:
-                self.charm.tls_events.refresh_tls_certificates_event.emit()
-                event.defer()
+        if (
+            self.charm.state.unit_server.model.private_ip
+            and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
+        ):
+            if self.charm.tls_manager.certificate_sans_require_update():
+                if not self.charm.state.client_tls_relation:
+                    self.charm.tls_manager.create_and_store_self_signed_certificate()
+                else:
+                    self.charm.tls_events.refresh_tls_certificates_event.emit()
+                    event.defer()
+                    return
 
-        # TODO rolling ops
-        self.charm.workload.restart(self.charm.workload.valkey_service)
-        self.charm.sentinel_manager.restart_service()
+            self.charm.state.unit_server.update(
+                {
+                    "hostname": self.charm.state.hostname,
+                    "private_ip": self.charm.state.bind_address,
+                }
+            )
+            # TODO rolling ops
+            self.charm.workload.restart(self.charm.workload.valkey_service)
+            self.charm.sentinel_manager.restart_service()

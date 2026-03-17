@@ -295,13 +295,6 @@ class BaseEvents(ops.Object):
                 self.charm.sentinel_manager.get_primary_ip()
             )
 
-        self.charm.state.unit_server.update(
-            {
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
-
         if not self.charm.unit.is_leader():
             return
 
