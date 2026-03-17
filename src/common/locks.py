@@ -105,7 +105,8 @@ class DataBagLock(Lockable):
         )
         if self.state.unit_server.unit.is_leader():
             logger.info(
-                f"Leader unit requesting {self.name} lock. Triggering lock request processing."
+                "Leader unit requesting %s lock. Triggering lock request processing.",
+                self.name,
             )
             self.process()
 
@@ -120,7 +121,8 @@ class DataBagLock(Lockable):
         )
         if self.state.unit_server.unit.is_leader():
             logger.info(
-                f"Leader unit releasing {self.name} lock. Triggering lock request processing."
+                "Leader unit releasing %s lock. Triggering lock request processing.",
+                self.name,
             )
             self.process()
 
@@ -129,7 +131,7 @@ class DataBagLock(Lockable):
     def process(self) -> None:
         """Process the lock requests and update the unit with the lock."""
         if not self.state.unit_server.unit.is_leader():
-            logger.info(f"Only the leader can process {self.name} lock requests.")
+            logger.info("Only the leader can process lock requests.")
             return
 
         if self.is_lock_free_to_give:
@@ -197,12 +199,16 @@ class ScaleDownLock(Lockable):
         Returns:
             bool: True if the lock was acquired, False if the timeout was reached before acquiring the lock.
         """
-        logger.debug(f"{self.charm.state.unit_server.unit_name} is requesting {self.name} lock.")
+        logger.debug(
+            "%s is requesting %s lock.", self.charm.state.unit_server.unit_name, self.name
+        )
         retry_until = time.time() + timeout if timeout else None
         primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
         if self.get_unit_with_lock(primary_ip) == self.charm.state.unit_server.unit_name:
             logger.debug(
-                f"{self.charm.state.unit_server.unit_name} already holds {self.name} lock. No need to request it again."
+                "%s already holds %s lock. No need to request it again.",
+                self.charm.state.unit_server.unit_name,
+                self.name,
             )
             return True
 
@@ -225,20 +231,26 @@ class ScaleDownLock(Lockable):
                     ],
                 ):
                     logger.debug(
-                        f"{self.charm.state.unit_server.unit_name} acquired {self.name} lock."
+                        "%s acquired %s lock.", self.charm.state.unit_server.unit_name, self.name
                     )
                     return True
             except ValkeyWorkloadCommandError:
                 logger.warning(
-                    f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock due to a workload command error. Retrying..."
+                    "%s failed to acquire %s lock due to a workload command error. Retrying...",
+                    self.charm.state.unit_server.unit_name,
+                    self.name,
                 )
             if retry_until and time.time() > retry_until:
                 logger.warning(
-                    f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock within timeout. Giving up."
+                    "%s failed to acquire %s lock within timeout. Giving up.",
+                    self.charm.state.unit_server.unit_name,
+                    self.name,
                 )
                 return False
             logger.info(
-                f"{self.charm.state.unit_server.unit_name} failed to acquire {self.name} lock. Retrying in 5 seconds."
+                "%s failed to acquire %s lock. Retrying in 5 seconds.",
+                self.charm.state.unit_server.unit_name,
+                self.name,
             )
             time.sleep(5)
             # update the primary ip in case a failover happens when we are waiting to acquire the lock
@@ -263,10 +275,12 @@ class ScaleDownLock(Lockable):
             )
             == "1"
         ):
-            logger.debug(f"{self.charm.state.unit_server.unit_name} released {self.name} lock.")
+            logger.debug("%s released %s lock.", self.charm.state.unit_server.unit_name, self.name)
             return True
-        else:
-            logger.warning(
-                f"{self.charm.state.unit_server.unit_name} failed to release {self.name} lock. It may not have held the lock or it may have already been released."
-            )
-            return False
+
+        logger.warning(
+            "%s failed to release %s lock. It may not have held the lock or it may have already been released.",
+            self.charm.state.unit_server.unit_name,
+            self.name,
+        )
+        return False

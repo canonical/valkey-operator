@@ -80,7 +80,7 @@ class ClusterManager(ManagerStatusProtocol):
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
         except IndexError as e:
-            logger.warning(f"Unexpected role information format: {role_info}. Error: {e}")
+            logger.warning("Unexpected role information format: %s. Error: %s", role_info, e)
             return False
 
     @retry(

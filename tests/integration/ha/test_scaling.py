@@ -280,7 +280,9 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
     )
     assert primary_unit is not None, "Failed to identify primary unit for scale down test."
     logger.info(
-        f"Identified primary unit {primary_unit} with IP {primary_ip} for scale down test."
+        "Identified primary unit %s with IP %s for scale down test.",
+        primary_unit,
+        primary_ip,
     )
     juju.remove_unit(primary_unit)
     juju.wait(

@@ -89,7 +89,8 @@ class RelationState:
         """Write to relation data."""
         if not self.relation:
             logger.warning(
-                f"Fields {list(items.keys())} were attempted to be written on the relation before it exists."
+                "Fields %s were attempted to be written on the relation before it exists.",
+                list(items.keys()),
             )
             return
 
