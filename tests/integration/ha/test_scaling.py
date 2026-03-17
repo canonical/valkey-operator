@@ -16,6 +16,7 @@ from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
+    existing_app,
     get_cluster_hostnames,
     get_number_connected_replicas,
     get_password,
@@ -33,6 +34,9 @@ TEST_VALUE = "test_value"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Build the charm-under-test and deploy it with three units."""
+    if existing_app(juju):
+        return
+
     juju.deploy(
         charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
@@ -56,31 +60,34 @@ async def test_seed_data(juju: jubilant.Juju) -> None:
 
 async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     """Make sure new units are added to the valkey downtime."""
-    init_units_count = len(juju.status().apps[APP_NAME].units)
+    app_name = existing_app(juju) or APP_NAME
+    init_units_count = len(juju.status().apps[app_name].units)
     await c_writes.async_clear()
     c_writes.start()
 
     # scale up
-    juju.add_unit(APP_NAME, num_units=NUM_UNITS - init_units_count)
+    juju.add_unit(app_name, num_units=2)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=10, unit_count=NUM_UNITS
+            status, app_name, idle_period=10, unit_count=init_units_count + 2
         ),
         timeout=1200,
     )
-    num_units = len(juju.status().apps[APP_NAME].units)
-    assert num_units == NUM_UNITS, f"Expected {NUM_UNITS} units, got {num_units}."
+    num_units = len(juju.status().apps[app_name].units)
+    assert num_units == init_units_count + 2, (
+        f"Expected {init_units_count + 2} units, got {num_units}."
+    )
 
     # check if all units have been added to the cluster
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    hostnames = get_cluster_hostnames(juju, app_name)
 
     connected_replicas = await get_number_connected_replicas(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert connected_replicas == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected replicas, got {connected_replicas}."
+    assert connected_replicas == init_units_count + 1, (
+        f"Expected {init_units_count + 1} connected replicas, got {connected_replicas}."
     )
 
     await assert_continuous_writes_increasing(
@@ -100,13 +107,26 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
 
 async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
     """Make sure scale down operations complete successfully."""
+    app_name = existing_app(juju) or APP_NAME
+    init_units_count = len(juju.status().apps[app_name].units)
+
+    if init_units_count < 1:
+        juju.add_unit(app_name, num_units=NUM_UNITS - init_units_count)
+        init_units_count = NUM_UNITS
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, idle_period=10, unit_count=init_units_count
+            ),
+            timeout=1200,
+        )
+
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_replicas == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected replicas, got {number_of_replicas}."
+    assert number_of_replicas == init_units_count - 1, (
+        f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
 
     await c_writes.async_clear()
@@ -114,38 +134,40 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     await asyncio.sleep(10)  # let the continuous writes write some data
 
     # scale down
-    remove_number_units(juju, APP_NAME, num_units=1, substrate=substrate)
+    remove_number_units(juju, app_name, num_units=1, substrate=substrate)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
+            status, app_name, unit_count=init_units_count - 1, idle_period=10
         )
     )
-    num_units = len(juju.status().get_units(APP_NAME))
-    assert num_units == NUM_UNITS - 1, f"Expected {NUM_UNITS - 1} units, got {num_units}."
+    num_units = len(juju.status().get_units(app_name))
+    assert num_units == init_units_count - 1, (
+        f"Expected {init_units_count - 1} units, got {num_units}."
+    )
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_replicas == NUM_UNITS - 2, (
-        f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
+    assert number_of_replicas == init_units_count - 2, (
+        f"Expected {init_units_count - 2} connected replicas, got {number_of_replicas}."
     )
 
     # update hostnames after scale down
     c_writes.update()
 
     await assert_continuous_writes_increasing(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
 
-    logger.info("Stopping continuous writes after scale up test.")
+    logger.info("Stopping continuous writes after scale down test.")
     logger.info(await c_writes.async_stop())
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -156,22 +178,25 @@ async def test_scale_down_multiple_units(
     juju: jubilant.Juju, substrate: Substrate, c_writes
 ) -> None:
     """Make sure multiple scale down operations complete successfully."""
-    number_current_units = len(juju.status().apps[APP_NAME].units)
-    juju.add_unit(APP_NAME, num_units=(NUM_UNITS + 1) - number_current_units)
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=10, unit_count=NUM_UNITS + 1
-        ),
-        timeout=1200,
-    )
+    app_name = existing_app(juju) or APP_NAME
+    init_units_count = len(juju.status().apps[app_name].units)
+    if init_units_count < NUM_UNITS + 1:
+        juju.add_unit(app_name, num_units=(NUM_UNITS + 1) - init_units_count)
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, idle_period=10, unit_count=NUM_UNITS + 1
+            ),
+            timeout=1200,
+        )
+        init_units_count = NUM_UNITS + 1
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_replicas == NUM_UNITS, (
-        f"Expected {NUM_UNITS} connected replicas, got {number_of_replicas}."
+    assert number_of_replicas == init_units_count - 1, (
+        f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
 
     await c_writes.async_clear()
@@ -179,29 +204,31 @@ async def test_scale_down_multiple_units(
     await asyncio.sleep(10)  # let the continuous writes write some data
 
     # scale down multiple units
-    remove_number_units(juju, APP_NAME, num_units=2, substrate=substrate)
+    remove_number_units(juju, app_name, num_units=2, substrate=substrate)
 
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
+            status, app_name, unit_count=init_units_count - 2, idle_period=10
         )
     )
-    num_units = len(juju.status().get_units(APP_NAME))
-    assert num_units == NUM_UNITS - 1, f"Expected {NUM_UNITS - 1} units, got {num_units}."
+    num_units = len(juju.status().get_units(app_name))
+    assert num_units == init_units_count - 2, (
+        f"Expected {init_units_count - 2} units, got {num_units}."
+    )
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
-    assert number_of_replicas == NUM_UNITS - 2, (
-        f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
+    assert number_of_replicas == init_units_count - 3, (
+        f"Expected {init_units_count - 3} connected replicas, got {number_of_replicas}."
     )
 
     c_writes.update()
 
     await assert_continuous_writes_increasing(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -210,34 +237,35 @@ async def test_scale_down_multiple_units(
     logger.info(await c_writes.async_stop())
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_hostnames(juju, APP_NAME),
+        hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     await c_writes.async_clear()
 
 
-async def test_scale_down_to_zero_and_back(
+async def test_scale_down_to_zero_and_back_up(
     juju: jubilant.Juju, substrate: Substrate, c_writes
 ) -> None:
     """Make sure that removing all units and then adding them again works."""
+    app_name = existing_app(juju) or APP_NAME
     # remove all remaining units
     remove_number_units(
-        juju, APP_NAME, num_units=len(juju.status().apps[APP_NAME].units), substrate=substrate
+        juju, app_name, num_units=len(juju.status().apps[app_name].units), substrate=substrate
     )
-    juju.wait(lambda status: len(juju.status().get_units(APP_NAME)) == 0)
+    juju.wait(lambda status: len(juju.status().get_units(app_name)) == 0)
 
     # scale up again
-    juju.add_unit(APP_NAME, num_units=NUM_UNITS)
+    juju.add_unit(app_name, num_units=NUM_UNITS)
 
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS, idle_period=10
+            status, app_name, unit_count=NUM_UNITS, idle_period=10
         ),
         timeout=1200,
     )
 
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    hostnames = get_cluster_hostnames(juju, app_name)
 
     connected_replicas = await get_number_connected_replicas(
         hostnames=hostnames,
@@ -270,29 +298,45 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
     if substrate == Substrate.K8S:
         pytest.skip("Primary unit can only targeted on VM")
 
+    app_name = existing_app(juju) or APP_NAME
+    init_units_count = len(juju.status().apps[app_name].units)
+    if init_units_count < NUM_UNITS:
+        juju.add_unit(app_name, num_units=NUM_UNITS - init_units_count)
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, idle_period=10, unit_count=NUM_UNITS
+            ),
+            timeout=1200,
+        )
+        init_units_count = NUM_UNITS
+
     await c_writes.async_clear()
     c_writes.start()
-    primary_ip = get_primary_ip(juju, APP_NAME)
+    primary_endpoint = get_primary_ip(juju, app_name)
     primary_unit = next(
         unit
-        for unit, unit_value in juju.status().get_units(APP_NAME).items()
-        if unit_value.public_address == primary_ip
+        for unit, unit_value in juju.status().get_units(app_name).items()
+        if unit_value.public_address == primary_endpoint
     )
     assert primary_unit is not None, "Failed to identify primary unit for scale down test."
     logger.info(
-        f"Identified primary unit {primary_unit} with IP {primary_ip} for scale down test."
+        "Identified primary unit %s with endpoint %s for scale down test.",
+        primary_unit,
+        primary_endpoint,
     )
     juju.remove_unit(primary_unit)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS - 1, idle_period=10
+            status, app_name, unit_count=init_units_count - 1, idle_period=10
         )
     )
     c_writes.update()
-    new_primary_ip = get_primary_ip(juju, APP_NAME)
-    assert new_primary_ip != primary_ip, "Primary IP did not change after removing primary unit."
-    logger.info(f"New primary IP after scale down is {new_primary_ip}.")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    new_primary_endpoint = get_primary_ip(juju, app_name)
+    assert new_primary_endpoint != primary_endpoint, (
+        "Primary endpoint did not change after removing primary unit."
+    )
+    logger.info(f"New primary endpoint after scale down is {new_primary_endpoint}.")
+    hostnames = get_cluster_hostnames(juju, app_name)
     await assert_continuous_writes_increasing(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,
@@ -310,10 +354,11 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
 
 def test_scale_down_remove_application(juju: jubilant.Juju) -> None:
     """Make sure the application can be removed."""
-    juju.remove_application(APP_NAME)
+    app_name = existing_app(juju) or APP_NAME
+    juju.remove_application(app_name)
 
     juju.wait(
-        lambda status: APP_NAME not in status.apps,
+        lambda status: app_name not in status.apps,
         timeout=600,
         delay=5,
     )

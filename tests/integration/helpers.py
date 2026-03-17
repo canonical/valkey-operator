@@ -135,7 +135,7 @@ def does_message_match(expected_status_message: str, status: StatusObject) -> bo
             )
         )
     except KeyError as e:
-        logger.error(f"Error attempting to convert StatusObject to ops.StatusBase: {e}")
+        logger.error("Error attempting to convert StatusObject to ops.StatusBase: %s", e)
         return False
 
 
@@ -420,7 +420,12 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     total_bytes_target = target_gb * 1024 * 1024 * 1024
     total_keys = total_bytes_target // value_size_bytes
 
-    logger.info(f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)")
+    logger.info(
+        "Targeting ~%sGB (%s keys of %s bytes each)",
+        target_gb,
+        total_keys,
+        value_size_bytes,
+    )
 
     start_time = time.time()
     keys_added = 0
@@ -444,15 +449,20 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
                 elapsed = time.time() - start_time
                 percent = (keys_added / total_keys) * 100
                 logger.info(
-                    f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+                    "Progress: %.1f%% | Keys: %s | Elapsed: %.1f s",
+                    percent,
+                    keys_added,
+                    elapsed,
                 )
 
         except Exception as e:
-            logger.error(f"\nError: {e}")
+            logger.error("Error: %s", e)
         finally:
             total_time = time.time() - start_time
             logger.info(
-                f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds."
+                "Seeding complete! Added %s keys in %.2f seconds.",
+                keys_added,
+                total_time,
             )
 
 
@@ -691,3 +701,16 @@ def get_data_bag(
         else {}
     )
     return {unit_name: local_data} | remote_data
+
+
+def existing_app(juju: jubilant.Juju) -> str | None:
+    """Return the name of an existing valkey cluster.
+
+    Returns:
+        str | None: name of an application deployment for `valkey` if it exists, None otherwise.
+    """
+    for app_name, app_status in juju.status().apps.items():
+        if "valkey" == app_status.charm_name:
+            return app_name
+
+    return None

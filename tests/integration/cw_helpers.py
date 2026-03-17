@@ -87,4 +87,4 @@ def assert_continuous_writes_consistent(
         assert count == last_written_value + 1, (
             f"endpoint: {endpoint}, expected count: {last_written_value + 1}, current count: {count}"
         )
-        logger.info(f"Continuous writes are consistent on {endpoint}.")
+        logger.info("Continuous writes are consistent on %s.", endpoint)

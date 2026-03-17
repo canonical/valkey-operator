@@ -89,7 +89,8 @@ class RelationState:
         """Write to relation data."""
         if not self.relation:
             logger.warning(
-                f"Fields {list(items.keys())} were attempted to be written on the relation before it exists."
+                "Fields %s were attempted to be written on the relation before it exists.",
+                list(items.keys()),
             )
             return
 
@@ -140,12 +141,9 @@ class ValkeyServer(RelationState):
     @property
     def is_being_removed(self) -> bool:
         """Check if the unit is being removed from the cluster."""
-        return self.model.scale_down_state in {
-            ScaleDownState.STOP_SERVICES.value,
-            ScaleDownState.RESET_SENTINEL.value,
-            ScaleDownState.HEALTH_CHECK.value,
-            ScaleDownState.GOING_AWAY.value,
-        }
+        return (
+            self.model.scale_down_state == ScaleDownState.GOING_AWAY.value if self.model else False
+        )
 
     @property
     def is_active(self) -> bool:
