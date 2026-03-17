@@ -159,8 +159,7 @@ class ClusterManager(ManagerStatusProtocol):
 
     def _get_scale_down_status(self) -> StatusObject | None:
         """Get the current scale down status of the unit."""
-        match self.state.unit_server.model.scale_down_state:
-            case ScaleDownState.GOING_AWAY.value:
-                return ScaleDownStatuses.GOING_AWAY.value
+        if self.state.unit_server.model.scale_down_state == ScaleDownState.WAIT_FOR_LOCK.value:
+            return ScaleDownStatuses.GOING_AWAY.value
 
         return None

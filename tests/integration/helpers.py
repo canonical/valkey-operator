@@ -386,8 +386,7 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
     if "role:master" in replication_info:
         return hostnames[0]
     # extract ip
-    match = re.search(r"master_host:([^\s]+)", replication_info)
-    if not match:
+    if not (match := re.search(r"master_host:([^\s]+)", replication_info)):
         raise ValueError("Could not find master_host in replication info")
     return match.group(1)
 

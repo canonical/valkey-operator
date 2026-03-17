@@ -72,22 +72,22 @@ class SentinelManager(ManagerStatusProtocol):
 
         client = self._get_sentinel_client()
 
-        for sentinel_ip in active_sentinels:
+        for sentinel_host in active_sentinels:
             try:
                 discovered_sentinels = {
-                    sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_ip)
+                    sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_host)
                 }
                 if self.state.endpoint not in discovered_sentinels:
                     logger.warning(
                         "Sentinel at %s does not see local sentinel at %s.",
-                        sentinel_ip,
+                        sentinel_host,
                         self.state.endpoint,
                     )
                     return False
 
             except ValkeyWorkloadCommandError:
                 logger.warning(
-                    "Could not query sentinel at %s for primary discovery.", sentinel_ip
+                    "Could not query sentinel at %s for primary discovery.", sentinel_host
                 )
                 return False
         return True
@@ -156,7 +156,8 @@ class SentinelManager(ManagerStatusProtocol):
         client = self._get_sentinel_client()
         try:
             client.failover_primary_coordinated(self.state.endpoint)
-            client.is_failover_in_progress(self.state.endpoint)
+            if client.is_failover_in_progress(self.state.endpoint):
+                raise SentinelFailoverError("Failover is in progress after triggering failover.")
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to trigger failover: %s", e)
             raise SentinelFailoverError from e

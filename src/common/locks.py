@@ -4,12 +4,12 @@
 """Collection of locks for cluster operations."""
 
 import logging
-import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol, override
 
+from tenacity import Retrying, stop_after_attempt, wait_fixed
+
 from common.client import ValkeyClient
-from common.exceptions import ValkeyWorkloadCommandError
 from core.cluster_state import ClusterState
 from literals import CharmUsers
 
@@ -202,7 +202,6 @@ class ScaleDownLock(Lockable):
         logger.debug(
             "%s is requesting %s lock.", self.charm.state.unit_server.unit_name, self.name
         )
-        retry_until = time.time() + timeout if timeout else None
         primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
         if self.get_unit_with_lock(primary_ip) == self.charm.state.unit_server.unit_name:
             logger.debug(
@@ -216,8 +215,22 @@ class ScaleDownLock(Lockable):
             logger.debug("Last unit in the cluster scaling down. Lock will be skipped.")
             return True
 
-        while True:
-            try:
+        number_of_retries = min(timeout // 5 if timeout else 1, 1)
+
+        for attempt in Retrying(
+            wait=wait_fixed(5),
+            stop=stop_after_attempt(number_of_retries),
+            retry_error_callback=lambda _: False,
+            after=lambda retry_state: logger.info(
+                "%s failed to acquire %s lock on attempt %d. Retrying in 5 seconds.",
+                self.charm.state.unit_server.unit_name,
+                self.name,
+                retry_state.attempt_number,
+            ),
+        ):
+            with attempt:
+                # update the primary ip in case a failover happens when we are waiting to acquire the lock
+                primary_ip = self.charm.sentinel_manager.get_primary_ip()
                 if self.client.set(
                     hostname=primary_ip,
                     key=self.lock_key,
@@ -234,27 +247,6 @@ class ScaleDownLock(Lockable):
                         "%s acquired %s lock.", self.charm.state.unit_server.unit_name, self.name
                     )
                     return True
-            except ValkeyWorkloadCommandError:
-                logger.warning(
-                    "%s failed to acquire %s lock due to a workload command error. Retrying...",
-                    self.charm.state.unit_server.unit_name,
-                    self.name,
-                )
-            if retry_until and time.time() > retry_until:
-                logger.warning(
-                    "%s failed to acquire %s lock within timeout. Giving up.",
-                    self.charm.state.unit_server.unit_name,
-                    self.name,
-                )
-                return False
-            logger.info(
-                "%s failed to acquire %s lock. Retrying in 5 seconds.",
-                self.charm.state.unit_server.unit_name,
-                self.name,
-            )
-            time.sleep(5)
-            # update the primary ip in case a failover happens when we are waiting to acquire the lock
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
 
     @property
     def is_held_by_this_unit(self) -> bool:
