@@ -133,7 +133,9 @@ def test_primary(cloud_spec):
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.failover_primary_coordinated") as mock_failover,
-        patch("common.client.SentinelClient.is_failover_in_progress") as mock_failover_in_progress,
+        patch(
+            "common.client.SentinelClient.is_failover_in_progress", return_value=False
+        ) as mock_failover_in_progress,
         patch("common.client.SentinelClient.reset") as mock_reset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
