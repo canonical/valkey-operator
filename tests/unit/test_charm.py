@@ -13,6 +13,7 @@ from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    PRIMARY_NAME,
     STATUS_PEERS_RELATION,
     CharmUsers,
     StartState,
@@ -344,7 +345,10 @@ def test_update_status_leader_unit(cloud_spec):
         containers={container},
     )
 
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
 
@@ -363,7 +367,10 @@ def test_update_status_non_leader_unit(cloud_spec):
         relations={relation, status_peer_relation},
         containers={container},
     )
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
 
