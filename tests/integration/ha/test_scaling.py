@@ -354,11 +354,10 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
 
 def test_scale_down_remove_application(juju: jubilant.Juju) -> None:
     """Make sure the application can be removed."""
-    app_name = existing_app(juju) or APP_NAME
-    juju.remove_application(app_name)
+    juju.remove_application(APP_NAME)
 
     juju.wait(
-        lambda status: app_name not in status.apps,
+        lambda status: APP_NAME not in status.apps,
         timeout=600,
         delay=5,
     )
