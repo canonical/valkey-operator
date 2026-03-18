@@ -6,6 +6,7 @@ import asyncio
 import logging
 import multiprocessing
 import queue
+import time
 from contextlib import asynccontextmanager
 from multiprocessing import log_to_stderr
 from pathlib import Path
@@ -13,7 +14,13 @@ from types import SimpleNamespace
 from typing import Optional
 
 import jubilant
-from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
+from glide import (
+    BackoffStrategy,
+    GlideClient,
+    GlideClientConfiguration,
+    NodeAddress,
+    ServerCredentials,
+)
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -22,13 +29,25 @@ from tenacity import (
 )
 
 from literals import CharmUsers
-from tests.integration.helpers import get_cluster_hostnames, get_password
+from tests.integration.helpers import get_data_bag, get_password
 
 logger = logging.getLogger(__name__)
 
 
 class WriteFailedError(Exception):
     """Raised when a single write operation has failed."""
+
+
+def get_active_hostnames(juju: jubilant.Juju, app_name: str) -> str:
+    """Get hostnames of units in started state and not marked for scale down."""
+    return ",".join(
+        [
+            unit["private-ip"]
+            for unit in get_data_bag(juju, app_name, "valkey-peers").values()
+            if unit.get("start-state", "") == "started"
+            and unit.get("scale-down-state", None) is None
+        ]
+    )
 
 
 class ContinuousWrites:
@@ -54,7 +73,7 @@ class ContinuousWrites:
     def _get_config(self) -> SimpleNamespace:
         """Fetch current cluster configuration from Juju."""
         return SimpleNamespace(
-            endpoints=",".join(get_cluster_hostnames(self._juju, app_name=self._app)),
+            endpoints=get_active_hostnames(self._juju, self._app),
             valkey_password=get_password(self._juju, user=CharmUsers.VALKEY_ADMIN),
         )
 
@@ -70,8 +89,9 @@ class ContinuousWrites:
         glide_config = GlideClientConfiguration(
             addresses=addresses,
             client_name="continuous_writes_client",
-            request_timeout=5000,
+            request_timeout=500,
             credentials=credentials,
+            reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
         )
 
         return await GlideClient.create(glide_config)
@@ -233,8 +253,9 @@ class ContinuousWrites:
             glide_config = GlideClientConfiguration(
                 addresses=addresses,
                 client_name="continuous_writes_worker",
-                request_timeout=5000,
+                request_timeout=500,
                 credentials=credentials,
+                reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
             )
             return await GlideClient.create(glide_config)
 
@@ -248,9 +269,8 @@ class ContinuousWrites:
 
         current_val = starting_number
         config = initial_config
-        # client = await _make_client(config)
 
-        proc_logger.info(f"Starting continuous async writes from {current_val}")
+        proc_logger.info("Starting continuous async writes from %s", current_val)
 
         try:
             while not event.is_set():
@@ -261,7 +281,8 @@ class ContinuousWrites:
                     pass
 
                 try:
-                    proc_logger.info(f"Writing value: {current_val}")
+                    proc_logger.info("Writing value: %s", current_val)
+                    proc_logger.info("Current endpoints=%s", config.endpoints)
                     async with with_client(config) as client:
                         if not (
                             res := await asyncio.wait_for(
@@ -269,10 +290,10 @@ class ContinuousWrites:
                             )
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
-                    proc_logger.info(f"Length after write: {res}")
+                    proc_logger.info("Length after write: %s", res)
                     await asyncio.sleep(in_between_sleep)
                 except Exception as e:
-                    proc_logger.warning(f"Write failed at {current_val}: {e}")
+                    proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
                     if event.is_set():
                         break
@@ -291,7 +312,20 @@ if __name__ == "__main__":
     cw = ContinuousWrites(juju=juju_env, app="valkey", in_between_sleep=0.5)
     cw.clear()
     cw.start()
-    print("Continuous writes started. Press Enter to stop...")
-    input()
+    # stop on ctrl + C or after some time
+    hostnames = get_active_hostnames(juju_env, "valkey")
+    try:
+        while True:
+            time.sleep(1)
+            if new_hostnames := get_active_hostnames(juju_env, "valkey") != hostnames:
+                logger.info(
+                    "Hostnames changed from %s to %s, updating continuous writes client.",
+                    hostnames,
+                    new_hostnames,
+                )
+                hostnames = new_hostnames
+                cw.update()
+    except KeyboardInterrupt:
+        pass
     stats = cw.clear()
     print(f"Stopped. Stats: {stats}")

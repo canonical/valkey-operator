@@ -74,6 +74,10 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
+    def stop(self) -> None:
+        """Stop the workload service."""
+        pass
+
     def restart(self, service: str) -> None:
         """Restart a workload service."""
         pass

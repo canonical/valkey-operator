@@ -124,6 +124,10 @@ def test_client_tls_relation_broken(cloud_spec):
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            return_value=("10.0.1.1", 6379),
+        ),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         assert reload_tls.call_count == 2
@@ -166,6 +170,10 @@ def test_client_tls_relation_broken_disabling_tls_fails(cloud_spec):
             "managers.config.ConfigManager.set_config_properties", side_effect=ValueError("failed")
         ),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            return_value=("10.0.1.1", 6379),
+        ),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         reload_tls.assert_not_called()
@@ -233,6 +241,10 @@ def test_client_tls_relation_broken_writing_internal_cert_fails(cloud_spec):
         patch("core.base_workload.WorkloadBase.write_file", side_effect=PermissionError("failed")),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            return_value=("10.0.1.1", 6379),
+        ),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         reload_tls.assert_called_once()
@@ -267,6 +279,10 @@ def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
         patch("managers.cluster.ClusterManager.reload_tls_settings"),
         patch("managers.sentinel.SentinelManager.restart_service"),
         patch("charmlibs.pathops.ContainerPath.mkdir"),
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            return_value=("10.0.1.1", 6379),
+        ),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
@@ -312,6 +328,10 @@ def test_client_certificate_available(cloud_spec):
             patch("managers.sentinel.SentinelManager.restart_service"),
             patch("managers.tls.TLSManager.write_certificate"),
             patch("managers.tls.TLSManager.will_certificate_expire"),
+            patch(
+                "common.client.SentinelClient.get_primary_addr_by_name",
+                return_value=("10.0.1.1", 6379),
+            ),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)
@@ -364,6 +384,10 @@ def test_client_certificate_available_enabling_fails(cloud_spec):
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.tls.TLSManager.write_certificate"),
             patch("managers.tls.TLSManager.will_certificate_expire"),
+            patch(
+                "common.client.SentinelClient.get_primary_addr_by_name",
+                return_value=("10.0.1.1", 6379),
+            ),
         ):
             event.certificate = certificate.certificate
             charm.tls_events._on_certificate_available(event)

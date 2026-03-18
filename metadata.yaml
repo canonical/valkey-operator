@@ -22,6 +22,9 @@ website:
 containers:
   valkey:
     resource: valkey-image
+    mounts:
+      - storage: data
+        location: /var/lib/valkey/
 
 resources:
   valkey-image:
@@ -40,3 +43,10 @@ requires:
     interface: tls-certificates
     limit: 1
     optional: true
+
+storage:
+  data:
+    type: filesystem
+    location: /var/snap/charmed-valkey/common/var/lib/charmed-valkey
+    description: storage for valkey data
+    minimum-size: 1G

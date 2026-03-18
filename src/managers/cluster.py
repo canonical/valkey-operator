@@ -18,8 +18,8 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, StartState, TLSState
-from statuses import CharmStatuses, StartStatuses
+from literals import CharmUsers, ScaleDownState, StartState
+from statuses import CharmStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +45,21 @@ class ClusterManager(ManagerStatusProtocol):
         return ValkeyClient(
             username=self.admin_user,
             password=self.admin_password,
-            tls=True
-            if self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
-            else False,
+            tls=self.state.unit_server.is_tls_enabled,
             workload=self.workload,
         )
 
     def reload_acl_file(self) -> None:
         """Reload the ACL file into the cluster."""
         client = self._get_valkey_client()
-        if not client.load_acl(hostname=self.state.bind_address):
+        if not client.acl_load(hostname=self.state.endpoint):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()
         if not client.config_set(
-            hostname=self.state.bind_address,
+            hostname=self.state.endpoint,
             parameter="primaryauth",
             value=self.state.cluster.internal_users_credentials.get(
                 CharmUsers.VALKEY_REPLICA.value, ""
@@ -78,7 +76,12 @@ class ClusterManager(ManagerStatusProtocol):
     def is_replica_synced(self) -> bool:
         """Check if the replica is synced with the primary."""
         client = self._get_valkey_client()
-        return client.is_replica_synced(hostname=self.state.bind_address)
+        role_info = client.role(hostname=self.state.endpoint)
+        try:
+            return role_info[0] == "slave" and role_info[3] == "connected"
+        except IndexError as e:
+            logger.warning("Unexpected role information format: %s. Error: %s", role_info, e)
+            return False
 
     @retry(
         wait=wait_fixed(5),
@@ -90,12 +93,12 @@ class ClusterManager(ManagerStatusProtocol):
         """Check if a valkey instance is healthy."""
         client = self._get_valkey_client()
 
-        if not client.ping(hostname=self.state.bind_address):
+        if not client.ping(hostname=self.state.endpoint):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
 
         if (
-            persistence_info := client.get_persistence_info(hostname=self.state.bind_address)
+            persistence_info := client.info_persistence(hostname=self.state.endpoint)
         ) and persistence_info.get("loading", "") != "0":
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False
@@ -109,7 +112,7 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()
-        client.reload_tls(tls_config, hostname=self.state.bind_address)
+        client.reload_tls(tls_config, hostname=self.state.endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
@@ -119,38 +122,44 @@ class ClusterManager(ManagerStatusProtocol):
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        match self.state.unit_server.model.start_state:
-            case StartState.NOT_STARTED.value:
-                status_list.append(
-                    StartStatuses.SERVICE_NOT_STARTED.value,
-                )
-            case StartState.WAITING_FOR_PRIMARY_START.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_PRIMARY_START.value,
-                )
-            case StartState.WAITING_TO_START.value:
-                status_list.append(
-                    StartStatuses.WAITING_TO_START.value,
-                )
-            case StartState.CONFIGURATION_ERROR.value:
-                status_list.append(
-                    StartStatuses.CONFIGURATION_ERROR.value,
-                )
-            case StartState.STARTING_WAITING_VALKEY.value:
-                status_list.append(
-                    StartStatuses.SERVICE_STARTING.value,
-                )
-            case StartState.STARTING_WAITING_SENTINEL.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value,
-                )
-            case StartState.STARTING_WAITING_REPLICA_SYNC.value:
-                status_list.append(
-                    StartStatuses.WAITING_FOR_REPLICA_SYNC.value,
-                )
-            case StartState.ERROR_ON_START.value:
-                status_list.append(
-                    StartStatuses.ERROR_ON_START.value,
-                )
+        if scope == "unit":
+            if start_status := self._get_start_status():
+                status_list.append(start_status)
+
+            if scale_down_status := self._get_scale_down_status():
+                status_list.append(scale_down_status)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+    def _get_start_status(self) -> StatusObject | None:
+        """Get the current start status of the unit."""
+        match self.state.unit_server.model.start_state:
+            case StartState.NOT_STARTED.value:
+                if (
+                    self.state.unit_server.model.scale_down_state
+                    == ScaleDownState.NO_SCALE_DOWN.value
+                ):
+                    return StartStatuses.SERVICE_NOT_STARTED.value
+            case StartState.WAITING_FOR_PRIMARY_START.value:
+                return StartStatuses.WAITING_FOR_PRIMARY_START.value
+            case StartState.WAITING_TO_START.value:
+                return StartStatuses.WAITING_TO_START.value
+            case StartState.CONFIGURATION_ERROR.value:
+                return StartStatuses.CONFIGURATION_ERROR.value
+            case StartState.STARTING_WAITING_VALKEY.value:
+                return StartStatuses.SERVICE_STARTING.value
+            case StartState.STARTING_WAITING_SENTINEL.value:
+                return StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value
+            case StartState.STARTING_WAITING_REPLICA_SYNC.value:
+                return StartStatuses.WAITING_FOR_REPLICA_SYNC.value
+            case StartState.ERROR_ON_START.value:
+                return StartStatuses.ERROR_ON_START.value
+
+        return None
+
+    def _get_scale_down_status(self) -> StatusObject | None:
+        """Get the current scale down status of the unit."""
+        if self.state.unit_server.model.scale_down_state == ScaleDownState.WAIT_FOR_LOCK.value:
+            return ScaleDownStatuses.GOING_AWAY.value
+
+        return None

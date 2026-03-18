@@ -27,7 +27,9 @@ from literals import (
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
+    ScaleDownState,
     StartState,
+    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -51,7 +53,7 @@ class PeerAppModel(PeerModel):
     charmed_stats_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
-    starting_member: str = Field(default="")
+    start_member: str = Field(default="")
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
     tls_client_private_key: ExtraSecretStr = Field(default=None)
@@ -65,6 +67,7 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
+    scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
     tls_ca_rotation: str = Field(default="")
@@ -91,7 +94,8 @@ class RelationState:
         """Write to relation data."""
         if not self.relation:
             logger.warning(
-                f"Fields {list(items.keys())} were attempted to be written on the relation before it exists."
+                "Fields %s were attempted to be written on the relation before it exists.",
+                list(items.keys()),
             )
             return
 
@@ -140,6 +144,18 @@ class ValkeyServer(RelationState):
         return self.model.start_state == StartState.STARTED.value if self.model else False
 
     @property
+    def is_being_removed(self) -> bool:
+        """Check if the unit is being removed from the cluster."""
+        return (
+            self.model.scale_down_state == ScaleDownState.GOING_AWAY.value if self.model else False
+        )
+
+    @property
+    def is_active(self) -> bool:
+        """Check if the unit is started and not being removed."""
+        return self.is_started and not self.is_being_removed
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -153,6 +169,19 @@ class ValkeyServer(RelationState):
             return TLSState.NO_TLS
 
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
+
+    @property
+    def is_tls_enabled(self) -> bool:
+        """Check if TLS is enabled for client connections."""
+        return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+
+    def get_endpoint(self, substrate: Substrate) -> str:
+        """Return the endpoint to be used by other units to connect to this unit.
+
+        On VM-based substrates, this should be the private IP address.
+        On Kubernetes, this should be the hostname of the unit.
+        """
+        return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
     @property
     def tls_ca_rotation_state(self) -> TLSCARotationState:
