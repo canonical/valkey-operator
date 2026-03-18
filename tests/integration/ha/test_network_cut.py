@@ -80,13 +80,10 @@ async def test_network_cut_primary(  # noqa: C901
     c_writes_async_clean,
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
-    if tls_enabled:
-        if substrate == Substrate.K8S:
-            pytest.skip("Tests on k8s is the same as no IP will change")
-        download_client_certificate_from_unit(juju, APP_NAME)
     if change_ip and substrate == Substrate.K8S:
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
+    download_client_certificate_from_unit(juju, APP_NAME)
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
     c_writes.start()
