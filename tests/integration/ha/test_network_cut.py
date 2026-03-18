@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
-import asyncio
 import logging
 
 import jubilant
 import pytest
+from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from literals import Substrate
 from tests.integration.cw_helpers import (
@@ -81,6 +81,7 @@ async def test_network_cut_primary(  # noqa: C901
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
     download_client_certificate_from_unit(juju, APP_NAME)
+
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
     c_writes.start()
@@ -115,16 +116,18 @@ async def test_network_cut_primary(  # noqa: C901
         primary_unit_name,
         primary_ip,
     )
-    while True:
-        try:
-            new_primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
-            break
-        except ValueError as e:
-            logger.warning(f"Error getting primary IP after network cut: {e}")
-        logger.info("Waiting for new primary to be elected...")
-        await asyncio.sleep(10)
 
-    assert new_primary_ip != primary_ip, (
+    new_primary_ip = None
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+        with attempt:
+            try:
+                new_primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
+                break
+            except ValueError as e:
+                logger.warning(f"Error getting primary IP after network cut: {e}")
+            logger.info("Waiting for new primary to be elected...")
+
+    assert new_primary_ip and new_primary_ip != primary_ip, (
         "Primary IP did not change after cutting network to the primary unit."
     )
     logger.info(
