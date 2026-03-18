@@ -5,8 +5,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import ops.testing
-import pytest
 import yaml
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,

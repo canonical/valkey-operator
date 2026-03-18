@@ -302,11 +302,9 @@ class TLSManager(ManagerStatusProtocol):
         self.workload.write_file(
             current_ca_cert, self.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
         )
-
-        self.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
         return True
 
-    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
+    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
 
