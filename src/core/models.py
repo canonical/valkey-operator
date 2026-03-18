@@ -27,6 +27,7 @@ from literals import (
     INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
     StartState,
+    TLSCARotationState,
     TLSState,
 )
 
@@ -64,6 +65,8 @@ class PeerUnitModel(PeerModel):
     request_start_lock: bool = Field(default=False)
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
+    tls_ca_rotation: str = Field(default="")
+    tls_certificate_expiring: bool = Field(default=False)
 
 
 class RelationState:
@@ -151,6 +154,16 @@ class ValkeyServer(RelationState):
             return TLSState.NO_TLS
 
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
+
+    @property
+    def tls_ca_rotation_state(self) -> TLSCARotationState:
+        """Check if a TLS CA rotation is in progress."""
+        if not self.model:
+            return TLSCARotationState.NO_ROTATION
+
+        return TLSCARotationState(
+            self.model.tls_ca_rotation or TLSCARotationState.NO_ROTATION.value
+        )
 
 
 @final

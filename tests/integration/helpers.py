@@ -582,20 +582,23 @@ class WrongPassError(Exception):
     """Raised when authentication fails due to incorrect credentials."""
 
 
-async def auth_test(hostnames: list[str], username: str | None, password: str | None) -> bool:
+async def auth_test(
+    hostnames: list[str], username: str | None, password: str | None, tls_enabled: bool = False
+) -> bool:
     """Test authentication to the Valkey cluster by attempting to ping it.
 
     Args:
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
     try:
         async with create_valkey_client(
-            hostnames=hostnames, username=username, password=password
+            hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
         ) as client:
             return await client.ping() == "PONG".encode()
     except Exception as e:

@@ -83,3 +83,17 @@ class TLSStatuses(Enum):
     DISABLING_CLIENT_TLS_FAILED = StatusObject(
         status="blocked", message="Failed to disable client TLS..."
     )
+    CERTIFICATE_EXPIRING = StatusObject(
+        status="maintenance",
+        message="TLS certificates expiring soon. Please ensure new certificates are provided",
+        short_message="TLS certificates expiring soon",
+    )
+    CA_ROTATION_DETECTED = StatusObject(
+        status="maintenance", message="TLS CA rotation: new CA detected"
+    )
+    CA_ROTATION_CA_ADDED = StatusObject(
+        status="maintenance", message="TLS CA rotation: new CA certificate added"
+    )
+    CA_ROTATION_UPDATED = StatusObject(
+        status="maintenance", message="TLS CA rotation: certificates updated"
+    )

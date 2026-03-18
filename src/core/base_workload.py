@@ -159,3 +159,19 @@ class WorkloadBase(ABC):
             pathops.PebbleConnectionError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
+
+    def read_file(self, path: pathops.PathProtocol) -> str:
+        """Read a text file and return the string contents.
+
+        Args:
+            path (PathProtocol): The file path to be read.
+        """
+        try:
+            return path.read_text()
+        except (
+            FileNotFoundError,
+            PermissionError,
+            pathops.PebbleConnectionError,
+            UnicodeError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
