@@ -211,7 +211,7 @@ class TLSEvents(ops.Object):
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
-        if self.charm.app.planned_units() == 0:
+        if self.charm.app.planned_units() == 0 or self.charm.state.unit_server.is_being_removed:
             return
 
         if not self.charm.state.cluster.internal_ca_certificate:
@@ -222,15 +222,17 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-        if self.charm.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
+        if self.charm.state.unit_server.is_tls_enabled:
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
                 primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_sentinel_config_properties(
+                    primary_endpoint=primary_ip
+                )
                 self.charm.sentinel_manager.restart_service()
             except (
                 ValkeyWorkloadCommandError,
@@ -291,8 +293,8 @@ class TLSEvents(ops.Object):
 
         logger.info("Enabling client TLS in Valkey")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
-        self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.sentinel_manager.restart_service()

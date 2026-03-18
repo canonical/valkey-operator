@@ -42,6 +42,8 @@ INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
 INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 
+DATA_STORAGE = "data"
+
 
 # As per the valkey users spec
 # https://docs.google.com/document/d/1EImKKHK3wLY73-D1M2ItpHe88NHeB-Iq2M3lz7AQB7E
@@ -87,6 +89,18 @@ class StartState(StrEnum):
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     ERROR_ON_START = "error_on_start"
     STARTED = "started"
+
+
+class ScaleDownState(StrEnum):
+    """Scale down states for the service."""
+
+    NO_SCALE_DOWN = ""
+    WAIT_FOR_LOCK = "wait_for_lock"
+    WAIT_TO_FAILOVER = "wait_to_failover"
+    STOP_SERVICES = "stopping_services"
+    RESET_SENTINEL = "reset_sentinel"
+    HEALTH_CHECK = "health_check"
+    GOING_AWAY = "going_away"
 
 
 class TLSState(StrEnum):

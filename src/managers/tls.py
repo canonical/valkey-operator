@@ -43,7 +43,7 @@ class TLSManager(ManagerStatusProtocol):
         Args:
             state (TLSState): The TLS state.
         """
-        logger.debug(f"Setting TLS state to {state}")
+        logger.debug("Setting TLS state to %s", state)
         self.state.unit_server.update({"tls_client_state": state.value})
 
     def set_cert_state(self, is_ready: bool) -> None:

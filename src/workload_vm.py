@@ -21,6 +21,7 @@ from tenacity import (
 
 from common.exceptions import (
     ValkeyServiceNotAliveError,
+    ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
@@ -184,3 +185,19 @@ class ValkeyVmWorkload(WorkloadBase):
 
             time.sleep(delay)
         return True
+
+    @override
+    def stop(self) -> None:
+        try:
+            self.valkey.stop(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
+        except snap.SnapError as e:
+            logger.error("Failed to stop Valkey services: %s", e)
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Failed to stop Valkey services: {e}"
+            ) from e
+
+        if self.alive():
+            logger.error("Valkey services are still alive after stop.")
+            raise ValkeyServicesCouldNotBeStoppedError(
+                "Valkey services are still alive after stop."
+            )

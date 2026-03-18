@@ -2,11 +2,9 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import pytest
-import yaml
 from ops import ActiveStatus, pebble, testing
 
 from common.exceptions import ValkeyServiceNotAliveError, ValkeyWorkloadCommandError
@@ -21,7 +19,7 @@ from src.literals import (
 )
 from src.statuses import CharmStatuses, ClusterStatuses, StartStatuses
 
-from .helpers import status_is
+from .helpers import APP_NAME, status_is
 
 CHARM_USER = "_daemon_"
 CONTAINER = "valkey"
@@ -29,8 +27,6 @@ SERVICE_VALKEY = "valkey"
 SERVICE_METRIC_EXPORTER = "metric_exporter"
 SERVICE_SENTINEL = "valkey-sentinel"
 
-METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
-APP_NAME = METADATA["name"]
 
 internal_passwords_secret = testing.Secret(
     tracked_content={f"{user.value}-password": "secure-password" for user in CharmUsers},
@@ -100,17 +96,18 @@ def test_start_primary(cloud_spec):
 
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
-        patch("common.client.ValkeyClient.get_persistence_info", return_value={"loading": "0"}),
-        patch("common.client.ValkeyClient.set_value", return_value=True),
+        patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("common.client.ValkeyClient.set", return_value=True),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
         assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
 
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
-        patch("common.client.ValkeyClient.get_persistence_info", return_value={"loading": "0"}),
-        patch("common.client.ValkeyClient.set_value", return_value=True),
-        patch("common.client.ValkeyClient.sentinel_get_master_info", return_value={"ip": "test"}),
+        patch("common.client.SentinelClient.ping", return_value=True),
+        patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("common.client.ValkeyClient.set", return_value=True),
+        patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
         assert state_out.unit_status == ActiveStatus()
@@ -145,7 +142,6 @@ def test_start_primary(cloud_spec):
 
     state_out = ctx.run(ctx.on.start(), state_in)
     assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value)
-    assert status_is(state_out, StartStatuses.SERVICE_NOT_STARTED.value, is_app=True)
 
 
 def test_start_non_primary(cloud_spec):
@@ -199,11 +195,14 @@ def test_start_non_primary(cloud_spec):
         assert status_is(state_out, StartStatuses.WAITING_TO_START.value)
 
         # health check
-        with patch("common.client.ValkeyClient.is_replica_synced", return_value=False):
+        with patch(
+            "common.client.ValkeyClient.role",
+            return_value=["slave", "ip", 6379, "sync", 467184],
+        ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"starting-member": "valkey/0"},
+                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -216,38 +215,23 @@ def test_start_non_primary(cloud_spec):
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
 
-        # replica syncing
+        # sentinel not yet discovered error raised
         with (
-            patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
+            patch(
+                "core.cluster_state.ClusterState.bind_address",
+                new_callable=PropertyMock(return_value="10.0.1.0"),
+            ),
+            patch(
+                "common.client.SentinelClient.sentinels_primary",
+                side_effect=ValkeyWorkloadCommandError("errored out"),
+            ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"starting-member": "valkey/0"},
-                peers_data={1: {"start-state": "started"}},
-            )
-            state_in = testing.State(
-                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-                leader=False,
-                relations={relation, status_peer_relation},
-                secrets={internal_passwords_secret},
-                containers={container},
-            )
-            state_out = ctx.run(ctx.on.start(), state_in)
-            assert status_is(state_out, StartStatuses.WAITING_FOR_REPLICA_SYNC.value)
-
-        # sentinel not yet discovered
-        with (
-            patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=False),
-            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
-            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
-        ):
-            relation = testing.PeerRelation(
-                id=1,
-                endpoint=PEER_RELATION,
-                local_app_data={"starting-member": "valkey/0"},
+                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -260,6 +244,57 @@ def test_start_non_primary(cloud_spec):
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
 
+        # sentinel not yet discovered sentinel not seeing other sentinel
+        with (
+            patch(
+                "core.cluster_state.ClusterState.bind_address",
+                new_callable=PropertyMock(return_value="10.0.1.0"),
+            ),
+            patch(
+                "common.client.SentinelClient.sentinels_primary",
+                return_value=[{"ip": "10.0.1.1"}, {"ip": "10.0.1.2"}],
+            ),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        ):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"start-member": "valkey/0"},
+                peers_data={1: {"start-state": "started"}},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
+
+        # replica syncing
+        with (
+            patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
+            patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        ):
+            relation = testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_app_data={"start-member": "valkey/0"},
+                peers_data={1: {"start-state": "started"}},
+            )
+            state_in = testing.State(
+                model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+                leader=False,
+                relations={relation, status_peer_relation},
+                secrets={internal_passwords_secret},
+                containers={container},
+            )
+            state_out = ctx.run(ctx.on.start(), state_in)
+            assert status_is(state_out, StartStatuses.WAITING_FOR_REPLICA_SYNC.value)
         # Happy path with sentinel discovered and replica synced
         with (
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
@@ -270,7 +305,7 @@ def test_start_non_primary(cloud_spec):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"starting-member": "valkey/0"},
+                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -439,7 +474,9 @@ def test_config_changed_non_leader_unit(cloud_spec):
 
 def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -464,7 +501,9 @@ def test_config_changed_leader_unit_valkey_update_fails(cloud_spec):
 
 def test_config_changed_leader_unit(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
@@ -481,12 +520,12 @@ def test_config_changed_leader_unit(cloud_spec):
     )
     with (
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
-        mock_load_acl.assert_called_once()
+        mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
@@ -495,40 +534,6 @@ def test_config_changed_leader_unit(cloud_spec):
             secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
             == "secure-password"
         )
-
-
-# def test_config_changed_leader_unit_primary(cloud_spec):
-#     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-#     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
-#     container = testing.Container(name=CONTAINER, can_connect=True)
-
-#     password_secret = testing.Secret(
-#         tracked_content={user.value: "secure-password" for user in CharmUsers},
-#         remote_grants=APP_NAME,
-#     )
-#     state_in = testing.State(
-#         leader=True,
-#         relations={relation},
-#         containers={container},
-#         secrets={password_secret},
-#         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
-#         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
-#     )
-#     with (
-#         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-#         patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
-#         patch("common.client.ValkeyClient.config_set") as mock_config_set,
-#         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
-#     ):
-#         state_out = ctx.run(ctx.on.config_changed(), state_in)
-#         mock_set_acl_file.assert_called_once()
-#         secret_out = state_out.get_secret(
-#             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
-#         )
-#         assert (
-#             secret_out.latest_content.get(f"{CharmUsers.VALKEY_ADMIN.value}-password")
-#             == "secure-password"
-#         )
 
 
 def test_config_changed_leader_unit_wrong_username(cloud_spec):
@@ -590,20 +595,22 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("common.client.ValkeyClient.load_acl") as mock_load_acl,
+        patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_load_acl.assert_called_once()
+        mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
+    )
     statuses_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -636,7 +643,9 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
-        mock_exec_command.assert_called_once_with(["acl", "load"], hostname="127.1.1.1")
+        mock_exec_command.assert_called_once_with(
+            ["acl", "load"], hostname="valkey-0.valkey-endpoints"
+        )
         cluster_statuses = charm.state.statuses.get(
             scope="unit",
             component=charm.cluster_manager.name,
@@ -689,7 +698,7 @@ def test_relation_changed_event_leader_setting_starting_member(cloud_spec):
     )
     with patch("managers.tls.TLSManager.will_certificate_expire"):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("starting-member") == "valkey/1"
+        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
 
 
 def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
@@ -697,7 +706,7 @@ def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"starting-member": "valkey/1"},
+        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": "started"},
         peers_data={1: {"start-state": "started"}},
     )
@@ -711,7 +720,7 @@ def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
     )
     with patch("managers.tls.TLSManager.will_certificate_expire"):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("starting-member") is None
+        assert state_out.get_relation(1).local_app_data.get("start-member") is None
 
 
 def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
@@ -719,7 +728,7 @@ def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"starting-member": "valkey/1"},
+        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": StartState.STARTED.value},
         peers_data={
             1: {
@@ -738,4 +747,4 @@ def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
     )
     with patch("managers.tls.TLSManager.will_certificate_expire"):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("starting-member") == "valkey/1"
+        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
