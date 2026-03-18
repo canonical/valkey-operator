@@ -174,6 +174,23 @@ class StartLock(DataBagLock):
         )
 
 
+class RestartLock(DataBagLock):
+    """Lock for restart operations."""
+
+    unit_request_lock_atr_name = "request_restart_lock"
+    member_with_lock_atr_name = "restart_member"
+
+    @property
+    def is_lock_free_to_give(self) -> bool:
+        """Check if the unit with the restart lock has completed its operation."""
+        restarting_unit = self.unit_with_lock
+        return (
+            not self.state.cluster.model.restart_member
+            or not restarting_unit
+            or not restarting_unit.model.request_restart_lock
+        )
+
+
 class ScaleDownLock(Lockable):
     """Lock for scale down operations.
 

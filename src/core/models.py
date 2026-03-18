@@ -53,6 +53,7 @@ class PeerAppModel(PeerModel):
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
     start_member: str = Field(default="")
+    restart_member: str = Field(default="")
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
 
@@ -65,6 +66,7 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
+    request_restart_lock: bool = Field(default=False)
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)

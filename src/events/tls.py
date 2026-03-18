@@ -24,6 +24,7 @@ from literals import (
     CLIENT_PORT,
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
+    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -320,9 +321,9 @@ class TLSEvents(ops.Object):
                     "private_ip": self.charm.state.bind_address,
                 }
             )
-            # TODO rolling ops
-            self.charm.workload.restart(self.charm.workload.valkey_service)
-            self.charm.sentinel_manager.restart_service()
+            # only restart on VM because on k8s the hostname is stable and does not change with IP changes
+            if self.charm.state.substrate == Substrate.VM:
+                self.charm.base_events.restart_workload.emit()
 
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""

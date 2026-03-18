@@ -538,7 +538,7 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
         mock_set_acl_file.assert_not_called()
 
 
-def test_config_changed_ip_change_no_tls_relation(cloud_spec):
+def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1,
@@ -557,17 +557,17 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec):
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
-        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec_vm),
     )
     with (
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
         patch("managers.sentinel.SentinelManager.restart_service") as mock_restart_sentinel,
         patch(
-            "workload_k8s.ValkeyK8sWorkload.exec",
+            "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
         ),
-        patch("workload_k8s.ValkeyK8sWorkload.restart") as mock_workload_restart,
+        patch("workload_vm.ValkeyVmWorkload.restart") as mock_workload_restart,
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
         patch(
             "managers.tls.TLSManager.build_sans_dns", return_value=frozenset({"www.example.com"})
@@ -576,6 +576,8 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec):
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+        patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()
