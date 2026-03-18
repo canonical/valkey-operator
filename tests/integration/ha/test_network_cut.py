@@ -13,6 +13,7 @@ from tests.integration.cw_helpers import (
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
+    get_sans_from_certificate,
     get_unit_name_from_primary_ip,
     hostname_from_unit,
     is_unit_reachable,
@@ -27,6 +28,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
     get_cluster_hostnames,
+    get_ip_from_unit,
     get_number_connected_replicas,
     get_password,
     get_primary_ip,
@@ -67,8 +69,10 @@ def test_build_and_deploy(
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
+@pytest.mark.parametrize("change_ip", [True, False], ids=["change_ip", "no_change_ip"])
 async def test_network_cut_primary(  # noqa: C901
     tls_enabled: bool,
+    change_ip: bool,
     juju: jubilant.Juju,
     substrate: Substrate,
     chaos_mesh,
@@ -80,6 +84,9 @@ async def test_network_cut_primary(  # noqa: C901
         if substrate == Substrate.K8S:
             pytest.skip("Tests on k8s is the same as no IP will change")
         download_client_certificate_from_unit(juju, APP_NAME)
+    if change_ip and substrate == Substrate.K8S:
+        pytest.skip("Changing IP is not applicable for k8s substrate.")
+
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
     c_writes.start()
@@ -91,17 +98,16 @@ async def test_network_cut_primary(  # noqa: C901
     # Cut the network to the primary unit
     logger.info("Cutting network to primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
-    if tls_enabled:
-        logger.info(
-            "TLS is enabled, ensuring client certificates are downloaded before network cut."
-        )
-        download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+
+    download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+
     primary_hostname = hostname_from_unit(juju, primary_unit_name)
     machine_name = primary_hostname
     if substrate == Substrate.K8S:
         primary_hostname = f"{primary_hostname}.{APP_NAME}-endpoints"
+
     logger.info("Identified container name for primary unit: %s", primary_hostname)
-    cut_network_from_unit(juju, substrate, machine_name)
+    cut_network_from_unit(juju, substrate, machine_name, change_ip=change_ip)
 
     for unit in juju.status().apps[APP_NAME].units:
         if unit == primary_unit_name:
@@ -168,8 +174,16 @@ async def test_network_cut_primary(  # noqa: C901
             f"Unit {unit} cannot reach the original primary unit {primary_hostname} after network restoration."
         )
 
-    if tls_enabled:
-        download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+    download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+    # read ip from cert and check if is a different ip than before if change_ip is True
+    certificate_sans = get_sans_from_certificate("./client.pem")
+    if change_ip:
+        assert primary_ip not in certificate_sans["sans_ip"], (
+            "The old IP should not be in SANs of client certificate after network cut and IP change."
+        )
+        assert get_ip_from_unit(juju, primary_unit_name) in certificate_sans["sans_ip"], (
+            "The new IP should be in SANs of client certificate after network cut and IP change."
+        )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1

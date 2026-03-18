@@ -24,53 +24,86 @@ from tests.integration.helpers import APP_NAME
 logger = getLogger(__name__)
 
 
-def cut_network_from_unit(juju: jubilant.Juju, substrate: Substrate, machine_name: str) -> None:
+def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
+    """Cut network from a lxc container in a way the changes the IP."""
+    # apply a mask (device type `none`)
+    cut_network_command = f"lxc config device add {machine_name} eth0 none"
+    subprocess.check_call(cut_network_command.split())
+
+
+def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
+    """Cut network from a lxc container (without causing the change of the unit IP address)."""
+    override_command = f"lxc config device override {machine_name} eth0"
+    try:
+        subprocess.check_call(override_command.split())
+    except subprocess.CalledProcessError:
+        # Ignore if the interface was already overridden.
+        pass
+
+    limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress=0kbit"
+    subprocess.check_call(limit_set_command.split())
+    limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress=1kbit"
+    subprocess.check_call(limit_set_command.split())
+    limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority=10"
+    subprocess.check_call(limit_set_command.split())
+
+
+def k8s_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
+    """Cut network from a k8s pod without causing the change of the unit IP address."""
+    # Apply a NetworkChaos file to use chaos-mesh to simulate a network cut.
+    with tempfile.NamedTemporaryFile(dir=".") as temp_file:
+        # Generates a manifest for chaosmesh to simulate network failure for a pod
+        with open(
+            "tests/integration/ha/helpers/chaos_network_loss.yml"
+        ) as chaos_network_loss_file:
+            logger.info(
+                f"Calling network loss on ns={juju.model} and pod={machine_name.replace('/', '-')}"
+            )
+            template = string.Template(chaos_network_loss_file.read())
+            chaos_network_loss = template.substitute(
+                namespace=juju.model,
+                pod=machine_name.replace("/", "-"),
+            )
+
+            temp_file.write(str.encode(chaos_network_loss))
+            temp_file.flush()
+
+        # Apply the generated manifest, chaosmesh would then make the pod inaccessible
+        env = os.environ
+        env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
+        try:
+            command_result = subprocess.check_output(
+                " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
+                shell=True,
+                env=env,
+                stderr=subprocess.STDOUT,
+            )
+        except subprocess.CalledProcessError as err:
+            logger.error(
+                f"Failed to apply network isolation: [{err.returncode}] {err.stderr=}, {err.stdout=}"
+            )
+            raise
+        logger.info("Result of isolating unit from cluster is '%s'", command_result)
+
+
+def cut_network_from_unit(
+    juju: jubilant.Juju, substrate: Substrate, machine_name: str, change_ip: bool = False
+) -> None:
     """Cut network from a lxc container.
 
     Args:
         juju: Juju client
         substrate: The substrate the test is running on
         machine_name: lxc container hostname or k8s pod name
+        change_ip: Whether to change the IP address of the unit on the network cut (only applicable for VMs)
     """
     if substrate == Substrate.VM:
-        # apply a mask (device type `none`)
-        cut_network_command = f"lxc config device add {machine_name} eth0 none"
-        subprocess.check_call(cut_network_command.split())
+        if change_ip:
+            lxd_cut_network_from_unit_with_ip_change(machine_name)
+        else:
+            lxd_cut_network_from_unit_without_ip_change(machine_name)
     else:
-        # Apply a NetworkChaos file to use chaos-mesh to simulate a network cut.
-        with tempfile.NamedTemporaryFile(dir=".") as temp_file:
-            # Generates a manifest for chaosmesh to simulate network failure for a pod
-            with open(
-                "tests/integration/ha/helpers/chaos_network_loss.yml"
-            ) as chaos_network_loss_file:
-                logger.info(
-                    f"Calling network loss on ns={juju.model} and pod={machine_name.replace('/', '-')}"
-                )
-                template = string.Template(chaos_network_loss_file.read())
-                chaos_network_loss = template.substitute(
-                    namespace=juju.model,
-                    pod=machine_name.replace("/", "-"),
-                )
-
-                temp_file.write(str.encode(chaos_network_loss))
-                temp_file.flush()
-
-            # Apply the generated manifest, chaosmesh would then make the pod inaccessible
-            env = os.environ
-            env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
-            try:
-                command_result = subprocess.check_output(
-                    " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
-                    shell=True,
-                    env=env,
-                    stderr=subprocess.STDOUT,
-                )
-            except subprocess.CalledProcessError as err:
-                logger.error(
-                    f"Failed to apply network isolation: [{err.returncode}] {err.stderr=}, {err.stdout=}"
-                )
-                raise
-            logger.info("Result of isolating unit from cluster is '%s'", command_result)
+        k8s_cut_network_from_unit_without_ip_change(machine_name)
 
 
 def restore_network_to_unit(juju: jubilant.Juju, substrate: Substrate, machine_name: str) -> None:
@@ -294,3 +327,36 @@ def hostname_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
     task_result = juju.exec(command="hostname", unit=unit_name)
 
     return task_result.stdout.strip()
+
+
+def get_sans_from_certificate(certificate_path: str) -> dict[str, set[str]]:
+    """Get the SANs for a unit's cert."""
+    sans_ip = set()
+    sans_dns = set()
+    if not (
+        san_lines := subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-ext",
+                "subjectAltName",
+                "-noout",
+                "-in",
+                certificate_path,
+            ],
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    ):
+        return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+    for line in san_lines:
+        for sans in line.split(", "):
+            san_type, san_value = sans.split(":")
+
+            if san_type.strip() == "DNS":
+                sans_dns.add(san_value)
+            if san_type.strip() == "IP Address":
+                sans_ip.add(san_value)
+
+    return {"sans_ip": sans_ip, "sans_dns": sans_dns}
