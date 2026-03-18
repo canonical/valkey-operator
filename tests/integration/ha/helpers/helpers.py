@@ -48,7 +48,7 @@ def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
     subprocess.check_call(limit_set_command.split())
 
 
-def k8s_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
+def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: str) -> None:
     """Cut network from a k8s pod without causing the change of the unit IP address."""
     # Apply a NetworkChaos file to use chaos-mesh to simulate a network cut.
     with tempfile.NamedTemporaryFile(dir=".") as temp_file:
@@ -57,11 +57,11 @@ def k8s_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
             "tests/integration/ha/helpers/chaos_network_loss.yml"
         ) as chaos_network_loss_file:
             logger.info(
-                f"Calling network loss on ns={juju.model} and pod={machine_name.replace('/', '-')}"
+                f"Calling network loss on ns={model_name} and pod={machine_name.replace('/', '-')}"
             )
             template = string.Template(chaos_network_loss_file.read())
             chaos_network_loss = template.substitute(
-                namespace=juju.model,
+                namespace=model_name,
                 pod=machine_name.replace("/", "-"),
             )
 
@@ -87,13 +87,14 @@ def k8s_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
 
 
 def cut_network_from_unit(
-    juju: jubilant.Juju, substrate: Substrate, machine_name: str, change_ip: bool = False
+    substrate: Substrate, model_name: str, machine_name: str, change_ip: bool = False
 ) -> None:
     """Cut network from a lxc container.
 
     Args:
         juju: Juju client
         substrate: The substrate the test is running on
+        model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
         change_ip: Whether to change the IP address of the unit on the network cut (only applicable for VMs)
     """
@@ -103,15 +104,15 @@ def cut_network_from_unit(
         else:
             lxd_cut_network_from_unit_without_ip_change(machine_name)
     else:
-        k8s_cut_network_from_unit_without_ip_change(machine_name)
+        k8s_cut_network_from_unit_without_ip_change(model_name, machine_name)
 
 
-def restore_network_to_unit(juju: jubilant.Juju, substrate: Substrate, machine_name: str) -> None:
+def restore_network_to_unit(substrate: Substrate, model_name: str, machine_name: str) -> None:
     """Restore network from a lxc container.
 
     Args:
-        juju: Juju client
         substrate: The substrate the test is running on
+        model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
     """
     if substrate == Substrate.VM:
@@ -122,7 +123,7 @@ def restore_network_to_unit(juju: jubilant.Juju, substrate: Substrate, machine_n
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
         subprocess.check_output(
-            f"microk8s kubectl -n {juju.model} delete networkchaos network-loss-primary",
+            f"microk8s kubectl -n {model_name} delete networkchaos network-loss-primary",
             shell=True,
             env=env,
         )

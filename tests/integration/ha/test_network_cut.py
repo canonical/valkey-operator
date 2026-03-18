@@ -107,7 +107,7 @@ async def test_network_cut_primary(  # noqa: C901
         primary_hostname = f"{primary_hostname}.{APP_NAME}-endpoints"
 
     logger.info("Identified container name for primary unit: %s", primary_hostname)
-    cut_network_from_unit(juju, substrate, machine_name, change_ip=change_ip)
+    cut_network_from_unit(substrate, juju.model, machine_name, change_ip=change_ip)
 
     for unit in juju.status().apps[APP_NAME].units:
         if unit == primary_unit_name:
@@ -157,7 +157,7 @@ async def test_network_cut_primary(  # noqa: C901
 
     # restore network to the original primary unit
     logger.info("Restoring network to original primary unit at %s", primary_hostname)
-    restore_network_to_unit(juju, substrate, machine_name)
+    restore_network_to_unit(substrate, juju.model, machine_name)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
