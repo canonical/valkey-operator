@@ -165,7 +165,10 @@ class ContinuousWrites:
         if not self._is_stopped:
             result = self.stop()
 
-        asyncio.run(self._async_delete())
+        try:
+            asyncio.run(self._async_delete())
+        except Exception as e:
+            logger.warning("Failed to clear continuous writes data from Valkey: %s", e)
 
         last_written_file = Path(self.LAST_WRITTEN_VAL_PATH)
         if last_written_file.exists():
@@ -179,7 +182,10 @@ class ContinuousWrites:
         if not self._is_stopped:
             result = await self.async_stop()
 
-        await self._async_delete()
+        try:
+            await self._async_delete()
+        except Exception as e:
+            logger.warning("Failed to clear continuous writes data from Valkey: %s", e)
 
         last_written_file = Path(self.LAST_WRITTEN_VAL_PATH)
         if last_written_file.exists():
