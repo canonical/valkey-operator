@@ -270,7 +270,7 @@ class ContinuousWrites:
         current_val = starting_number
         config = initial_config
 
-        proc_logger.info(f"Starting continuous async writes from {current_val}")
+        proc_logger.info("Starting continuous async writes from %s", current_val)
 
         try:
             while not event.is_set():
@@ -281,8 +281,8 @@ class ContinuousWrites:
                     pass
 
                 try:
-                    proc_logger.info(f"Writing value: {current_val}")
-                    proc_logger.info(f"Current endpoints={config.endpoints}")
+                    proc_logger.info("Writing value: %s", current_val)
+                    proc_logger.info("Current endpoints=%s", config.endpoints)
                     async with with_client(config) as client:
                         if not (
                             res := await asyncio.wait_for(
@@ -290,10 +290,10 @@ class ContinuousWrites:
                             )
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
-                    proc_logger.info(f"Length after write: {res}")
+                    proc_logger.info("Length after write: %s", res)
                     await asyncio.sleep(in_between_sleep)
                 except Exception as e:
-                    proc_logger.warning(f"Write failed at {current_val}: {e}")
+                    proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
                     if event.is_set():
                         break
@@ -319,7 +319,9 @@ if __name__ == "__main__":
             time.sleep(1)
             if new_hostnames := get_active_hostnames(juju_env, "valkey") != hostnames:
                 logger.info(
-                    f"Hostnames changed from {hostnames} to {new_hostnames}, updating continuous writes client."
+                    "Hostnames changed from %s to %s, updating continuous writes client.",
+                    hostnames,
+                    new_hostnames,
                 )
                 hostnames = new_hostnames
                 cw.update()

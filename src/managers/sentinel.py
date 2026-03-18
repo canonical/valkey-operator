@@ -72,19 +72,23 @@ class SentinelManager(ManagerStatusProtocol):
 
         client = self._get_sentinel_client()
 
-        for sentinel_ip in active_sentinels:
+        for sentinel_host in active_sentinels:
             try:
                 discovered_sentinels = {
-                    sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_ip)
+                    sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_host)
                 }
                 if self.state.endpoint not in discovered_sentinels:
                     logger.warning(
-                        f"Sentinel at {sentinel_ip} does not see local sentinel at {self.state.endpoint}."
+                        "Sentinel at %s does not see local sentinel at %s.",
+                        sentinel_host,
+                        self.state.endpoint,
                     )
                     return False
 
             except ValkeyWorkloadCommandError:
-                logger.warning(f"Could not query sentinel at {sentinel_ip} for primary discovery.")
+                logger.warning(
+                    "Could not query sentinel at %s for primary discovery.", sentinel_host
+                )
                 return False
         return True
 
@@ -152,9 +156,10 @@ class SentinelManager(ManagerStatusProtocol):
         client = self._get_sentinel_client()
         try:
             client.failover_primary_coordinated(self.state.endpoint)
-            client.is_failover_in_progress(self.state.endpoint)
+            if client.is_failover_in_progress(self.state.endpoint):
+                raise SentinelFailoverError("Failover is in progress after triggering failover.")
         except ValkeyWorkloadCommandError as e:
-            logger.error(f"Failed to trigger failover: {e}")
+            logger.error("Failed to trigger failover: %s", e)
             raise SentinelFailoverError from e
 
     def reset_sentinel_states(self, sentinel_ips: list[str]) -> None:
@@ -213,12 +218,15 @@ class SentinelManager(ManagerStatusProtocol):
             }
             if discovered_sentinels != sentinel_ips_set:
                 logger.warning(
-                    f"Sentinel at {target_sentinel_ip} sees sentinels {discovered_sentinels}, expected {sentinel_ips_set}."
+                    "Sentinel at %s sees sentinels %s, expected %s.",
+                    target_sentinel_ip,
+                    discovered_sentinels,
+                    sentinel_ips_set,
                 )
                 return False
         except ValkeyWorkloadCommandError:
             logger.warning(
-                f"Could not query sentinel at {target_sentinel_ip} for sentinel discovery."
+                "Could not query sentinel at %s for sentinel discovery.", target_sentinel_ip
             )
             return False
         return True
@@ -255,10 +263,16 @@ class SentinelManager(ManagerStatusProtocol):
                 number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
             ):
                 logger.warning(
-                    f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
+                    "Sentinel at %s sees %d replicas, expected %d.",
+                    sentinel_ip,
+                    number_replicas,
+                    expected_replicas,
                 )
                 raise SentinelIncorrectReplicaCountError(
-                    f"Sentinel at {sentinel_ip} sees {number_replicas} replicas, expected {expected_replicas}."
+                    "Sentinel at %s sees %d replicas, expected %d.",
+                    sentinel_ip,
+                    number_replicas,
+                    expected_replicas,
                 )
 
     def get_active_sentinel_ips(self, hostname: str) -> list[str]:

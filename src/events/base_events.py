@@ -276,7 +276,7 @@ class BaseEvents(ops.Object):
                     str(admin_secret_id)
                 )
             except (ops.ModelError, ops.SecretNotFoundError) as e:
-                logger.error(f"Could not access secret {admin_secret_id}: {e}")
+                logger.error("Could not access secret %s: %s", admin_secret_id, e)
                 raise
 
         # generate passwords for all internal users if not specified in the user secret
@@ -389,7 +389,7 @@ class BaseEvents(ops.Object):
         )
 
         if any(key not in CharmUsers for key in secret_content.keys()):
-            logger.error(f"Invalid username in secret {secret_id}.")
+            logger.error("Invalid username in secret %s.", secret_id)
             self.charm.status.set_running_status(
                 ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
                 scope="app",
@@ -448,7 +448,6 @@ class BaseEvents(ops.Object):
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
 
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.WAIT_FOR_LOCK})
         self.charm.status.set_running_status(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
             scope="unit",
@@ -493,9 +492,6 @@ class BaseEvents(ops.Object):
             primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
             and len(active_sentinels) > 1
         ):
-            self.charm.state.unit_server.update(
-                {"scale_down_state": ScaleDownState.WAIT_TO_FAILOVER}
-            )
             logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
             self.charm.sentinel_manager.failover()
             primary_ip = self.charm.sentinel_manager.get_primary_ip()
@@ -505,7 +501,6 @@ class BaseEvents(ops.Object):
             )
 
         # stop valkey and sentinel processes
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.STOP_SERVICES})
         self.charm.workload.stop()
         active_sentinels = [
             ip
@@ -514,18 +509,12 @@ class BaseEvents(ops.Object):
         ]
 
         # reset sentinel states on other units
-        self.charm.state.unit_server.update(
-            {
-                "scale_down_state": ScaleDownState.RESET_SENTINEL,
-                "start_state": StartState.NOT_STARTED.value,
-            }
-        )
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
         if active_sentinels:
             logger.debug("Resetting sentinel states on active units: %s", active_sentinels)
             self.charm.sentinel_manager.reset_sentinel_states(active_sentinels)
 
             # check health after scale down
-            self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.HEALTH_CHECK})
             self.charm.sentinel_manager.verify_expected_replica_count(active_sentinels)
             # release lock
             scale_down_lock.release_lock(primary_ip=primary_ip)

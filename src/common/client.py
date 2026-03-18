@@ -143,7 +143,7 @@ class ValkeyClient(CliClient):
         )
         values = {}
         if not output.strip():
-            logger.warning(f"No persistence info found on Valkey server at {hostname}.")
+            logger.warning("No persistence info found on Valkey server at %s.", hostname)
             return None
         for line in output.strip().splitlines():
             if line.startswith("#"):

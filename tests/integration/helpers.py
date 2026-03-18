@@ -136,7 +136,7 @@ def does_message_match(expected_status_message: str, status: StatusObject) -> bo
             )
         )
     except KeyError as e:
-        logger.error(f"Error attempting to convert StatusObject to ops.StatusBase: {e}")
+        logger.error("Error attempting to convert StatusObject to ops.StatusBase: %s", e)
         return False
 
 
@@ -387,8 +387,7 @@ def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
     if "role:master" in replication_info:
         return hostnames[0]
     # extract ip
-    match = re.search(r"master_host:([^\s]+)", replication_info)
-    if not match:
+    if not (match := re.search(r"master_host:([^\s]+)", replication_info)):
         raise ValueError("Could not find master_host in replication info")
     return match.group(1)
 
@@ -417,7 +416,12 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     total_bytes_target = target_gb * 1024 * 1024 * 1024
     total_keys = total_bytes_target // value_size_bytes
 
-    logger.info(f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)")
+    logger.info(
+        "Targeting ~%sGB (%s keys of %s bytes each)",
+        target_gb,
+        total_keys,
+        value_size_bytes,
+    )
 
     start_time = time.time()
     keys_added = 0
@@ -441,15 +445,20 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
                 elapsed = time.time() - start_time
                 percent = (keys_added / total_keys) * 100
                 logger.info(
-                    f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+                    "Progress: %.1f%% | Keys: %s | Elapsed: %.1f s",
+                    percent,
+                    keys_added,
+                    elapsed,
                 )
 
         except Exception as e:
-            logger.error(f"\nError: {e}")
+            logger.error("Error: %s", e)
         finally:
             total_time = time.time() - start_time
             logger.info(
-                f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds."
+                "Seeding complete! Added %s keys in %.2f seconds.",
+                keys_added,
+                total_time,
             )
 
 
@@ -615,20 +624,23 @@ class WrongPassError(Exception):
     """Raised when authentication fails due to incorrect credentials."""
 
 
-async def auth_test(hostnames: list[str], username: str | None, password: str | None) -> bool:
+async def auth_test(
+    hostnames: list[str], username: str | None, password: str | None, tls_enabled: bool = False
+) -> bool:
     """Test authentication to the Valkey cluster by attempting to ping it.
 
     Args:
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
     try:
         async with create_valkey_client(
-            hostnames=hostnames, username=username, password=password
+            hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
         ) as client:
             return await client.ping() == "PONG".encode()
     except Exception as e:
@@ -696,3 +708,16 @@ def get_data_bag(
         else {}
     )
     return {unit_name: local_data} | remote_data
+
+
+def existing_app(juju: jubilant.Juju) -> str | None:
+    """Return the name of an existing valkey cluster.
+
+    Returns:
+        str | None: name of an application deployment for `valkey` if it exists, None otherwise.
+    """
+    for app_name, app_status in juju.status().apps.items():
+        if "valkey" == app_status.charm_name:
+            return app_name
+
+    return None
