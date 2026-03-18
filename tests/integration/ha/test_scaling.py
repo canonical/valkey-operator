@@ -110,7 +110,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
 
-    if init_units_count < 1:
+    if init_units_count < NUM_UNITS:
         juju.add_unit(app_name, num_units=NUM_UNITS - init_units_count)
         init_units_count = NUM_UNITS
         juju.wait(

@@ -248,6 +248,8 @@ class ScaleDownLock(Lockable):
                     )
                     return True
 
+        return False
+
     @property
     def is_held_by_this_unit(self) -> bool:
         """Check if the local unit holds the lock."""
