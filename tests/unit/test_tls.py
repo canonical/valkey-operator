@@ -5,6 +5,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
@@ -921,7 +922,7 @@ def test_private_key_without_client_tls(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     private_key = PrivateKey.generate()
-    secret = ops.testing.Secret(
+    secret = testing.Secret(
         {"private-key": private_key.raw},
         label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
     )
@@ -956,7 +957,7 @@ def test_invalid_private_key(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     private_key = "invalid-private-key"
-    secret = ops.testing.Secret(
+    secret = testing.Secret(
         {"private-key": private_key},
         label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
     )
@@ -992,7 +993,7 @@ def test_private_key_refreshes_certificate(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     private_key = PrivateKey.generate()
-    user_secret = ops.testing.Secret(
+    user_secret = testing.Secret(
         {"private-key": private_key.raw},
         label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
     )
@@ -1027,7 +1028,7 @@ def test_private_key_secret_changed(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     private_key = PrivateKey.generate()
-    user_secret = ops.testing.Secret(
+    user_secret = testing.Secret(
         {"private-key": private_key.raw},
         label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
     )

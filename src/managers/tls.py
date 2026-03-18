@@ -304,7 +304,7 @@ class TLSManager(ManagerStatusProtocol):
         )
         return True
 
-    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
+    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
 
