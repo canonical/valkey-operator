@@ -344,8 +344,9 @@ def test_update_status_leader_unit(cloud_spec):
         containers={container},
     )
 
-    state_out = ctx.run(ctx.on.update_status(), state_in)
-    assert state_out.unit_status == ActiveStatus()
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+        assert state_out.unit_status == ActiveStatus()
 
 
 def test_update_status_non_leader_unit(cloud_spec):
@@ -362,8 +363,9 @@ def test_update_status_non_leader_unit(cloud_spec):
         relations={relation, status_peer_relation},
         containers={container},
     )
-    state_out = ctx.run(ctx.on.update_status(), state_in)
-    assert state_out.unit_status == ActiveStatus()
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+        assert state_out.unit_status == ActiveStatus()
 
 
 def test_internal_user_creation(cloud_spec):
@@ -694,8 +696,9 @@ def test_relation_changed_event_leader_setting_starting_member(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-    assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
 
 
 def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
@@ -715,8 +718,9 @@ def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-    assert state_out.get_relation(1).local_app_data.get("start-member") is None
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+        assert state_out.get_relation(1).local_app_data.get("start-member") is None
 
 
 def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
@@ -741,5 +745,6 @@ def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-    assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"

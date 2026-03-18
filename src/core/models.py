@@ -29,6 +29,7 @@ from literals import (
     ScaleDownState,
     StartState,
     Substrate,
+    TLSCARotationState,
     TLSState,
 )
 
@@ -67,6 +68,8 @@ class PeerUnitModel(PeerModel):
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
+    tls_ca_rotation: str = Field(default="")
+    tls_certificate_expiring: bool = Field(default=False)
 
 
 class RelationState:
@@ -177,6 +180,16 @@ class ValkeyServer(RelationState):
         On Kubernetes, this should be the hostname of the unit.
         """
         return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
+
+    @property
+    def tls_ca_rotation_state(self) -> TLSCARotationState:
+        """Check if a TLS CA rotation is in progress."""
+        if not self.model:
+            return TLSCARotationState.NO_ROTATION
+
+        return TLSCARotationState(
+            self.model.tls_ca_rotation or TLSCARotationState.NO_ROTATION.value
+        )
 
 
 @final
