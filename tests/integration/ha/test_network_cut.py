@@ -44,9 +44,6 @@ def test_build_and_deploy(
     tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
 ) -> None:
     """Build the charm-under-test and deploy it with three units."""
-    if tls_enabled and substrate == Substrate.K8S:
-        pytest.skip("Tests on k8s is the same as no IP will change")
-
     juju.deploy(
         charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
