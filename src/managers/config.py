@@ -92,7 +92,7 @@ class ConfigManager(ManagerStatusProtocol):
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""
-        local_unit_endpoint = self.state.unit_server.get_endpoint(self.state.substrate)
+        local_unit_endpoint = self.state.endpoint
         replica_config = {
             "primaryuser": CharmUsers.VALKEY_REPLICA.value,
             "primaryauth": self.state.cluster.internal_users_credentials.get(
