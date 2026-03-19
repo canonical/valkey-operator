@@ -20,6 +20,7 @@ from tests.integration.ha.helpers.helpers import (
     VM_RESTART_DELAY_DEFAULT,
     get_unit_name_from_primary_ip,
     patch_restart_delay,
+    reboot_unit,
     send_process_control_signal,
 )
 
@@ -467,3 +468,83 @@ async def test_full_cluster_crash(
             delay=None,
             substrate=substrate,
         )
+
+
+async def test_reboot_primary(
+    juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
+) -> None:
+    """Make sure the cluster can self-heal when the leader goes down."""
+    app_name = existing_app(juju) or APP_NAME
+
+    # make sure we have at least two units so we can stop one of them
+    init_units_count = len(juju.status().get_units(app_name))
+    if init_units_count < 2:
+        juju.add_unit(app_name, num_units=2 - init_units_count)
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, idle_period=10, unit_count=2
+            ),
+            timeout=1200,
+        )
+
+    init_units_count = len(juju.status().get_units(app_name))
+    await c_writes.async_clear()
+    c_writes.start()
+    await asyncio.sleep(10)
+
+    primary_ip = get_primary_ip(juju, app_name)
+    assert primary_ip, "Failed to get primary endpoint from Juju status."
+
+    # Reboot the primary unit
+    logger.info("Rebooting primary unit at %s", primary_ip)
+    primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
+
+    reboot_unit(juju, primary_unit_name, substrate)
+
+    # wait for unit to reboot
+    await asyncio.sleep(3)
+
+    # make sure the process is stopped
+    admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
+    logger.info("Pinging primary unit to ensure it's down.")
+    assert not ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+        "Primary unit is still responding after reboot."
+    )
+
+    logger.info("Waiting for primary unit to reboot and become available.")
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, app_name, idle_period=30, unit_count=init_units_count
+        ),
+        timeout=1200,
+    )
+
+    c_writes.update()
+
+    # on k8s we get a new ip
+    if substrate == Substrate.VM:
+        assert ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+            "Primary unit is not responding after reboot."
+        )
+
+    number_of_replicas = await get_number_connected_replicas(
+        get_cluster_hostnames(juju, app_name), CharmUsers.VALKEY_ADMIN, admin_password
+    )
+    assert number_of_replicas == init_units_count - 1, (
+        f"Expected {init_units_count - 1} replicas to be connected, got {number_of_replicas}"
+    )
+
+    await assert_continuous_writes_increasing(
+        hostnames=get_cluster_hostnames(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN,
+        password=admin_password,
+    )
+
+    await c_writes.async_stop()
+
+    assert_continuous_writes_consistent(
+        hostnames=get_cluster_hostnames(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN,
+        password=admin_password,
+        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
+    )

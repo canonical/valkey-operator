@@ -575,3 +575,39 @@ def patch_restart_delay(
             lxd_patch_restart_delay(juju, unit_name, delay)
         case Substrate.K8S:
             pebble_patch_restart_delay(juju, unit_name, delay=delay, ensure_replan=True)
+
+
+def reboot_unit(juju: jubilant.Juju, unit_name: str, substrate: Substrate) -> None:
+    """Reboot a unit."""
+    if substrate == Substrate.VM:
+        juju.exec(command="sudo reboot", unit=unit_name)
+    else:
+        delete_pod(unit_name.replace("/", "-"), juju.model)
+
+
+def delete_pod(pod_name: str, namespace="testing"):
+    # Load the kubeconfig file from your local machine (~/.kube/config)
+    # Note: If running this script INSIDE a pod, use config.load_incluster_config() instead.
+    config.load_kube_config()
+
+    configuration = client.Configuration.get_default_copy()
+    configuration.verify_ssl = False
+    client.Configuration.set_default(configuration)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    # CoreV1Api contains the methods for core resources like Pods, Services, etc.
+    v1 = client.CoreV1Api()
+
+    try:
+        # Call the API to delete the pod
+        logger.info("Attempting to delete pod %s in namespace '%s'...", pod_name, namespace)
+        v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+
+        logger.info("Success! Pod deleted.")
+
+    except ApiException as e:
+        # Handle API errors (e.g., pod not found, unauthorized, etc.)
+        if e.status == 404:
+            logger.warning("Error: Pod '%s' not found in namespace '%s'.", pod_name, namespace)
+        else:
+            logger.error("Exception when calling CoreV1Api->delete_namespaced_pod: %s", e)
