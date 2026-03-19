@@ -7,8 +7,10 @@
 import os
 import string
 import subprocess
+import tarfile
 import tempfile
 import time
+from datetime import datetime
 from logging import getLogger
 
 import jubilant
@@ -16,12 +18,17 @@ import kubernetes as kubernetes
 import urllib3
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
+from tenacity import RetryError, Retrying, stop_after_attempt, stop_after_delay, wait_fixed
 
 from literals import Substrate
 from tests.integration.helpers import APP_NAME
 
 logger = getLogger(__name__)
+
+VALKEY_SNAP_SERVICE_NAME = "snap.charmed-valkey.server.service"
+VM_RESTART_DELAY_DEFAULT = 20
+K8S_RESTART_DELAY_DEFAULT = 5
+RESTART_DELAY_PATCHED = 120
 
 
 def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
@@ -392,3 +399,179 @@ def send_process_control_signal(
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
     logger.info(f"Signal {signal} sent to database process on unit {unit_name}.")
+
+
+def lxd_patch_restart_delay(juju: jubilant.Juju, unit_name: str, delay: int | None = None) -> None:
+    """Update the restart delay in the snap's systemd service file."""
+    delay = delay or VM_RESTART_DELAY_DEFAULT
+    juju.exec(
+        command=f"sed -i 's/^RestartSec=.*/RestartSec={delay}s/' /etc/systemd/system/{VALKEY_SNAP_SERVICE_NAME}",
+        unit=unit_name,
+    )
+
+    # reload the daemon for systemd to reflect changes
+    juju.exec(command="sudo systemctl daemon-reload", unit=unit_name)
+
+
+EXTEND_PEBBLE_RESTART_DELAY_YAML = """services:
+  valkey:
+    override: merge
+    backoff-delay: {delay}s
+    backoff-limit: {delay}s
+"""
+
+RESTORE_PEBBLE_RESTART_DELAY_YAML = """services:
+  valkey:
+    override: merge
+    backoff-delay: 500ms
+    backoff-limit: 30s
+"""
+
+
+def pebble_patch_restart_delay(
+    juju: jubilant.Juju,
+    unit_name: str,
+    delay: int | None = None,
+    ensure_replan: bool = False,
+) -> None:
+    """Modify the pebble restart delay of the underlying process.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        unit_name: The name of unit to extend the pebble restart delay for
+        delay: The new restart delay to apply
+        ensure_replan: Whether to check that the replan command succeeded
+    """
+    pebble_file_content = (
+        EXTEND_PEBBLE_RESTART_DELAY_YAML.format(delay=delay)
+        if delay
+        else RESTORE_PEBBLE_RESTART_DELAY_YAML
+    )
+    kubernetes.config.load_kube_config()
+    client = kubernetes.client.api.core_v1_api.CoreV1Api()
+
+    pod_name = unit_name.replace("/", "-")
+    container_name = "valkey"
+    service_name = "valkey"
+    now = datetime.now().isoformat()
+
+    with tempfile.NamedTemporaryFile() as pebble_plan_file:
+        pebble_plan_file.write(str.encode(pebble_file_content))
+        pebble_plan_file.flush()
+
+        copy_file_into_pod(
+            client,
+            juju.model,
+            pod_name,
+            container_name,
+            pebble_plan_file.name,
+            f"/tmp/pebble_plan_{now}.yml",
+        )
+
+    add_to_pebble_layer_commands = (
+        f"/charm/bin/pebble add --combine {service_name} /tmp/pebble_plan_{now}.yml"
+    )
+    response = kubernetes.stream.stream(
+        client.connect_get_namespaced_pod_exec,
+        pod_name,
+        juju.model,
+        container=container_name,
+        command=add_to_pebble_layer_commands.split(),
+        stdin=False,
+        stdout=True,
+        stderr=True,
+        tty=False,
+        _preload_content=False,
+    )
+    response.run_forever(timeout=5)
+    assert response.returncode == 0, (
+        f"Failed to add to pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
+    )
+
+    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3)):
+        with attempt:
+            replan_pebble_layer_commands = "/charm/bin/pebble replan"
+            response = kubernetes.stream.stream(
+                client.connect_get_namespaced_pod_exec,
+                pod_name,
+                juju.model,
+                container=container_name,
+                command=replan_pebble_layer_commands.split(),
+                stdin=False,
+                stdout=True,
+                stderr=True,
+                tty=False,
+                _preload_content=False,
+            )
+            response.run_forever(timeout=60)
+            if ensure_replan:
+                assert response.returncode == 0, (
+                    f"Failed to replan pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
+                )
+
+
+def copy_file_into_pod(
+    client: kubernetes.client.api.core_v1_api.CoreV1Api,
+    namespace: str,
+    pod_name: str,
+    container_name: str,
+    source_path: str,
+    destination_path: str,
+) -> None:
+    """Copy file contents into pod.
+
+    Args:
+        client: The kubernetes CoreV1Api client
+        namespace: The namespace of the pod to copy files to
+        pod_name: The name of the pod to copy files to
+        container_name: The name of the pod container to copy files to
+        source_path: The path of the file to copy from the local machine
+        destination_path: The path to copy the file to in the pod
+    """
+    try:
+        exec_command = ["tar", "xvf", "-", "-C", "/"]
+
+        api_response = kubernetes.stream.stream(
+            client.connect_get_namespaced_pod_exec,
+            pod_name,
+            namespace,
+            container=container_name,
+            command=exec_command,
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            tty=False,
+            _preload_content=False,
+        )
+
+        with tempfile.TemporaryFile() as tar_buffer:
+            with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+                tar.add(source_path, destination_path)
+
+            tar_buffer.seek(0)
+            commands = []
+            commands.append(tar_buffer.read())
+
+            while api_response.is_open():
+                api_response.update(timeout=1)
+
+                if commands:
+                    command = commands.pop(0)
+                    api_response.write_stdin(command.decode())
+                else:
+                    break
+
+            api_response.close()
+    except kubernetes.client.rest.ApiException:
+        assert False
+
+
+def patch_restart_delay(
+    juju: jubilant.Juju, unit_name: str, delay: int | None, substrate: Substrate
+) -> None:
+    """Update the restart delay for the database process based on the substrate."""
+    match substrate:
+        case Substrate.VM:
+            lxd_patch_restart_delay(juju, unit_name, delay)
+        case Substrate.K8S:
+            pebble_patch_restart_delay(juju, unit_name, delay=delay, ensure_replan=True)
