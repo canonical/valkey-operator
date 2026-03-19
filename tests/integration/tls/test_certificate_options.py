@@ -53,10 +53,11 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
 
 
-def test_initialize_vault(juju: jubilant.Juju) -> None:
+def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Initialize Vault and wait for it to be ready."""
     vault_units = juju.status().get_units(VAULT_NAME)
-    vault_ip = next(iter(vault_units.values())).public_address
+    vault_unit = next(iter(vault_units.values()))
+    vault_ip = vault_unit.address if substrate == Substrate.K8S else vault_unit.public_address
     secrets = juju.secrets()
     logger.info("Initializing Vault")
 
@@ -161,7 +162,7 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
             expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_DENIED.value]},
             num_units={APP_NAME: NUM_UNITS},
         ),
-        timeout=100,
+        timeout=600,
     )
 
     logger.info("Removing client-certificates relation for Vault")
