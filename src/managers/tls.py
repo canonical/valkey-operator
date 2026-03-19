@@ -354,13 +354,18 @@ class TLSManager(ManagerStatusProtocol):
 
         return False
 
-    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
+    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
 
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+        if (relation := self.state.client_tls_relation) and relation.data[relation.app].get(
+            "request_errors"
+        ):
+            status_list.append(TLSStatuses.CERTIFICATE_DENIED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)

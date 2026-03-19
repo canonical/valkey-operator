@@ -122,7 +122,5 @@ class TLSStatuses(Enum):
         short_message="Invalid value `certificate-extra-sans`",
     )
     CERTIFICATE_DENIED = StatusObject(
-        status="blocked",
-        message="Certificate request was denied, check logs for details",
-        running="async",
+        status="blocked", message="Certificate request was denied, check logs for details"
     )

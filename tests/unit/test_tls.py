@@ -260,7 +260,7 @@ def test_client_certificate_denied(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+        local_unit_data={"start-state": "started", "tls-client-state": "to-tls"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_tls_relation = testing.Relation(

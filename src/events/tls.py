@@ -28,7 +28,6 @@ from literals import (
     TLSCARotationState,
     TLSState,
 )
-from statuses import TLSStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -167,12 +166,6 @@ class TLSEvents(ops.Object):
             logger.error("Received certificate does not match provided certificates: %s", cert)
             return
 
-        self.charm.state.statuses.delete(
-            TLSStatuses.CERTIFICATE_DENIED.value,
-            scope="unit",
-            component=self.charm.tls_manager.name,
-        )
-
         logger.info("Storing client certificate")
         try:
             if rotate_ca := self.charm.tls_manager.start_ca_rotation_if_required(cert):
@@ -228,12 +221,6 @@ class TLSEvents(ops.Object):
             for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
         ]:
             logger.error("Certificate request was denied: %s", event.error.message)
-            self.charm.status.set_running_status(
-                TLSStatuses.CERTIFICATE_DENIED.value,
-                scope="unit",
-                component_name=self.charm.tls_manager.name,
-                statuses_state=self.charm.state.statuses,
-            )
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
