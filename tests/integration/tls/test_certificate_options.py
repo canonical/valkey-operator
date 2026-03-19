@@ -50,8 +50,11 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
             "pki_allow_ip_sans": False,
         },
     )
-    juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
-    juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30))
+    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
 
 
@@ -157,36 +160,6 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.wait(lambda status: are_apps_active_and_agents_idle(status, VAULT_NAME))
 
 
-def test_certificate_denied(juju: jubilant.Juju) -> None:
-    """Process denied certificate request."""
-    logger.info("Integrate Valkey with Vault for client TLS")
-    logger.info("Certificate requests should be denied because Vault does not allow IP SANs")
-    juju.integrate(f"{APP_NAME}:client-certificates", VAULT_NAME)
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_DENIED.value]},
-            num_units={APP_NAME: NUM_UNITS},
-        ),
-        timeout=600,
-    )
-
-    logger.info("Updating Vault configuration to get certificates")
-    juju.config(
-        app=VAULT_NAME,
-        values={
-            "pki_allow_any_name": True,
-            "pki_allow_ip_sans": True,
-        },
-    )
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
-        ),
-        timeout=600,
-    )
-
-
 def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
     """Configure extra sans for the TLS certificates."""
     logger.info("Set config to invalid sans value")
@@ -243,6 +216,27 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
     )
     assert expected_sans not in client_cert_sans, (
         f"sans value {expected_sans} found in certificate sans {client_cert_sans}"
+    )
+
+    logger.info("Remove relation with %s", TLS_NAME)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
+
+
+def test_certificate_denied(juju: jubilant.Juju) -> None:
+    """Process denied certificate request."""
+    logger.info("Integrate Valkey with Vault for client TLS")
+    logger.info("Certificate requests should be denied because Vault does not allow IP SANs")
+    juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_DENIED.value]},
+            num_units={APP_NAME: NUM_UNITS},
+        ),
+        timeout=600,
     )
 
 
