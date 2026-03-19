@@ -44,7 +44,10 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         "vault-k8s" if substrate == Substrate.K8S else "vault",
         app=VAULT_NAME,
         channel="1.18/edge",
-        config={"pki_allow_ip_sans": False},
+        config={
+            "pki_ca_common_name": "mydomain.com",
+            "pki_allow_ip_sans": False,
+        },
     )
     juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
@@ -54,7 +57,7 @@ def test_initialize_vault(juju: jubilant.Juju) -> None:
     """Initialize Vault and wait for it to be ready."""
     vault_units = juju.status().get_units(VAULT_NAME)
     vault_ip = next(iter(vault_units.values())).public_address
-    secrets = jubilant.secrets()
+    secrets = juju.secrets()
     logger.info("Initializing Vault")
 
     vault_ca = None
