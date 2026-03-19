@@ -371,3 +371,99 @@ async def test_full_cluster_restart(
             delay=None,
             substrate=substrate,
         )
+
+
+async def test_full_cluster_crash(
+    juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
+) -> None:
+    """Make sure the cluster can self-heal after all members went down."""
+    app_name = existing_app(juju) or APP_NAME
+
+    # make sure we have at least two units so we can stop one of them
+    init_units_count = len(juju.status().get_units(app_name))
+    if init_units_count < 2:
+        juju.add_unit(app_name, num_units=2 - init_units_count)
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, idle_period=10, unit_count=2
+            ),
+            timeout=1200,
+        )
+
+    init_units_count = len(juju.status().get_units(app_name))
+    c_writes.start()
+    await asyncio.sleep(10)
+
+    # update the restart delay for all units
+    for unit in juju.status().get_units(app_name):
+        patch_restart_delay(
+            juju,
+            unit_name=unit,
+            delay=RESTART_DELAY_PATCHED,
+            substrate=substrate,
+        )
+
+    db_process_name = K8S_PROCESS_PATTERN if substrate == Substrate.K8S else VM_PROCESS_PATTERN
+    for unit in juju.status().get_units(app_name):
+        send_process_control_signal(
+            unit_name=unit,
+            model_full_name=juju.model,
+            signal="SIGKILL",
+            db_process=db_process_name,
+            substrate=substrate,
+        )
+
+    # make sure the process is stopped
+    admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
+    for unit, unit_info in juju.status().get_units(app_name).items():
+        unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
+        logger.info("Pinging %s to ensure it's down.", unit)
+        assert not ping(unit_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+            f"{unit} still responding after SIGKILL."
+        )
+
+    # ensure the stopped unit was restarted
+    logger.info("Waiting for units to restart.")
+    await asyncio.sleep(RESTART_DELAY_PATCHED + 10)
+
+    for unit, unit_info in juju.status().get_units(app_name).items():
+        unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
+        logger.info("Pinging %s to ensure it's up.", unit)
+        assert ping(unit_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+            f"{unit} is not responding after restart delay."
+        )
+
+    logger.info("All units are available again.")
+
+    logger.info("Checking number of connected replicas after primary restart.")
+    hostnames = get_cluster_hostnames(juju, app_name)
+    number_of_replicas = await get_number_connected_replicas(
+        hostnames, CharmUsers.VALKEY_ADMIN, admin_password
+    )
+    assert number_of_replicas == init_units_count - 1, (
+        f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
+    )
+
+    # ensure data is written in the cluster
+    logger.info("Checking continuous writes are increasing after primary restart.")
+    await assert_continuous_writes_increasing(
+        hostnames=hostnames, username=CharmUsers.VALKEY_ADMIN, password=admin_password
+    )
+
+    await c_writes.async_stop()
+
+    assert_continuous_writes_consistent(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN,
+        password=admin_password,
+        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
+    )
+
+    # reset the restart delay to the original value
+    for unit in juju.status().get_units(app_name):
+        patch_restart_delay(
+            juju,
+            unit_name=unit,
+            delay=None,
+            substrate=substrate,
+        )
