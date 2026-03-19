@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
+    CertificateDeniedEvent,
     CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
 )
@@ -27,6 +28,7 @@ from literals import (
     TLSCARotationState,
     TLSState,
 )
+from statuses import TLSStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -70,6 +72,9 @@ class TLSEvents(ops.Object):
         )
         self.framework.observe(
             self.client_certificate.on.certificate_available, self._on_certificate_available
+        )
+        self.framework.observe(
+            self.client_certificate.on.certificate_denied, self._on_certificate_denied
         )
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
@@ -162,6 +167,12 @@ class TLSEvents(ops.Object):
             logger.error("Received certificate does not match provided certificates: %s", cert)
             return
 
+        self.charm.state.statuses.delete(
+            TLSStatuses.CERTIFICATE_DENIED.value,
+            scope="unit",
+            component=self.charm.tls_manager.name,
+        )
+
         logger.info("Storing client certificate")
         try:
             if rotate_ca := self.charm.tls_manager.start_ca_rotation_if_required(cert):
@@ -209,6 +220,20 @@ class TLSEvents(ops.Object):
             logger.warning("Not all units have stored the client certificate")
             event.defer()
             return
+
+    def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
+        """Handle the `certificate-denied` event from TLS provider."""
+        if event.certificate_signing_request in [
+            csr.certificate_signing_request
+            for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
+        ]:
+            logger.error("Certificate request was denied: %s", event.error.message)
+            self.charm.status.set_running_status(
+                TLSStatuses.CERTIFICATE_DENIED.value,
+                scope="unit",
+                component_name=self.charm.tls_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""

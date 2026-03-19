@@ -106,7 +106,6 @@ class TLSManager(ManagerStatusProtocol):
 
         if ingress_ip := self.state.ingress_address:
             sans_ip.add(ingress_ip)
-        logger.info(sans_ip)
 
         return frozenset(sans_ip)
 
@@ -133,7 +132,6 @@ class TLSManager(ManagerStatusProtocol):
             }
 
         sans_dns.add(self.state.unit_server.model.hostname)
-        logger.info(sans_dns)
 
         return frozenset(sans_dns)
 
