@@ -594,6 +594,8 @@ async def test_full_cluster_reboot(
         timeout=1200,
     )
 
+    c_writes.update()
+
     for unit, unit_info in juju.status().get_units(app_name).items():
         unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
         logger.info("Pinging %s to ensure it's up.", unit)
