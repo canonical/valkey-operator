@@ -361,3 +361,34 @@ def get_sans_from_certificate(certificate_path: str) -> dict[str, set[str]]:
                 sans_ip.add(san_value)
 
     return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+
+def send_process_control_signal(
+    unit_name: str,
+    model_full_name: str,
+    signal: str,
+    db_process: str,
+    substrate: Substrate,
+) -> None:
+    """Send control signal to a database process running on a Juju unit.
+
+    Args:
+        unit_name: the Juju unit running the process
+        model_full_name: the Juju model for the unit
+        signal: the signal to issue, e.g `SIGKILL`
+        db_process: the path to the database process binary
+        substrate: the substrate the test is running on
+    """
+    if substrate == Substrate.K8S:
+        # For k8s, we exec into the pod and send the signal to the process
+        command = f"JUJU_MODEL={model_full_name} juju ssh --container valkey {unit_name} pkill --signal {signal} {db_process}"
+    else:
+        command = f"JUJU_MODEL={model_full_name} juju ssh {unit_name} sudo -i 'pkill --signal {signal} -f {db_process}'"
+
+    try:
+        subprocess.check_output(
+            command, stderr=subprocess.PIPE, shell=True, universal_newlines=True, timeout=3
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    logger.info(f"Signal {signal} sent to database process on unit {unit_name}.")

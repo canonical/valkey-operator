@@ -350,10 +350,10 @@ class ContinuousWrites:
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
                     proc_logger.info("Length after write: %s", res)
-                    await asyncio.sleep(in_between_sleep)
                 except Exception as e:
                     proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
+                    await asyncio.sleep(in_between_sleep)
                     if event.is_set():
                         break
 

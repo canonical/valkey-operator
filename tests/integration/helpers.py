@@ -558,7 +558,11 @@ def ping(
     Returns:
         True if the node responds to a ping, False otherwise.
     """
-    return exec_valkey_cli(hostname, username, password, "ping").stdout == "PONG"
+    try:
+        return exec_valkey_cli(hostname, username, password, "ping").stdout == "PONG"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.warning(f"Error executing Valkey CLI ping on {hostname}: {e}")
+        return False
 
 
 async def ping_cluster(

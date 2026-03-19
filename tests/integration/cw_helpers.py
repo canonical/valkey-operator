@@ -70,6 +70,7 @@ def assert_continuous_writes_consistent(
     hostnames: list[str],
     username: str,
     password: str,
+    ignore_count: bool = False,
 ) -> None:
     """Assert that the continuous writes are consistent."""
     last_written_value = None
@@ -81,10 +82,18 @@ def assert_continuous_writes_consistent(
     for endpoint in hostnames:
         last_value = int(exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 0").stdout)
         count = int(exec_valkey_cli(endpoint, username, password, f"LLEN {KEY}").stdout)
+        logger.info(
+            "Endpoint: %s, last written value: %s, last value in DB: %s, count in DB: %s",
+            endpoint,
+            last_written_value,
+            last_value,
+            count,
+        )
         assert last_written_value == last_value, (
             f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
         )
-        assert count == last_written_value + 1, (
-            f"endpoint: {endpoint}, expected count: {last_written_value + 1}, current count: {count}"
-        )
+        if not ignore_count:
+            assert count == last_written_value + 1, (
+                f"endpoint: {endpoint}, expected count: {last_written_value + 1}, current count: {count}"
+            )
         logger.info("Continuous writes are consistent on %s.", endpoint)
