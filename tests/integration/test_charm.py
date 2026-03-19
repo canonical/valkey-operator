@@ -223,11 +223,10 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     # deferred `config_changed` event will be retried before `update_status`
     with fast_forward(juju):
         juju.grant_secret(identifier=secret_name, app=APP_NAME)
-
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
-        timeout=1200,
-    )
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
+            timeout=1200,
+        )
 
     # perform read operation with the updated password
     hostnames = get_cluster_hostnames(juju, APP_NAME)
