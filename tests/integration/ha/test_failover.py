@@ -36,8 +36,9 @@ from ..helpers import (
 logger = logging.getLogger(__name__)
 
 NUM_UNITS = 3
-RESTART_DELAY_DEFAULT = 20
-RESTART_DELAY_PATCHED = 120
+VM_RESTART_DELAY_DEFAULT = 20
+K8S_RESTART_DELAY_DEFAULT = 5
+VM_RESTART_DELAY_PATCHED = 120
 FAILOVER_DELAY = 45
 TEST_KEY = "test_key"
 TEST_VALUE = "42"
@@ -115,15 +116,19 @@ async def test_kill_db_process_on_primary(
     )
     # We have 20s before systemd restarts the process
     # make sure the process is stopped
-    logger.info("Pinging primary unit to ensure it's down.")
     admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
-    assert not ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
-        "Primary unit is still responding after SIGKILL."
-    )
+    if substrate == Substrate.VM:
+        # K8s restarts much faster so pinging to check will be very flakey
+        logger.info("Pinging primary unit to ensure it's down.")
+        assert not ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+            "Primary unit is still responding after SIGKILL."
+        )
 
     # ensure the stopped unit was restarted
     logger.info("Waiting for primary unit to restart.")
-    time.sleep(RESTART_DELAY_DEFAULT)
+    time.sleep(
+        VM_RESTART_DELAY_DEFAULT if substrate == Substrate.VM else K8S_RESTART_DELAY_DEFAULT
+    )
     assert ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
         "Primary unit is not responding after restart delay."
     )
