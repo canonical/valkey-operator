@@ -57,7 +57,7 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Initialize Vault and wait for it to be ready."""
     vault_units = juju.status().get_units(VAULT_NAME)
     vault_unit = next(iter(vault_units.values()))
-    vault_ip = vault_unit.address if substrate == Substrate.K8S else vault_unit.public_address
+    vault_ip = juju.status().apps[VAULT_NAME].address if substrate == Substrate.K8S else vault_unit.public_address
     secrets = juju.secrets()
     logger.info("Initializing Vault")
 
