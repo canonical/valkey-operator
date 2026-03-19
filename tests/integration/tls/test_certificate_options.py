@@ -171,22 +171,24 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
         timeout=600,
     )
 
-    logger.info("Removing client-certificates relation for Vault")
-    juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
+    logger.info("Updating Vault configuration to get certificates")
+    juju.config(
+        app=VAULT_NAME,
+        values={
+            "pki_allow_any_name": True,
+            "pki_allow_ip_sans": True,
+        },
+    )
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
 
 def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
     """Configure extra sans for the TLS certificates."""
-    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
-
     logger.info("Set config to invalid sans value")
     config_value = "-my.hostname"
     juju.config(app=APP_NAME, values={"certificate-extra-sans": config_value})
