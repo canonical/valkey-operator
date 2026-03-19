@@ -78,6 +78,7 @@ class TLSEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
@@ -281,6 +282,19 @@ class TLSEvents(ops.Object):
         if len(self.charm.state.servers) == 1:
             logger.debug("Trigger peer relation change to orchestrate certificate/CA rotation")
             self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle TLS related config changes."""
+        if not self.charm.tls_manager.extra_sans_config_is_valid():
+            logger.warning("Invalid configuration for 'certificate-extra-sans'")
+            return
+
+        if (
+            self.charm.state.client_tls_relation
+            and self.charm.tls_manager.certificate_sans_require_update()
+        ):
+            logger.info("Configuration change for TLS, refresh TLS certificates")
+            self.refresh_tls_certificates_event.emit()
 
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""

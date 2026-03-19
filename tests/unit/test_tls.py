@@ -927,3 +927,181 @@ def test_ca_rotation_all_units_ca_updated(cloud_spec):
             state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
             == TLSCARotationState.NO_ROTATION.value
         )
+
+
+def test_set_extra_sans_config_option(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={"certificate-extra-sans": "192.168.1.100, myhostname"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    current_sans_value = (
+        "X509v3 Subject Alternative Name: \n    "
+        "DNS:valkey-0.valkey-endpoints, "
+        "IP Address:127.1.1.1, IP Address:192.0.2.0"
+    )
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
+    ):
+        ctx.run(ctx.on.config_changed(), state_in)
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+
+
+def test_set_extra_sans_config_option_unit_placeholder(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={
+            "certificate-extra-sans": "192.168.1.100, valkey-{unit}.hostname",
+        },
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    current_sans_value = (
+        "X509v3 Subject Alternative Name: \n    "
+        "DNS:myhostname, DNS:valkey-0.valkey-endpoints, "
+        "IP Address:127.1.1.1, IP Address:192.168.1.100, IP Address:192.0.2.0"
+    )
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
+    ):
+        ctx.run(ctx.on.config_changed(), state_in)
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+
+
+def test_set_extra_sans_config_option_invalid_ip(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={"certificate-extra-sans": "192.168.257.100, myhostname"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert status_is(state_out, TLSStatuses.SANS_CONFIG_INVALID.value)
+    # no RefreshTLSCertificatesEvent must be emitted
+    assert len(ctx.emitted_events) == 1
+
+
+def test_set_extra_sans_config_option_invalid_dns(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={"certificate-extra-sans": "-myhostname"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert status_is(state_out, TLSStatuses.SANS_CONFIG_INVALID.value)
+    # no RefreshTLSCertificatesEvent must be emitted
+    assert len(ctx.emitted_events) == 1
+
+
+def test_set_extra_sans_config_option_special_chars(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={"certificate-extra-sans": "192.168.1.100, my$*hostname"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    assert status_is(state_out, TLSStatuses.SANS_CONFIG_INVALID.value)
+    # no RefreshTLSCertificatesEvent must be emitted
+    assert len(ctx.emitted_events) == 1
+
+
+def test_set_extra_sans_config_option_no_update(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        config={"certificate-extra-sans": "192.168.1.100, myhostname"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    current_sans_value = (
+        "X509v3 Subject Alternative Name: \n    "
+        "DNS:myhostname, DNS:valkey-0.valkey-endpoints, "
+        "IP Address:127.1.1.1, IP Address:192.168.1.100, IP Address:192.0.2.0"
+    )
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
+    ):
+        ctx.run(ctx.on.config_changed(), state_in)
+        # no RefreshTLSCertificatesEvent must be emitted
+        assert len(ctx.emitted_events) == 1

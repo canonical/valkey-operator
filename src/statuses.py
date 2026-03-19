@@ -116,3 +116,8 @@ class TLSStatuses(Enum):
     CA_ROTATION_UPDATED = StatusObject(
         status="maintenance", message="TLS CA rotation: certificates updated"
     )
+    SANS_CONFIG_INVALID = StatusObject(
+        status="blocked",
+        message="Invalid value for config option 'certificate-extra-sans'",
+        short_message="Invalid value `certificate-extra-sans`",
+    )
