@@ -242,7 +242,6 @@ class ValkeyCluster(RelationState):
     def tls_client_private_key(self) -> PrivateKey | None:
         """Retrieve the private key for client TLS."""
         if self.model and (private_key := self.model.tls_client_private_key):
-            private_key = PrivateKey(raw=private_key)
-            return private_key
+            return PrivateKey(raw=private_key)
 
         return None
