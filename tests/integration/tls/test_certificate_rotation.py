@@ -274,6 +274,10 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
 
     logger.info("Waiting for CA certificate to expire")
     sleep(CA_EXPIRY_TIME)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=10, unit_count=NUM_UNITS),
+        timeout=600,
+    )
 
     logger.info("Check access with previous certificate fails after expiration")
     with pytest.raises(Exception) as exc_info:
