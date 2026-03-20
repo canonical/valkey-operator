@@ -13,6 +13,7 @@ from charmlibs.interfaces.tls_certificates import (
     PrivateKey,
 )
 from charms.data_platform_libs.v1.data_interfaces import (
+    ExtraSecretStr,
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
@@ -55,6 +56,7 @@ class PeerAppModel(PeerModel):
     start_member: str = Field(default="")
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
+    tls_client_private_key: ExtraSecretStr = Field(default=None)
 
 
 class PeerUnitModel(PeerModel):
@@ -235,3 +237,11 @@ class ValkeyCluster(RelationState):
             return None
 
         return PrivateKey.from_string(self.model.internal_ca_private_key)
+
+    @property
+    def tls_client_private_key(self) -> PrivateKey | None:
+        """Retrieve the private key for client TLS."""
+        if self.model and (private_key := self.model.tls_client_private_key):
+            return PrivateKey(raw=private_key)
+
+        return None

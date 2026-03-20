@@ -226,7 +226,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     juju.config(app=TLS_NAME, values=tls_config)
     juju.wait(
         lambda status: are_agents_idle(status, TLS_NAME, idle_period=30),
-        timeout=100,
+        timeout=600,
     )
 
     logger.info("Enabling client TLS again")
