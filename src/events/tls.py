@@ -25,6 +25,7 @@ from literals import (
     CLIENT_PORT,
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
+    TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
     TLSState,
 )
@@ -58,7 +59,7 @@ class TLSEvents(ops.Object):
                     sans_dns=self.charm.tls_manager.build_sans_dns(),
                 ),
             ],
-            private_key=None,
+            private_key=self.charm.tls_manager.get_client_tls_private_key(),
             refresh_events=[self.refresh_tls_certificates_event],
         )
 
@@ -82,6 +83,7 @@ class TLSEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
@@ -295,11 +297,37 @@ class TLSEvents(ops.Object):
             logger.debug("Trigger peer relation change to orchestrate certificate/CA rotation")
             self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
 
+    def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
+        """Handle TLS related secret changes."""
+        if not (secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)):
+            return
+
+        if secret_id != event.secret.id:
+            return
+
+        if not (private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id)):
+            logger.error("Invalid private key provided, cannot update TLS certificates.")
+            return
+
+        if self.charm.unit.is_leader():
+            self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
+
+        if self.charm.state.client_tls_relation:
+            self.refresh_tls_certificates_event.emit()
+
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle TLS related config changes."""
         if not self.charm.tls_manager.extra_sans_config_is_valid():
             logger.warning("Invalid configuration for 'certificate-extra-sans'")
             return
+
+        if (secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)) and (
+            private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id)
+        ):
+            if self.charm.unit.is_leader():
+                self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
+            # refresh event will be ignored by the tls lib if the csr is unchanged
+            self.refresh_tls_certificates_event.emit()
 
         if (
             self.charm.state.client_tls_relation

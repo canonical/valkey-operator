@@ -5,11 +5,13 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateDeniedEvent,
     CertificateError,
+    PrivateKey,
     ProviderCertificate,
     RequirerCertificateRequest,
 )
@@ -22,6 +24,7 @@ from src.literals import (
     INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
+    TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
 )
 from src.statuses import TLSStatuses
@@ -943,6 +946,145 @@ def test_ca_rotation_all_units_ca_updated(cloud_spec):
             state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
             == TLSCARotationState.NO_ROTATION.value
         )
+
+
+def test_private_key_without_client_tls(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    private_key = PrivateKey.generate()
+    secret = testing.Secret(
+        {"private-key": private_key.raw},
+        label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    )
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation},
+        secrets={secret},
+        config={TLS_CLIENT_PRIVATE_KEY_CONFIG: secret.id},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.config_changed(), state_in)
+    secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+    assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
+    assert status_is(state_out, TLSStatuses.PRIVATE_KEY_BUT_NO_TLS.value)
+
+
+def test_invalid_private_key(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    private_key = "invalid-private-key"
+    secret = testing.Secret(
+        {"private-key": private_key},
+        label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    )
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        secrets={secret},
+        config={TLS_CLIENT_PRIVATE_KEY_CONFIG: secret.id},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        # ensure the secret was not populated with the invalid private key
+        with pytest.raises(KeyError):
+            state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+        assert status_is(state_out, TLSStatuses.PRIVATE_KEY_INVALID.value)
+
+
+def test_private_key_refreshes_certificate(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    private_key = PrivateKey.generate()
+    user_secret = testing.Secret(
+        {"private-key": private_key.raw},
+        label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    )
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        secrets={user_secret},
+        config={TLS_CLIENT_PRIVATE_KEY_CONFIG: user_secret.id},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+        assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+
+
+def test_private_key_secret_changed(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(
+        id=3,
+        endpoint=CLIENT_TLS_RELATION_NAME,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    private_key = PrivateKey.generate()
+    user_secret = testing.Secret(
+        {"private-key": private_key.raw},
+        label=TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    )
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        secrets={user_secret},
+        config={TLS_CLIENT_PRIVATE_KEY_CONFIG: user_secret.id},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.secret_changed(secret=user_secret), state_in)
+    secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+    assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
+    assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
 
 
 def test_set_extra_sans_config_option(cloud_spec):

@@ -4,7 +4,10 @@
 
 """Manager for handling TLS-related operations."""
 
+import base64
+import binascii
 import logging
+import re
 from datetime import timedelta
 from ipaddress import ip_address
 
@@ -18,12 +21,13 @@ from charmlibs.interfaces.tls_certificates import (
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from ops import ModelError, SecretNotFoundError
 from validators import ValidationError, hostname
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import TLSCARotationState, TLSState
+from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, TLSCARotationState, TLSState
 from statuses import CharmStatuses, TLSStatuses
 
 logger = logging.getLogger(__name__)
@@ -134,6 +138,60 @@ class TLSManager(ManagerStatusProtocol):
         sans_dns.add(self.state.unit_server.model.hostname)
 
         return frozenset(sans_dns)
+
+    def read_and_validate_private_key(self, private_key_secret_id: str) -> PrivateKey | None:
+        """Read and validate a private key provided via Juju secret.
+
+        Args:
+            private_key_secret_id (str): The Juju secret ID for the secret
+                that stores the private key.
+
+        Returns:
+            PrivateKey: The private key.
+        """
+        try:
+            secret_content = self.state.get_secret_from_id(private_key_secret_id).get(
+                "private-key"
+            )
+        except (ModelError, SecretNotFoundError) as e:
+            logger.error(e)
+            return None
+
+        if secret_content is None:
+            logger.error(f"Secret {private_key_secret_id} does not contain a private key.")
+            return None
+
+        try:
+            private_key = (
+                secret_content
+                if re.match(r"(-+(BEGIN|END) [A-Z ]+-+)", secret_content)
+                else base64.b64decode(secret_content).decode("utf-8").strip()
+            )
+        except (UnicodeDecodeError, binascii.Error) as e:
+            logger.error(e)
+            return None
+        try:
+            private_key = PrivateKey(raw=private_key)
+        except ValueError as e:
+            logger.error(e)
+            return None
+        if not private_key.is_valid():
+            logger.error("Invalid private key format.")
+            return None
+
+        return private_key
+
+    def get_client_tls_private_key(self) -> PrivateKey | None:
+        """Get the private key provided by users, if available."""
+        if secret_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
+            if private_key := self.read_and_validate_private_key(secret_id):
+                return private_key
+
+            # in case the configured secret is invalid
+            return self.state.cluster.tls_client_private_key
+
+        # in case no user supplied private key configured
+        return None
 
     def _generate_private_key(self) -> PrivateKey:
         """Generate a private key for use in peer TLS."""
@@ -376,6 +434,14 @@ class TLSManager(ManagerStatusProtocol):
             and not self.state.client_tls_relation
         ):
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS_FAILED.value)
+
+        if self.state.cluster.tls_client_private_key and not self.state.client_tls_relation:
+            status_list.append(TLSStatuses.PRIVATE_KEY_BUT_NO_TLS.value)
+
+        if (
+            private_key_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)
+        ) and self.read_and_validate_private_key(str(private_key_id)) is None:
+            status_list.append(TLSStatuses.PRIVATE_KEY_INVALID.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)
