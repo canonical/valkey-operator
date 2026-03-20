@@ -995,11 +995,12 @@ def test_invalid_private_key(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    state_out = ctx.run(ctx.on.config_changed(), state_in)
-    # ensure the secret was not populated with the invalid private key
-    with pytest.raises(KeyError):
-        state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
-    assert status_is(state_out, TLSStatuses.PRIVATE_KEY_INVALID.value)
+    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        # ensure the secret was not populated with the invalid private key
+        with pytest.raises(KeyError):
+            state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+        assert status_is(state_out, TLSStatuses.PRIVATE_KEY_INVALID.value)
 
 
 def test_private_key_refreshes_certificate(cloud_spec):
@@ -1031,10 +1032,11 @@ def test_private_key_refreshes_certificate(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    state_out = ctx.run(ctx.on.config_changed(), state_in)
-    secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
-    assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
-    assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
+        assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
 
 
 def test_private_key_secret_changed(cloud_spec):
