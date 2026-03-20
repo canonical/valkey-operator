@@ -58,6 +58,72 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
 
 
+def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
+    """Configure extra sans for the TLS certificates."""
+    logger.info("Set config to invalid sans value")
+    config_value = "-my.hostname"
+    juju.config(app=APP_NAME, values={"certificate-extra-sans": config_value})
+
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_unit_statuses={APP_NAME: [TLSStatuses.SANS_CONFIG_INVALID.value]},
+            num_units={APP_NAME: NUM_UNITS},
+        ),
+        timeout=100,
+    )
+
+    download_client_certificate_from_unit(juju, APP_NAME)
+    client_cert_sans = subprocess.getoutput(
+        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
+    )
+    assert config_value not in client_cert_sans, (
+        f"config value {config_value} found in certificate sans {client_cert_sans}"
+    )
+
+    logger.info("Configure valid extra-sans")
+    config_value = "server-{unit}.valkey"
+    juju.config(app=APP_NAME, values={"certificate-extra-sans": config_value})
+
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS),
+        timeout=100,
+    )
+
+    # this will download the client cert from application.units[0]
+    download_client_certificate_from_unit(juju, APP_NAME)
+    client_cert_sans = subprocess.getoutput(
+        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
+    )
+    unit_name = next(iter(juju.status().get_units(APP_NAME)))
+    expected_sans = config_value.replace("{unit}", unit_name.split("/")[-1])
+    assert expected_sans in client_cert_sans, (
+        f"expected sans {expected_sans} not found in certificate sans {client_cert_sans}"
+    )
+
+    logger.info("Resetting configuration for extra-sans")
+    juju.config(app=APP_NAME, reset="certificate-extra-sans")
+
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS)
+    )
+
+    download_client_certificate_from_unit(juju, APP_NAME)
+    client_cert_sans = subprocess.getoutput(
+        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
+    )
+    assert expected_sans not in client_cert_sans, (
+        f"sans value {expected_sans} found in certificate sans {client_cert_sans}"
+    )
+
+    logger.info("Remove relation with %s", TLS_NAME)
+    juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
+
+
 def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Initialize Vault and wait for it to be ready."""
     vault_units = juju.status().get_units(VAULT_NAME)
@@ -143,7 +209,6 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     )
 
     assert secret_id, "Failed to create vault-token secret"
-
     juju.grant_secret("vault-token", VAULT_NAME)
 
     vault_unit_name = next(iter(vault_units))
@@ -156,80 +221,18 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     )
 
     assert action.status == "completed", "Action should succeed"
-
     juju.wait(lambda status: are_apps_active_and_agents_idle(status, VAULT_NAME))
-
-
-def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
-    """Configure extra sans for the TLS certificates."""
-    logger.info("Set config to invalid sans value")
-    config_value = "-my.hostname"
-    juju.config(app=APP_NAME, values={"certificate-extra-sans": config_value})
-
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_unit_statuses={APP_NAME: [TLSStatuses.SANS_CONFIG_INVALID.value]},
-            num_units={APP_NAME: NUM_UNITS},
-        ),
-        timeout=100,
-    )
-
-    download_client_certificate_from_unit(juju, APP_NAME)
-    client_cert_sans = subprocess.getoutput(
-        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
-    )
-    assert config_value not in client_cert_sans, (
-        f"config value {config_value} found in certificate sans {client_cert_sans}"
-    )
-
-    logger.info("Configure valid extra-sans")
-    config_value = "server-{unit}.valkey"
-    juju.config(app=APP_NAME, values={"certificate-extra-sans": config_value})
-
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS),
-        timeout=100,
-    )
-
-    # this will download the client cert from application.units[0]
-    download_client_certificate_from_unit(juju, APP_NAME)
-    client_cert_sans = subprocess.getoutput(
-        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
-    )
-    unit_name = next(iter(juju.status().get_units(APP_NAME)))
-    expected_sans = config_value.replace("{unit}", unit_name.split("/")[-1])
-    assert expected_sans in client_cert_sans, (
-        f"expected sans {expected_sans} not found in certificate sans {client_cert_sans}"
-    )
-
-    logger.info("Resetting configuration for extra-sans")
-    juju.config(app=APP_NAME, reset="certificate-extra-sans")
-
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS)
-    )
-
-    download_client_certificate_from_unit(juju, APP_NAME)
-    client_cert_sans = subprocess.getoutput(
-        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
-    )
-    assert expected_sans not in client_cert_sans, (
-        f"sans value {expected_sans} found in certificate sans {client_cert_sans}"
-    )
-
-    logger.info("Remove relation with %s", TLS_NAME)
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
 
 
 def test_certificate_denied(juju: jubilant.Juju) -> None:
     """Process denied certificate request."""
+    logger.info("Integrate %s with %s for Intermediate CA", VAULT_NAME, TLS_NAME)
+    juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
+    juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30), timeout=600)
+
     logger.info("Integrate Valkey with Vault for client TLS")
     logger.info("Certificate requests should be denied because Vault does not allow IP SANs")
-    juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
+    juju.integrate(f"{APP_NAME}:client-certificates", VAULT_NAME)
     juju.wait(
         lambda status: does_status_match(
             status,
