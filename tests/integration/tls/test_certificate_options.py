@@ -9,7 +9,7 @@ from pathlib import Path
 
 import jubilant
 
-from literals import Substrate
+from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
@@ -21,11 +21,16 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
+    get_cluster_hostnames,
+    get_password,
+    set_key,
 )
 
 logger = logging.getLogger(__name__)
 
 NUM_UNITS = 3
+TEST_KEY = "test_key"
+TEST_VALUE = "test_value"
 VAULT_NAME = "vault"
 
 
@@ -224,7 +229,7 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.wait(lambda status: are_apps_active_and_agents_idle(status, VAULT_NAME))
 
 
-def test_certificate_denied(juju: jubilant.Juju) -> None:
+async def test_certificate_denied(juju: jubilant.Juju) -> None:
     """Process denied certificate request."""
     logger.info("Integrate %s with %s for Intermediate CA", VAULT_NAME, TLS_NAME)
     juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
@@ -241,6 +246,18 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
         ),
         timeout=600,
     )
+
+    logger.info("Ensure access without TLS is still possible")
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    result = await set_key(
+        hostnames=hostnames,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=False,
+        key=TEST_KEY,
+        value=TEST_VALUE,
+    )
+    assert result == "OK", "Failed to write data without TLS"
 
 
 def _install_dependencies() -> None:
