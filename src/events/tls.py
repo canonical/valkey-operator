@@ -308,12 +308,12 @@ class TLSEvents(ops.Object):
             and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
         ):
             if self.charm.tls_manager.certificate_sans_require_update():
-                if not self.charm.state.client_tls_relation:
-                    self.charm.tls_manager.create_and_store_self_signed_certificate()
-                else:
+                if self.charm.state.client_tls_relation:
                     self.charm.tls_events.refresh_tls_certificates_event.emit()
                     event.defer()
                     return
+
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
 
             self.charm.state.unit_server.update(
                 {
