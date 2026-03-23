@@ -567,39 +567,47 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        if event.restart_valkey:
-            self.charm.workload.restart(self.charm.workload.valkey_service)
-        if event.restart_sentinel:
-            self.charm.sentinel_manager.restart_service()
+        try:
+            if event.restart_valkey:
+                self.charm.workload.restart(self.charm.workload.valkey_service)
+            if event.restart_sentinel:
+                self.charm.sentinel_manager.restart_service()
 
-        if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
-            check_replica_sync=False
-        ):
-            self.charm.status.set_running_status(
+            if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
+                check_replica_sync=False
+            ):
+                self.charm.status.set_running_status(
+                    ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
+                    scope="unit",
+                    component_name=self.charm.cluster_manager.name,
+                    statuses_state=self.charm.state.statuses,
+                )
+                event.defer()
+                return
+
+            self.charm.state.statuses.delete(
                 ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
                 scope="unit",
-                component_name=self.charm.cluster_manager.name,
-                statuses_state=self.charm.state.statuses,
+                component=self.charm.cluster_manager.name,
             )
 
-        self.charm.state.statuses.delete(
-            ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
-            scope="unit",
-            component=self.charm.cluster_manager.name,
-        )
+            if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+                self.charm.status.set_running_status(
+                    ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
+                    scope="unit",
+                    component_name=self.charm.cluster_manager.name,
+                    statuses_state=self.charm.state.statuses,
+                )
+                event.defer()
+                return
 
-        if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-            self.charm.status.set_running_status(
+            self.charm.state.statuses.delete(
                 ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
                 scope="unit",
-                component_name=self.charm.cluster_manager.name,
-                statuses_state=self.charm.state.statuses,
+                component=self.charm.cluster_manager.name,
             )
-
-        self.charm.state.statuses.delete(
-            ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
-            scope="unit",
-            component=self.charm.cluster_manager.name,
-        )
-
-        restart_lock.release_lock()
+        except ValkeyServicesFailedToStartError as e:
+            logger.error(e)
+            event.defer()
+        finally:
+            restart_lock.release_lock()
