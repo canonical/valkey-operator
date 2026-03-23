@@ -13,6 +13,7 @@ from tests.integration.cw_helpers import (
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
+    endpoint_in_sentinels,
     get_sans_from_certificate,
     get_unit_name_from_primary_ip,
     hostname_from_unit,
@@ -33,7 +34,6 @@ from tests.integration.helpers import (
     get_number_connected_replicas,
     get_password,
     get_primary_ip,
-    get_sentinels,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ async def test_network_cut_primary(  # noqa: C901
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
     download_client_certificate_from_unit(juju, APP_NAME)
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    hostnames = get_cluster_hostnames(juju, APP_NAME, use_juju_exec=True)
 
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
@@ -163,16 +163,22 @@ async def test_network_cut_primary(  # noqa: C901
         f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
     )
 
+    logger.info(
+        "Verified that a new primary has been elected and is reachable at %s. Verifying that old primary endpoint is marked as down in sentinels of other units...",
+        new_primary_endpoint,
+    )
     for hostname in hostnames:
         if hostname == old_primary_endpoint:
             continue
-        old_primary_sentinel = [
-            sentinel
-            for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)
-            if old_primary_endpoint in sentinel["ip"]
-        ][0]
-        assert "s_down" in old_primary_sentinel["flags"], (
-            f"The old primary IP {old_primary_endpoint} should be marked as down in sentinels list after network cut for hostname {hostname}."
+        assert endpoint_in_sentinels(
+            juju, old_primary_endpoint, hostname, status="s_down", tls_enabled=tls_enabled
+        ), (
+            f"The old primary endpoint should be marked as down in sentinels list of hostname {hostname} after network cut."
+        )
+        logger.info(
+            "Verified that old primary endpoint %s is marked as down in sentinels of hostname %s after network cut.",
+            old_primary_endpoint,
+            hostname,
         )
 
     await assert_continuous_writes_increasing(
@@ -192,6 +198,11 @@ async def test_network_cut_primary(  # noqa: C901
     )
     c_writes.update()
 
+    logger.info(
+        "Network restored to original primary unit %s. Verifying that all units can reach the original primary unit at %s...",
+        primary_unit_name,
+        primary_hostname,
+    )
     for unit in juju.status().apps[APP_NAME].units:
         if unit == primary_unit_name:
             continue
@@ -200,15 +211,21 @@ async def test_network_cut_primary(  # noqa: C901
         ), (
             f"Unit {unit} cannot reach the original primary unit {primary_hostname} after network restoration."
         )
+        logger.info(
+            "Unit %s can reach the original primary unit %s after network restoration.",
+            unit,
+            primary_hostname,
+        )
 
     download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+    new_unit_ip = get_ip_from_unit(juju, primary_unit_name)
     # read ip from cert and check if is a different ip than before if change_ip is True
     certificate_sans = get_sans_from_certificate("./client.pem")
     if change_ip:
         assert old_primary_endpoint not in certificate_sans["sans_ip"], (
             "The old IP should not be in SANs of client certificate after network cut and IP change."
         )
-        assert get_ip_from_unit(juju, primary_unit_name) in certificate_sans["sans_ip"], (
+        assert new_unit_ip in certificate_sans["sans_ip"], (
             "The new IP should be in SANs of client certificate after network cut and IP change."
         )
 
@@ -224,20 +241,35 @@ async def test_network_cut_primary(  # noqa: C901
         f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
     )
 
-    if change_ip:
-        # only on lxd
-        for hostname in hostnames:
-            if hostname == new_primary_endpoint:
-                continue
-            new_primary_discovered = False
-            for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled):
-                assert old_primary_endpoint not in sentinel["ip"], (
-                    "The old IP should not be in sentinels list after network cut and IP change."
-                )
-                if new_primary_endpoint in sentinel["ip"]:
-                    new_primary_discovered = True
-            assert new_primary_discovered, (
-                f"The new primary IP {new_primary_endpoint} should be in sentinels list after network cut and IP change for hostname {hostname}."
+    # only on lxd
+    for hostname in hostnames:
+        if hostname == new_unit_ip:
+            continue
+        if change_ip:
+            assert not endpoint_in_sentinels(
+                juju, old_primary_endpoint, hostname, tls_enabled=tls_enabled
+            ), (
+                f"The old primary endpoint should not be present in sentinels list of hostname {hostname} after network cut and IP change."
+            )
+            assert endpoint_in_sentinels(juju, new_unit_ip, hostname, tls_enabled=tls_enabled), (
+                f"The new primary IP should be present in sentinels list of hostname {hostname} after network cut and IP change."
+            )
+            logger.info(
+                "Verified that old primary endpoint %s is not in sentinels and new primary IP %s is in sentinels of hostname %s after network restoration with IP change.",
+                old_primary_endpoint,
+                new_unit_ip,
+                hostname,
+            )
+        else:
+            assert endpoint_in_sentinels(
+                juju, old_primary_endpoint, hostname, tls_enabled=tls_enabled
+            ), (
+                f"The old primary endpoint should be present in sentinels list of hostname {hostname} after network cut and no IP change."
+            )
+            logger.info(
+                "Verified that old primary endpoint %s is in sentinels of hostname %s after network restoration with no IP change.",
+                old_primary_endpoint,
+                hostname,
             )
 
     await assert_continuous_writes_increasing(

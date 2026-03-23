@@ -19,7 +19,7 @@ from kubernetes.client.rest import ApiException
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
 
 from literals import Substrate
-from tests.integration.helpers import APP_NAME
+from tests.integration.helpers import APP_NAME, get_sentinels
 
 logger = getLogger(__name__)
 
@@ -397,3 +397,30 @@ def lxd_get_controller_hostname(juju: jubilant.Juju) -> str:
         machine.get("instance-id")
         for machine in controller_details[controller_name]["controller-machines"].values()
     ][0]
+
+
+def endpoint_in_sentinels(
+    juju: jubilant.Juju,
+    endpoint: str,
+    hostname: str,
+    status: str = "",
+    tls_enabled: bool = False,
+) -> bool:
+    """Check if the provided endpoint is present in the sentinels list of any of the provided hostnames."""
+    endpoint_sentinel = [
+        sentinel
+        for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)
+        if endpoint in sentinel["ip"]
+    ]
+    if not endpoint_sentinel:
+        logger.error(
+            f"Endpoint {endpoint} not found in sentinels list of {hostname}. Sentinels list: {get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)}"
+        )
+        return False
+    if status and status not in endpoint_sentinel[0]["flags"]:
+        logger.error(
+            f"Endpoint {endpoint} found in sentinels list of {hostname} but with unexpected status. Expected status: {status}, Sentinels list: {get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)}"
+        )
+        return False
+
+    return True
