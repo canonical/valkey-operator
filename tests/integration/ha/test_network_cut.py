@@ -83,7 +83,7 @@ async def test_network_cut_primary(  # noqa: C901
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
     download_client_certificate_from_unit(juju, APP_NAME)
-    hostnames = get_cluster_hostnames(juju, APP_NAME, use_juju_exec=True)
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
 
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
@@ -229,7 +229,7 @@ async def test_network_cut_primary(  # noqa: C901
             "The new IP should be in SANs of client certificate after network cut and IP change."
         )
 
-    hostnames = get_cluster_hostnames(juju, APP_NAME, use_juju_exec=True)
+    hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
     number_of_replicas = await get_number_connected_replicas(
         hostnames=hostnames,

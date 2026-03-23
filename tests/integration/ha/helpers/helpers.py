@@ -196,10 +196,15 @@ def get_unit_name_from_primary_ip(
     Returns:
         The container name corresponding to the primary endpoint.
     """
-    ip_address_attribute = "public_address" if substrate == Substrate.VM else "address"
     for unit_name, unit in juju.status().apps[APP_NAME].units.items():
-        if getattr(unit, ip_address_attribute) == primary_ip:
-            return unit_name
+        try:
+            if (
+                juju.exec("unit-get private-address", unit=unit_name, wait=5).stdout.strip()
+                == primary_ip
+            ):
+                return unit_name
+        except TimeoutError as e:
+            logger.warning(f"Failed to get private address for {unit_name}: {e}")
     raise ValueError(f"No unit found with IP address {primary_ip}")
 
 

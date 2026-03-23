@@ -229,36 +229,24 @@ def verify_unit_count(
     return all(count == len(status.get_units(app)) for app, count in unit_count.items())
 
 
-def get_cluster_hostnames(
-    juju: jubilant.Juju, app_name: str, use_juju_exec: bool = False
-) -> list[str]:
+def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
     """Get the hostnames of all units in the Valkey application.
 
     Args:
         juju: The Juju client instance.
         app_name: The name of the Valkey application.
-        use_juju_exec: Whether to use `juju exec` to get the hostnames.
 
     Returns:
         A list of hostnames for all units in the Valkey application.
     """
     # returns the real ip addresses even if they are not updated on juju's status
-    if use_juju_exec:
-        ips = []
-        for unit in juju.status().get_units(app_name):
-            try:
-                ips.append(juju.exec("unit-get private-address", unit=unit, wait=5).stdout.strip())
-            except TimeoutError as e:
-                logger.warning(f"Failed to get private address for {unit}: {e}")
-        return ips
-
-    status = juju.status()
-    model_info = juju.show_model()
-
-    if model_info.type == "kubernetes":
-        return [unit.address for unit in status.get_units(app_name).values()]
-
-    return [unit.public_address for unit in status.get_units(app_name).values()]
+    ips = []
+    for unit in juju.status().get_units(app_name):
+        try:
+            ips.append(juju.exec("unit-get private-address", unit=unit, wait=5).stdout.strip())
+        except TimeoutError as e:
+            logger.warning(f"Failed to get private address for {unit}: {e}")
+    return ips
 
 
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
