@@ -13,6 +13,7 @@ from tests.integration.cw_helpers import (
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
+    get_controller_hostname,
     get_sans_from_certificate,
     get_unit_name_from_primary_ip,
     hostname_from_unit,
@@ -87,12 +88,12 @@ async def test_network_cut_primary(  # noqa: C901
     c_writes.start()
 
     # Get the current primary unit
-    primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
-    assert primary_ip, "Failed to get primary endpoint from Juju status."
+    primary_endpoint = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
+    assert primary_endpoint, "Failed to get primary endpoint from Juju status."
 
     # Cut the network to the primary unit
-    logger.info("Cutting network to primary unit at %s", primary_ip)
-    primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
+    logger.info("Cutting network to primary unit at %s", primary_endpoint)
+    primary_unit_name = get_unit_name_from_primary_ip(juju, primary_endpoint, substrate)
 
     download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
 
@@ -104,6 +105,12 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info("Identified container name for primary unit: %s", primary_hostname)
     cut_network_from_unit(substrate, juju.model, machine_name, change_ip=change_ip)
 
+    if substrate == Substrate.VM:
+        controller_hostname = get_controller_hostname(juju)
+        assert not is_unit_reachable(juju, controller_hostname, primary_hostname, substrate), (
+            f"Controller {controller_hostname} can still reach the primary unit {primary_hostname} after network cut."
+        )
+
     for unit in juju.status().apps[APP_NAME].units:
         if unit == primary_unit_name:
             continue
@@ -114,24 +121,26 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info(
         "Network successfully cut to primary unit %s at %s. Verifying new primary election...",
         primary_unit_name,
-        primary_ip,
+        primary_endpoint,
     )
 
-    new_primary_ip = None
+    new_primary_endpoint = None
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
         with attempt:
             try:
-                new_primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
+                new_primary_endpoint = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
                 break
             except ValueError as e:
                 logger.warning(f"Error getting primary IP after network cut: {e}")
             logger.info("Waiting for new primary to be elected...")
 
-    assert new_primary_ip and new_primary_ip != primary_ip, (
+    assert new_primary_endpoint and new_primary_endpoint != primary_endpoint, (
         "Primary IP did not change after cutting network to the primary unit."
     )
     logger.info(
-        "New primary IP after network cut: %s vs old primary IP: %s", new_primary_ip, primary_ip
+        "New primary IP after network cut: %s vs old primary IP: %s",
+        new_primary_endpoint,
+        primary_endpoint,
     )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
@@ -175,7 +184,7 @@ async def test_network_cut_primary(  # noqa: C901
     # read ip from cert and check if is a different ip than before if change_ip is True
     certificate_sans = get_sans_from_certificate("./client.pem")
     if change_ip:
-        assert primary_ip not in certificate_sans["sans_ip"], (
+        assert primary_endpoint not in certificate_sans["sans_ip"], (
             "The old IP should not be in SANs of client certificate after network cut and IP change."
         )
         assert get_ip_from_unit(juju, primary_unit_name) in certificate_sans["sans_ip"], (

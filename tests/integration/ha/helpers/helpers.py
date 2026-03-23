@@ -12,8 +12,8 @@ import time
 from logging import getLogger
 
 import jubilant
-import kubernetes as kubernetes
 import urllib3
+import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
@@ -29,6 +29,8 @@ def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     # apply a mask (device type `none`)
     cut_network_command = f"lxc config device add {machine_name} eth0 none"
     subprocess.check_call(cut_network_command.split())
+
+    time.sleep(5)
 
 
 def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
@@ -107,15 +109,26 @@ def cut_network_from_unit(
         k8s_cut_network_from_unit_without_ip_change(model_name, machine_name)
 
 
-def restore_network_to_unit(substrate: Substrate, model_name: str, machine_name: str) -> None:
+def restore_network_to_unit(
+    substrate: Substrate, model_name: str, machine_name: str, change_ip: bool = False
+) -> None:
     """Restore network from a lxc container.
 
     Args:
         substrate: The substrate the test is running on
         model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
+        change_ip: Whether the network cut changed the IP address of the unit (only applicable for VMs)
     """
     if substrate == Substrate.VM:
+        if change_ip:
+            limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
+            subprocess.check_call(limit_set_command.split())
+            limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
+            subprocess.check_call(limit_set_command.split())
+            limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
+            subprocess.check_call(limit_set_command.split())
+            return
         # remove mask from eth0
         restore_network_command = f"lxc config device remove {machine_name} eth0"
         subprocess.check_call(restore_network_command.split())
@@ -177,7 +190,7 @@ def get_unit_name_from_primary_ip(
 
     Args:
         juju: Juju client
-        primary_ip: The primary endpoint in the form of "ip:port"
+        primary_ip: The primary endpoint IP address to get the corresponding container name for
         substrate: The substrate the test is running on
 
     Returns:
@@ -247,13 +260,17 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
         v1.create_namespaced_pod(namespace=namespace, body=pod_manifest)
 
         # Poll the pod status until it completes
-        while True:
-            pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
-            phase = pod_status.status.phase
+        phase = None
+        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2)):
+            with attempt:
+                pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
+                phase = pod_status.status.phase
 
-            if phase in ["Succeeded", "Failed"]:
-                break
-            time.sleep(1)  # Wait a second before checking again
+                if phase not in ["Succeeded", "Failed"]:
+                    logger.info(
+                        f"Pod '{temp_pod_name}' is in phase '{phase}'. Waiting for completion..."
+                    )
+                    raise ValueError("Pod not completed yet")
 
         # Optional: Fetch the actual ping output logs for debugging
         logs = v1.read_namespaced_pod_log(name=temp_pod_name, namespace=namespace)
@@ -361,3 +378,18 @@ def get_sans_from_certificate(certificate_path: str) -> dict[str, set[str]]:
                 sans_ip.add(san_value)
 
     return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+
+def get_controller_hostname(juju: jubilant.Juju) -> str:
+    """Return controller machine hostname."""
+    raw_model = juju.cli("show-model", juju.model, include_model=False)
+    raw_controller = juju.cli("show-controller", include_model=False)
+
+    model_details = yaml.safe_load(raw_model)
+    controller_details = yaml.safe_load(raw_controller)
+    controller_name = model_details[juju.model.split(":")[1]]["controller-name"]
+
+    return [
+        machine.get("instance-id")
+        for machine in controller_details[controller_name]["controller-machines"].values()
+    ][0]
