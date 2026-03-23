@@ -131,6 +131,11 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
 
 def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Initialize Vault and wait for it to be ready."""
+    # follows the procedure for initializing and unsealing Vault as described in
+    # https://canonical-vault-charms.readthedocs-hosted.com/en/latest/tutorial/getting_started_k8s/#deploy-vault
+    logger.info("Initializing Vault")
+
+    logger.info("Getting the Vault address")
     vault_units = juju.status().get_units(VAULT_NAME)
     vault_unit = next(iter(vault_units.values()))
     vault_ip = (
@@ -139,24 +144,23 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
         else vault_unit.public_address
     )
     secrets = juju.secrets()
-    logger.info("Initializing Vault")
 
+    logger.info("Extracting Vault's CA certificate")
     vault_ca = None
     for secret in secrets:
         if secret.label == "self-signed-vault-ca-certificate":
             vault_ca = juju.show_secret(identifier=secret.uri, reveal=True).content.get(
                 "certificate"
             )
-
     assert vault_ca, "Vault CA certificate not found in secrets"
-
     Path("./vault_ca.pem").write_text(vault_ca)
 
+    # point the locally installed Vault client to the Vault deployment
     vault_env = os.environ.copy()
     vault_env["VAULT_CACERT"] = "./vault_ca.pem"
     vault_env["VAULT_ADDR"] = f"https://{vault_ip}:8200"
 
-    # operator init
+    # initialize the deployed Vault
     logger.info("Running vault operator init")
     init_cmd = [
         "vault",
@@ -170,11 +174,13 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     )
     logger.info(f"Vault operator init output: {init_result.stdout}")
     init_results_list = [line.strip() for line in init_result.stdout.splitlines() if line.strip()]
+
+    # on init, Vault returns the root token and a key that are required for unsealing Vault
     unseal_key = init_results_list[0].split(":")[1].strip()
     root_token = init_results_list[1].split(":")[1].strip()
     vault_env["VAULT_TOKEN"] = root_token
 
-    # operator unseal
+    # unseal the deployed Vault
     logger.info("Running vault operator unseal")
     unseal_cmd = [
         "vault",
@@ -187,8 +193,8 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     )
     logger.info(f"Vault operator unseal output: {unseal_result.stdout}")
 
-    # authorise vault charm
-    # create vault token
+    # authorize Vault charm
+    # create a one-time token and store it as a secret
     logger.info("Creating Vault token for the vault charm")
     create_token_cmd = [
         "vault",
@@ -216,6 +222,7 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     assert secret_id, "Failed to create vault-token secret"
     juju.grant_secret("vault-token", VAULT_NAME)
 
+    # authorize the charm to interact with Vault using the token value from the secret
     vault_unit_name = next(iter(vault_units))
     action = juju.run(
         unit=vault_unit_name,
@@ -258,6 +265,15 @@ async def test_certificate_denied(juju: jubilant.Juju) -> None:
         value=TEST_VALUE,
     )
     assert result == "OK", "Failed to write data without TLS"
+
+    logger.info("Removing TLS relation again")
+    juju.remove_relation(f"{APP_NAME}:client-certificates", VAULT_NAME)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
+        timeout=100,
+    )
 
 
 def _install_dependencies() -> None:
