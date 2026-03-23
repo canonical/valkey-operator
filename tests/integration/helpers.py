@@ -33,6 +33,8 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
     TLS_PORT,
     CharmUsers,
     Substrate,
@@ -227,16 +229,29 @@ def verify_unit_count(
     return all(count == len(status.get_units(app)) for app, count in unit_count.items())
 
 
-def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
+def get_cluster_hostnames(
+    juju: jubilant.Juju, app_name: str, use_juju_exec: bool = False
+) -> list[str]:
     """Get the hostnames of all units in the Valkey application.
 
     Args:
         juju: The Juju client instance.
         app_name: The name of the Valkey application.
+        use_juju_exec: Whether to use `juju exec` to get the hostnames.
 
     Returns:
         A list of hostnames for all units in the Valkey application.
     """
+    # returns the real ip addresses even if they are not updated on juju's status
+    if use_juju_exec:
+        ips = []
+        for unit in juju.status().get_units(app_name):
+            try:
+                ips.append(juju.exec("unit-get private-address", unit=unit, wait=5).stdout.strip())
+            except TimeoutError as e:
+                logger.warning(f"Failed to get private address for {unit}: {e}")
+        return ips
+
     status = juju.status()
     model_info = juju.show_model()
 
@@ -478,9 +493,13 @@ def exec_valkey_cli(
     command: str,
     tls_enabled: bool = False,
     json: bool = False,
+    sentinel: bool = False,
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    pre_command = f"valkey-cli --no-auth-warning -h {hostname} -p {TLS_PORT if tls_enabled else CLIENT_PORT} --user {username} --pass {password} {'--json' if json else ''}"
+    port = TLS_PORT if tls_enabled else CLIENT_PORT
+    if sentinel:
+        port = SENTINEL_TLS_PORT if tls_enabled else SENTINEL_PORT
+    pre_command = f"valkey-cli --no-auth-warning -h {hostname} -p {port} --user {username} --pass {password} {'--json' if json else ''}"
     if tls_enabled:
         pre_command += " --tls --cert client.pem --key client.key --cacert client_ca.pem"
     exec_command = f"{pre_command} {command}"
@@ -722,3 +741,18 @@ def existing_app(juju: jubilant.Juju) -> str | None:
 def get_ip_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
     """Get the IP address of a unit based on the substrate type."""
     return juju.exec("unit-get", "private-address", unit=unit_name).stdout.strip()
+
+
+def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = False) -> list[dict]:
+    """Get the list of sentinels from the data bag."""
+    return json.loads(
+        exec_valkey_cli(
+            primary_ip,
+            username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+            tls_enabled=tls_enabled,
+            command="sentinel sentinels primary",
+            json=True,
+            sentinel=True,
+        ).stdout
+    )

@@ -122,16 +122,16 @@ def restore_network_to_unit(
     """
     if substrate == Substrate.VM:
         if change_ip:
-            limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
-            subprocess.check_call(limit_set_command.split())
-            limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
-            subprocess.check_call(limit_set_command.split())
-            limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
-            subprocess.check_call(limit_set_command.split())
+            # remove mask from eth0
+            restore_network_command = f"lxc config device remove {machine_name} eth0"
+            subprocess.check_call(restore_network_command.split())
             return
-        # remove mask from eth0
-        restore_network_command = f"lxc config device remove {machine_name} eth0"
-        subprocess.check_call(restore_network_command.split())
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
+        subprocess.check_call(limit_set_command.split())
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
+        subprocess.check_call(limit_set_command.split())
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
+        subprocess.check_call(limit_set_command.split())
     else:
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
@@ -301,10 +301,10 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
             logger.error(f"Failed to delete temporary pod {temp_pod_name}: {e}")
 
 
-def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
+def is_unit_reachable_lxd(from_host: str, to_host: str, number_of_retries: int = 10) -> bool:
     """Test network reachability between LXD hosts."""
     try:
-        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+        for attempt in Retrying(stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10)):
             with attempt:
                 ping = subprocess.call(
                     f"lxc exec {from_host} -- ping -c 5 -W 2 {to_host}".split(),
@@ -321,7 +321,11 @@ def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
 
 
 def is_unit_reachable(
-    juju: jubilant.Juju, from_host: str, to_host: str, substrate: Substrate
+    juju: jubilant.Juju,
+    from_host: str,
+    to_host: str,
+    substrate: Substrate,
+    number_of_retries: int = 10,
 ) -> bool:
     """Test network reachability to a unit based on the substrate."""
     assert juju.model, "Juju client must be connected to a model before checking unit reachability"
@@ -329,7 +333,7 @@ def is_unit_reachable(
         case Substrate.K8S:
             return is_unit_reachable_k8s(juju.model, from_host, to_host)
         case Substrate.VM:
-            return is_unit_reachable_lxd(from_host, to_host)
+            return is_unit_reachable_lxd(from_host, to_host, number_of_retries=number_of_retries)
 
 
 def hostname_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
@@ -380,14 +384,14 @@ def get_sans_from_certificate(certificate_path: str) -> dict[str, set[str]]:
     return {"sans_ip": sans_ip, "sans_dns": sans_dns}
 
 
-def get_controller_hostname(juju: jubilant.Juju) -> str:
+def lxd_get_controller_hostname(juju: jubilant.Juju) -> str:
     """Return controller machine hostname."""
     raw_model = juju.cli("show-model", juju.model, include_model=False)
     raw_controller = juju.cli("show-controller", include_model=False)
 
     model_details = yaml.safe_load(raw_model)
     controller_details = yaml.safe_load(raw_controller)
-    controller_name = model_details[juju.model.split(":")[1]]["controller-name"]
+    controller_name = model_details[juju.model]["controller-name"]
 
     return [
         machine.get("instance-id")
