@@ -241,7 +241,6 @@ async def test_network_cut_primary(  # noqa: C901
         f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
     )
 
-    # only on lxd
     for hostname in hostnames:
         if hostname == new_unit_ip:
             continue
