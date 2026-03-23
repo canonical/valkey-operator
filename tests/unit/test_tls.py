@@ -1299,3 +1299,29 @@ def test_client_tls_relation_broken_run_deferred_event(cloud_spec):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
+
+
+def test_client_tls_relation_broken_not_active_yet(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "tls-client-state": "to-tls",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
+    assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
+    assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"

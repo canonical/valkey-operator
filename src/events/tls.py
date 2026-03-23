@@ -235,6 +235,11 @@ class TLSEvents(ops.Object):
         if self.charm.app.planned_units() == 0 or self.charm.state.unit_server.is_being_removed:
             return
 
+        if not self.charm.state.unit_server.model.client_cert_ready:
+            logger.info("Client TLS relation removed, no certificate was stored yet")
+            self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
+            return
+
         if not self.charm.state.cluster.internal_ca_certificate:
             if self.charm.unit.is_leader():
                 self.charm.tls_manager.generate_ca_certificate()
