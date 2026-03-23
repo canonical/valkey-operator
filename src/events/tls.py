@@ -223,6 +223,12 @@ class TLSEvents(ops.Object):
             for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
         ]:
             logger.error("Certificate request was denied: %s", event.error.message)
+            return
+
+        logger.warning(
+            "Certificate denied event received for unknown signing request: %s",
+            event.certificate_signing_request,
+        )
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
