@@ -24,6 +24,7 @@ from pydantic import Field
 from typing_extensions import Annotated
 
 from literals import (
+    CLIENTS_USERS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 InternalUsersSecret = Annotated[
     OptionalSecretStr, Field(exclude=True, default=None), INTERNAL_USERS_SECRET_LABEL_SUFFIX
+]
+ClientUsersSecret = Annotated[
+    OptionalSecretStr, Field(exclude=True, default=None), CLIENTS_USERS_SECRET_LABEL_SUFFIX
 ]
 InternalCertificatesSecret = Annotated[
     OptionalSecretStr, Field(exclude=True, default=None), INTERNET_CERTS_SECRET_LABEL_SUFFIX
@@ -57,6 +61,7 @@ class PeerAppModel(PeerModel):
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
     tls_client_private_key: ExtraSecretStr = Field(default=None)
+    external_client_users: ClientUsersSecret = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -245,3 +250,17 @@ class ValkeyCluster(RelationState):
             return PrivateKey(raw=private_key)
 
         return None
+
+
+class ExternalClient:
+    """State object for an external client."""
+
+    def __init__(
+        self,
+        username,
+        password,
+        resource,
+    ):
+        self.username = username
+        self.password = password
+        self.resource = resource

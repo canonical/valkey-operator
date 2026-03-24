@@ -29,7 +29,7 @@ SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
-
+EXTERNAL_CLIENTS_RELATION = "valkey-client"
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -40,6 +40,7 @@ PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
+CLIENTS_USERS_SECRET_LABEL_SUFFIX = "client_users_secret"
 INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 

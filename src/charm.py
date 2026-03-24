@@ -11,10 +11,12 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
+from events.external_clients import ExternalClientsEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
+from managers.external_clients import ExternalClientsManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
 from workload_k8s import ValkeyK8sWorkload
@@ -47,6 +49,7 @@ class ValkeyCharm(ops.CharmBase):
         self.config_manager = ConfigManager(state=self.state, workload=self.workload)
         self.sentinel_manager = SentinelManager(state=self.state, workload=self.workload)
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
+        self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
@@ -55,11 +58,13 @@ class ValkeyCharm(ops.CharmBase):
             self.config_manager,
             self.sentinel_manager,
             self.tls_manager,
+            self.client_manager,
         )
 
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)
         self.tls_events = TLSEvents(self)
+        self.client_events = ExternalClientsEvents(self)
 
 
 if __name__ == "__main__":

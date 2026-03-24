@@ -152,6 +152,30 @@ class ValkeyClient(CliClient):
             values[values_parts[0]] = values_parts[1]
         return values
 
+    def info_server(self, hostname: str) -> dict[str, str] | None:
+        """Get the server information of the Valkey server.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Returns:
+            dict[str, str] | None: The server information retrieved from Valkey.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute.
+        """
+        output = self.exec_cli_command(["info", "server"], hostname=hostname, json_output=False)
+        values = {}
+        if not output.strip():
+            logger.warning("No server info found on Valkey server at %s.", hostname)
+            return None
+        for line in output.strip().splitlines():
+            if line.startswith("#"):
+                continue
+            values_parts = line.split(":", 1)
+            values[values_parts[0]] = values_parts[1]
+        return values
+
     def set(
         self, hostname: str, key: str, value: str, additional_args: list[str] | None = None
     ) -> bool:

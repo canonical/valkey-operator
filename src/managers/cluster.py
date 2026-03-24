@@ -109,6 +109,13 @@ class ClusterManager(ManagerStatusProtocol):
 
         return True
 
+    def get_version(self) -> str:
+        """Get the Valkey version from the server."""
+        client = self._get_valkey_client()
+        server_info = client.info_server(hostname=self.state.endpoint)
+
+        return server_info.get("valkey_version")
+
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()

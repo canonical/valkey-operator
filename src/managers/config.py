@@ -5,6 +5,7 @@
 """Manager for all config related tasks."""
 
 import hashlib
+import json
 import logging
 import secrets
 import string
@@ -169,7 +170,8 @@ class ConfigManager(ManagerStatusProtocol):
             # Sentinel users should be in the sentinel acl file
             if "VALKEY_" not in user.name:
                 continue
-            acl_content += self._get_user_acl_line(user, passwords=passwords)
+            acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
+        acl_content += self._get_client_user_acl_lines()
         self.workload.write_file(
             acl_content,
             self.workload.acl_file,
@@ -177,22 +179,43 @@ class ConfigManager(ManagerStatusProtocol):
             group=self.workload.user,
         )
 
-    def _get_user_acl_line(self, user: CharmUsers, passwords: dict[str, str] | None = None) -> str:
-        """Generate an ACL line for a given user.
+    def _get_internal_user_acl_line(
+        self, user: CharmUsers, passwords: dict[str, str] | None = None
+    ) -> str:
+        """Generate an ACL line for a given internal user.
 
         Args:
-            user (CharmUsers): User for which to generate the ACL line.
+            user (CharmUsers): Internal User for which to generate the ACL line.
             passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
                 the passwords from the cluster state will be used.
 
         Returns:
-            str: ACL line for the user.
+            str: ACL line for the internal user.
         """
         passwords = passwords or self.state.cluster.internal_users_credentials
         if not (password := passwords.get(user.value, "")):
             raise ValueError(f"No password found for user {user}")
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
+
+    def _get_client_user_acl_lines(self) -> str | None:
+        """Generate the ACL lines for all external client users.
+
+        Returns:
+            str: ACL lines for the external client users.
+        """
+        acl_content = ""
+
+        if not (external_clients_from_state := self.state.cluster.model.external_client_users):
+            return acl_content
+
+        external_client_users = json.loads(external_clients_from_state)
+        for username, values in external_client_users.items():
+            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction ~{values['resource']} &{values['resource']}"
+            password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
+            acl_content += f"user {username} on #{password_hash} {permissions}\n"
+
+        return acl_content
 
     def get_sentinel_config_properties(
         self, primary_endpoint: str
@@ -318,7 +341,7 @@ class ConfigManager(ManagerStatusProtocol):
             # Sentinel users should be in the sentinel acl file
             if "VALKEY_" in user.name:
                 continue
-            acl_content += self._get_user_acl_line(user, passwords=passwords)
+            acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
         self.workload.write_file(
             acl_content,
             self.workload.sentinel_acl_file,
