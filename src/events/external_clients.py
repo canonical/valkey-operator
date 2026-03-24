@@ -13,10 +13,10 @@ from lib.charms.data_platform_libs.v1.data_interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
     ResourceProviderEventHandler,
-    ResourceProviderModel,
+    ValkeyResponseModel,
 )
 from src.common.exceptions import ValkeyACLLoadError, ValkeyWorkloadCommandError
-from src.literals import EXTERNAL_CLIENTS_RELATION
+from src.literals import EXTERNAL_CLIENTS_RELATION, PEER_RELATION
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -40,6 +40,13 @@ class ExternalClientsEvents(ops.Object):
 
         self.framework.observe(
             self.valkey_provides.on.bulk_resources_requested, self._on_bulk_resources_requested
+        )
+        self.framework.observe(
+            self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
+            self._on_client_relation_broken,
+        )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
         )
 
     def _on_bulk_resources_requested(
@@ -86,12 +93,15 @@ class ExternalClientsEvents(ops.Object):
             response = next(
                 (
                     res
-                    for res in self.valkey_provides.responses(
-                        event.relation, ResourceProviderModel
-                    )
+                    for res in self.valkey_provides.responses(event.relation, ValkeyResponseModel)
                     if res.request_id == request.request_id
                 ),
                 None,
+            ) or ValkeyResponseModel(
+                username=username,
+                request_id=request.request_id,
+                resource=request.resource,
+                salt=request.salt,
             )
 
             response.username = username

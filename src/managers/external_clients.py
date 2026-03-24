@@ -50,8 +50,14 @@ class ExternalClientsManager(ManagerStatusProtocol):
             return
 
         logger.info("Adding managed user %s", username)
-        external_client_users[username]["password"] = password
-        external_client_users[username]["resource"] = resource
+        external_client_users.update(
+            {
+                username: {
+                    "password": password,
+                    "resource": resource,
+                }
+            }
+        )
         self.state.cluster.update({"external_client_users": external_client_users})
 
     def remove_managed_users(self, relation_id: int):

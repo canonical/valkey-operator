@@ -25,8 +25,8 @@ from typing_extensions import Annotated
 
 from literals import (
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
+    INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
-    INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
     ScaleDownState,
     StartState,
@@ -44,7 +44,7 @@ ClientUsersSecret = Annotated[
     OptionalSecretStr, Field(exclude=True, default=None), CLIENTS_USERS_SECRET_LABEL_SUFFIX
 ]
 InternalCertificatesSecret = Annotated[
-    OptionalSecretStr, Field(exclude=True, default=None), INTERNET_CERTS_SECRET_LABEL_SUFFIX
+    OptionalSecretStr, Field(exclude=True, default=None), INTERNAL_CERTS_SECRET_LABEL_SUFFIX
 ]
 
 

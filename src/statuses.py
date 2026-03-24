@@ -123,3 +123,11 @@ class TLSStatuses(Enum):
         status="blocked",
         message="The private key provided is not valid. Please provide a valid private key",
     )
+
+
+class ExternalClientsStatuses(Enum):
+    """Collection of external clients related statuses."""
+
+    RESOURCE_REQUEST_FAILED = StatusObject(
+        status="blocked", message="Client relation: Failed to process resource request"
+    )

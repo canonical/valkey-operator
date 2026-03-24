@@ -41,7 +41,7 @@ QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
 CLIENTS_USERS_SECRET_LABEL_SUFFIX = "client_users_secret"
-INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
+INTERNAL_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
