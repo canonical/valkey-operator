@@ -4,7 +4,6 @@
 
 """Manager for handling external clients."""
 
-import json
 import logging
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -13,7 +12,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from statuses import CharmStatuses
+from statuses import CharmStatuses, ExternalClientsStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +39,7 @@ class ExternalClientsManager(ManagerStatusProtocol):
 
     def add_managed_user_if_required(self, username: str, password: str, resource: str) -> None:
         """Add an external client's user to the state."""
-        if external_clients_from_state := self.state.cluster.model.external_client_users:
-            external_client_users = json.loads(external_clients_from_state)
-        else:
+        if not (external_client_users := self.state.cluster.external_users_credentials):
             external_client_users = {}
 
         if external_client_users.get(username):
@@ -62,11 +59,10 @@ class ExternalClientsManager(ManagerStatusProtocol):
 
     def remove_managed_users(self, relation_id: int):
         """Remove all managed users for an external client relation from the state."""
-        if not (external_clients_from_state := self.state.cluster.model.external_client_users):
+        if not (external_client_users := self.state.cluster.external_users_credentials):
             return
 
-        external_client_users = json.loads(external_clients_from_state)
-        for username in external_client_users:
+        for username in list(external_client_users):
             if username.startswith(f"relation-{relation_id}"):
                 logger.info("Removing managed user %s", username)
                 del external_client_users[username]
@@ -75,10 +71,9 @@ class ExternalClientsManager(ManagerStatusProtocol):
 
     def get_password(self, username: str) -> str | None:
         """Query the password of an external client user from the state."""
-        if not (external_clients_from_state := self.state.cluster.model.external_client_users):
+        if not (external_client_users := self.state.cluster.external_users_credentials):
             return None
 
-        external_client_users = json.loads(external_clients_from_state)
         if user := external_client_users.get(username):
             return user.get("password")
 
@@ -88,8 +83,27 @@ class ExternalClientsManager(ManagerStatusProtocol):
         """Compute the external client statuses."""
         status_list: list[StatusObject] = []
 
-        # Peer relation not established yet, or model not built yet for unit or app
-        if not self.state.cluster.model or not self.state.unit_server.model:
+        # Peer relation not established yet, model not built yet or no users added
+        if (
+            not self.state.cluster.model
+            or not self.state.unit_server.model
+            or not self.state.external_client_relations
+            or scope != "app"
+        ):
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+        if not self.state.cluster.external_users_credentials:
+            status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
+            return status_list
+
+        for relation in self.state.external_client_relations:
+            if not any(
+                f"relation-{relation.id}" in key
+                for key in self.state.cluster.external_users_credentials.keys()
+            ):
+                status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
+
+            if not relation.data[self.state.charm.app].get("endpoints"):
+                status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

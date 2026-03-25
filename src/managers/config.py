@@ -5,7 +5,6 @@
 """Manager for all config related tasks."""
 
 import hashlib
-import json
 import logging
 import secrets
 import string
@@ -206,10 +205,9 @@ class ConfigManager(ManagerStatusProtocol):
         """
         acl_content = ""
 
-        if not (external_clients_from_state := self.state.cluster.model.external_client_users):
+        if not (external_client_users := self.state.cluster.external_users_credentials):
             return acl_content
 
-        external_client_users = json.loads(external_clients_from_state)
         for username, values in external_client_users.items():
             permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction ~{values['resource']} &{values['resource']}"
             password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()

@@ -4,6 +4,7 @@
 
 """Collection of state objects for the Valkey relations, apps and units."""
 
+import json
 import logging
 from typing import Any, final
 
@@ -228,6 +229,14 @@ class ValkeyCluster(RelationState):
         return passwords
 
     @property
+    def external_users_credentials(self) -> dict[str, dict[str, str]] | None:
+        """Retrieve the user credentials for external clients from the state and return as dict."""
+        if not (external_clients := self.model.external_client_users):
+            return None
+
+        return json.loads(external_clients)
+
+    @property
     def internal_ca_certificate(self) -> Certificate | None:
         """Retrieve the internal CA certificate."""
         if not self.model or not self.model.internal_ca_certificate:
@@ -250,17 +259,3 @@ class ValkeyCluster(RelationState):
             return PrivateKey(raw=private_key)
 
         return None
-
-
-class ExternalClient:
-    """State object for an external client."""
-
-    def __init__(
-        self,
-        username,
-        password,
-        resource,
-    ):
-        self.username = username
-        self.password = password
-        self.resource = resource

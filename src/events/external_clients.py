@@ -16,7 +16,11 @@ from lib.charms.data_platform_libs.v1.data_interfaces import (
     ResourceRequestedEvent,
     ValkeyResponseModel,
 )
-from src.common.exceptions import ValkeyACLLoadError, ValkeyWorkloadCommandError
+from src.common.exceptions import (
+    ValkeyACLLoadError,
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyWorkloadCommandError,
+)
 from src.literals import EXTERNAL_CLIENTS_RELATION, PEER_RELATION
 
 if TYPE_CHECKING:
@@ -78,7 +82,7 @@ class ExternalClientsEvents(ops.Object):
                 else None
             )
             version = self.charm.cluster_manager.get_version()
-        except ValkeyWorkloadCommandError as e:
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
             logger.error("Not ready to process client relation: %s", e)
             event.defer()
             return
@@ -155,11 +159,14 @@ class ExternalClientsEvents(ops.Object):
 
     def _on_client_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the relation-broken event."""
-        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.model:
+        if not self.charm.state.unit_server.model:
             return
 
-        logger.info("Removing managed users for external client relation")
-        self.charm.client_manager.remove_managed_users(event.relation.id)
+        if self.charm.unit.is_leader():
+            logger.info("Removing managed users for external client relation")
+            self.charm.client_manager.remove_managed_users(event.relation.id)
+
+        logger.info("Updating ACL configuration in Valkey")
         try:
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()

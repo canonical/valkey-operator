@@ -129,5 +129,5 @@ class ExternalClientsStatuses(Enum):
     """Collection of external clients related statuses."""
 
     RESOURCE_REQUEST_FAILED = StatusObject(
-        status="blocked", message="Client relation: Failed to process resource request"
+        status="blocked", message="Client relation: Failed to process access request"
     )

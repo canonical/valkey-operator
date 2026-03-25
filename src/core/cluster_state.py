@@ -17,6 +17,7 @@ from data_platform_helpers.advanced_statuses.protocol import StatusesState, Stat
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
     CLIENT_TLS_RELATION_NAME,
+    EXTERNAL_CLIENTS_RELATION,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
     Substrate,
@@ -110,6 +111,11 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def client_tls_relation(self) -> ops.Relation | None:
         """Get the client certificates relation."""
         return self.model.get_relation(CLIENT_TLS_RELATION_NAME)
+
+    @property
+    def external_client_relations(self) -> set[ops.Relation]:
+        """Get the client relations."""
+        return set(self.model.relations[EXTERNAL_CLIENTS_RELATION])
 
     @property
     def bind_address(self) -> str:
