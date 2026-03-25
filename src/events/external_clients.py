@@ -13,6 +13,7 @@ from lib.charms.data_platform_libs.v1.data_interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
     ResourceProviderEventHandler,
+    ResourceRequestedEvent,
     ValkeyResponseModel,
 )
 from src.common.exceptions import ValkeyACLLoadError, ValkeyWorkloadCommandError
@@ -42,6 +43,9 @@ class ExternalClientsEvents(ops.Object):
             self.valkey_provides.on.bulk_resources_requested, self._on_bulk_resources_requested
         )
         self.framework.observe(
+            self.valkey_provides.on.resource_requested, self._on_bulk_resources_requested
+        )
+        self.framework.observe(
             self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
             self._on_client_relation_broken,
         )
@@ -50,7 +54,7 @@ class ExternalClientsEvents(ops.Object):
         )
 
     def _on_bulk_resources_requested(
-        self, event: BulkResourcesRequestedEvent[RequirerCommonModel]
+        self, event: BulkResourcesRequestedEvent[RequirerCommonModel] | ResourceRequestedEvent
     ) -> None:
         """Handle bulk resources requested event."""
         if not self.charm.unit.is_leader():
@@ -79,8 +83,14 @@ class ExternalClientsEvents(ops.Object):
             event.defer()
             return
 
+        # backward compatibility to data-interfaces v0
+        if isinstance(event, ResourceRequestedEvent):
+            requests = [event.request]
+        else:
+            requests = event.requests
+
         responses = []
-        for request in event.requests:
+        for request in requests:
             username = self.charm.client_manager.get_username(
                 event.relation.id, request.request_id
             )
