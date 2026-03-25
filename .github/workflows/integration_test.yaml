@@ -26,7 +26,7 @@ jobs:
           sudo apt update
           sudo snap install charmcraft --classic
           sudo snap install go --classic
-          go install github.com/snapcore/spread/cmd/spread@latest
+          go install github.com/canonical/spread/cmd/spread@latest
           pipx install tox poetry
           # to build Valkey-glide during tests
           sudo apt install libprotobuf-dev protobuf-compiler -y
@@ -125,7 +125,7 @@ jobs:
           sudo apt update
           sudo snap install charmcraft --classic
           sudo snap install go --classic
-          go install github.com/snapcore/spread/cmd/spread@latest
+          go install github.com/canonical/spread/cmd/spread@latest
           # to build Valkey-glide during tests
           sudo apt install libprotobuf-dev protobuf-compiler -y
           sudo apt install rustup -y
