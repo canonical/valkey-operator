@@ -334,12 +334,11 @@ class TLSManager(ManagerStatusProtocol):
         extra_sans = [san.strip() for san in extra_sans_config.split(",")]
 
         for san in extra_sans:
-            if not self._is_ip_address(san):
-                if not self._is_hostname(
-                    san.replace("{unit}", str(self.state.unit_server.unit_id))
-                ):
-                    logger.error(f"certificate-extra-sans configuration is invalid for {san}")
-                    return False
+            if not self._is_ip_address(san) and not self._is_hostname(
+                san.replace("{unit}", str(self.state.unit_server.unit_id))
+            ):
+                logger.error(f"certificate-extra-sans configuration is invalid for {san}")
+                return False
 
         return True
 
