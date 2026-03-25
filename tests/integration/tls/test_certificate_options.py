@@ -36,7 +36,10 @@ VAULT_NAME = "vault"
 
 def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Deploy the charm under test and a TLS provider."""
-    _install_dependencies()
+    logger.info("Installing vault cli client")
+    subprocess.run(
+        ["sudo", "snap", "install", "vault"], check=True, text=True, capture_output=True
+    )
 
     juju.deploy(
         charm,
@@ -273,12 +276,4 @@ async def test_certificate_denied(juju: jubilant.Juju) -> None:
             status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
         ),
         timeout=100,
-    )
-
-
-def _install_dependencies() -> None:
-    """Install dependencies for the test."""
-    # Install TLS Certificates interface library
-    subprocess.run(
-        ["sudo", "snap", "install", "vault"], check=True, text=True, capture_output=True
     )
