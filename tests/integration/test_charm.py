@@ -220,9 +220,9 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     )
 
     logger.info("Secret access will be granted now - wait for updated password")
+    juju.grant_secret(identifier=secret_name, app=APP_NAME)
     # deferred `config_changed` event will be retried before `update_status`
     with fast_forward(juju):
-        juju.grant_secret(identifier=secret_name, app=APP_NAME)
         juju.wait(
             lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=10),
             timeout=1200,

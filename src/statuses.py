@@ -128,3 +128,6 @@ class TLSStatuses(Enum):
         message="Invalid value for config option 'certificate-extra-sans'",
         short_message="Invalid value `certificate-extra-sans`",
     )
+    CERTIFICATE_DENIED = StatusObject(
+        status="blocked", message="Certificate request was denied, check logs for details"
+    )

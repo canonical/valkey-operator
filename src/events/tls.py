@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
+    CertificateDeniedEvent,
     CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
 )
@@ -71,6 +72,9 @@ class TLSEvents(ops.Object):
         )
         self.framework.observe(
             self.client_certificate.on.certificate_available, self._on_certificate_available
+        )
+        self.framework.observe(
+            self.client_certificate.on.certificate_denied, self._on_certificate_denied
         )
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
@@ -212,9 +216,28 @@ class TLSEvents(ops.Object):
             event.defer()
             return
 
+    def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
+        """Handle the `certificate-denied` event from TLS provider."""
+        if event.certificate_signing_request in [
+            csr.certificate_signing_request
+            for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
+        ]:
+            logger.error("Certificate request was denied: %s", event.error.message)
+            return
+
+        logger.warning(
+            "Certificate denied event received for unknown signing request: %s",
+            event.certificate_signing_request,
+        )
+
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
         if self.charm.app.planned_units() == 0 or self.charm.state.unit_server.is_being_removed:
+            return
+
+        if not self.charm.state.unit_server.model.client_cert_ready:
+            logger.info("Client TLS relation removed, no certificate was stored yet")
+            self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             return
 
         if not self.charm.state.cluster.internal_ca_certificate:
