@@ -71,6 +71,7 @@ def assert_continuous_writes_consistent(
     username: str,
     password: str,
     ignore_count: bool = False,
+    tls_enabled: bool = False,
 ) -> None:
     """Assert that the continuous writes are consistent."""
     last_written_value = None
@@ -80,8 +81,16 @@ def assert_continuous_writes_consistent(
         raise ValueError("Could not read last written value from file.")
 
     for endpoint in hostnames:
-        last_value = int(exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 0").stdout)
-        count = int(exec_valkey_cli(endpoint, username, password, f"LLEN {KEY}").stdout)
+        last_value = int(
+            exec_valkey_cli(
+                endpoint, username, password, f"LRANGE {KEY} 0 0", tls_enabled=tls_enabled
+            ).stdout
+        )
+        count = int(
+            exec_valkey_cli(
+                endpoint, username, password, f"LLEN {KEY}", tls_enabled=tls_enabled
+            ).stdout
+        )
         logger.info(
             "Endpoint: %s, last written value: %s, last value in DB: %s, count in DB: %s",
             endpoint,
