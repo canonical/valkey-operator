@@ -1,0 +1,12 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+[tool.poetry]
+package-mode = false
+requires-poetry = ">=2.0.0"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+ops = "3.5.0"
+pydantic = ">2.12.3"
+charmlibs-interfaces-tls-certificates = ">1.0"
