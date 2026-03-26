@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Utility script to removing chaosmesh from the K8S cluster, to clean up test artefacts
+# source: https://github.com/canonical/mongo-single-kernel-library/blob/8/edge/tests/integration/helpers/scripts/destroy_chaos_mesh.sh
 
 chaos_mesh_ns=$1
 
@@ -12,7 +13,7 @@ destroy_chaos_mesh() {
     echo "deleting api-resources"
     for i in $(kubectl api-resources | grep chaos-mesh | awk '{print $1}'); do timeout 30 kubectl delete "${i}" --all --all-namespaces || :; done
 
-    if [ "$(kubectl -n "${chaos_mesh_ns}" get mutatingwebhookconfiguration | grep -c 'choas-mesh-mutation')" = "1" ]; then
+    if [ "$(kubectl -n "${chaos_mesh_ns}" get mutatingwebhookconfiguration | grep -c 'chaos-mesh-mutation')" = "1" ]; then
         echo "deleting chaos-mesh-mutation"
         timeout 30 kubectl -n "${chaos_mesh_ns}" delete mutatingwebhookconfiguration chaos-mesh-mutation || :
     fi

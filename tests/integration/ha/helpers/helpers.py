@@ -14,14 +14,14 @@ from datetime import datetime
 from logging import getLogger
 
 import jubilant
-import kubernetes as kubernetes
 import urllib3
+import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from tenacity import RetryError, Retrying, stop_after_attempt, stop_after_delay, wait_fixed
 
 from literals import Substrate
-from tests.integration.helpers import APP_NAME
+from tests.integration.helpers import APP_NAME, get_sentinels
 
 logger = getLogger(__name__)
 
@@ -36,6 +36,8 @@ def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     # apply a mask (device type `none`)
     cut_network_command = f"lxc config device add {machine_name} eth0 none"
     subprocess.check_call(cut_network_command.split())
+
+    time.sleep(5)
 
 
 def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
@@ -114,18 +116,29 @@ def cut_network_from_unit(
         k8s_cut_network_from_unit_without_ip_change(model_name, machine_name)
 
 
-def restore_network_to_unit(substrate: Substrate, model_name: str, machine_name: str) -> None:
+def restore_network_to_unit(
+    substrate: Substrate, model_name: str, machine_name: str, change_ip: bool = False
+) -> None:
     """Restore network from a lxc container.
 
     Args:
         substrate: The substrate the test is running on
         model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
+        change_ip: Whether the network cut changed the IP address of the unit (only applicable for VMs)
     """
     if substrate == Substrate.VM:
-        # remove mask from eth0
-        restore_network_command = f"lxc config device remove {machine_name} eth0"
-        subprocess.check_call(restore_network_command.split())
+        if change_ip:
+            # remove mask from eth0
+            restore_network_command = f"lxc config device remove {machine_name} eth0"
+            subprocess.check_call(restore_network_command.split())
+            return
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
+        subprocess.check_call(limit_set_command.split())
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
+        subprocess.check_call(limit_set_command.split())
+        limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
+        subprocess.check_call(limit_set_command.split())
     else:
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
@@ -184,16 +197,21 @@ def get_unit_name_from_primary_ip(
 
     Args:
         juju: Juju client
-        primary_ip: The primary endpoint in the form of "ip:port"
+        primary_ip: The primary endpoint IP address to get the corresponding container name for
         substrate: The substrate the test is running on
 
     Returns:
         The container name corresponding to the primary endpoint.
     """
-    ip_address_attribute = "public_address" if substrate == Substrate.VM else "address"
     for unit_name, unit in juju.status().apps[APP_NAME].units.items():
-        if getattr(unit, ip_address_attribute) == primary_ip:
-            return unit_name
+        try:
+            if (
+                juju.exec("unit-get private-address", unit=unit_name, wait=5).stdout.strip()
+                == primary_ip
+            ):
+                return unit_name
+        except TimeoutError as e:
+            logger.warning(f"Failed to get private address for {unit_name}: {e}")
     raise ValueError(f"No unit found with IP address {primary_ip}")
 
 
@@ -254,13 +272,17 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
         v1.create_namespaced_pod(namespace=namespace, body=pod_manifest)
 
         # Poll the pod status until it completes
-        while True:
-            pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
-            phase = pod_status.status.phase
+        phase = None
+        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2)):
+            with attempt:
+                pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
+                phase = pod_status.status.phase
 
-            if phase in ["Succeeded", "Failed"]:
-                break
-            time.sleep(1)  # Wait a second before checking again
+                if phase not in ["Succeeded", "Failed"]:
+                    logger.info(
+                        f"Pod '{temp_pod_name}' is in phase '{phase}'. Waiting for completion..."
+                    )
+                    raise ValueError("Pod not completed yet")
 
         # Optional: Fetch the actual ping output logs for debugging
         logs = v1.read_namespaced_pod_log(name=temp_pod_name, namespace=namespace)
@@ -291,10 +313,10 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
             logger.error(f"Failed to delete temporary pod {temp_pod_name}: {e}")
 
 
-def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
+def is_unit_reachable_lxd(from_host: str, to_host: str, number_of_retries: int = 10) -> bool:
     """Test network reachability between LXD hosts."""
     try:
-        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+        for attempt in Retrying(stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10)):
             with attempt:
                 ping = subprocess.call(
                     f"lxc exec {from_host} -- ping -c 5 -W 2 {to_host}".split(),
@@ -311,7 +333,11 @@ def is_unit_reachable_lxd(from_host: str, to_host: str) -> bool:
 
 
 def is_unit_reachable(
-    juju: jubilant.Juju, from_host: str, to_host: str, substrate: Substrate
+    juju: jubilant.Juju,
+    from_host: str,
+    to_host: str,
+    substrate: Substrate,
+    number_of_retries: int = 10,
 ) -> bool:
     """Test network reachability to a unit based on the substrate."""
     assert juju.model, "Juju client must be connected to a model before checking unit reachability"
@@ -319,7 +345,7 @@ def is_unit_reachable(
         case Substrate.K8S:
             return is_unit_reachable_k8s(juju.model, from_host, to_host)
         case Substrate.VM:
-            return is_unit_reachable_lxd(from_host, to_host)
+            return is_unit_reachable_lxd(from_host, to_host, number_of_retries=number_of_retries)
 
 
 def hostname_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
@@ -368,6 +394,48 @@ def get_sans_from_certificate(certificate_path: str) -> dict[str, set[str]]:
                 sans_ip.add(san_value)
 
     return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+
+def lxd_get_controller_hostname(juju: jubilant.Juju) -> str:
+    """Return controller machine hostname."""
+    raw_model = juju.cli("show-model", juju.model, include_model=False)
+    raw_controller = juju.cli("show-controller", include_model=False)
+
+    model_details = yaml.safe_load(raw_model)
+    controller_details = yaml.safe_load(raw_controller)
+    controller_name = model_details[juju.model]["controller-name"]
+
+    return [
+        machine.get("instance-id")
+        for machine in controller_details[controller_name]["controller-machines"].values()
+    ][0]
+
+
+def endpoint_in_sentinels(
+    juju: jubilant.Juju,
+    endpoint: str,
+    hostname: str,
+    status: str = "",
+    tls_enabled: bool = False,
+) -> bool:
+    """Check if the provided endpoint is present in the sentinels list of any of the provided hostnames."""
+    endpoint_sentinel = [
+        sentinel
+        for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)
+        if endpoint in sentinel["ip"]
+    ]
+    if not endpoint_sentinel:
+        logger.error(
+            f"Endpoint {endpoint} not found in sentinels list of {hostname}. Sentinels list: {get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)}"
+        )
+        return False
+    if status and status not in endpoint_sentinel[0]["flags"]:
+        logger.error(
+            f"Endpoint {endpoint} found in sentinels list of {hostname} but with unexpected status. Expected status: {status}, Sentinels list: {get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)}"
+        )
+        return False
+
+    return True
 
 
 def send_process_control_signal(

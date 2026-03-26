@@ -16,3 +16,8 @@ options:
       - charmed-sentinel-operator: administrative user for operating valkey sentinel
       - charmed-sentinel-valkey: used by sentinel to authenticate against valkey
       - charmed-sentinel-peers: used by sentinel for inter-sentinel authentication
+
+  tls-client-private-key:
+    type: secret
+    description: |
+      A Juju secret URI of a secret containing the private key for client TLS certificates.
