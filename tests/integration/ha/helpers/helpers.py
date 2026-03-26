@@ -16,7 +16,7 @@ from logging import getLogger
 import jubilant
 import urllib3
 import yaml
-from kubernetes import client, config
+from kubernetes import client, config, stream
 from kubernetes.client.rest import ApiException
 from tenacity import RetryError, Retrying, stop_after_attempt, stop_after_delay, wait_fixed
 
@@ -515,8 +515,8 @@ def pebble_patch_restart_delay(
         if delay
         else RESTORE_PEBBLE_RESTART_DELAY_YAML
     )
-    kubernetes.config.load_kube_config()
-    client = kubernetes.client.api.core_v1_api.CoreV1Api()
+    config.load_kube_config()
+    kube_client = client.api.core_v1_api.CoreV1Api()
 
     pod_name = unit_name.replace("/", "-")
     container_name = "valkey"
@@ -528,7 +528,7 @@ def pebble_patch_restart_delay(
         pebble_plan_file.flush()
 
         copy_file_into_pod(
-            client,
+            kube_client,
             juju.model,
             pod_name,
             container_name,
@@ -539,8 +539,8 @@ def pebble_patch_restart_delay(
     add_to_pebble_layer_commands = (
         f"/charm/bin/pebble add --combine {service_name} /tmp/pebble_plan_{now}.yml"
     )
-    response = kubernetes.stream.stream(
-        client.connect_get_namespaced_pod_exec,
+    response = stream.stream(
+        kube_client.connect_get_namespaced_pod_exec,
         pod_name,
         juju.model,
         container=container_name,
@@ -559,8 +559,8 @@ def pebble_patch_restart_delay(
     for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3)):
         with attempt:
             replan_pebble_layer_commands = "/charm/bin/pebble replan"
-            response = kubernetes.stream.stream(
-                client.connect_get_namespaced_pod_exec,
+            response = stream.stream(
+                kube_client.connect_get_namespaced_pod_exec,
                 pod_name,
                 juju.model,
                 container=container_name,
@@ -579,7 +579,7 @@ def pebble_patch_restart_delay(
 
 
 def copy_file_into_pod(
-    client: kubernetes.client.api.core_v1_api.CoreV1Api,
+    client: client.api.core_v1_api.CoreV1Api,
     namespace: str,
     pod_name: str,
     container_name: str,
@@ -599,7 +599,7 @@ def copy_file_into_pod(
     try:
         exec_command = ["tar", "xvf", "-", "-C", "/"]
 
-        api_response = kubernetes.stream.stream(
+        api_response = stream.stream(
             client.connect_get_namespaced_pod_exec,
             pod_name,
             namespace,
@@ -630,7 +630,7 @@ def copy_file_into_pod(
                     break
 
             api_response.close()
-    except kubernetes.client.rest.ApiException:
+    except ApiException:
         assert False
 
 

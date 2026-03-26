@@ -33,6 +33,7 @@ from ..helpers import (
     exec_valkey_cli,
     existing_app,
     get_cluster_hostnames,
+    get_ip_from_unit,
     get_number_connected_replicas,
     get_password,
     get_primary_ip,
@@ -101,7 +102,7 @@ async def test_kill_db_process_on_primary(
     await asyncio.sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name)
-    assert primary_ip, "Failed to get primary endpoint from Juju status."
+    assert primary_ip, "Failed to get primary endpoint from valkey."
 
     # Cut the network to the primary unit
     logger.info("Axing away primary unit at %s", primary_ip)
@@ -132,10 +133,12 @@ async def test_kill_db_process_on_primary(
     await asyncio.sleep(
         VM_RESTART_DELAY_DEFAULT if substrate == Substrate.VM else K8S_RESTART_DELAY_DEFAULT
     )
-    assert ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
-        "Primary unit is not responding after restart delay."
-    )
-    logger.info("Primary unit is available again.")
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(5), reraise=True):
+        with attempt:
+            assert ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+                "Primary unit is not responding after restart delay."
+            )
+            logger.info("Primary unit is available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
     hostnames = get_cluster_hostnames(juju, app_name)
@@ -185,7 +188,7 @@ async def test_freeze_db_process_on_primary(
     await asyncio.sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name)
-    assert primary_ip, "Failed to get primary endpoint from Juju status."
+    assert primary_ip, "Failed to get primary endpoint from valkey."
 
     # Cut the network to the primary unit
     logger.info("Axing away primary unit at %s", primary_ip)
@@ -493,7 +496,7 @@ async def test_reboot_primary(
     await asyncio.sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name)
-    assert primary_ip, "Failed to get primary endpoint from Juju status."
+    assert primary_ip, "Failed to get primary endpoint from valkey."
 
     # Reboot the primary unit
     logger.info("Rebooting primary unit at %s", primary_ip)
@@ -522,10 +525,10 @@ async def test_reboot_primary(
     c_writes.update()
 
     # on k8s we get a new ip
-    if substrate == Substrate.VM:
-        assert ping(primary_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
-            "Primary unit is not responding after reboot."
-        )
+    new_ip = get_ip_from_unit(juju, primary_unit_name)
+    assert ping(new_ip, CharmUsers.VALKEY_ADMIN, admin_password), (
+        "Primary unit is not responding after reboot."
+    )
 
     number_of_replicas = await get_number_connected_replicas(
         get_cluster_hostnames(juju, app_name), CharmUsers.VALKEY_ADMIN, admin_password

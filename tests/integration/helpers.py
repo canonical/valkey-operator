@@ -27,6 +27,7 @@ from glide import (
     TlsAdvancedConfiguration,
 )
 from ops import SecretNotFoundError, StatusBase
+from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from literals import (
     CLIENT_PORT,
@@ -732,7 +733,10 @@ def existing_app(juju: jubilant.Juju) -> str | None:
 
 def get_ip_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
     """Get the IP address of a unit based on the substrate type."""
-    return juju.exec("unit-get", "private-address", unit=unit_name).stdout.strip()
+    for attempt in Retrying(stop=stop_after_attempt(5), wait=wait_fixed(3), reraise=True):
+        with attempt:
+            return juju.exec("unit-get", "private-address", unit=unit_name).stdout.strip()
+    raise ValueError(f"Failed to get IP address for unit {unit_name} after multiple attempts")
 
 
 def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = False) -> list[dict]:
