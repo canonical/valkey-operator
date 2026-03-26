@@ -1,7 +1,0 @@
-summary: test_failover.py
-environment:
-  TEST_MODULE: ha/test_failover.py
-execute: |
-  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate k8s --alluredir="$SPREAD_TASK/allure-results"
-artifacts:
-  - allure-results
