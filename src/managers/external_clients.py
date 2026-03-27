@@ -57,7 +57,7 @@ class ExternalClientsManager(ManagerStatusProtocol):
         )
         self.state.cluster.update({"external_client_users": external_client_users})
 
-    def remove_managed_users(self, relation_id: int):
+    def remove_managed_users(self, relation_id: int) -> None:
         """Remove all managed users for an external client relation from the state."""
         if not (external_client_users := self.state.cluster.external_users_credentials):
             return
@@ -68,6 +68,17 @@ class ExternalClientsManager(ManagerStatusProtocol):
                 del external_client_users[username]
 
         self.state.cluster.update({"external_client_users": external_client_users})
+
+    def does_user_exist_for_relation(self, relation_id: int) -> bool:
+        """Check if a managed user has been added for a relation."""
+        if not (external_client_users := self.state.cluster.external_users_credentials):
+            return False
+
+        for username in external_client_users:
+            if username.startswith(f"relation-{relation_id}"):
+                return True
+
+        return False
 
     def get_password(self, username: str) -> str | None:
         """Query the password of an external client user from the state."""
@@ -81,7 +92,9 @@ class ExternalClientsManager(ManagerStatusProtocol):
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the external client statuses."""
-        status_list: list[StatusObject] = []
+        status_list: list[StatusObject] = self.state.statuses.get(
+            scope=scope, component=self.name, running_status_only=True, running_status_type="async"
+        ).root
 
         # Peer relation not established yet, model not built yet or no users added
         if (
@@ -93,7 +106,7 @@ class ExternalClientsManager(ManagerStatusProtocol):
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if not self.state.cluster.external_users_credentials:
-            status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
+            status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_UNPROCESSED.value)
             return status_list
 
         for relation in self.state.external_client_relations:
@@ -101,9 +114,6 @@ class ExternalClientsManager(ManagerStatusProtocol):
                 f"relation-{relation.id}" in key
                 for key in self.state.cluster.external_users_credentials.keys()
             ):
-                status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
-
-            if not relation.data[self.state.charm.app].get("endpoints"):
-                status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value)
+                status_list.append(ExternalClientsStatuses.RESOURCE_REQUEST_UNPROCESSED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

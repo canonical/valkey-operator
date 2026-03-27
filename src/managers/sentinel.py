@@ -136,7 +136,7 @@ class SentinelManager(ManagerStatusProtocol):
         client = self._get_sentinel_client()
 
         replica_list = client.replicas_primary(hostname=self.state.endpoint)
-        return ",".join(f"{replica['ip']}:{port}" for replica in replica_list)
+        return ",".join(sorted([f"{replica['ip']}:{port}" for replica in replica_list]))
 
     def get_sentinel_endpoints(self) -> str:
         """Get the endpoints of all sentinel nodes, consisting of address and port."""
@@ -147,7 +147,7 @@ class SentinelManager(ManagerStatusProtocol):
         ]
         port = SENTINEL_TLS_PORT if self.state.unit_server.is_tls_enabled else SENTINEL_PORT
 
-        return ",".join(f"{server}:{port}" for server in started_servers)
+        return ",".join(sorted([f"{server}:{port}" for server in started_servers]))
 
     @retry(
         wait=wait_fixed(5),

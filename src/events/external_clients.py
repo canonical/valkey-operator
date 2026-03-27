@@ -9,19 +9,20 @@ from typing import TYPE_CHECKING
 
 import ops
 
-from lib.charms.data_platform_libs.v1.data_interfaces import (
+from charms.data_platform_libs.v1.data_interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
     ResourceProviderEventHandler,
     ResourceRequestedEvent,
     ValkeyResponseModel,
 )
-from src.common.exceptions import (
+from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
-from src.literals import EXTERNAL_CLIENTS_RELATION, PEER_RELATION
+from literals import EXTERNAL_CLIENTS_RELATION
+from statuses import ExternalClientsStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -50,11 +51,12 @@ class ExternalClientsEvents(ops.Object):
             self.valkey_provides.on.resource_requested, self._on_bulk_resources_requested
         )
         self.framework.observe(
-            self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
-            self._on_client_relation_broken,
+            self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_joined,
+            self._on_client_relation_joined
         )
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+            self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
+            self._on_client_relation_broken,
         )
 
     def _on_bulk_resources_requested(
@@ -136,16 +138,32 @@ class ExternalClientsEvents(ops.Object):
             self.charm.cluster_manager.reload_acl_file()
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
+            self.charm.status.set_running_status(
+                ExternalClientsStatuses.USER_SETUP_FAILED.value,
+                scope="unit",
+                statuses_state=self.charm.state.statuses,
+                component_name=self.charm.client_manager.name,
+            )
             event.defer()
             return
 
         if responses:
             self.valkey_provides.set_responses(event.relation.id, responses)
 
-    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Handle changes to the peer relation that are relevant for external client relations."""
-        if not self.charm.state.cluster.model.external_client_users:
-            logger.debug("No client users yet, nothing to process")
+        self.charm.state.statuses.delete(
+            ExternalClientsStatuses.USER_SETUP_FAILED.value,
+            scope="unit",
+            component=self.charm.client_manager.name,
+        )
+
+    def _on_client_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
+        """Handle new client relations on non-leader units."""
+        if self.charm.unit.is_leader():
+            return
+
+        if not self.charm.client_manager.does_user_exist_for_relation(event.relation.id):
+            logger.info("Waiting for managed user to be created")
+            event.defer()
             return
 
         logger.info("Reconciling ACL configuration in Valkey")
@@ -154,12 +172,24 @@ class ExternalClientsEvents(ops.Object):
             self.charm.cluster_manager.reload_acl_file()
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
+            self.charm.status.set_running_status(
+                ExternalClientsStatuses.USER_SETUP_FAILED.value,
+                scope="unit",
+                statuses_state=self.charm.state.statuses,
+                component_name=self.charm.client_manager.name,
+            )
             event.defer()
             return
 
+        self.charm.state.statuses.delete(
+            ExternalClientsStatuses.USER_SETUP_FAILED.value,
+            scope="unit",
+            component=self.charm.client_manager.name,
+        )
+
     def _on_client_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the relation-broken event."""
-        if not self.charm.state.unit_server.model:
+        if not self.charm.state.unit_server.model or self.charm.state.unit_server.is_being_removed:
             return
 
         if self.charm.unit.is_leader():

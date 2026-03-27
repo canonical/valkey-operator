@@ -231,7 +231,7 @@ class ValkeyCluster(RelationState):
     @property
     def external_users_credentials(self) -> dict[str, dict[str, str]] | None:
         """Retrieve the user credentials for external clients from the state and return as dict."""
-        if not (external_clients := self.model.external_client_users):
+        if not self.model or not (external_clients := self.model.external_client_users):
             return None
 
         return json.loads(external_clients)

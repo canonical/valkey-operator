@@ -128,6 +128,12 @@ class TLSStatuses(Enum):
 class ExternalClientsStatuses(Enum):
     """Collection of external clients related statuses."""
 
-    RESOURCE_REQUEST_FAILED = StatusObject(
-        status="blocked", message="Client relation: Failed to process access request"
+    RESOURCE_REQUEST_UNPROCESSED = StatusObject(
+        status="maintenance", message="Client relation: Request not processed yet"
+    )
+
+    USER_SETUP_FAILED = StatusObject(
+        status="blocked",
+        message="Client relation: Failed to add ACLs for client user",
+        running="async",
     )

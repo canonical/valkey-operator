@@ -9,9 +9,9 @@ from unittest.mock import patch
 import yaml
 from ops import testing
 
-from src.charm import ValkeyCharm
-from src.common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
-from src.literals import (
+from charm import ValkeyCharm
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
+from literals import (
     CLIENT_PORT,
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
     EXTERNAL_CLIENTS_RELATION,
@@ -19,7 +19,7 @@ from src.literals import (
     SENTINEL_PORT,
     STATUS_PEERS_RELATION,
 )
-from src.statuses import ExternalClientsStatuses
+from statuses import ExternalClientsStatuses
 
 from .helpers import status_is
 
@@ -200,7 +200,7 @@ def test_client_request_failed(cloud_spec):
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         assert status_is(
-            state_out, ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value, is_app=True
+            state_out, ExternalClientsStatuses.RESOURCE_REQUEST_UNPROCESSED.value, is_app=True
         )
 
 
@@ -245,9 +245,7 @@ def test_client_request_acl_load_failed(cloud_spec):
         ),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
-        assert status_is(
-            state_out, ExternalClientsStatuses.RESOURCE_REQUEST_FAILED.value, is_app=True
-        )
+        assert status_is(state_out, ExternalClientsStatuses.USER_SETUP_FAILED.value)
 
 
 def test_add_new_client_user_non_leader(cloud_spec):
@@ -295,9 +293,60 @@ def test_add_new_client_user_non_leader(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
     ):
-        ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
+        ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+
+
+def test_client_user_not_existing_yet(cloud_spec):
+    primary_endpoint = "valkey-0.valkey-endpoints"
+    key_prefix = "test:*"
+    request_id = "0cbbc9781f189ea5"
+    salt = "mWpK32IQW4bsu65t"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "hostname": primary_endpoint},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_relation = testing.Relation(
+        id=3,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": f'[{{"resource": "{key_prefix}", "request-id": "{request_id}", "salt": "{salt}"}}]',
+        },
+    )
+    managed_users_secret = testing.Secret(
+        tracked_content={
+            "external-client-users": """ \
+            {"relation-2-08154711": \
+            {"resource": "*", "password": "secret"}} \
+            """
+        },
+        owner="app",
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{CLIENTS_USERS_SECRET_LABEL_SUFFIX}",
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, client_relation},
+        secrets={managed_users_secret},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("common.client.ValkeyClient.acl_load") as load_acl,
+    ):
+        state_out = ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
+        set_acl_file.assert_not_called()
+        load_acl.assert_not_called()
+        assert "valkey_client_relation_joined" in [e.name for e in state_out.deferred]
 
 
 def test_remove_client_user(cloud_spec):

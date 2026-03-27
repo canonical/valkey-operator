@@ -62,25 +62,23 @@ class RequirerCharm(ops.CharmBase):
                 ],
                 response_model=ValkeyResponseModel,
             )
+            self.framework.observe(
+                self.valkey_interface.on.resource_created, self._on_resource_created
+            )
         else:
             self.valkey_interface = DatabaseRequires(
                 charm=self,
                 relation_name="valkey-client",
                 database_name="requirer-charm:*",
             )
+            self.framework.observe(
+                self.valkey_interface.on.database_created, self._on_database_created
+            )
 
-        # Charm events
+        # Event observers
         framework.observe(self.on.start, self._on_start)
         framework.observe(self.on.put_action, self._on_put_action)
         framework.observe(self.on.get_action, self._on_get_action)
-
-        # Data interfaces events
-        self.framework.observe(
-            self.valkey_interface.on.database_created, self._on_database_created
-        )
-        self.framework.observe(
-            self.valkey_interface.on.resource_created, self._on_resource_created
-        )
         self.framework.observe(
             self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed
         )
