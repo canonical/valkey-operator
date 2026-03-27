@@ -197,12 +197,14 @@ class ConfigManager(ManagerStatusProtocol):
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
-    def _get_client_user_acl_lines(self) -> str | None:
+    def _get_client_user_acl_lines(self, for_sentinel: bool = False) -> str | None:
         """Generate the ACL lines for all external client users.
 
         Returns:
             str: ACL lines for the external client users.
         """
+        sentinel_base_permissions = "-@all +auth +client +command +hello +ping +role "
+        sentinel_sentinel_permissions = "+sentinel|get-master-addr-by-name +sentinel|master +sentinel|masters +sentinel|replicas +sentinel|sentinels"
         acl_content = ""
 
         if not (external_client_users := self.state.cluster.external_users_credentials):
@@ -210,6 +212,8 @@ class ConfigManager(ManagerStatusProtocol):
 
         for username, values in external_client_users.items():
             permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info ~{values['resource']} &{values['resource']}"
+            if for_sentinel:
+                permissions = sentinel_base_permissions + sentinel_sentinel_permissions
             password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
             acl_content += f"user {username} on #{password_hash} {permissions}\n"
 
@@ -340,6 +344,7 @@ class ConfigManager(ManagerStatusProtocol):
             if "VALKEY_" in user.name:
                 continue
             acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
+        acl_content += self._get_client_user_acl_lines(for_sentinel=True)
         self.workload.write_file(
             acl_content,
             self.workload.sentinel_acl_file,

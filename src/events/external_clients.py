@@ -19,6 +19,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
 from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
+    ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
 from literals import EXTERNAL_CLIENTS_RELATION
@@ -136,7 +137,14 @@ class ExternalClientsEvents(ops.Object):
         try:
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            self.charm.config_manager.set_sentinel_acl_file()
+            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyACLLoadError,
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error(e)
             self.charm.status.set_running_status(
                 ExternalClientsStatuses.USER_SETUP_FAILED.value,
@@ -175,7 +183,14 @@ class ExternalClientsEvents(ops.Object):
         try:
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            self.charm.config_manager.set_sentinel_acl_file()
+            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyACLLoadError,
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error(e)
             self.charm.status.set_running_status(
                 ExternalClientsStatuses.USER_SETUP_FAILED.value,
@@ -201,11 +216,23 @@ class ExternalClientsEvents(ops.Object):
             logger.info("Removing managed users for external client relation")
             self.charm.client_manager.remove_managed_users(event.relation.id)
 
+        if self.charm.client_manager.does_user_exist_for_relation(event.relation.id):
+            logger.info("Waiting for managed users to be cleaned up")
+            event.defer()
+            return
+
         logger.info("Updating ACL configuration in Valkey")
         try:
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            self.charm.config_manager.set_sentinel_acl_file()
+            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyACLLoadError,
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error(e)
             event.defer()
             return

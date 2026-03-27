@@ -74,10 +74,14 @@ def test_add_new_client_user(cloud_spec):
         ),
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
         relation = state_out.get_relation(client_relation.id)
         response = json.loads(relation.local_app_data["requests"])[0]
         secret_user_id = response["secret-user"]
@@ -140,10 +144,14 @@ def test_add_new_client_user_v0(cloud_spec):
         ),
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
         relation = state_out.get_relation(client_relation.id)
         response = relation.local_app_data
         secret_user_id = response["secret-user"]
@@ -292,10 +300,14 @@ def test_add_new_client_user_non_leader(cloud_spec):
     with (
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
 
 
 def test_client_user_not_existing_yet(cloud_spec):
@@ -342,10 +354,14 @@ def test_client_user_not_existing_yet(cloud_spec):
     with (
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
         set_acl_file.assert_not_called()
         load_acl.assert_not_called()
+        set_sentinel_acl_file.assert_not_called()
+        restart_sentinel.assert_not_called()
         assert "valkey_client_relation_joined" in [e.name for e in state_out.deferred]
 
 
@@ -395,10 +411,14 @@ def test_remove_client_user(cloud_spec):
     with (
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
 
         managed_users_secret = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{CLIENTS_USERS_SECRET_LABEL_SUFFIX}"
@@ -458,8 +478,12 @@ def test_relation_broken_non_leader(cloud_spec):
             "managers.external_clients.ExternalClientsManager.remove_managed_users"
         ) as remove_user,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         remove_user.assert_not_called()
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
