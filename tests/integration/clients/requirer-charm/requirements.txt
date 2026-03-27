@@ -1,4 +1,0 @@
-ops>=3.5.0
-pydantic==2.12.3
-pydantic-core==2.41.4
-setuptools-scm<=10.0.0

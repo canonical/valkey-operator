@@ -209,7 +209,7 @@ class ConfigManager(ManagerStatusProtocol):
             return acl_content
 
         for username, values in external_client_users.items():
-            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction ~{values['resource']} &{values['resource']}"
+            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info ~{values['resource']} &{values['resource']}"
             password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
             acl_content += f"user {username} on #{password_hash} {permissions}\n"
 

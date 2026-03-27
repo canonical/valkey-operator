@@ -45,10 +45,14 @@ parts:
     source: .
     after:
       - poetry-deps
+    poetry-export-extra-args: ['--without-hashes']
     build-packages:
       - libffi-dev  # Needed to build Python dependencies with Rust from source
       - libssl-dev  # Needed to build Python dependencies with Rust from source
       - pkg-config  # Needed to build Python dependencies with Rust from source
+      - libprotobuf-dev # Needed to build Valkey-glide
+      - protobuf-compiler # Needed to build Valkey-glide
+      - git
     build-environment:
       - PIP_BUILD_CONSTRAINT: constraints.txt # Workaround setuptools 82
     override-build: |
@@ -76,14 +80,14 @@ parts:
       cp requirements.txt "$CRAFT_PART_INSTALL/requirements.txt"
 
 actions:
-  put:
-    description: Put a key value pair in Valkey
+  set:
+    description: Set a key value pair in Valkey
     params:
       key:
-        description: The key to put in Valkey
+        description: The key to set in Valkey
         type: string
       value:
-        description: The value to put in Valkey
+        description: The value to set in Valkey
         type: string
       user:
         description: The username to use

@@ -4,6 +4,7 @@
 
 """Charm the application."""
 
+import asyncio
 import logging
 import socket
 
@@ -23,6 +24,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
     ValkeyResponseModel,
     build_model,
 )
+from client import ValkeyClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,7 @@ class RequirerCharm(ops.CharmBase):
 
         # Event observers
         framework.observe(self.on.start, self._on_start)
-        framework.observe(self.on.put_action, self._on_put_action)
+        framework.observe(self.on.set_action, self._on_set_action)
         framework.observe(self.on.get_action, self._on_get_action)
         self.framework.observe(
             self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed
@@ -106,6 +108,16 @@ class RequirerCharm(ops.CharmBase):
     @property
     def credentials(self) -> dict[str, str] | None:
         """Retrieve the client credentials provided by Valkey."""
+        if self.data_interfaces_version == 0:
+            if not self.valkey_relation:
+                return None
+
+            return {
+                self.valkey_interface.fetch_relation_field(
+                    self.valkey_relation.id, "username"
+                ): self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "password")
+            }
+
         remote_responses = self.remote_responses
         if not remote_responses:
             return None
@@ -117,8 +129,14 @@ class RequirerCharm(ops.CharmBase):
         return credentials
 
     @property
-    def primary_endpoints(self) -> str | None:
+    def primary_endpoint(self) -> str | None:
         """Retrieve the write-endpoints provided by Valkey."""
+        if self.data_interfaces_version == 0:
+            if not self.valkey_relation:
+                return None
+
+            return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "endpoints")
+
         remote_responses = self.remote_responses
         if not remote_responses:
             return None
@@ -126,31 +144,81 @@ class RequirerCharm(ops.CharmBase):
         return remote_responses[0].endpoints
 
     @property
-    def replica_endpoints(self) -> str | None:
-        """Retrieve the read-only-endpoints provided by Valkey."""
+    def tls_enabled(self) -> bool:
+        """Retrieve the tls flag provided by Valkey."""
+        if self.data_interfaces_version == 0:
+            if not self.valkey_relation:
+                return False
+
+            return (
+                self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls")
+                == "true"
+            )
+
+        remote_responses = self.remote_responses
+        if not remote_responses:
+            return False
+
+        return remote_responses[0].tls
+
+    @property
+    def tls_ca_cert(self) -> str | None:
+        """Retrieve the tls CA cert provided by Valkey."""
         remote_responses = self.remote_responses
         if not remote_responses:
             return None
 
-        return remote_responses[0].read_only_endpoints
+        return remote_responses[0].tls_ca
+
+    @property
+    def certificate(self) -> str | None:
+        certificates, _ = self.certificates.get_assigned_certificates()
+        if not certificates:
+            return None
+
+        return certificates[0].certificate.raw
+
+    @property
+    def private_key(self) -> str | None:
+        _, private_key = self.certificates.get_assigned_certificates()
+        if not private_key:
+            return None
+
+        return private_key.raw
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle start event."""
         self.unit.status = ops.ActiveStatus()
 
-    def _on_put_action(self, event: ops.ActionEvent) -> None:
-        """Handle put action."""
+    def _on_set_action(self, event: ops.ActionEvent) -> None:
+        """Handle set action."""
         if not self.valkey_relation:
             event.fail("The action can be run only after relation is created.")
             event.set_results({"ok": False})
             return
 
-        if not (key := str(event.params.get("key", ""))) or not (value := str(event.params.get("value", ""))):
-            event.fail("Both key and value parameters are required.")
+        key = str(event.params.get("key", ""))
+        value = str(event.params.get("value", ""))
+        user = str(event.params.get("user", ""))
+        if not key or not value or not user:
+            event.fail("Parameters key, value and user are required.")
             event.set_results({"ok": False})
             return
 
-        # todo: add logic
+        client = ValkeyClient(
+            username=user,
+            password=self.credentials.get(user),
+            host=self.primary_endpoint.split(":")[0],
+            port=int(self.primary_endpoint.split(":")[1]),
+            tls_cert=self.certificate.encode() if self.tls_enabled else None,
+            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
+        )
+        try:
+            asyncio.run(client.set_key(key, value))
+            event.set_results({"ok": True})
+        except Exception as e:
+            logger.error("Failed to write data: %s", e)
 
     def _on_get_action(self, event: ops.ActionEvent) -> None:
         """Handle get action."""
@@ -159,19 +227,41 @@ class RequirerCharm(ops.CharmBase):
             event.set_results({"ok": False})
             return
 
-        if not (key := str(event.params.get("key", ""))):
-            event.fail("Key parameter is required.")
+        key = str(event.params.get("key", ""))
+        user = str(event.params.get("user", ""))
+        if not key or not user:
+            event.fail("Parameters key and user are required.")
             event.set_results({"ok": False})
             return
 
-        # todo: add logic
+        client = ValkeyClient(
+            username=user,
+            password=self.credentials.get(user),
+            host=self.primary_endpoint.split(":")[0],
+            port=int(self.primary_endpoint.split(":")[1]),
+            tls_cert=self.certificate.encode() if self.tls_enabled else None,
+            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
+        )
+        try:
+            value = asyncio.run(client.get_key(key))
+            event.set_results(
+                {
+                    "ok": True,
+                    "result": value,
+                }
+            )
+        except Exception as e:
+            logger.error("Failed to read data: %s", e)
 
     def _on_resource_created(self, event: ResourceCreatedEvent[ResourceProviderModel]) -> None:
         """Handle resource created event."""
         logger.info("Resource created")
         logger.info("Valkey endpoints: %s", event.response.endpoints)
 
-    def _on_endpoints_changed(self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]) -> None:
+    def _on_endpoints_changed(
+        self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]
+    ) -> None:
         """Handle endpoints changed event."""
         logger.info("Valkey endpoints have been changed to: %s", event.response.endpoints)
 

@@ -8,7 +8,6 @@ import logging
 from typing import TYPE_CHECKING
 
 import ops
-
 from charms.data_platform_libs.v1.data_interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
@@ -16,6 +15,7 @@ from charms.data_platform_libs.v1.data_interfaces import (
     ResourceRequestedEvent,
     ValkeyResponseModel,
 )
+
 from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
@@ -52,7 +52,7 @@ class ExternalClientsEvents(ops.Object):
         )
         self.framework.observe(
             self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_joined,
-            self._on_client_relation_joined
+            self._on_client_relation_joined,
         )
         self.framework.observe(
             self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
@@ -66,8 +66,8 @@ class ExternalClientsEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
-        if not self.charm.state.unit_server.model:
-            logger.info("Peer relation not ready yet")
+        if not self.charm.state.unit_server.is_started:
+            logger.info("Valkey not ready yet")
             event.defer()
             return
 
@@ -159,6 +159,11 @@ class ExternalClientsEvents(ops.Object):
     def _on_client_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
         """Handle new client relations on non-leader units."""
         if self.charm.unit.is_leader():
+            return
+
+        if not self.charm.state.unit_server.is_started:
+            logger.info("Valkey not ready yet")
+            event.defer()
             return
 
         if not self.charm.client_manager.does_user_exist_for_relation(event.relation.id):

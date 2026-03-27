@@ -10,3 +10,6 @@ python = "^3.12"
 ops = "3.5.0"
 pydantic = ">2.12.3"
 charmlibs-interfaces-tls-certificates = ">1.0"
+# TODO replace with official release once build from source is possible
+# https://github.com/valkey-io/valkey-glide/pull/5202
+valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs-to-async-client" }
