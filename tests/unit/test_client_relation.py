@@ -267,6 +267,7 @@ def test_add_new_client_user_non_leader(cloud_spec):
         id=1,
         endpoint=PEER_RELATION,
         local_unit_data={"start-state": "started", "hostname": primary_endpoint},
+        local_app_data={"client-user-epoch": "1774854243.6019819"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_relation = testing.Relation(
@@ -303,14 +304,17 @@ def test_add_new_client_user_non_leader(cloud_spec):
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
-        ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
+        state_out = ctx.run(
+            ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
+        )
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         restart_sentinel.assert_called_once()
+        assert state_out.get_relation(1).local_unit_data.get("client-user-epoch") != 0
 
 
-def test_client_user_not_existing_yet(cloud_spec):
+def test_client_user_not_created_yet(cloud_spec):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -320,7 +324,12 @@ def test_client_user_not_existing_yet(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "hostname": primary_endpoint},
+        local_unit_data={
+            "start-state": "started",
+            "hostname": primary_endpoint,
+            "client-user-epoch": "1774854243.6019819",
+        },
+        local_app_data={"client-user-epoch": "1774854240.6000019"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     client_relation = testing.Relation(
@@ -357,12 +366,11 @@ def test_client_user_not_existing_yet(cloud_spec):
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
-        state_out = ctx.run(ctx.on.relation_joined(relation=client_relation), state_in)
+        ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
         set_acl_file.assert_not_called()
         load_acl.assert_not_called()
         set_sentinel_acl_file.assert_not_called()
         restart_sentinel.assert_not_called()
-        assert "valkey_client_relation_joined" in [e.name for e in state_out.deferred]
 
 
 def test_remove_client_user(cloud_spec):

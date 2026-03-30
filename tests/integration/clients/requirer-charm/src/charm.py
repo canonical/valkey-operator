@@ -164,6 +164,12 @@ class RequirerCharm(ops.CharmBase):
     @property
     def tls_ca_cert(self) -> str | None:
         """Retrieve the tls CA cert provided by Valkey."""
+        if self.data_interfaces_version == 0:
+            if not self.valkey_relation:
+                return None
+
+            return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls_ca")
+
         remote_responses = self.remote_responses
         if not remote_responses:
             return None

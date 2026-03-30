@@ -63,6 +63,7 @@ class PeerAppModel(PeerModel):
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
     tls_client_private_key: ExtraSecretStr = Field(default=None)
     external_client_users: ClientUsersSecret = Field(default="")
+    client_user_epoch: float = Field(default=0)
 
 
 class PeerUnitModel(PeerModel):
@@ -78,6 +79,7 @@ class PeerUnitModel(PeerModel):
     client_cert_ready: bool = Field(default=False)
     tls_ca_rotation: str = Field(default="")
     tls_certificate_expiring: bool = Field(default=False)
+    client_user_epoch: float = Field(default=0)
 
 
 class RelationState:

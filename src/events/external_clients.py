@@ -5,6 +5,7 @@
 """External clients related event handlers."""
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import ops
@@ -22,7 +23,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from literals import EXTERNAL_CLIENTS_RELATION
+from literals import EXTERNAL_CLIENTS_RELATION, PEER_RELATION
 from statuses import ExternalClientsStatuses
 
 if TYPE_CHECKING:
@@ -52,8 +53,8 @@ class ExternalClientsEvents(ops.Object):
             self.valkey_provides.on.resource_requested, self._on_bulk_resources_requested
         )
         self.framework.observe(
-            self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_joined,
-            self._on_client_relation_joined,
+            self.charm.on[PEER_RELATION].relation_changed,
+            self._on_peer_relation_changed,
         )
         self.framework.observe(
             self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
@@ -158,25 +159,37 @@ class ExternalClientsEvents(ops.Object):
         if responses:
             self.valkey_provides.set_responses(event.relation.id, responses)
 
+        self.charm.state.cluster.update({"client_user_epoch": time.time()})
         self.charm.state.statuses.delete(
             ExternalClientsStatuses.USER_SETUP_FAILED.value,
             scope="unit",
             component=self.charm.client_manager.name,
         )
 
-    def _on_client_relation_joined(self, event: ops.RelationJoinedEvent) -> None:
-        """Handle new client relations on non-leader units."""
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Handle peer relation changes in regard to external client relations."""
+        if (
+            not self.charm.state.unit_server.is_started
+            or not self.charm.state.external_client_relations
+        ):
+            return
+
         if self.charm.unit.is_leader():
-            return
+            # this catches all changes from scaling operations, TLS switchover, IP changes, etc.
+            try:
+                self._update_client_relations()
+            except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+                logger.error("Error updating client relations: %s", e)
+                event.defer()
+            finally:
+                return
 
-        if not self.charm.state.unit_server.is_started:
-            logger.info("Valkey not ready yet")
-            event.defer()
-            return
-
-        if not self.charm.client_manager.does_user_exist_for_relation(event.relation.id):
-            logger.info("Waiting for managed user to be created")
-            event.defer()
+        # from here on, the code is only relevant for non-leader units
+        if (
+            self.charm.state.unit_server.model.client_user_epoch
+            >= self.charm.state.cluster.model.client_user_epoch
+        ):
+            logger.debug("ACLs on this unit up-to-date")
             return
 
         logger.info("Reconciling ACL configuration in Valkey")
@@ -201,6 +214,7 @@ class ExternalClientsEvents(ops.Object):
             event.defer()
             return
 
+        self.charm.state.unit_server.update({"client_user_epoch": time.time()})
         self.charm.state.statuses.delete(
             ExternalClientsStatuses.USER_SETUP_FAILED.value,
             scope="unit",
@@ -236,3 +250,40 @@ class ExternalClientsEvents(ops.Object):
             logger.error(e)
             event.defer()
             return
+
+    def _update_client_relations(self) -> None:
+        """Update provider data for client relations."""
+        logger.info("Updating provider data for client relations")
+
+        primary_endpoints = self.charm.sentinel_manager.get_primary_endpoint()
+        replica_endpoints = self.charm.sentinel_manager.get_replica_endpoints()
+        sentinel_endpoints = self.charm.sentinel_manager.get_sentinel_endpoints()
+        tls_ca = (
+            self.charm.workload.read_file(self.charm.workload.tls_paths.client_ca)
+            if self.charm.state.unit_server.is_tls_enabled
+            else None
+        )
+        version = self.charm.cluster_manager.get_version()
+
+        for relation in self.charm.state.external_client_relations:
+            if not (responses := self.valkey_provides.responses(relation, ValkeyResponseModel)):
+                logger.warning("Skipping relation %s with no responses.", relation.id)
+                continue
+
+            for request in self.valkey_provides.requests(relation):
+                if not (
+                    current_response := next(
+                        (res for res in responses if res.request_id == request.request_id), None
+                    )
+                ):
+                    logger.warning("Skipping relation %s, no matching response.", relation.id)
+                    continue
+
+                current_response.endpoints = primary_endpoints
+                current_response.read_only_endpoints = replica_endpoints
+                current_response.sentinel_endpoints = sentinel_endpoints
+                current_response.tls = self.charm.state.unit_server.is_tls_enabled
+                current_response.tls_ca = tls_ca
+                current_response.version = version
+
+            self.valkey_provides.set_responses(relation.id, responses)

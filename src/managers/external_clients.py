@@ -99,7 +99,6 @@ class ExternalClientsManager(ManagerStatusProtocol):
         # Peer relation not established yet, model not built yet or no users added
         if (
             not self.state.cluster.model
-            or not self.state.unit_server.model
             or not self.state.external_client_relations
             or scope != "app"
         ):
