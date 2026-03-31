@@ -258,7 +258,7 @@ class RequirerCharm(ops.CharmBase):
                 }
             )
         except Exception as e:
-            event.fail(f"Failed to write data: {e}")
+            event.fail(f"Failed to read data: {e}")
             logger.error("Failed to read data: %s", e)
 
     def _on_get_credentials_action(self, event: ops.ActionEvent) -> None:
