@@ -1,0 +1,7 @@
+summary: test_client_relation.py
+environment:
+  TEST_MODULE: test_client_relation.py
+execute: |
+  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate k8s --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results

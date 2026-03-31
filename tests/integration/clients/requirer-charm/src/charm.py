@@ -81,9 +81,8 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(self.on.start, self._on_start)
         framework.observe(self.on.set_action, self._on_set_action)
         framework.observe(self.on.get_action, self._on_get_action)
-        self.framework.observe(
-            self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed
-        )
+        framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
+        framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
@@ -106,11 +105,11 @@ class RequirerCharm(ops.CharmBase):
         ).requests
 
     @property
-    def credentials(self) -> dict[str, str] | None:
+    def credentials(self) -> dict[str | None, str | None]:
         """Retrieve the client credentials provided by Valkey."""
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
-                return None
+                return {"": None}
 
             return {
                 self.valkey_interface.fetch_relation_field(
@@ -120,7 +119,7 @@ class RequirerCharm(ops.CharmBase):
 
         remote_responses = self.remote_responses
         if not remote_responses:
-            return None
+            return {"": None}
 
         credentials = {}
         for response in remote_responses:
@@ -260,10 +259,25 @@ class RequirerCharm(ops.CharmBase):
         except Exception as e:
             logger.error("Failed to read data: %s", e)
 
+    def _on_get_credentials_action(self, event: ops.ActionEvent) -> None:
+        """Return the credentials an action response."""
+        if not self.valkey_relation:
+            event.fail("The action can be run only after relation is created.")
+            event.set_results({"ok": False})
+            return
+
+        credentials = self.credentials
+        usernames = ",".join(list(credentials.keys()))
+        event.set_results(
+            {
+                "ok": True,
+                "usernames": usernames,
+            }
+        )
+
     def _on_resource_created(self, event: ResourceCreatedEvent[ResourceProviderModel]) -> None:
         """Handle resource created event."""
         logger.info("Resource created")
-        logger.info("Valkey endpoints: %s", event.response.endpoints)
 
     def _on_endpoints_changed(
         self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]
@@ -274,7 +288,6 @@ class RequirerCharm(ops.CharmBase):
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
         logger.info("Database created")
-        logger.info("Valkey endpoints: %s", event.endpoints)
 
 
 if __name__ == "__main__":  # pragma: nocover
