@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-REQUIRER_V1_NAME = "req_v1"
-REQUIRER_V0_NAME = "req_v0"
+REQUIRER_V1_NAME = "req-v1"
+REQUIRER_V0_NAME = "req-v0"
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
     requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
     logger.info("Trying to access global keyspace - should be denied")
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    username = json.loads(get_credentials_action.results["usernames"])
+    username = get_credentials_action.results["usernames"]
 
     with pytest.raises(jubilant.TaskError) as task_error:
         juju.run(
@@ -107,7 +107,7 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
     requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
     logger.info("Trying to access global keyspace - should be denied")
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    usernames = json.loads(get_credentials_action.results["usernames"])
+    usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")
 
     with pytest.raises(jubilant.TaskError) as task_error:
@@ -169,7 +169,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     logger.info("Ensure TLS access for v0 client")
     requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    username = json.loads(get_credentials_action.results["usernames"])
+    username = get_credentials_action.results["usernames"]
 
     set_action = juju.run(
         requirer_unit,
@@ -190,7 +190,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     logger.info("Ensure TLS access for v1 client")
     requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    usernames = json.loads(get_credentials_action.results["usernames"])
+    usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")
 
     set_action = juju.run(
