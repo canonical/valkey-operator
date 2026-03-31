@@ -170,6 +170,70 @@ def test_add_new_client_user_v0(cloud_spec):
         assert secret_tls.latest_content.get("tls") == "false"
 
 
+def test_client_user_already_exists(cloud_spec):
+    primary_endpoint = "valkey-0.valkey-endpoints"
+    key_prefix = "test:*"
+    request_id = "0cbbc9781f189ea5"
+    salt = "mWpK32IQW4bsu65t"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "hostname": primary_endpoint},
+        local_app_data={"client-user-epoch": "1774854243.6019819"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_relation = testing.Relation(
+        id=3,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": f'[{{"resource": "{key_prefix}", "request-id": "{request_id}", "salt": "{salt}"}}]',
+        },
+    )
+    managed_users_secret = testing.Secret(
+        tracked_content={
+            "external-client-users": """ \
+                {"relation-3-0cbbc9781f189ea5": \
+                {"resource": "test:*", "password": "mypassword"}, \
+                "relation-4-08154711": \
+                {"resource": "another_keyspace:*", "password": "anotherpassword"}} \
+                """
+        },
+        owner="app",
+        label=f"{PEER_RELATION}.{APP_NAME}.app.{CLIENTS_USERS_SECRET_LABEL_SUFFIX}",
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_relation},
+        secrets={managed_users_secret},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("managers.sentinel.SentinelManager.get_primary_ip"),
+        patch("common.client.SentinelClient.replicas_primary"),
+        patch("common.client.ValkeyClient.info_server"),
+        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("common.client.ValkeyClient.acl_load") as load_acl,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+    ):
+        state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
+        set_acl_file.assert_not_called()
+        load_acl.assert_not_called()
+        set_sentinel_acl_file.assert_not_called()
+        restart_sentinel.assert_not_called()
+        assert (
+            state_out.get_relation(peer_relation.id).local_app_data.get("client-user-epoch")
+            == "1774854243.6019819"
+        )
+
+
 def test_client_request_failed(cloud_spec):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"

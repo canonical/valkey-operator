@@ -102,11 +102,13 @@ class ExternalClientsEvents(ops.Object):
             username = self.charm.client_manager.get_username(
                 event.relation.id, request.request_id
             )
+            if self.charm.client_manager.does_username_exist(username):
+                logger.info("Request ignored: User already exists. Id: %s", request.request_id)
+                continue
+
             if not (password := self.charm.client_manager.get_password(username)):
                 password = self.charm.config_manager.generate_password()
-            self.charm.client_manager.add_managed_user_if_required(
-                username, password, request.resource
-            )
+            self.charm.client_manager.add_managed_user(username, password, request.resource)
 
             response = next(
                 (
@@ -134,6 +136,10 @@ class ExternalClientsEvents(ops.Object):
 
             responses.append(response)
 
+        if not responses:
+            logger.info("No updates to process on resource request")
+            return
+
         logger.info("Updating ACL configuration in Valkey")
         try:
             self.charm.config_manager.set_acl_file()
@@ -156,9 +162,7 @@ class ExternalClientsEvents(ops.Object):
             event.defer()
             return
 
-        if responses:
-            self.valkey_provides.set_responses(event.relation.id, responses)
-
+        self.valkey_provides.set_responses(event.relation.id, responses)
         self.charm.state.cluster.update({"client_user_epoch": time.time()})
         self.charm.state.statuses.delete(
             ExternalClientsStatuses.USER_SETUP_FAILED.value,

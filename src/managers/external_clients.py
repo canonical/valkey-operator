@@ -37,7 +37,7 @@ class ExternalClientsManager(ManagerStatusProtocol):
         """
         return f"relation-{relation_id}-{request_id}" if request_id else f"relation-{relation_id}"
 
-    def add_managed_user_if_required(self, username: str, password: str, resource: str) -> None:
+    def add_managed_user(self, username: str, password: str, resource: str) -> None:
         """Add an external client's user to the state."""
         if not (external_client_users := self.state.cluster.external_users_credentials):
             external_client_users = {}
@@ -69,8 +69,19 @@ class ExternalClientsManager(ManagerStatusProtocol):
 
         self.state.cluster.update({"external_client_users": external_client_users})
 
+    def does_username_exist(self, username: str) -> bool:
+        """Check if a username already exists."""
+        if not (external_client_users := self.state.cluster.external_users_credentials):
+            return False
+
+        if external_client_users.get(username):
+            logger.debug("Client user already exists: %s", username)
+            return True
+
+        return False
+
     def does_user_exist_for_relation(self, relation_id: int) -> bool:
-        """Check if a managed user has been added for a relation."""
+        """Check if any managed user has been added for a relation."""
         if not (external_client_users := self.state.cluster.external_users_credentials):
             return False
 

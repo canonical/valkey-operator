@@ -187,7 +187,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     assert result == TEST_VALUE
 
     logger.info("Ensure TLS access for v1 client")
-    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")

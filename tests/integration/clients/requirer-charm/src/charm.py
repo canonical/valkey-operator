@@ -285,7 +285,7 @@ class RequirerCharm(ops.CharmBase):
         self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]
     ) -> None:
         """Handle endpoints changed event."""
-        logger.info("Valkey endpoints have been changed",)
+        logger.info("Valkey endpoints have been changed")
 
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
