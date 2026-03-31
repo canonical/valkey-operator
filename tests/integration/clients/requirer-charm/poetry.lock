@@ -219,6 +219,22 @@ test = ["certifi (>=2024)", "cryptography-vectors (==46.0.6)", "pretend (>=0.7)"
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "dpcharmlibs-interfaces"
+version = "1.0.2"
+description = "The dpcharmlibs.interfaces package."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "dpcharmlibs_interfaces-1.0.2-py3-none-any.whl", hash = "sha256:1fa1005e55a0fa000bcf340831ab33ff7e7f6225678d6d07ca1383c36a658326"},
+    {file = "dpcharmlibs_interfaces-1.0.2.tar.gz", hash = "sha256:5cc88791d4844c1d485188e10c04fbc6651de16b841fe2fb09da5643bf3af981"},
+]
+
+[package.dependencies]
+ops = ">=3,<4"
+pydantic = ">=2.11,<3"
+
+[[package]]
 name = "idna"
 version = "3.11"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -665,4 +681,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "0f21ab6fe58a21b29ef2960f2dfbc15512dd7d3ec00feebd32d2be8b9c9e3a3d"
+content-hash = "d095ff73efc0dc57e3b33f3047e0fa09db0dc1c9c623eef5c266fde0af3f810d"

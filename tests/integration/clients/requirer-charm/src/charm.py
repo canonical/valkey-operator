@@ -14,7 +14,8 @@ from charmlibs.interfaces.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseCreatedEvent, DatabaseRequires
-from charms.data_platform_libs.v1.data_interfaces import (
+from client import ValkeyClient
+from dpcharmlibs.interfaces import (
     DataContractV1,
     RequirerCommonModel,
     ResourceCreatedEvent,
@@ -24,7 +25,6 @@ from charms.data_platform_libs.v1.data_interfaces import (
     ValkeyResponseModel,
     build_model,
 )
-from client import ValkeyClient
 
 logger = logging.getLogger(__name__)
 

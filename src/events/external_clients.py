@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING
 
 import ops
-from charms.data_platform_libs.v1.data_interfaces import (
+from dpcharmlibs.interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
     ResourceProviderEventHandler,

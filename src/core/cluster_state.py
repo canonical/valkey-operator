@@ -7,12 +7,12 @@
 import logging
 
 import ops
-from charms.data_platform_libs.v1.data_interfaces import (
+from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
+from dpcharmlibs.interfaces import (
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
 )
-from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
 
 from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
