@@ -123,6 +123,7 @@ jobs:
         timeout-minutes: 5
         run: |
           sudo apt update
+          snap info lxd
           sudo snap install charmcraft --classic
           sudo snap install go --classic
           go install github.com/snapcore/spread/cmd/spread@latest
