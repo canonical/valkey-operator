@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
-import json
 import logging
 
 import jubilant
@@ -91,7 +90,7 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
         requirer_unit, "get", params={"key": f"requirer-charm:{TEST_KEY}", "user": username}
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE
 
 
@@ -136,7 +135,7 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
         params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE
 
     logger.info("Trying to access global keyspace with unrestricted permissions")
@@ -151,7 +150,7 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
         requirer_unit, "get", params={"key": TEST_KEY, "user": user_global_keyspace}
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE
 
 
@@ -184,7 +183,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
         params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE
 
     logger.info("Ensure TLS access for v1 client")
@@ -210,7 +209,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
         params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE
 
     set_action = juju.run(
@@ -226,5 +225,5 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
         params={"key": TEST_KEY, "user": user_global_keyspace},
     )
     assert get_action.status == "completed", "Action should succeed"
-    result = json.loads(get_action.results["result"])
+    result = get_action.results["result"]
     assert result == TEST_VALUE

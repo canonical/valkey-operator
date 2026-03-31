@@ -167,7 +167,7 @@ class RequirerCharm(ops.CharmBase):
             if not self.valkey_relation:
                 return None
 
-            return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls_ca")
+            return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls-ca")
 
         remote_responses = self.remote_responses
         if not remote_responses:
@@ -223,6 +223,7 @@ class RequirerCharm(ops.CharmBase):
             asyncio.run(client.set_key(key, value))
             event.set_results({"ok": True})
         except Exception as e:
+            event.fail(f"Failed to write data: {e}")
             logger.error("Failed to write data: %s", e)
 
     def _on_get_action(self, event: ops.ActionEvent) -> None:
@@ -257,6 +258,7 @@ class RequirerCharm(ops.CharmBase):
                 }
             )
         except Exception as e:
+            event.fail(f"Failed to write data: {e}")
             logger.error("Failed to read data: %s", e)
 
     def _on_get_credentials_action(self, event: ops.ActionEvent) -> None:
@@ -283,7 +285,7 @@ class RequirerCharm(ops.CharmBase):
         self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]
     ) -> None:
         """Handle endpoints changed event."""
-        logger.info("Valkey endpoints have been changed to: %s", event.response.endpoints)
+        logger.info("Valkey endpoints have been changed",)
 
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
