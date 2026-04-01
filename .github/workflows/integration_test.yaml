@@ -129,7 +129,9 @@ jobs:
           go install github.com/snapcore/spread/cmd/spread@latest
           # to build Valkey-glide during tests
           sudo apt install libprotobuf-dev protobuf-compiler -y
-          sudo apt install rustup -y
+          # 22.04 installs rustup from snap
+          # sudo apt install rustup -y
+          snap install rustup --classic
           rustup set profile minimal
           rustup default 1.90.0
       - name: Download packed charm(s)
