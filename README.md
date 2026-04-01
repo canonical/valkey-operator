@@ -1,6 +1,6 @@
 ## Valkey operator
 [![CharmHub Badge](https://charmhub.io/valkey/badge.svg)](https://charmhub.io/valkey)
-[![docs badge](https://canonical-charmed-valkey.readthedocs-hosted.com/en/latest/)](https://canonical-charmed-valkey.readthedocs-hosted.com/)
+[![docs badge](https://app.readthedocs.com/projects/canonical-charmed-valkey/badge/?version=latest&style=plastic)](https://app.readthedocs.com/projects/canonical-charmed-valkey/builds/?version__slug=latest)
 
 Charmed Valkey is an open-source Juju charm that will automate the deployment, 
 scaling, configuration and operations of Valkey databases across clouds, virtual
@@ -10,8 +10,8 @@ machines and bare metal, using the Juju orchestration framework.
 key-value data store compatible with Redis® clients and ecosystem tooling.
 
 The charm can be deployed on Kubernetes and VM clouds and aims to simplify Valkey
-operations from Day 0 to Day 2, offering secure defaults integration interfaces,
-and lifecycle automation.
+operations from [Day 0 to Day 2](https://codilime.com/blog/day-0-day-1-day-2-the-software-lifecycle-in-the-cloud-age/), 
+offering secure defaults integration interfaces, and lifecycle automation.
 
 ## Basic usage
 
