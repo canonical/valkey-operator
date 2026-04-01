@@ -96,7 +96,7 @@ backends:
       CONCIERGE_EXTRA_DEBS: pipx
       DOCKERHUB_MIRROR: "$(HOST: echo $DOCKERHUB_MIRROR)"
     systems:
-      - ubuntu-24.04:
+      - ubuntu-22.04:
           username: runner
 
 suites:
