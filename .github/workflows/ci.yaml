@@ -72,22 +72,11 @@ jobs:
       matrix:
         path:
           - .
-    name: Build charm
-    uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
-    with:
-      path-to-charm-directory: ${{ matrix.path }}
-
-  build-test-charm:
-    strategy:
-      fail-fast: true
-      matrix:
-        path:
           - tests/integration/clients/requirer-charm
     name: Build charm
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:
       path-to-charm-directory: ${{ matrix.path }}
-      cache: false
 
   integration-test:
     name: Integration test
