@@ -1,9 +1,13 @@
 # How to deploy
 
+This guide provides deployment instructions for Charmed Valkey.
+
+## Prerequisites
+
 The basic requirements for deploying a charm are the [**Juju client**](https://documentation.ubuntu.com/juju/3.6/) 
 and a [**cloud**](https://juju.is/docs/juju/cloud).
 
-## Quickstart
+## Setup
 
 First, [bootstrap](https://juju.is/docs/juju/juju-bootstrap) the cloud controller
 and create a [model](https://canonical-juju.readthedocs-hosted.com/en/latest/user/reference/model/):

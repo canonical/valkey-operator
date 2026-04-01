@@ -66,5 +66,5 @@ for more information.
 Home <self>
 Tutorial <tutorial>
 /how-to/index
-/reference/index
+Contact <reference/contact>
 ```

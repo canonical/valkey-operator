@@ -11,8 +11,6 @@ first time, it will be most beneficial if:
 - You have some experience using a Linux-based CLI
 - You are familiar with the [Juju orchestration engine](https://documentation.ubuntu.com/juju/latest/)
 
----
-
 ## Set up the environment
 
 This tutorial will deploy Charmed Valkey on Kubernetes.
@@ -29,7 +27,7 @@ machines running Ubuntu. It uses the [cloud-init](https://cloud-init.io/) standa
 to install and configure all the necessary parts automatically.
 
 Install Multipass from the [snap store](https://snapcraft.io/multipass):
-```text
+```shell
 sudo snap install multipass
 ```
 
@@ -37,13 +35,13 @@ Spin up a new VM using [`multipass launch`](https://multipass.run/docs/launch-co
 with the [charm-dev](https://github.com/canonical/multipass-blueprints/blob/main/v1/charm-dev.yaml)
 cloud-init configuration:
 
-```text
+```shell
 multipass launch --cpus 4 --memory 8G --disk 50G --name dev-vm charm-dev
 ```
 
 As soon as a new VM has started, access it:
 
-```text
+```shell
 multipass shell dev-vm
 ```
 
@@ -58,14 +56,14 @@ All necessary components have been pre-installed inside the VM already, like LXD
 Let's bootstrap Juju to use the local MicroK8s controller. We will call it 
 "k8s-controller", but you can give it any name you'd like:
 
-```text
+```shell
 juju bootstrap microk8s k8s-controller
 ```
 
 A controller can work with different [models](https://juju.is/docs/juju/model). 
 Set up a specific model for Charmed Valkey named `tutorial`:
 
-```text
+```shell
 juju add-model tutorial
 ```
 
@@ -82,7 +80,7 @@ Model "admin/tutorial" is empty.
 
 To deploy Charmed Valkey, run:
 
-```text
+```shell
 juju deploy valkey --channel 9/edge --trust
 ```
 
@@ -92,7 +90,7 @@ on how provisioned (RAM, CPU, etc.) your machine is.
 
 You can track the progress by running:
 
-```text
+```shell
 watch juju status --color
 ```
 
@@ -143,7 +141,7 @@ valkey/0*  active    idle   10.1.44.126
 The user we will connect to in this tutorial will be the internal `charmed-operator`
 user of Charmed Valkey. To retrieve its associated password, run the following command:
 
-```text
+```shell
 juju show-secret valkey-peers.valkey.app.internal_users_secret --reveal
 ```
 
@@ -154,38 +152,50 @@ Copy the content displayed for `charmed-operator-password`.
 The easiest way to interact with Valkey is via [its command line interface `valkey-cli`](https://valkey.io/topics/cli/).
 which can be installed with the [`valkey-tools` package in Ubuntu](https://packages.ubuntu.com/search?suite=noble&section=all&arch=any&keywords=valkey-tools&searchon=names):
 
-```text
+```shell
 sudo apt update && sudo apt install valkey-tools
 ```
 
 Run the command below to connect to your Charmed Valkey database, using the host's IP address:
 
-```text
+```shell
 valkey-cli -h 10.1.44.126 -p 6379
 ```
 
-Run the following command to log in and perform a basic health check, using the
-previously retrieved credentials:
+Run the following command to log in, using the previously retrieved credentials:
 
 ```text
 10.1.44.126:6379> AUTH charmed-operator <your-password-here>
-OK
+```
+
+Now perform a basic health check with this command:
+
+```shell
 10.1.44.126:6379> ping
+```
+
+You should receive this response from the Valkey server:
+
+```text
 PONG
 ```
 
 Now it is possible to perform Valkey commands on the database. To set a key `mykey`
-to the value `HelloWorld`, run this command:
+to the value `HelloWorld`:
 
-```text
+```shell
 10.1.44.126:6379> set mykey "HelloWorld"
-OK
 ```
 
 In order to retrieve the key you just set, run the following command:
 
-```text
+```shell
 10.1.44.126:6379> get mykey
+```
+
+As response you should get the value you just set:
+
+```
 "HelloWorld"
 ```
 
@@ -211,7 +221,7 @@ This tutorial hosts all nodes on the same machine.
 
 You can add replica units to your deployed Valkey database with the following command:
 
-```text
+```shell
 juju add-unit valkey -n 2
 ```
 
@@ -243,13 +253,14 @@ number of replicas to one.
 
 Before scaling down, list all the units with `juju status`. You will see 
 three units: 
+
 * `valkey/0`
 * `valkey/1`
 * `valkey/2` 
 
 To scale the application down to two units, enter:
 
-```text
+```shell
 juju remove-unit valkey --num-units 1
 ```
 
@@ -290,7 +301,7 @@ Check [this guide](https://discourse.charmhub.io/t/security-with-x-509-certifica
 
 Before enabling TLS on Charmed Valkey, we must deploy the `self-signed-certificates` operator:
 
-```text
+```shell
 juju deploy self-signed-certificates --config ca-common-name="Tutorial CA"
 ```
 
@@ -313,7 +324,7 @@ valkey/1                     active    idle   10.1.44.117
 
 To enable TLS on Charmed Valkey, integrate the two applications:
 
-```text
+```shell
 juju integrate valkey:client-certificates self-signed-certificates:certificates
 ```
 
@@ -340,8 +351,13 @@ client TLS. Valkey now listens on port `6380` (previously it was `6379`).
 Use `openssl` to connect to Valkey and check the TLS certificate in use. Note 
 that your unit's IP address will likely be different to the one shown below:
 
+```shell
+openssl s_client -connect 10.1.44.126:6380  2>/dev/null | openssl x509 -noout -dates
+```
+
+You should see the validity dates of the certificate in use as output:
+
 ```text
-$ openssl s_client -connect 10.1.44.126:6380  2>/dev/null | openssl x509 -noout -dates
 notBefore=Mar 16 13:52:57 2026 GMT
 notAfter=Jun 14 13:52:57 2026 GMT
 ```
@@ -351,7 +367,7 @@ application `self-signed-certificates`.
 
 To remove the external TLS, remove the integration:
 
-```text
+```shell
 juju remove-relation valkey:client-certificates self-signed-certificates:certificates
 ```
 
@@ -367,7 +383,7 @@ or remove it entirely using the steps in this page.
 
 If you'd like to keep your environment for later, simply stop your VM with
 
-```text
+```shell
 multipass stop dev-vm
 ```
 
@@ -382,6 +398,6 @@ For more information, see the docs for [`multipass delete`](https://multipass.ru
 
 **Delete your VM and its data** by running:
 
-```text
+```shell
 multipass delete --purge dev-vm
 ```

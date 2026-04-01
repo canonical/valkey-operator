@@ -3,9 +3,10 @@
 Adding and removing units from a Valkey deployment is done by scaling [Juju units](https://juju.is/docs/juju/unit). 
  
 ## Add a unit
-You can add additional units to your deployed Valkey application with the following command:
 
-```text
+To add additional units to your deployed Valkey application, run the following command:
+
+```shell
 juju add-unit valkey -n 1
 ```
 
@@ -37,6 +38,7 @@ three units, one is the primary and two are replicas. Removing a unit will reduc
 number of replicas to one.
 
 Before scaling down, list all the units with `juju status`:
+
 * `valkey/0`
 * `valkey/1`
 * `valkey/2`
@@ -44,7 +46,7 @@ Before scaling down, list all the units with `juju status`:
 
 To scale the application down to three units, run:
 
-```text
+```shell
 juju remove-unit valkey --num-units 1
 ```
 

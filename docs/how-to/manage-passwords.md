@@ -1,6 +1,8 @@
 # How to manage passwords
 
-In order to read or write data in Valkey, we need to authenticate ourselves.
+This guides provides instructions for creating, updating, and otherwise managing passwords.
+
+To read or write data in Valkey, we need to authenticate ourselves.
 
 For this guide, we will use Charmed {spellexception}`Valkey's` internal admin user
 `charmed-operator`. This user is only for internal use, and it is created automatically
@@ -13,7 +15,7 @@ Valkey.
 
 First, create a secret in `Juju` containing your password:
 
-```text
+```shell
 juju add-secret passwords charmed-operator=changeme
 ```
 
@@ -27,13 +29,13 @@ Make note of the string following `secret:`.
 
 Grant the secret to Charmed Valkey:
 
-```text
+```shell
 juju grant-secret passwords valkey
 ```
 
 Configure the secret's URI as `system-users` credentials to Charmed Valkey:
 
-```text
+```shell
 juju config valkey system-users=secret:d6s4mr7mp25c765ucep0
 ```
 
@@ -55,22 +57,29 @@ valkey/1                     active    idle   10.1.44.117
 valkey/2                     active    idle   10.1.44.127         
 ```
 
-Now you can use the password to access Valkey. Select the IP address for one of the units
-and check the current health with this command:
+Now you can use the password to access Valkey. Select the IP address for one of the units to connect to:
 
-```text
-$ valkey-cli -h 10.1.44.126 -p 6379
+```shell
+valkey-cli -h 10.1.44.126 -p 6379
+```
+
+Authenticate with the username and password you just configured:
+
+```shell
 10.1.44.126:6379> AUTH charmed-operator changeme
-OK
+```
+
+Check the current health of the server with this command:
+
+```shell
 10.1.44.126:6379> ping
-PONG
 ```
 
 ## Update the password
 
 To update your user-configured password, simply update the value of the secret. Here's an example:
 
-```text
+```shell
 juju update-secret passwords charmed-operator=moresecurepassword
 ```
 
@@ -78,24 +87,21 @@ After running this command, Charmed Valkey will immediately update the password.
 After the deployment has settled again, you can no longer use the old password to
 access Valkey. Instead, you will receive an error similar to this:
 
-```text
-$ valkey-cli -h 10.1.44.126 -p 6379
-10.1.44.126:6379> AUTH charmed-operator changeme
+```shell
 (error) WRONGPASS invalid username-password pair or user is disabled.
 ```
 
-Instead, use your updated password:
+Instead, use your updated password to authenticate:
 
-```text
-$ valkey-cli -h 10.1.44.126 -p 6379
+```shell
 10.1.44.126:6379> AUTH charmed-operator moresecurepassword
-OK
 ```
 
 ## Handle multiple passwords
 
 Charmed Valkey maintains multiple internal users with different permissions for
 different scopes:
+
 * `charmed-operator`: the user that manages the database instances
 * `charmed-replication`: the user performs replication between primary and replica instances of Valkey
 * `charmed-sentinel-operator`: the user that manages Sentinel for Valkey
@@ -110,6 +116,6 @@ To set the password for the `charmed-operator` and `charmed-sentinel-operator` u
 but keeping the automatically generated passwords for all other users, run the following
 command:
 
-```text
+```shell
 juju update-secret passwords charmed-operator=moresecurepassword charmed-sentinel-operator=sentinelpassword
 ```
