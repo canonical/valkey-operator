@@ -332,13 +332,14 @@ class TLSEvents(ops.Object):
             logger.warning("Invalid configuration for 'certificate-extra-sans'")
             return
 
-        if (secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)) and (
-            private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id)
-        ):
-            if self.charm.unit.is_leader():
-                self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
-            # refresh event will be ignored by the tls lib if the csr is unchanged
-            self.refresh_tls_certificates_event.emit()
+        if secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
+            if private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id):
+                if self.charm.unit.is_leader():
+                    self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
+                # refresh event will be ignored by the tls lib if the csr is unchanged
+                self.refresh_tls_certificates_event.emit()
+            else:
+                logger.error("Invalid private key provided, cannot update TLS certificates.")
 
         if (
             self.charm.state.client_tls_relation
