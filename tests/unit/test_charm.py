@@ -789,7 +789,7 @@ def test_relation_changed_event_update_quorum(cloud_spec):
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"),
     ):
         ctx.run(ctx.on.relation_changed(relation), state_in)
-        mock_set.assert_called_once_with("127.1.1.1", PRIMARY_NAME, "quorum", "2")
+        mock_set.assert_called_once_with("valkey-0.valkey-endpoints", PRIMARY_NAME, "quorum", "2")
 
 
 def test_relation_changed_event_do_not_update_quorum(cloud_spec):
