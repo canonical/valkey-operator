@@ -89,7 +89,7 @@ def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: s
 
 
 def cut_network_from_unit(
-    substrate: Substrate, model_name: str, machine_name: str, change_ip: bool = False
+    substrate: Substrate, model_name: str, machine_name: str, ip_change: bool = False
 ) -> None:
     """Cut network from a lxc container.
 
@@ -98,10 +98,10 @@ def cut_network_from_unit(
         substrate: The substrate the test is running on
         model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
-        change_ip: Whether to change the IP address of the unit on the network cut (only applicable for VMs)
+        ip_change: Whether to change the IP address of the unit on the network cut (only applicable for VMs)
     """
     if substrate == Substrate.VM:
-        if change_ip:
+        if ip_change:
             lxd_cut_network_from_unit_with_ip_change(machine_name)
         else:
             lxd_cut_network_from_unit_without_ip_change(machine_name)
@@ -110,7 +110,7 @@ def cut_network_from_unit(
 
 
 def restore_network_to_unit(
-    substrate: Substrate, model_name: str, machine_name: str, change_ip: bool = False
+    substrate: Substrate, model_name: str, machine_name: str, ip_change: bool = False
 ) -> None:
     """Restore network from a lxc container.
 
@@ -118,10 +118,10 @@ def restore_network_to_unit(
         substrate: The substrate the test is running on
         model_name: The juju model name (only applicable for k8s)
         machine_name: lxc container hostname or k8s pod name
-        change_ip: Whether the network cut changed the IP address of the unit (only applicable for VMs)
+        ip_change: Whether the network cut changed the IP address of the unit (only applicable for VMs)
     """
     if substrate == Substrate.VM:
-        if change_ip:
+        if ip_change:
             # remove mask from eth0
             restore_network_command = f"lxc config device remove {machine_name} eth0"
             subprocess.check_call(restore_network_command.split())
@@ -404,7 +404,7 @@ def lxd_get_controller_hostname(juju: jubilant.Juju) -> str:
     ][0]
 
 
-def endpoint_in_sentinels(
+def is_endpoint_in_sentinels(
     juju: jubilant.Juju,
     endpoint: str,
     hostname: str,
