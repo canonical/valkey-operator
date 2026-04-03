@@ -89,7 +89,9 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     )
 
     for unit in juju.status().apps[app_name].units:
-        assert get_quorum(juju, unit) == (num_units // 2) + 1
+        assert get_quorum(juju, unit) == (num_units // 2) + 1, (
+            f"Unexpected quorum value for unit {unit} after scale up"
+        )
 
     # check if all units have been added to the cluster
     hostnames = get_cluster_hostnames(juju, app_name)
@@ -159,7 +161,9 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     )
 
     for unit in juju.status().apps[app_name].units:
-        assert get_quorum(juju, unit) == (num_units // 2) + 1
+        assert get_quorum(juju, unit) == (num_units // 2) + 1, (
+            f"Unexpected quorum value for unit {unit} after scale down"
+        )
 
     number_of_replicas = await get_number_connected_replicas(
         hostnames=get_cluster_hostnames(juju, app_name),
@@ -242,7 +246,9 @@ async def test_scale_down_multiple_units(
     )
 
     for unit in juju.status().apps[app_name].units:
-        assert get_quorum(juju, unit) == (num_units // 2) + 1
+        assert get_quorum(juju, unit) == (num_units // 2) + 1, (
+            f"Unexpected quorum value for unit {unit} after scale down"
+        )
 
     c_writes.update()
 

@@ -228,7 +228,7 @@ class BaseEvents(ops.Object):
             self.charm.unit.open_port("tcp", CLIENT_PORT)
         self.charm.unit.open_port("tcp", TLS_PORT)
 
-    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+    def _on_peer_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
         self._reconfigure_quorum_if_necessary()
 
@@ -238,7 +238,7 @@ class BaseEvents(ops.Object):
         for lock in [StartLock(self.charm.state)]:
             lock.process()
 
-    def _on_peer_relation_departed(self, event: ops.RelationDepartedEvent) -> None:
+    def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
         self._reconfigure_quorum_if_necessary()
 

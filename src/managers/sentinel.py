@@ -320,9 +320,9 @@ class SentinelManager(ManagerStatusProtocol):
     def get_configured_quorum(self) -> int:
         """Get the currently configured quorum for the sentinel cluster."""
         client = self._get_sentinel_client()
-        return int(client.primary(self.state.bind_address)["quorum"])
+        return int(client.primary(self.state.endpoint)["quorum"])
 
     def set_quorum(self, quorum: int) -> None:
         """Set the quorum for the sentinel cluster."""
         client = self._get_sentinel_client()
-        client.set(self.state.bind_address, PRIMARY_NAME, "quorum", str(quorum))
+        client.set(self.state.endpoint, PRIMARY_NAME, "quorum", str(quorum))

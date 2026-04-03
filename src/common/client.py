@@ -416,6 +416,11 @@ class SentinelClient(CliClient):
             command=["sentinel", "sentinels", PRIMARY_NAME], hostname=hostname
         )
 
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(1),
+        reraise=True,
+    )
     def set(self, hostname: str, *args: str) -> bool:
         """Set a sentinel configuration parameter through the CLI.
 
@@ -425,6 +430,9 @@ class SentinelClient(CliClient):
 
         Returns:
             bool: True if the command executed successfully, False otherwise.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
         """
         return (
             self.exec_cli_command(
