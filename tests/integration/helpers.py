@@ -297,6 +297,10 @@ async def create_valkey_client(
         client_cert_pem=tls_cert if tls_enabled else None,
         client_key_pem=tls_key if tls_enabled else None,
         root_pem_cacerts=tls_ca_cert if tls_enabled else None,
+        # We only set FQDN in the certs the IP is not in the cert
+        # so we need to skip hostname verification
+        # we cannot use the hostname because the runner cannot resolve it
+        use_insecure_tls=True if tls_enabled else None,
     )
 
     client_config = GlideClientConfiguration(
