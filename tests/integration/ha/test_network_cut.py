@@ -232,15 +232,18 @@ async def test_network_cut_primary(  # noqa: C901
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
-    number_of_replicas = await get_number_connected_replicas(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
-    assert number_of_replicas == NUM_UNITS - 1, (
-        f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
-    )
+    # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+        with attempt:
+            number_of_replicas = await get_number_connected_replicas(
+                hostnames=hostnames,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                tls_enabled=tls_enabled,
+            )
+            assert number_of_replicas == NUM_UNITS - 1, (
+                f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
+            )
 
     logger.info("Verifying endpoint presence in sentinels")
 
