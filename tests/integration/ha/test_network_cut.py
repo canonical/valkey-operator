@@ -156,15 +156,18 @@ async def test_network_cut_primary(  # noqa: C901
 
     logger.info("Checking number of connected replicas after network cut...")
     # check replica number that it is down to NUM_UNITS - 2
-    number_of_replicas = await get_number_connected_replicas(
-        hostnames=hostnames,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
-    assert number_of_replicas == NUM_UNITS - 2, (
-        f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
-    )
+    # retry in case cluster hasn't stabilized yet after primary cut and new primary election
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+        with attempt:
+            number_of_replicas = await get_number_connected_replicas(
+                hostnames=hostnames,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                tls_enabled=tls_enabled,
+            )
+            assert number_of_replicas == NUM_UNITS - 2, (
+                f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
+            )
 
     logger.info(
         "Verifying that new primary endpoint is marked as down in sentinels list of other replicas..."
