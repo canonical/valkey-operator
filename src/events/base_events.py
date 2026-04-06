@@ -322,6 +322,22 @@ class BaseEvents(ops.Object):
                 self.charm.sentinel_manager.get_primary_ip()
             )
 
+            if self.charm.tls_manager.certificate_sans_require_update():
+                if self.charm.state.client_tls_relation:
+                    self.charm.tls_events.refresh_tls_certificates_event.emit()
+                    event.defer()
+                    return
+
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+
+            self.charm.state.unit_server.update(
+                {
+                    "hostname": self.charm.state.hostname,
+                    "private_ip": self.charm.state.bind_address,
+                }
+            )
+            self.charm.base_events.restart_workload.emit()
+
         if not self.charm.unit.is_leader():
             return
 

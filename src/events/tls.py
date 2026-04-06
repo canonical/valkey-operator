@@ -25,7 +25,6 @@ from literals import (
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
-    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -331,28 +330,6 @@ class TLSEvents(ops.Object):
             self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
             if self.charm.state.client_tls_relation:
                 self.refresh_tls_certificates_event.emit()
-
-        if (
-            self.charm.state.unit_server.model.private_ip
-            and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
-        ):
-            if self.charm.tls_manager.certificate_sans_require_update():
-                if self.charm.state.client_tls_relation:
-                    self.charm.tls_events.refresh_tls_certificates_event.emit()
-                    event.defer()
-                    return
-
-                self.charm.tls_manager.create_and_store_self_signed_certificate()
-
-            self.charm.state.unit_server.update(
-                {
-                    "hostname": self.charm.state.hostname,
-                    "private_ip": self.charm.state.bind_address,
-                }
-            )
-            # only restart on VM because on k8s the hostname is stable and does not change with IP changes
-            if self.charm.state.substrate == Substrate.VM:
-                self.charm.base_events.restart_workload.emit()
 
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""

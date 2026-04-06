@@ -115,6 +115,7 @@ class ContinuousWrites:
             client_cert_pem=tls_cert if conf.tls_enabled else None,
             client_key_pem=tls_key if conf.tls_enabled else None,
             root_pem_cacerts=tls_ca_cert if conf.tls_enabled else None,
+            use_insecure_tls=True if conf.tls_enabled else None,
         )
 
         glide_config = GlideClientConfiguration(
@@ -304,6 +305,7 @@ class ContinuousWrites:
                 client_cert_pem=tls_cert if conf.tls_enabled else None,
                 client_key_pem=tls_key if conf.tls_enabled else None,
                 root_pem_cacerts=tls_ca_cert if conf.tls_enabled else None,
+                use_insecure_tls=True if conf.tls_enabled else None,
             )
 
             glide_config = GlideClientConfiguration(

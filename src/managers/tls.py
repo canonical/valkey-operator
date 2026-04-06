@@ -95,7 +95,8 @@ class TLSManager(ManagerStatusProtocol):
         """Build the SANs IP for the TLS certificate."""
         sans_ip = set()
 
-        if not self.state.peer_relation:
+        # Rely fully on FQDN on k8s
+        if not self.state.peer_relation or self.state.substrate == "k8s":
             return frozenset(sans_ip)
 
         sans_ip.add(self.state.bind_address)
