@@ -3,6 +3,19 @@
 Valkey provides a secure transport layer for communication between clients and Valkey,
 and the charm provides a simple way of enabling TLS encryption.
 
+## Peer-to-peer connections
+
+For internal communication between Valkey peers, Charmed Valkey always enables TLS
+by default. The TLS certificates for this purpose are managed by the charm itself
+and do not require a separate TLS provider. This applies to connections between
+Valkey primary and replicas as well as between Valkey and Sentinel and between 
+Sentinel instances.
+
+To add another layer of security for communication between clients and Valkey,
+follow the instructions in the next sections. The self-managed, internal peer TLS
+will be replaced with an external TLS provider and encryption will be enabled 
+for both client and peer TLS.
+
 ## Deploy a TLS provider
 
 This guide will use the [Self-signed Certificates](https://charmhub.io/self-signed-certificates)
