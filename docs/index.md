@@ -20,10 +20,10 @@ integration interfaces, and lifecycle automation.
 
 ## In this documentation
 
-|                                                                                                         |                                                                                               |
-|---------------------------------------------------------------------------------------------------------| --------------------------------------------------------------------------------------------- |
-| [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to Valkey for new users </br>      | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
-| [Reference](/reference/index) </br> Technical information - specifications, APIs, architecture| <!--[Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics--> |
+|                                                                                                        |                                                                                               |
+|--------------------------------------------------------------------------------------------------------| --------------------------------------------------------------------------------------------- |
+| [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to Valkey for new users </br>     | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
+<!--| [Reference](/reference/index) </br> Technical information - specifications, APIs, architecture  | [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics |-->
 
 ## How this documentation is organised
 
@@ -46,7 +46,7 @@ suggestions, fixes and constructive feedback.
 - [Valkey snap](https://github.com/canonical/charmed-valkey-snap)
 - [Valkey rock](https://github.com/canonical/charmed-valkey-rock)
 - [Canonical Data solutions](https://canonical.com/data)
-- [Report issues](https://github.com/canonical/charmed-valkey-operator/issues)
+- [Report issues](https://github.com/canonical/valkey-operator/issues)
 - {doc}`Contact us <reference/contact>`
 
 ## License and trademarks
@@ -55,7 +55,7 @@ Valkey and the Valkey logo are trademarks of LF Projects, LLC.
 
 The Charmed Valkey operator is free software, distributed under the Apache Software License,
 version 2.0.
-See [LICENSE](https://github.com/canonical/charmed-valkey-operator/blob/main/LICENSE)
+See [LICENSE](https://github.com/canonical/valkey-operator/blob/main/LICENSE)
 for more information.
 
 ```{toctree}
