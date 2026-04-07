@@ -13,12 +13,14 @@ first time, it will be most beneficial if:
 
 ## Set up the environment
 
-This tutorial will deploy Charmed Valkey on Kubernetes.
+Charmed Valkey can be deployed on both Kubernetes and VM clouds. For this tutorial,
+we will deploy Charmed Valkey on Kubernetes using MicroK8s.
 
 First, we will set up a cloud environment using [Multipass](https://multipass.run/)
 with [MicroK8s](https://microk8s.io/docs) and [Juju](https://documentation.ubuntu.com/juju/3.6/). 
 This is the quickest and easiest way to get your machine ready for using Charmed Valkey
-on Kubernetes. 
+on Kubernetes. If you are interested in VM deployments, [LXD](https://documentation.ubuntu.com/lxd/latest/)
+can be used instead of MicroK8s. 
 
 ### Multipass
 
@@ -59,6 +61,16 @@ Let's bootstrap Juju to use the local MicroK8s controller. We will call it
 ```shell
 juju bootstrap microk8s k8s-controller
 ```
+
+If you decided to deploy an LXD environment instead of MicroK8s, bootstrap the LXD
+controller with this command:
+
+```shell
+juju bootstrap localhost lxd-controller
+```
+
+For this tutorial, we will continue with the MicroK8s environment, but all commands
+can equally be run on the LXD environment as well.
 
 A controller can work with different [models](https://juju.is/docs/juju/model). 
 Set up a specific model for Charmed Valkey named `tutorial`:
@@ -206,7 +218,7 @@ In order to retrieve the key you just set, run the following command:
 10.1.44.126:6379> get mykey
 ```
 
-As response you should get the value you just set:
+As response, you should get the value you just set:
 
 ```
 "HelloWorld"

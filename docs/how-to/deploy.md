@@ -1,6 +1,7 @@
 # How to deploy
 
-This guide provides deployment instructions for Charmed Valkey.
+This guide provides deployment instructions for Charmed Valkey. It supports both 
+Kubernetes and VM clouds and can be deployed seamless on both substrates.
 
 ## Prerequisites
 
