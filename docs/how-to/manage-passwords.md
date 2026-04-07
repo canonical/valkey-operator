@@ -11,6 +11,23 @@ by Charmed Valkey.
 We will go through setting a user-defined password for this admin user and configuring
 Valkey. 
 
+## Auto-generated credentials
+
+For security purposes, Charmed Valkey automatically generates users and passwords 
+for its operations and internal administration tasks. These credentials are stored
+in a Juju secret owned by the charm. Inspect the secret:
+
+```shell
+juju show-secret valkey-peers.valkey.app.internal_users_secret --reveal
+```
+
+```{caution}
+This secret is only for internal use. It must not be updated by users.
+```
+
+To override the auto-generated passwords for the internal users, follow the instructions
+of the next section.
+
 ## Configure a user-provided password
 
 First, create a secret in `Juju` containing your password:
