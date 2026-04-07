@@ -97,7 +97,7 @@ class TLSManager(ManagerStatusProtocol):
         """Build the SANs IP for the TLS certificate."""
         sans_ip = set()
 
-        if not self.state.peer_relation:
+        if not self.state.unit_server.model:
             return frozenset(sans_ip)
 
         if self.extra_sans_config_is_valid() and (
@@ -120,9 +120,8 @@ class TLSManager(ManagerStatusProtocol):
             frozenset[str]: The SANs DNS.
         """
         sans_dns = set()
-        sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
 
-        if not self.state.peer_relation:
+        if not self.state.unit_server.model:
             return frozenset(sans_dns)
 
         if self.extra_sans_config_is_valid() and (
@@ -135,7 +134,8 @@ class TLSManager(ManagerStatusProtocol):
                 if not self._is_ip_address(san)
             }
 
-        sans_dns.add(self.state.unit_server.model.hostname)
+        sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
+        sans_dns.add(self.state.hostname)
 
         return frozenset(sans_dns)
 
