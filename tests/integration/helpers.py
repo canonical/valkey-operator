@@ -508,6 +508,26 @@ def exec_valkey_cli(
     )
 
 
+def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
+    """Get the currently configured sentinel quorum."""
+    status = juju.status()
+    model_info = juju.show_model()
+    units = status.get_units(APP_NAME)
+    unit_endpoint = (
+        units[unit_name].public_address
+        if model_info.type != "kubernetes"
+        else units[unit_name].address
+    )
+    result = exec_valkey_cli(
+        hostname=unit_endpoint,
+        username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+        command="SENTINEL primary primary",
+        json=True,
+    )
+    return int(json.loads(result.stdout)["quorum"])
+
+
 async def set_key(
     hostnames: list[str],
     username: str,

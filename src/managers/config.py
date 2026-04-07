@@ -21,7 +21,6 @@ from literals import (
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
     PRIMARY_NAME,
-    QUORUM_NUMBER,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
@@ -255,10 +254,7 @@ class ConfigManager(ManagerStatusProtocol):
     def _generate_sentinel_configs(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the sentinel config properties based on the current cluster state."""
         sentinel_configs = {}
-        # TODO consider adding quorum calculation based on number of planned_units and the parity of the number of units
-        sentinel_configs["monitor"] = (
-            f"{PRIMARY_NAME} {primary_endpoint} {TLS_PORT} {QUORUM_NUMBER}"
-        )
+        sentinel_configs["monitor"] = f"{PRIMARY_NAME} {primary_endpoint} {TLS_PORT} {self.quorum}"
         # auth settings
         # auth-user is used by sentinel to authenticate to the valkey primary
         sentinel_configs["auth-user"] = f"{PRIMARY_NAME} {CharmUsers.VALKEY_SENTINEL.value}"
@@ -361,6 +357,12 @@ class ConfigManager(ManagerStatusProtocol):
                 {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
             )
             raise ValkeyConfigurationError("Failed to set configuration") from e
+
+    @property
+    def quorum(self) -> int:
+        """Calculate the quorum based on the number of units in the cluster."""
+        num_units = len([server for server in self.state.servers if server.is_active])
+        return (num_units // 2) + 1
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
