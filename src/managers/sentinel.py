@@ -22,7 +22,14 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, SENTINEL_TLS_PORT, TLS_PORT, CharmUsers
+from literals import (
+    CLIENT_PORT,
+    PRIMARY_NAME,
+    SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
+    TLS_PORT,
+    CharmUsers,
+)
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
