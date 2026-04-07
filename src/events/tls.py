@@ -365,17 +365,6 @@ class TLSEvents(ops.Object):
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.sentinel_manager.restart_service()
 
-    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Handle the `config-changed` event."""
-        if (
-            (secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG))
-            and (private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id))
-            and self.charm.unit.is_leader()
-        ):
-            self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
-            if self.charm.state.client_tls_relation:
-                self.refresh_tls_certificates_event.emit()
-
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""
         match self.charm.state.unit_server.tls_ca_rotation_state:
