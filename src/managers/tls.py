@@ -9,6 +9,7 @@ import binascii
 import logging
 import re
 from datetime import timedelta
+from ipaddress import ip_address
 
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
@@ -21,6 +22,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 from ops import ModelError, SecretNotFoundError
+from validators import ValidationError, hostname
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -98,6 +100,12 @@ class TLSManager(ManagerStatusProtocol):
         if not self.state.peer_relation:
             return frozenset(sans_ip)
 
+        if self.extra_sans_config_is_valid() and (
+            extra_sans_config := self.state.config.get("certificate-extra-sans")
+        ):
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
+
         sans_ip.add(self.state.bind_address)
 
         if ingress_ip := self.state.ingress_address:
@@ -116,6 +124,16 @@ class TLSManager(ManagerStatusProtocol):
 
         if not self.state.peer_relation:
             return frozenset(sans_dns)
+
+        if self.extra_sans_config_is_valid() and (
+            extra_sans_config := self.state.config.get("certificate-extra-sans")
+        ):
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            sans_dns = {
+                san.replace("{unit}", str(self.state.unit_server.unit_id))
+                for san in extra_sans
+                if not self._is_ip_address(san)
+            }
 
         sans_dns.add(self.state.unit_server.model.hostname)
 
@@ -304,6 +322,95 @@ class TLSManager(ManagerStatusProtocol):
         )
         return True
 
+    def extra_sans_config_is_valid(self) -> bool:
+        """Validate configuration value for certificate-extra-sans option.
+
+        Returns:
+            bool: True if config value is valid, False if invalid.
+        """
+        if not (extra_sans_config := self.state.config.get("certificate-extra-sans")):
+            return True
+
+        extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+
+        for san in extra_sans:
+            if not self._is_ip_address(san) and not self._is_hostname(
+                san.replace("{unit}", str(self.state.unit_server.unit_id))
+            ):
+                logger.error(f"certificate-extra-sans configuration is invalid for {san}")
+                return False
+
+        return True
+
+    def _is_ip_address(self, input_value: str) -> bool:
+        """Validate a given str and return True if it is an IP address, False if not."""
+        try:
+            ip_address(input_value)
+            return True
+        except ValueError:
+            return False
+
+    def _is_hostname(self, input_value: str) -> bool:
+        """Validate a given str and return True if it is a hostname, False if not."""
+        try:
+            # Hostname string may only be hyphens and alpha-numerals.
+            return hostname(
+                input_value,
+                skip_ipv4_addr=True,
+                skip_ipv6_addr=True,
+                may_have_port=False,
+                maybe_simple=True,
+            )
+        except ValidationError:
+            return False
+
+    def get_current_sans(self) -> dict[str, set[str]]:
+        """Get the current SANs for a unit's cert."""
+        cert_file = self.workload.tls_paths.client_cert
+
+        sans_ip = set()
+        sans_dns = set()
+        if not (
+            san_lines := self.workload.exec(
+                [
+                    "openssl",
+                    "x509",
+                    "-ext",
+                    "subjectAltName",
+                    "-noout",
+                    "-in",
+                    cert_file.as_posix(),
+                ]
+            )[0].splitlines()
+        ):
+            return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+        for line in san_lines:
+            for sans in line.split(", "):
+                san_type, san_value = sans.split(":")
+
+                if san_type.strip() == "DNS":
+                    sans_dns.add(san_value)
+                if san_type.strip() == "IP Address":
+                    sans_ip.add(san_value)
+
+        return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+    def certificate_sans_require_update(self) -> bool:
+        """Check current certificate sans and determine if certificate requires update.
+
+        Returns:
+            bool: True if certificate sans have changed, False if they are still the same.
+        """
+        current_sans = self.get_current_sans()
+        new_sans_ip = self.build_sans_ip()
+        new_sans_dns = self.build_sans_dns()
+
+        if new_sans_ip ^ current_sans["sans_ip"] or new_sans_dns ^ current_sans["sans_dns"]:
+            return True
+
+        return False
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
@@ -311,6 +418,11 @@ class TLSManager(ManagerStatusProtocol):
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+        if (relation := self.state.client_tls_relation) and relation.data[relation.app].get(
+            "request_errors"
+        ):
+            status_list.append(TLSStatuses.CERTIFICATE_DENIED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)
@@ -343,5 +455,8 @@ class TLSManager(ManagerStatusProtocol):
 
         if self.state.unit_server.model.tls_certificate_expiring:
             status_list.append(TLSStatuses.CERTIFICATE_EXPIRING.value)
+
+        if not self.extra_sans_config_is_valid():
+            status_list.append(TLSStatuses.SANS_CONFIG_INVALID.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
