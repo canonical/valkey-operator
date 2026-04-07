@@ -41,6 +41,9 @@ QUORUM_NUMBER = 2
 INTERNAL_USERS_PASSWORD_CONFIG = "system-users"
 INTERNAL_USERS_SECRET_LABEL_SUFFIX = "internal_users_secret"
 INTERNET_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
+TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
+
+DATA_STORAGE = "data"
 
 
 # As per the valkey users spec
@@ -89,6 +92,18 @@ class StartState(StrEnum):
     STARTED = "started"
 
 
+class ScaleDownState(StrEnum):
+    """Scale down states for the service."""
+
+    NO_SCALE_DOWN = ""
+    WAIT_FOR_LOCK = "wait_for_lock"
+    WAIT_TO_FAILOVER = "wait_to_failover"
+    STOP_SERVICES = "stopping_services"
+    RESET_SENTINEL = "reset_sentinel"
+    HEALTH_CHECK = "health_check"
+    GOING_AWAY = "going_away"
+
+
 class TLSState(StrEnum):
     """TLS states."""
 
@@ -96,3 +111,12 @@ class TLSState(StrEnum):
     TO_TLS = "to-tls"
     TLS = "tls"
     TO_NO_TLS = "to-no-tls"
+
+
+class TLSCARotationState(StrEnum):
+    """TLS CA Rotation state."""
+
+    NO_ROTATION = "no-rotation"
+    NEW_CA_DETECTED = "new-ca-detected"
+    NEW_CA_ADDED = "new-ca-added"
+    CA_UPDATED = "ca-updated"

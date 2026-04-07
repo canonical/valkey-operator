@@ -24,6 +24,10 @@ class ValkeyConfigSetError(ValkeyClientError):
     """Custom Exception if setting configuration on valkey cluster fails."""
 
 
+class ValkeyCannotGetPrimaryIPError(ValkeyClientError):
+    """Custom Exception if the primary IP cannot be determined from the sentinels."""
+
+
 class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
 
@@ -38,6 +42,26 @@ class ValkeyServiceNotAliveError(Exception):
 
 class ValkeyConfigurationError(Exception):
     """Custom Exception if Valkey configuration fails to be set."""
+
+
+class SentinelFailoverError(Exception):
+    """Custom Exception if triggering sentinel failover fails."""
+
+
+class ValkeyServicesCouldNotBeStoppedError(Exception):
+    """Custom Exception if Valkey services could not be stopped."""
+
+
+class CannotSeeAllActiveSentinelsError(Exception):
+    """Custom Exception if the local sentinel cannot see all active sentinels in the cluster."""
+
+
+class SentinelIncorrectReplicaCountError(Exception):
+    """Custom Exception if the sentinel sees an incorrect number of replicas."""
+
+
+class RequestingLockTimedOutError(Exception):
+    """Custom Exception if requesting a lock times out."""
 
 
 class ValkeyCertificatesNotReadyError(Exception):

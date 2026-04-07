@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import json
 import logging
 import os
 import re
@@ -10,7 +11,7 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, NamedTuple
+from typing import List, Literal, NamedTuple
 
 import jubilant
 import yaml
@@ -34,6 +35,7 @@ from literals import (
     PEER_RELATION,
     TLS_PORT,
     CharmUsers,
+    Substrate,
 )
 
 logger = logging.getLogger(__name__)
@@ -133,7 +135,7 @@ def does_message_match(expected_status_message: str, status: StatusObject) -> bo
             )
         )
     except KeyError as e:
-        logger.error(f"Error attempting to convert StatusObject to ops.StatusBase: {e}")
+        logger.error("Error attempting to convert StatusObject to ops.StatusBase: %s", e)
         return False
 
 
@@ -367,19 +369,26 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
         juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
-async def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
     hostnames = get_cluster_hostnames(juju, app)
-    async with create_valkey_client([hostnames[0]], password=get_password(juju)) as client:
-        info = await client.custom_command(["client", "info"])
-    match = re.search(r"laddr=([\d\.]+):", info.decode())
-    if match:
-        return match.group(1)
-    raise RuntimeError("Primary IP not found in client info output")
+    replication_info = exec_valkey_cli(
+        hostnames[0],
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+        command="info replication",
+    ).stdout
+    # if master then we return the hostname
+    if "role:master" in replication_info:
+        return hostnames[0]
+    # extract ip
+    if not (match := re.search(r"master_host:([^\s]+)", replication_info)):
+        raise ValueError("Could not find master_host in replication info")
+    return match.group(1)
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
@@ -406,8 +415,11 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     total_bytes_target = target_gb * 1024 * 1024 * 1024
     total_keys = total_bytes_target // value_size_bytes
 
-    logger.debug(
-        f"Targeting ~{target_gb}GB ({total_keys:,} keys of {value_size_bytes} bytes each)"
+    logger.info(
+        "Targeting ~%sGB (%s keys of %s bytes each)",
+        target_gb,
+        total_keys,
+        value_size_bytes,
     )
 
     start_time = time.time()
@@ -432,15 +444,20 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
                 elapsed = time.time() - start_time
                 percent = (keys_added / total_keys) * 100
                 logger.info(
-                    f"Progress: {percent:.1f}% | Keys: {keys_added:,} | Elapsed: {elapsed:.1f}s",
+                    "Progress: %.1f%% | Keys: %s | Elapsed: %.1f s",
+                    percent,
+                    keys_added,
+                    elapsed,
                 )
 
         except Exception as e:
-            logger.error(f"\nError: {e}")
+            logger.error("Error: %s", e)
         finally:
             total_time = time.time() - start_time
             logger.info(
-                f"\nSeeding complete! Added {keys_added:,} keys in {total_time:.2f} seconds."
+                "Seeding complete! Added %s keys in %.2f seconds.",
+                keys_added,
+                total_time,
             )
 
 
@@ -453,9 +470,7 @@ def exec_valkey_cli(
     hostname: str, username: str, password: str, command: str
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = (
-        f"valkey-cli -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
-    )
+    command = f"valkey-cli --no-auth-warning -h {hostname} -p {CLIENT_PORT} --user {username} --pass {password} {command}"
     result = subprocess.run(
         command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
@@ -549,12 +564,12 @@ async def ping_cluster(
         return await client.ping() == "PONG".encode()
 
 
-async def get_number_connected_slaves(
+async def get_number_connected_replicas(
     hostnames: list[str],
     username: str,
     password: str,
 ) -> int:
-    """Get the number of connected slaves in the Valkey cluster.
+    """Get the number of connected replicas in the Valkey cluster.
 
     Args:
         hostnames: List of hostnames of the Valkey cluster nodes.
@@ -562,7 +577,7 @@ async def get_number_connected_slaves(
         password: The password for authentication.
 
     Returns:
-        The number of connected slaves.
+        The number of connected replicas.
     """
     async with create_valkey_client(
         hostnames=hostnames, username=username, password=password
@@ -570,7 +585,7 @@ async def get_number_connected_slaves(
         info = (await client.info([InfoSection.REPLICATION])).decode()
     search_result = re.search(r"connected_slaves:([\d+])", info)
     if not search_result:
-        raise ValueError("Could not parse number of connected slaves from info output")
+        raise ValueError("Could not parse number of connected replicas from info output")
     return int(search_result.group(1))
 
 
@@ -582,20 +597,23 @@ class WrongPassError(Exception):
     """Raised when authentication fails due to incorrect credentials."""
 
 
-async def auth_test(hostnames: list[str], username: str | None, password: str | None) -> bool:
+async def auth_test(
+    hostnames: list[str], username: str | None, password: str | None, tls_enabled: bool = False
+) -> bool:
     """Test authentication to the Valkey cluster by attempting to ping it.
 
     Args:
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
     try:
         async with create_valkey_client(
-            hostnames=hostnames, username=username, password=password
+            hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
         ) as client:
             return await client.ping() == "PONG".encode()
     except Exception as e:
@@ -606,3 +624,73 @@ async def auth_test(hostnames: list[str], username: str | None, password: str | 
             raise WrongPassError("Authentication failed: WRONGPASS error") from e
         else:
             raise e
+
+
+def remove_number_units(
+    juju: jubilant.Juju, app: str, num_units: int, substrate: Substrate
+) -> None:
+    """Remove a specified number of units from an application.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app: The name of the application from which to remove units
+        num_units: The number of units to remove
+        substrate: The substrate type ("k8s" or "vm")
+    """
+    match substrate:
+        case "k8s":
+            juju.remove_unit(app, num_units=num_units)
+        case "vm":
+            # get units names
+            unit_names = list(juju.status().get_units(app))
+            # remove units by name until num_units have been removed
+            juju.remove_unit(*unit_names[:num_units])
+
+
+def get_data_bag(
+    juju: jubilant.Juju,
+    app_name: str,
+    relation_name: str,
+    scope: Literal["app", "unit"] = "unit",
+) -> dict:
+    """Get the data bag for a given unit.
+
+    Args:
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app_name: The name of the application whose data bag to retrieve
+        relation_name: The name of the relation for which to retrieve the data bag
+        scope: Specify whether to get the data bag for the app or unit
+    =
+    Returns:
+        The data bag for the specified unit.
+    """
+    unit_name = next(iter(juju.status().get_units(app_name)))
+    unit_info = juju.cli("show-unit", unit_name, "--format", "json")
+    json_info = json.loads(unit_info)
+    relation = next(
+        rel for rel in json_info[unit_name]["relation-info"] if rel["endpoint"] == relation_name
+    )
+    if not relation:
+        raise ValueError(f"Relation {relation_name} not found for unit {unit_name}")
+    if scope == "app":
+        return relation["application-data"]
+    local_data = relation["local-unit"]["data"]
+    remote_data = (
+        {u_name: data["data"] for u_name, data in relation["related-units"].items()}
+        if relation.get("related-units")
+        else {}
+    )
+    return {unit_name: local_data} | remote_data
+
+
+def existing_app(juju: jubilant.Juju) -> str | None:
+    """Return the name of an existing valkey cluster.
+
+    Returns:
+        str | None: name of an application deployment for `valkey` if it exists, None otherwise.
+    """
+    for app_name, app_status in juju.status().apps.items():
+        if "valkey" == app_status.charm_name:
+            return app_name
+
+    return None

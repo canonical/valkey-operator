@@ -75,6 +75,25 @@ class StartStatuses(Enum):
     )
 
 
+class ScaleDownStatuses(Enum):
+    """Collection of possible statuses related to scale down operations."""
+
+    WAIT_FOR_LOCK = StatusObject(
+        status="maintenance",
+        message="Waiting for lock to scale down...",
+        running="async",
+    )
+    SCALING_DOWN = StatusObject(
+        status="maintenance",
+        message="Scaling down...",
+        running="async",
+    )
+    GOING_AWAY = StatusObject(
+        status="maintenance",
+        message="Waiting for juju to remove the unit...",
+    )
+
+
 class TLSStatuses(Enum):
     """Collection of TLS related statuses."""
 
@@ -82,4 +101,33 @@ class TLSStatuses(Enum):
     DISABLING_CLIENT_TLS = StatusObject(status="maintenance", message="Disabling client TLS...")
     DISABLING_CLIENT_TLS_FAILED = StatusObject(
         status="blocked", message="Failed to disable client TLS..."
+    )
+    CERTIFICATE_EXPIRING = StatusObject(
+        status="maintenance",
+        message="TLS certificates expiring soon. Please ensure new certificates are provided",
+        short_message="TLS certificates expiring soon",
+    )
+    CA_ROTATION_DETECTED = StatusObject(
+        status="maintenance", message="TLS CA rotation: new CA detected"
+    )
+    CA_ROTATION_CA_ADDED = StatusObject(
+        status="maintenance", message="TLS CA rotation: new CA certificate added"
+    )
+    CA_ROTATION_UPDATED = StatusObject(
+        status="maintenance", message="TLS CA rotation: certificates updated"
+    )
+    PRIVATE_KEY_BUT_NO_TLS = StatusObject(
+        status="blocked", message="Private Key provided, but client TLS not enabled"
+    )
+    PRIVATE_KEY_INVALID = StatusObject(
+        status="blocked",
+        message="The private key provided is not valid. Please provide a valid private key",
+    )
+    SANS_CONFIG_INVALID = StatusObject(
+        status="blocked",
+        message="Invalid value for config option 'certificate-extra-sans'",
+        short_message="Invalid value `certificate-extra-sans`",
+    )
+    CERTIFICATE_DENIED = StatusObject(
+        status="blocked", message="Certificate request was denied, check logs for details"
     )

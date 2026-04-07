@@ -2,9 +2,15 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+from pathlib import Path
+
+import yaml
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.utils import as_status
 from ops import testing
+
+METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
+APP_NAME = METADATA["name"]
 
 
 def status_is(state_out: testing.State, to_status: StatusObject, is_app: bool = False) -> bool:

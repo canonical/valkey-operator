@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
+    CertificateDeniedEvent,
     CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
 )
@@ -20,7 +21,14 @@ from common.exceptions import (
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import CLIENT_PORT, CLIENT_TLS_RELATION_NAME, PEER_RELATION, TLSState
+from literals import (
+    CLIENT_PORT,
+    CLIENT_TLS_RELATION_NAME,
+    PEER_RELATION,
+    TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    TLSCARotationState,
+    TLSState,
+)
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -51,7 +59,7 @@ class TLSEvents(ops.Object):
                     sans_dns=self.charm.tls_manager.build_sans_dns(),
                 ),
             ],
-            private_key=None,
+            private_key=self.charm.tls_manager.get_client_tls_private_key(),
             refresh_events=[self.refresh_tls_certificates_event],
         )
 
@@ -66,8 +74,17 @@ class TLSEvents(ops.Object):
             self.client_certificate.on.certificate_available, self._on_certificate_available
         )
         self.framework.observe(
+            self.client_certificate.on.certificate_denied, self._on_certificate_denied
+        )
+        self.framework.observe(
             self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
         )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+        )
+        self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
+        self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
@@ -89,11 +106,50 @@ class TLSEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to create certificate for peer-TLS, startup will fail: %s", e)
 
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Handle TLS related changes to the peer relation."""
+        if self.charm.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
+            try:
+                self._orchestrate_ca_rotation()
+            except ValkeyCertificatesNotReadyError:
+                logger.debug("Not all units ready")
+            except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
+                logger.error("Failed to reload TLS certificates")
+                event.defer()
+            finally:
+                return
+
+        if not self.charm.tls_manager.will_certificate_expire():
+            return
+
+        if self.charm.state.client_tls_relation:
+            return
+
+        logger.info("Renewing certificate for internal peer-TLS because it expires soon")
+        if self.charm.unit.is_leader():
+            # this triggers relation-changed event on all other units
+            self.charm.tls_manager.generate_ca_certificate()
+
+        try:
+            # internal certs: new cert always means a CA rotation because of same expiration
+            self.charm.tls_manager.start_ca_rotation_if_required()
+            self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
+            self.charm.tls_manager.create_and_store_self_signed_certificate()
+            self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
+            self._orchestrate_ca_rotation()
+        except ValkeyCertificatesNotReadyError:
+            logger.debug("Not all units ready")
+            return
+        except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError, ValkeyWorkloadCommandError):
+            logger.error("Failed to reload TLS certificates")
+            event.defer()
+            return
+
     def _on_tls_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Handle the `relation-created` event."""
         self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
-    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:
+    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:  # noqa: C901
         """Handle the `certificate-available` event from TLS provider."""
         cert = event.certificate
         client_certificates, client_private_key = (
@@ -114,6 +170,8 @@ class TLSEvents(ops.Object):
 
         logger.info("Storing client certificate")
         try:
+            if rotate_ca := self.charm.tls_manager.start_ca_rotation_if_required(cert):
+                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
             self.charm.tls_manager.write_certificate(cert, private_key)
             self.charm.tls_manager.set_cert_state(is_ready=True)
         except ValkeyWorkloadCommandError as e:
@@ -121,28 +179,65 @@ class TLSEvents(ops.Object):
             event.defer()
             return
 
-        if tls_state == TLSState.TO_TLS:
+        if tls_state == TLSState.TLS:
+            logger.info("Refreshing TLS certificates in Valkey")
             try:
-                self._enable_client_tls()
-                self.charm.tls_manager.set_tls_state(TLSState.TLS)
-                self.charm.unit.close_port("tcp", CLIENT_PORT)
-            except (
-                ValkeyWorkloadCommandError,
-                ValkeyServicesFailedToStartError,
-                ValkeyTLSLoadError,
-                ValueError,
-            ):
-                logger.error("Failed to enable client TLS")
-                event.defer()
-                return
+                if rotate_ca:
+                    self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
+                    self._orchestrate_ca_rotation()
+                    return
+
+                tls_config = self.charm.config_manager.generate_tls_config()
+                self.charm.cluster_manager.reload_tls_settings(tls_config)
+                self.charm.sentinel_manager.restart_service()
             except ValkeyCertificatesNotReadyError:
-                logger.warning("Not all units have stored the client certificate")
+                logger.debug("Not all units ready")
+            except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
+                logger.error("Failed to reload TLS certificates")
                 event.defer()
+            finally:
                 return
+
+        try:
+            self._enable_client_tls()
+            self.charm.tls_manager.set_tls_state(TLSState.TLS)
+            self.charm.unit.close_port("tcp", CLIENT_PORT)
+        except (
+            ValkeyWorkloadCommandError,
+            ValkeyServicesFailedToStartError,
+            ValkeyTLSLoadError,
+            ValueError,
+        ):
+            logger.error("Failed to enable client TLS")
+            event.defer()
+            return
+        except ValkeyCertificatesNotReadyError:
+            logger.warning("Not all units have stored the client certificate")
+            event.defer()
+            return
+
+    def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
+        """Handle the `certificate-denied` event from TLS provider."""
+        if event.certificate_signing_request in [
+            csr.certificate_signing_request
+            for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
+        ]:
+            logger.error("Certificate request was denied: %s", event.error.message)
+            return
+
+        logger.warning(
+            "Certificate denied event received for unknown signing request: %s",
+            event.certificate_signing_request,
+        )
 
     def _on_tls_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the `relation-broken` event."""
-        if self.charm.app.planned_units() == 0:
+        if self.charm.app.planned_units() == 0 or self.charm.state.unit_server.is_being_removed:
+            return
+
+        if not self.charm.state.unit_server.model.client_cert_ready:
+            logger.info("Client TLS relation removed, no certificate was stored yet")
+            self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             return
 
         if not self.charm.state.cluster.internal_ca_certificate:
@@ -153,15 +248,17 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-        if self.charm.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]:
+        if self.charm.state.unit_server.is_tls_enabled:
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
                 primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+                self.charm.config_manager.set_sentinel_config_properties(
+                    primary_endpoint=primary_ip
+                )
                 self.charm.sentinel_manager.restart_service()
             except (
                 ValkeyWorkloadCommandError,
@@ -195,6 +292,62 @@ class TLSEvents(ops.Object):
             event.defer()
             return
 
+    def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
+        """Handle TLS related parts of update_status event."""
+        if not self.charm.tls_manager.will_certificate_expire():
+            return
+
+        if self.charm.state.client_tls_relation:
+            return
+
+        if self.charm.unit.is_leader():
+            # need to renew CA first (same validity), this triggers relation-changed event
+            self.charm.tls_manager.generate_ca_certificate()
+
+        if len(self.charm.state.servers) == 1:
+            logger.debug("Trigger peer relation change to orchestrate certificate/CA rotation")
+            self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
+
+    def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
+        """Handle TLS related secret changes."""
+        if not (secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)):
+            return
+
+        if secret_id != event.secret.id:
+            return
+
+        if not (private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id)):
+            logger.error("Invalid private key provided, cannot update TLS certificates.")
+            return
+
+        if self.charm.unit.is_leader():
+            self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
+
+        if self.charm.state.client_tls_relation:
+            self.refresh_tls_certificates_event.emit()
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle TLS related config changes."""
+        if not self.charm.tls_manager.extra_sans_config_is_valid():
+            logger.warning("Invalid configuration for 'certificate-extra-sans'")
+            return
+
+        if secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
+            if private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id):
+                if self.charm.unit.is_leader():
+                    self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
+                # refresh event will be ignored by the tls lib if the csr is unchanged
+                self.refresh_tls_certificates_event.emit()
+            else:
+                logger.error("Invalid private key provided, cannot update TLS certificates.")
+
+        if (
+            self.charm.state.client_tls_relation
+            and self.charm.tls_manager.certificate_sans_require_update()
+        ):
+            logger.info("Configuration change for TLS, refresh TLS certificates")
+            self.refresh_tls_certificates_event.emit()
+
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""
         if not all(server.model.client_cert_ready for server in self.charm.state.servers):
@@ -206,8 +359,53 @@ class TLSEvents(ops.Object):
 
         logger.info("Enabling client TLS in Valkey")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.config_manager.set_config_properties(primary_ip=primary_ip)
-        self.charm.config_manager.set_sentinel_config_properties(primary_ip=primary_ip)
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
         self.charm.sentinel_manager.restart_service()
+
+    def _orchestrate_ca_rotation(self) -> None:
+        """Orchestrate the workflow when a TLS CA rotation has been initiated."""
+        match self.charm.state.unit_server.tls_ca_rotation_state:
+            case TLSCARotationState.NEW_CA_DETECTED:
+                if self.charm.state.client_tls_relation:
+                    # new client TLS CA is stored in certificate_available event
+                    return
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
+            case TLSCARotationState.NEW_CA_ADDED:
+                if not all(
+                    server.tls_ca_rotation_state
+                    in [TLSCARotationState.NEW_CA_ADDED, TLSCARotationState.CA_UPDATED]
+                    for server in self.charm.state.servers
+                ):
+                    raise ValkeyCertificatesNotReadyError
+
+                logger.info("Reload TLS certificates after all units have added the new CA")
+                tls_config = self.charm.config_manager.generate_tls_config()
+                self.charm.cluster_manager.reload_tls_settings(tls_config)
+                self.charm.sentinel_manager.restart_service()
+                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
+
+                if len(self.charm.state.servers) == 1:
+                    self.charm.on[PEER_RELATION].relation_changed.emit(
+                        self.charm.state.peer_relation
+                    )
+            case TLSCARotationState.CA_UPDATED:
+                if not all(
+                    server.model.tls_ca_rotation
+                    in [TLSCARotationState.CA_UPDATED, TLSCARotationState.NO_ROTATION]
+                    for server in self.charm.state.servers
+                ):
+                    raise ValkeyCertificatesNotReadyError
+
+                logger.info("Remove old CA after all units have updated the TLS certificate")
+                self.charm.workload.tls_paths.client_ca.with_name("old_client_ca.pem").unlink(
+                    missing_ok=True
+                )
+                self.charm.tls_manager.rehash_ca_certificates()
+                tls_config = self.charm.config_manager.generate_tls_config()
+                self.charm.cluster_manager.reload_tls_settings(tls_config)
+                self.charm.sentinel_manager.restart_service()
+                self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)

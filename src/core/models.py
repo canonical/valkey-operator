@@ -13,6 +13,7 @@ from charmlibs.interfaces.tls_certificates import (
     PrivateKey,
 )
 from charms.data_platform_libs.v1.data_interfaces import (
+    ExtraSecretStr,
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
@@ -26,7 +27,10 @@ from literals import (
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
+    ScaleDownState,
     StartState,
+    Substrate,
+    TLSCARotationState,
     TLSState,
 )
 
@@ -49,9 +53,10 @@ class PeerAppModel(PeerModel):
     charmed_stats_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_peers_password: InternalUsersSecret = Field(default="")
     charmed_sentinel_operator_password: InternalUsersSecret = Field(default="")
-    starting_member: str = Field(default="")
+    start_member: str = Field(default="")
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
+    tls_client_private_key: ExtraSecretStr = Field(default=None)
 
 
 class PeerUnitModel(PeerModel):
@@ -62,8 +67,11 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     request_start_lock: bool = Field(default=False)
+    scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
+    tls_ca_rotation: str = Field(default="")
+    tls_certificate_expiring: bool = Field(default=False)
 
 
 class RelationState:
@@ -80,31 +88,34 @@ class RelationState:
         self.relation = relation
         self.data_interface = data_interface
         self.component = component
+        self.model = self.data_interface.build_model(self.relation.id) if self.relation else None
 
     def update(self, items: dict[str, Any]) -> None:
         """Write to relation data."""
         if not self.relation:
             logger.warning(
-                f"Fields {list(items.keys())} were attempted to be written on the relation before it exists."
+                "Fields %s were attempted to be written on the relation before it exists.",
+                list(items.keys()),
             )
             return
 
         delete_fields = [key for key in items if not items[key]]
         update_content = {k: items[k] for k in items if k not in delete_fields}
 
-        model = self.data_interface.build_model(self.relation.id)
         for field, value in update_content.items():
-            setattr(model, field.replace("-", "_"), value)
+            setattr(self.model, field.replace("-", "_"), value)
 
         for field in delete_fields:
-            setattr(model, field.replace("-", "_"), None)
+            setattr(self.model, field.replace("-", "_"), None)
 
-        self.data_interface.write_model(self.relation.id, model)
+        self.data_interface.write_model(self.relation.id, self.model)
 
 
 @final
 class ValkeyServer(RelationState):
     """State/Relation data collection for a unit."""
+
+    model: PeerUnitModel
 
     def __init__(
         self,
@@ -116,11 +127,6 @@ class ValkeyServer(RelationState):
         super().__init__(relation, data_interface, component)
         self.data_interface = data_interface
         self.unit = component
-
-    @property
-    def model(self) -> PeerUnitModel | None:
-        """The peer relation model for this unit."""
-        return self.data_interface.build_model(self.relation.id) if self.relation else None
 
     @property
     def unit_id(self) -> int:
@@ -138,6 +144,18 @@ class ValkeyServer(RelationState):
         return self.model.start_state == StartState.STARTED.value if self.model else False
 
     @property
+    def is_being_removed(self) -> bool:
+        """Check if the unit is being removed from the cluster."""
+        return (
+            self.model.scale_down_state == ScaleDownState.GOING_AWAY.value if self.model else False
+        )
+
+    @property
+    def is_active(self) -> bool:
+        """Check if the unit is started and not being removed."""
+        return self.is_started and not self.is_being_removed
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -152,10 +170,35 @@ class ValkeyServer(RelationState):
 
         return TLSState(self.model.tls_client_state or TLSState.NO_TLS.value)
 
+    @property
+    def is_tls_enabled(self) -> bool:
+        """Check if TLS is enabled for client connections."""
+        return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
+
+    def get_endpoint(self, substrate: Substrate) -> str:
+        """Return the endpoint to be used by other units to connect to this unit.
+
+        On VM-based substrates, this should be the private IP address.
+        On Kubernetes, this should be the hostname of the unit.
+        """
+        return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
+
+    @property
+    def tls_ca_rotation_state(self) -> TLSCARotationState:
+        """Check if a TLS CA rotation is in progress."""
+        if not self.model:
+            return TLSCARotationState.NO_ROTATION
+
+        return TLSCARotationState(
+            self.model.tls_ca_rotation or TLSCARotationState.NO_ROTATION.value
+        )
+
 
 @final
 class ValkeyCluster(RelationState):
     """State/Relation data collection for the Valkey application."""
+
+    model: PeerAppModel
 
     def __init__(
         self,
@@ -166,11 +209,6 @@ class ValkeyCluster(RelationState):
         super().__init__(relation, data_interface, component)
         self.app = component
         self.data_interface = data_interface
-
-    @property
-    def model(self) -> PeerAppModel | None:
-        """The peer relation model for this application."""
-        return self.data_interface.build_model(self.relation.id) if self.relation else None
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:
@@ -199,3 +237,11 @@ class ValkeyCluster(RelationState):
             return None
 
         return PrivateKey.from_string(self.model.internal_ca_private_key)
+
+    @property
+    def tls_client_private_key(self) -> PrivateKey | None:
+        """Retrieve the private key for client TLS."""
+        if self.model and (private_key := self.model.tls_client_private_key):
+            return PrivateKey(raw=private_key)
+
+        return None
