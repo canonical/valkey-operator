@@ -1,0 +1,7 @@
+summary: test_certificate_options.py
+environment:
+  TEST_MODULE: test_certificate_options.py
+execute: |
+  tox run -e integration -- "tests/integration/tls/$TEST_MODULE" --substrate k8s --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results

@@ -1170,6 +1170,21 @@ files = [
 typing-extensions = ">=4.12.0"
 
 [[package]]
+name = "validators"
+version = "0.35.0"
+description = "Python Data Validation for Humans™"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "validators-0.35.0-py3-none-any.whl", hash = "sha256:e8c947097eae7892cb3d26868d637f79f47b4a0554bc6b80065dfe5aac3705dd"},
+    {file = "validators-0.35.0.tar.gz", hash = "sha256:992d6c48a4e77c81f1b4daba10d16c3a9bb0dbb79b3a19ea847ff0928e70497a"},
+]
+
+[package.extras]
+crypto-eth-addresses = ["eth-hash[pycryptodome] (>=0.7.0)"]
+
+[[package]]
 name = "valkey-glide"
 version = "0.0.0"
 description = "Valkey GLIDE Async client. Supports Valkey and Redis OSS."
@@ -1231,4 +1246,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "9085ffa9d77cbcb0ab1d8858dfdae18db329647e3036be7792c3abb94403dc95"
+content-hash = "007a58cbdc969e285b4607c8dd4650fc877ae8c4b154565909eb5debdbb209c9"
