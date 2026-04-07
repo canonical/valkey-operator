@@ -135,3 +135,11 @@ class TLSStatuses(Enum):
         status="blocked",
         message="The private key provided is not valid. Please provide a valid private key",
     )
+    SANS_CONFIG_INVALID = StatusObject(
+        status="blocked",
+        message="Invalid value for config option 'certificate-extra-sans'",
+        short_message="Invalid value `certificate-extra-sans`",
+    )
+    CERTIFICATE_DENIED = StatusObject(
+        status="blocked", message="Certificate request was denied, check logs for details"
+    )
