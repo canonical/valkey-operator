@@ -1,6 +1,6 @@
-summary: test_certificate_rotation.py
+summary: test_private_key.py
 environment:
-  TEST_MODULE: test_certificate_rotation.py
+  TEST_MODULE: test_private_key.py
 systems:
   - self-hosted-linux-amd64-noble-medium
 execute: |

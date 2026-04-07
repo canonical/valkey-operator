@@ -4,8 +4,12 @@
 
 """Manager for handling TLS-related operations."""
 
+import base64
+import binascii
 import logging
+import re
 from datetime import timedelta
+from ipaddress import ip_address
 
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
@@ -17,11 +21,13 @@ from charmlibs.interfaces.tls_certificates import (
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from ops import ModelError, SecretNotFoundError
+from validators import ValidationError, hostname
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import TLSCARotationState, TLSState
+from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, TLSCARotationState, TLSState
 from statuses import CharmStatuses, TLSStatuses
 
 logger = logging.getLogger(__name__)
@@ -94,6 +100,12 @@ class TLSManager(ManagerStatusProtocol):
         if not self.state.peer_relation:
             return frozenset(sans_ip)
 
+        if self.extra_sans_config_is_valid() and (
+            extra_sans_config := self.state.config.get("certificate-extra-sans")
+        ):
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
+
         sans_ip.add(self.state.bind_address)
 
         if ingress_ip := self.state.ingress_address:
@@ -113,9 +125,73 @@ class TLSManager(ManagerStatusProtocol):
         if not self.state.peer_relation:
             return frozenset(sans_dns)
 
+        if self.extra_sans_config_is_valid() and (
+            extra_sans_config := self.state.config.get("certificate-extra-sans")
+        ):
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            sans_dns = {
+                san.replace("{unit}", str(self.state.unit_server.unit_id))
+                for san in extra_sans
+                if not self._is_ip_address(san)
+            }
+
         sans_dns.add(self.state.unit_server.model.hostname)
 
         return frozenset(sans_dns)
+
+    def read_and_validate_private_key(self, private_key_secret_id: str) -> PrivateKey | None:
+        """Read and validate a private key provided via Juju secret.
+
+        Args:
+            private_key_secret_id (str): The Juju secret ID for the secret
+                that stores the private key.
+
+        Returns:
+            PrivateKey: The private key.
+        """
+        try:
+            secret_content = self.state.get_secret_from_id(private_key_secret_id).get(
+                "private-key"
+            )
+        except (ModelError, SecretNotFoundError) as e:
+            logger.error(e)
+            return None
+
+        if secret_content is None:
+            logger.error(f"Secret {private_key_secret_id} does not contain a private key.")
+            return None
+
+        try:
+            private_key = (
+                secret_content
+                if re.match(r"(-+(BEGIN|END) [A-Z ]+-+)", secret_content)
+                else base64.b64decode(secret_content).decode("utf-8").strip()
+            )
+        except (UnicodeDecodeError, binascii.Error) as e:
+            logger.error(e)
+            return None
+        try:
+            private_key = PrivateKey(raw=private_key)
+        except ValueError as e:
+            logger.error(e)
+            return None
+        if not private_key.is_valid():
+            logger.error("Invalid private key format.")
+            return None
+
+        return private_key
+
+    def get_client_tls_private_key(self) -> PrivateKey | None:
+        """Get the private key provided by users, if available."""
+        if secret_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
+            if private_key := self.read_and_validate_private_key(secret_id):
+                return private_key
+
+            # in case the configured secret is invalid
+            return self.state.cluster.tls_client_private_key
+
+        # in case no user supplied private key configured
+        return None
 
     def _generate_private_key(self) -> PrivateKey:
         """Generate a private key for use in peer TLS."""
@@ -246,13 +322,107 @@ class TLSManager(ManagerStatusProtocol):
         )
         return True
 
-    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
+    def extra_sans_config_is_valid(self) -> bool:
+        """Validate configuration value for certificate-extra-sans option.
+
+        Returns:
+            bool: True if config value is valid, False if invalid.
+        """
+        if not (extra_sans_config := self.state.config.get("certificate-extra-sans")):
+            return True
+
+        extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+
+        for san in extra_sans:
+            if not self._is_ip_address(san) and not self._is_hostname(
+                san.replace("{unit}", str(self.state.unit_server.unit_id))
+            ):
+                logger.error(f"certificate-extra-sans configuration is invalid for {san}")
+                return False
+
+        return True
+
+    def _is_ip_address(self, input_value: str) -> bool:
+        """Validate a given str and return True if it is an IP address, False if not."""
+        try:
+            ip_address(input_value)
+            return True
+        except ValueError:
+            return False
+
+    def _is_hostname(self, input_value: str) -> bool:
+        """Validate a given str and return True if it is a hostname, False if not."""
+        try:
+            # Hostname string may only be hyphens and alpha-numerals.
+            return hostname(
+                input_value,
+                skip_ipv4_addr=True,
+                skip_ipv6_addr=True,
+                may_have_port=False,
+                maybe_simple=True,
+            )
+        except ValidationError:
+            return False
+
+    def get_current_sans(self) -> dict[str, set[str]]:
+        """Get the current SANs for a unit's cert."""
+        cert_file = self.workload.tls_paths.client_cert
+
+        sans_ip = set()
+        sans_dns = set()
+        if not (
+            san_lines := self.workload.exec(
+                [
+                    "openssl",
+                    "x509",
+                    "-ext",
+                    "subjectAltName",
+                    "-noout",
+                    "-in",
+                    cert_file.as_posix(),
+                ]
+            )[0].splitlines()
+        ):
+            return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+        for line in san_lines:
+            for sans in line.split(", "):
+                san_type, san_value = sans.split(":")
+
+                if san_type.strip() == "DNS":
+                    sans_dns.add(san_value)
+                if san_type.strip() == "IP Address":
+                    sans_ip.add(san_value)
+
+        return {"sans_ip": sans_ip, "sans_dns": sans_dns}
+
+    def certificate_sans_require_update(self) -> bool:
+        """Check current certificate sans and determine if certificate requires update.
+
+        Returns:
+            bool: True if certificate sans have changed, False if they are still the same.
+        """
+        current_sans = self.get_current_sans()
+        new_sans_ip = self.build_sans_ip()
+        new_sans_dns = self.build_sans_dns()
+
+        if new_sans_ip ^ current_sans["sans_ip"] or new_sans_dns ^ current_sans["sans_dns"]:
+            return True
+
+        return False
+
+    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
 
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+        if (relation := self.state.client_tls_relation) and relation.data[relation.app].get(
+            "request_errors"
+        ):
+            status_list.append(TLSStatuses.CERTIFICATE_DENIED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)
@@ -263,6 +433,14 @@ class TLSManager(ManagerStatusProtocol):
             and not self.state.client_tls_relation
         ):
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS_FAILED.value)
+
+        if self.state.cluster.tls_client_private_key and not self.state.client_tls_relation:
+            status_list.append(TLSStatuses.PRIVATE_KEY_BUT_NO_TLS.value)
+
+        if (
+            private_key_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)
+        ) and self.read_and_validate_private_key(str(private_key_id)) is None:
+            status_list.append(TLSStatuses.PRIVATE_KEY_INVALID.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)
@@ -277,5 +455,8 @@ class TLSManager(ManagerStatusProtocol):
 
         if self.state.unit_server.model.tls_certificate_expiring:
             status_list.append(TLSStatuses.CERTIFICATE_EXPIRING.value)
+
+        if not self.extra_sans_config_is_valid():
+            status_list.append(TLSStatuses.SANS_CONFIG_INVALID.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
