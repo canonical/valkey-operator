@@ -130,13 +130,13 @@ class TLSManager(ManagerStatusProtocol):
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
             extra_sans = [san.strip() for san in extra_sans_config.split(",")]
-            sans_dns = {
+            sans_dns |= {
                 san.replace("{unit}", str(self.state.unit_server.unit_id))
                 for san in extra_sans
                 if not self._is_ip_address(san)
             }
 
-        sans_dns.add(self.state.unit_server.model.hostname)
+        sans_dns.add(self.state.hostname)
 
         return frozenset(sans_dns)
 
