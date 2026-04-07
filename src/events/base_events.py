@@ -230,7 +230,11 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
-        self._reconfigure_quorum_if_necessary()
+        try:
+            self._reconfigure_quorum_if_necessary()
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to update sentinel quorum: {e}")
+            # not critical to defer here, we can wait for the next relation change
 
         if not self.charm.unit.is_leader():
             return
@@ -240,7 +244,11 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
-        self._reconfigure_quorum_if_necessary()
+        try:
+            self._reconfigure_quorum_if_necessary()
+        except ValkeyWorkloadCommandError as e:
+            logger.error(f"Failed to update sentinel quorum: {e}")
+            # not critical to defer here, we can wait for the next relation change
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
@@ -546,11 +554,7 @@ class BaseEvents(ops.Object):
 
         if self.charm.sentinel_manager.get_configured_quorum() != self.charm.config_manager.quorum:
             logger.debug("Updating sentinel quorum to match current cluster size")
-            try:
-                self.charm.sentinel_manager.set_quorum(self.charm.config_manager.quorum)
-                self.charm.config_manager.set_sentinel_config_properties(
-                    self.charm.sentinel_manager.get_primary_ip()
-                )
-            except ValkeyWorkloadCommandError as e:
-                logger.error(f"Failed to update sentinel quorum: {e}")
-                # not critical to defer here, we can wait for the next relation change or config change to try again
+            self.charm.sentinel_manager.set_quorum(self.charm.config_manager.quorum)
+            self.charm.config_manager.set_sentinel_config_properties(
+                self.charm.sentinel_manager.get_primary_ip()
+            )
