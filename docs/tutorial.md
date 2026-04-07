@@ -162,6 +162,19 @@ Run the command below to connect to your Charmed Valkey database, using the host
 valkey-cli -h 10.1.44.126 -p 6379
 ```
 
+In Kubernetes environments, it is also possible to connect to the database using the DNS name
+of the unit. For that, connect into the unit:
+
+```shell
+juju ssh --container valkey valkey/0
+```
+
+Use the DNS endpoint to access Valkey from within the unit:
+
+```shell
+valkey-cli -h valkey-0.valkey-endpoints -p 6379
+```
+
 Run the following command to log in, using the previously retrieved credentials:
 
 ```text
