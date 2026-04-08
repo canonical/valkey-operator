@@ -110,18 +110,27 @@ valkey-cli -h 10.1.44.126 -p 6380 --tls --cert client.pem --key client.key --cac
 ```
 
 You should see an authentication error as result since the connection was established,
-but no credentials provided. After authentication with username and password, you can
-interact with the database:
+but no credentials provided:
 
-```{terminal}
-:output-only:
-10.1.44.126:6380> ping
+```text
 (error) NOAUTH Authentication required.
+```
 
+Authenticate with username and password to log in:
+
+```text
 10.1.44.126:6380> AUTH charmed-operator <PASSWORD>
-OK
+```
 
+Now you can interact with the database:
+
+```text
 10.1.44.126:6380> ping
+```
+
+You should receive a response like this from Valkey:
+
+```text
 PONG
 ```
 
@@ -234,9 +243,7 @@ valkey-cli -h 10.1.44.126 -p 6379
 You should see an authentication error as the result since the network connection was established,
 but no credentials provided:
 
-```{terminal}
-:output-only:
-10.1.44.126:6379> ping
+```text
 (error) NOAUTH Authentication required.
 ```
 

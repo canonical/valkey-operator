@@ -205,15 +205,13 @@ valkey-cli -h valkey-0.valkey-endpoints -p 6379
 
 Run the following command to log in, using the previously retrieved credentials:
 
-```{terminal}
-:output-only:
+```shell
 10.1.44.126:6379> AUTH charmed-operator <your-password-here>
 ```
 
 Now perform a basic health check with this command:
 
-```{terminal}
-:output-only:
+```shell
 10.1.44.126:6379> ping
 ```
 
@@ -226,17 +224,13 @@ PONG
 Now it is possible to perform Valkey commands on the database. To set a key `mykey`
 to the value `HelloWorld`:
 
-```{terminal}
-:output-only:
-
+```shell
 10.1.44.126:6379> set mykey "HelloWorld"
 ```
 
 In order to retrieve the key you just set, run the following command:
 
-```{terminal}
-:output-only:
-
+```shell
 10.1.44.126:6379> get mykey
 ```
 
