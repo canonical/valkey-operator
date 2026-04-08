@@ -9,6 +9,7 @@ import logging
 import socket
 
 import ops
+from charmlibs.interfaces.certificate_transfer import CertificateTransferProvides
 from charmlibs.interfaces.tls_certificates import (
     CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
@@ -25,10 +26,9 @@ from dpcharmlibs.interfaces import (
     ValkeyResponseModel,
     build_model,
 )
+from ops import RelationJoinedEvent
 
 logger = logging.getLogger(__name__)
-
-SERVICE_NAME = "some-service"  # Name of Pebble service that runs in the workload container.
 
 
 class RequirerCharm(ops.CharmBase):
@@ -53,6 +53,7 @@ class RequirerCharm(ops.CharmBase):
                 )
             ],
         )
+        self.certificate_transfer = CertificateTransferProvides(self, "certificate-transfer")
 
         if self.data_interfaces_version == 1:
             self.valkey_interface = ResourceRequirerEventHandler(
@@ -83,6 +84,7 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(self.on.get_action, self._on_get_action)
         framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
+        framework.observe(self.on.certificate_transfer.relation_joined)
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
@@ -290,6 +292,16 @@ class RequirerCharm(ops.CharmBase):
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
         logger.info("Database created")
+
+    def _on_certificate_transfer_relation_joined(self, event: RelationJoinedEvent) -> None:
+        """Handle the relation joined event for the certificate-transfer relation."""
+        certificates, _ = self.certificates.get_assigned_certificates()
+
+        if not certificates:
+            logger.error("No TLS provider available")
+            return
+
+        self.certificate_transfer.add_certificates(set(certificates[0].ca.raw))
 
 
 if __name__ == "__main__":  # pragma: nocover

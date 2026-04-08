@@ -3,6 +3,11 @@ title: Requirer client relation charm
 description: |
   Requirer client relation charm to test valkey_client
 summary: Requirer client relation charm to test valkey_client
+provides:
+  certificate-transfer:
+    interface: certificate_transfer
+    limit: 1
+    optional: true
 requires:
   valkey-client:
     interface: valkey_client

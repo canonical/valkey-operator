@@ -22,6 +22,8 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 REQUIRER_V1_NAME = "req-v1"
 REQUIRER_V0_NAME = "req-v0"
+REQUIRER_V1_TLS_PROVIDER = "ssc-req-v1"
+REQUIRER_V0_TLS_PROVIDER = "ssc-req-v0"
 
 
 @pytest.fixture
@@ -51,6 +53,8 @@ def test_build_and_deploy(
         config={"data-interfaces-version": "1"},
     )
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
+    juju.deploy(REQUIRER_V1_TLS_PROVIDER, channel=TLS_CHANNEL)
+    juju.deploy(REQUIRER_V0_TLS_PROVIDER, channel=TLS_CHANNEL)
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
@@ -163,6 +167,95 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
+    )
+
+    logger.info("Ensure TLS access for v0 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    username = get_credentials_action.results["usernames"]
+
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Ensure TLS access for v1 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    usernames = get_credentials_action.results["usernames"]
+    user_restricted_keyspace, user_global_keyspace = usernames.split(",")
+
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={
+            "key": f"requirer-charm:{TEST_KEY}",
+            "value": TEST_VALUE,
+            "user": user_restricted_keyspace,
+        },
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": TEST_KEY, "value": TEST_VALUE, "user": user_global_keyspace},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": TEST_KEY, "user": user_global_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+
+def test_certificate_transfer(juju: jubilant.Juju) -> None:
+    """Relate Requirer charms to separate TLS providers and ensure functionality."""
+    logger.info("Switch Requirer charms to other TLS providers")
+    juju.remove_relation(f"{REQUIRER_V0_NAME}:certificates", TLS_NAME)
+    juju.remove_relation(f"{REQUIRER_V1_NAME}:certificates", TLS_NAME)
+
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+    juju.integrate(f"{REQUIRER_V1_NAME}:certificates", REQUIRER_V1_TLS_PROVIDER)
+    juju.integrate(f"{REQUIRER_V0_NAME}:certificates", REQUIRER_V0_TLS_PROVIDER)
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    logger.info("Enable certificate transfer to Valkey")
+    juju.integrate(f"{REQUIRER_V1_NAME}:certificate-transfer", f"{APP_NAME}:certificate-transfer")
+    juju.integrate(f"{REQUIRER_V0_NAME}:certificate-transfer", f"{APP_NAME}:certificate-transfer")
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
     )
 
     logger.info("Ensure TLS access for v0 client")
