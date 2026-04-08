@@ -153,9 +153,7 @@ async def test_network_cut_primary(  # noqa: C901
             logger.info("Waiting for new primary to be elected...")
 
     assert new_primary_ip and new_primary_ip != primary_ip, (
-        "Primary IP did not change after cutting network to the primary unit. %s vs old primary IP: %s",
-        new_primary_ip,
-        primary_ip,
+        f"Primary IP did not change after cutting network to the primary unit. {new_primary_ip} vs old primary IP: {primary_ip}"
     )
     logger.info(
         "New primary IP after network cut: %s vs old primary IP: %s",
