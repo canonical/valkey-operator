@@ -523,6 +523,7 @@ def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
         username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
         password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
         command="SENTINEL primary primary",
+        sentinel=True,
         json=True,
     )
     return int(json.loads(result.stdout)["quorum"])
