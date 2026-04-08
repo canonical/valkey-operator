@@ -1258,7 +1258,7 @@ def test_set_extra_sans_config_option_no_update(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    current_sans_value = "X509v3 Subject Alternative Name: \n    DNS:myhostname, DNS:valkey0, DNS:valkey-0.valkey-endpoints"
+    current_sans_value = "X509v3 Subject Alternative Name: \n    DNS:myhostname, DNS:valkey0, DNS:valkey-0.valkey-endpoints, IP Address:192.168.1.100"
     with (
         patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
         patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
