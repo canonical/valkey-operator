@@ -83,12 +83,16 @@ valkey-cli -h 10.1.44.126 -p 6379
 Authenticate with the username and password you just configured:
 
 ```{terminal}
+:output-only:
+
 10.1.44.126:6379> AUTH charmed-operator <NEW_PASSWORD>
 ```
 
 Check the current health of the server with this command:
 
 ```{terminal}
+:output-only:
+
 10.1.44.126:6379> ping
 ```
 
@@ -111,6 +115,8 @@ the old password to access Valkey. Instead, you will receive an error similar to
 Instead, use your updated password to authenticate:
 
 ```{terminal}
+:output-only:
+
 10.1.44.126:6379> AUTH charmed-operator moresecurepassword
 ```
 

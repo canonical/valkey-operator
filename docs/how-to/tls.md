@@ -27,11 +27,16 @@ charm as an example for all cases.
 Check the [Security with X.509 certificates](https://charmhub.io/topics/security-with-x-509-certificates) page for an overview of all the TLS certificates charms available. 
 ```
 
-Deploy the `self-signed-certificates` charm. Charmed Valkey uses `v4` of the
-[{spellexception}`tls-certificates` library](https://charmhub.io/tls-certificates-interface/libraries/tls_certificates).
+Deploy the `self-signed-certificates` charm:
 
 ```shell
 juju deploy self-signed-certificates
+```
+
+```{warning}
+Charmed Valkey uses `v4` of the
+[{spellexception}`tls-certificates` library](https://charmhub.io/tls-certificates-interface/libraries/tls_certificates).
+Earlier versions of the library are not supported.
 ```
 
 Wait until `self-signed-certificates` is `active` by monitoring it with `juju status`.
@@ -109,6 +114,7 @@ but no credentials provided. After authentication with username and password, yo
 interact with the database:
 
 ```{terminal}
+:output-only:
 10.1.44.126:6380> ping
 (error) NOAUTH Authentication required.
 
@@ -229,6 +235,7 @@ You should see an authentication error as the result since the network connectio
 but no credentials provided:
 
 ```{terminal}
+:output-only:
 10.1.44.126:6379> ping
 (error) NOAUTH Authentication required.
 ```

@@ -12,6 +12,15 @@ first time, it will be most beneficial if:
 - You have some experience using a Linux-based CLI
 - You are familiar with the [Juju orchestration engine](https://documentation.ubuntu.com/juju/latest/)
 
+### Minimum system requirements
+
+- Any Linux operating system that supports snaps
+- At least 4GB of RAM
+- At least 4 CPUs
+- At least 20GB of available storage
+- Virtualisation support
+- amd64 or arm64 architecture
+
 ## Set up the environment
 
 Charmed Valkey can be deployed on both Kubernetes and VM clouds. For this tutorial,
@@ -40,7 +49,7 @@ with the [charm-dev](https://github.com/canonical/multipass-blueprints/blob/main
 cloud-init configuration:
 
 ```shell
-multipass launch --cpus 4 --memory 8G --disk 50G --name dev-vm charm-dev
+multipass launch --cpus 4 --memory 4G --disk 20G --name dev-vm charm-dev
 ```
 
 As soon as a new VM has started, access it:
@@ -67,7 +76,7 @@ juju bootstrap microk8s k8s-controller
 If you decided to deploy an LXD environment instead of MicroK8s, bootstrap an LXD
 controller instead.
 
-<details> <summary> Bootstrap example</summary>
+<details> <summary> Bootstrap example for LXD</summary>
 
 ```shell
 juju bootstrap localhost lxd-controller
@@ -197,12 +206,14 @@ valkey-cli -h valkey-0.valkey-endpoints -p 6379
 Run the following command to log in, using the previously retrieved credentials:
 
 ```{terminal}
+:output-only:
 10.1.44.126:6379> AUTH charmed-operator <your-password-here>
 ```
 
 Now perform a basic health check with this command:
 
 ```{terminal}
+:output-only:
 10.1.44.126:6379> ping
 ```
 
@@ -216,12 +227,16 @@ Now it is possible to perform Valkey commands on the database. To set a key `myk
 to the value `HelloWorld`:
 
 ```{terminal}
+:output-only:
+
 10.1.44.126:6379> set mykey "HelloWorld"
 ```
 
 In order to retrieve the key you just set, run the following command:
 
 ```{terminal}
+:output-only:
+
 10.1.44.126:6379> get mykey
 ```
 
