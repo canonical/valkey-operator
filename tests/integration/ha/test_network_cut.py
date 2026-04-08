@@ -233,14 +233,18 @@ async def test_network_cut_primary(  # noqa: C901
     # we do not use IPs in certificates for k8s, so no need to check SANs for IP changes
     if substrate == Substrate.VM:
         # read ip from cert and check if is a different ip than before if ip_change is True
-        certificate_sans = get_sans_from_certificate("./client.pem")
-        if ip_change:
-            assert primary_ip not in certificate_sans["sans_ip"], (
-                "The old IP should not be in SANs of client certificate after network cut and IP change."
-            )
-            assert new_unit_ip in certificate_sans["sans_ip"], (
-                "The new IP should be in SANs of client certificate after network cut and IP change."
-            )
+        # tolerate delays in certificate update by retrying for up to 100 seconds with 10 second intervals
+        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
+            with attempt:
+                download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+                certificate_sans = get_sans_from_certificate("./client.pem")
+                if ip_change:
+                    assert primary_ip not in certificate_sans["sans_ip"], (
+                        "The old IP should not be in SANs of client certificate after network cut and IP change."
+                    )
+                    assert new_unit_ip in certificate_sans["sans_ip"], (
+                        "The new IP should be in SANs of client certificate after network cut and IP change."
+                    )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
