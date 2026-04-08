@@ -312,13 +312,15 @@ class ExternalClientsEvents(ops.Object):
             logger.error("Could not retrieve CA certificates")
             return
 
+        ca_certs_file = f"external_client_cas_{event.relation_id}.pem"
+
         self.charm.workload.tls_dir.mkdir(exist_ok=True)
         self.charm.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
 
         try:
             self.charm.workload.write_file(
                 content="\n".join(ca_certs),
-                path=self.charm.workload.tls_paths.external_client_cas,
+                path=self.charm.workload.tls_paths.ca_certs_dir / ca_certs_file,
             )
             self.charm.tls_manager.rehash_ca_certificates()
         except ValkeyWorkloadCommandError as e:
@@ -328,14 +330,20 @@ class ExternalClientsEvents(ops.Object):
 
     def _on_ca_removed(self, event: CertificatesRemovedEvent) -> None:
         """Handle the CA certificates removed event."""
-        if not self.charm.workload.tls_paths.external_client_cas.exists():
+        ca_certs_file = (
+            self.charm.workload.tls_paths.ca_certs_dir
+            / f"external_client_cas_{event.relation_id}.pem"
+        )
+
+        if not ca_certs_file.exists():
             logger.warning("No CA certificates stored for external clients")
             return
 
         if not (ca_certs := self.certificate_transfer.get_all_certificates()):
             logger.info("No further CA certificates for external clients")
             try:
-                self.charm.workload.remove_file(self.charm.workload.tls_paths.external_client_cas)
+                self.charm.workload.remove_file(ca_certs_file)
+                self.charm.tls_manager.rehash_ca_certificates()
             except ValkeyWorkloadCommandError as e:
                 logger.error("Error removing CA certificates for external clients: %s", e)
                 event.defer()
@@ -343,10 +351,7 @@ class ExternalClientsEvents(ops.Object):
                 return
 
         try:
-            self.charm.workload.write_file(
-                content="\n".join(ca_certs),
-                path=self.charm.workload.tls_paths.external_client_cas,
-            )
+            self.charm.workload.write_file(content="\n".join(ca_certs), path=ca_certs_file)
             self.charm.tls_manager.rehash_ca_certificates()
         except ValkeyWorkloadCommandError as e:
             logger.error("Error storing CA certificates for external clients: %s", e)

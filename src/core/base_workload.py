@@ -40,11 +40,6 @@ class TLSPaths:
         """Path to the directory for CA certs."""
         return self.tls_root / "ca_certs"
 
-    @property
-    def external_client_cas(self) -> pathops.LocalPath | pathops.ContainerPath:
-        """Path to the CA file for external clients."""
-        return self.ca_certs_dir / "external_client_cas.pem"
-
 
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""
