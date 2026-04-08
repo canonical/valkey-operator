@@ -137,7 +137,7 @@ async def test_network_cut_primary(  # noqa: C901
 
     new_primary_ip = None
     # failover should happen after 30s
-    for attempt in Retrying(stop=stop_after_attempt(4), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_attempt(4), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
                 # we exclude the old primary ip because on k8s the unit is reachable by ip
@@ -166,7 +166,7 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info("Checking number of connected replicas after network cut...")
     # check replica number that it is down to NUM_UNITS - 2
     # retry in case cluster hasn't stabilized yet after primary cut and new primary election
-    for attempt in Retrying(stop=stop_after_attempt(3), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_attempt(3), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
                 hostnames=hostnames,
@@ -245,7 +245,7 @@ async def test_network_cut_primary(  # noqa: C901
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
-    for attempt in Retrying(stop=stop_after_attempt(3), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_attempt(3), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
                 hostnames=hostnames,
