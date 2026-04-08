@@ -1,6 +1,6 @@
 # How to scale horizontally
 
-Adding and removing units from a Valkey deployment is done by scaling [Juju units](https://juju.is/docs/juju/unit). 
+Horizontal scaling of a Valkey deployment is done by adding and removing [Juju units](https://juju.is/docs/juju/unit). 
  
 ## Add a unit
 
@@ -33,9 +33,9 @@ valkey/3                     active    idle   10.1.44.68
 
 ### Remove units
 
-Removing a unit from the application scales down the replicas. If you currently have
-three units, one is the primary and two are replicas. Removing a unit will reduce the
-number of replicas to one.
+Removing a unit from the application scales down the application. If you currently have
+four units, then only one is the primary and three are replicas. Removing a unit will reduce the
+number of replicas to two and the total number of units to three.
 
 Before scaling down, list all the units with `juju status`:
 
@@ -51,7 +51,7 @@ juju remove-unit valkey --num-units 1
 ```
 
 Safely removing the unit will take a few moments. You’ll know that the unit was
-successfully removed when `juju status` reports:
+successfully removed when `juju status` reports all units `active`/`idle` again:
 
 ```text
 Model     Controller      Cloud/Region        Version  SLA          Timestamp

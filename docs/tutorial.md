@@ -8,6 +8,7 @@ become familiar with its available operations.
 
 While this tutorial intends to guide you as you deploy Charmed Valkey for the
 first time, it will be most beneficial if:
+
 - You have some experience using a Linux-based CLI
 - You are familiar with the [Juju orchestration engine](https://documentation.ubuntu.com/juju/latest/)
 
@@ -29,6 +30,7 @@ machines running Ubuntu. It uses the [cloud-init](https://cloud-init.io/) standa
 to install and configure all the necessary parts automatically.
 
 Install Multipass from the [snap store](https://snapcraft.io/multipass):
+
 ```shell
 sudo snap install multipass
 ```
@@ -62,12 +64,16 @@ Let's bootstrap Juju to use the local MicroK8s controller. We will call it
 juju bootstrap microk8s k8s-controller
 ```
 
-If you decided to deploy an LXD environment instead of MicroK8s, bootstrap the LXD
-controller with this command:
+If you decided to deploy an LXD environment instead of MicroK8s, bootstrap an LXD
+controller instead.
+
+<details> <summary> Bootstrap example</summary>
 
 ```shell
 juju bootstrap localhost lxd-controller
 ```
+
+</details>
 
 For this tutorial, we will continue with the MicroK8s environment, but all commands
 can equally be run on the LXD environment as well.
@@ -132,14 +138,15 @@ In this section, you will learn how to get the credentials of your deployment an
 connect to the Valkey database.
 
 ```{caution}
-This part of the tutorial accesses Valkey via the `charmed-operator` user. 
+This part of the tutorial uses the charmed-operator user to access Valkey.
 
-**Do not directly interface with the `charmed-operator` user in a production environment.**
+**Do not use the charmed-operator user directly in a production environment.**
 ```
 
 ### Retrieve credentials
 
 Connecting to the database requires that you know two pieces of information: 
+
 1. The internal Valkey database user credentials (username and password)
 2. The host machine's IP address. 
 
@@ -168,7 +175,7 @@ which can be installed with the [`valkey-tools` package in Ubuntu](https://packa
 sudo apt update && sudo apt install valkey-tools
 ```
 
-Run the command below to connect to your Charmed Valkey database, using the host's IP address:
+Run the command below to connect to your Charmed Valkey database, using the unit's IP address:
 
 ```shell
 valkey-cli -h 10.1.44.126 -p 6379
@@ -189,13 +196,13 @@ valkey-cli -h valkey-0.valkey-endpoints -p 6379
 
 Run the following command to log in, using the previously retrieved credentials:
 
-```text
+```{terminal}
 10.1.44.126:6379> AUTH charmed-operator <your-password-here>
 ```
 
 Now perform a basic health check with this command:
 
-```shell
+```{terminal}
 10.1.44.126:6379> ping
 ```
 
@@ -208,13 +215,13 @@ PONG
 Now it is possible to perform Valkey commands on the database. To set a key `mykey`
 to the value `HelloWorld`:
 
-```shell
+```{terminal}
 10.1.44.126:6379> set mykey "HelloWorld"
 ```
 
 In order to retrieve the key you just set, run the following command:
 
-```shell
+```{terminal}
 10.1.44.126:6379> get mykey
 ```
 
@@ -406,7 +413,8 @@ cluster members, and enabled a layer of security with TLS.
 You may now keep your Charmed Valkey deployment running and write to the database 
 or remove it entirely using the steps in this page. 
 
-If you'd like to keep your environment for later, simply stop your VM with
+If you'd like to keep your environment for later, simply leave your VM with `Ctrl+D`
+and stop it with:
 
 ```shell
 multipass stop dev-vm

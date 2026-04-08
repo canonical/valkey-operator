@@ -1,6 +1,6 @@
 # How to manage passwords
 
-This guides provides instructions for creating, updating, and otherwise managing passwords.
+This guide provides instructions for creating, updating, and otherwise managing passwords.
 
 To read or write data in Valkey, we need to authenticate ourselves.
 
@@ -33,7 +33,7 @@ of the next section.
 First, create a secret in `Juju` containing your password:
 
 ```shell
-juju add-secret passwords charmed-operator=changeme
+juju add-secret passwords charmed-operator=<NEW_PASSWORD>
 ```
 
 You will get the `secret` ID as a response:
@@ -82,13 +82,13 @@ valkey-cli -h 10.1.44.126 -p 6379
 
 Authenticate with the username and password you just configured:
 
-```shell
-10.1.44.126:6379> AUTH charmed-operator changeme
+```{terminal}
+10.1.44.126:6379> AUTH charmed-operator <NEW_PASSWORD>
 ```
 
 Check the current health of the server with this command:
 
-```shell
+```{terminal}
 10.1.44.126:6379> ping
 ```
 
@@ -97,20 +97,20 @@ Check the current health of the server with this command:
 To update your user-configured password, simply update the value of the secret. Here's an example:
 
 ```shell
-juju update-secret passwords charmed-operator=moresecurepassword
+juju update-secret passwords charmed-operator=<MORE_SECURE_PASSWORD>
 ```
 
 After running this command, Charmed Valkey will immediately update the password.
-After the deployment has settled again, you can no longer use the old password to
-access Valkey. Instead, you will receive an error similar to this:
+Once the deployment has settled to `active`/`idle` state again, you can no longer use
+the old password to access Valkey. Instead, you will receive an error similar to this:
 
-```shell
+```text
 (error) WRONGPASS invalid username-password pair or user is disabled.
 ```
 
 Instead, use your updated password to authenticate:
 
-```shell
+```{terminal}
 10.1.44.126:6379> AUTH charmed-operator moresecurepassword
 ```
 
@@ -134,5 +134,5 @@ but keeping the automatically generated passwords for all other users, run the f
 command:
 
 ```shell
-juju update-secret passwords charmed-operator=moresecurepassword charmed-sentinel-operator=sentinelpassword
+juju update-secret passwords charmed-operator=<MORE_SECURE_PASSWORD> charmed-sentinel-operator=<SENTINEL_PASSWORD>
 ```
