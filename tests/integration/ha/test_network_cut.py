@@ -33,7 +33,6 @@ from tests.integration.helpers import (
     get_ip_from_unit,
     get_number_connected_replicas,
     get_password,
-    get_primary_endpoint,
     get_primary_ip,
 )
 
@@ -136,27 +135,32 @@ async def test_network_cut_primary(  # noqa: C901
 
     logger.info("Verifying new primary election...")
 
-    new_primary_endpoint = None
+    new_primary_ip = None
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
         with attempt:
             try:
-                new_primary_endpoint = get_primary_endpoint(
-                    juju, APP_NAME, tls_enabled=tls_enabled
+                # we exclude the old primary ip because on k8s the unit is reachable by ip
+                # from outside k8s and is forming its own cluster
+                new_primary_ip = get_primary_ip(
+                    juju,
+                    APP_NAME,
+                    tls_enabled=tls_enabled,
+                    hostnames=[ip for ip in hostnames if ip != primary_ip],
                 )
                 break
             except ValueError as e:
                 logger.warning(f"Error getting primary IP after network cut: {e}")
             logger.info("Waiting for new primary to be elected...")
 
-    assert new_primary_endpoint and new_primary_endpoint != primary_endpoint, (
+    assert new_primary_ip and new_primary_ip != primary_ip, (
         "Primary IP did not change after cutting network to the primary unit. %s vs old primary IP: %s",
-        new_primary_endpoint,
-        primary_endpoint,
+        new_primary_ip,
+        primary_ip,
     )
     logger.info(
         "New primary IP after network cut: %s vs old primary IP: %s",
-        new_primary_endpoint,
-        primary_endpoint,
+        new_primary_ip,
+        primary_ip,
     )
 
     logger.info("Checking number of connected replicas after network cut...")

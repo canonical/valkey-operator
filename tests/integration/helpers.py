@@ -378,13 +378,15 @@ def download_client_certificate_from_unit(
         juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
-def get_primary_ip(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> str:
+def get_primary_ip(
+    juju: jubilant.Juju, app: str, tls_enabled: bool = False, hostnames: list[str] | None = None
+) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
-    hostnames = get_cluster_hostnames(juju, app)
+    hostnames = hostnames or get_cluster_hostnames(juju, app)
     for hostname in hostnames:
         try:
             replication_info = exec_valkey_cli(
@@ -401,24 +403,6 @@ def get_primary_ip(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> 
             logger.warning(f"Error executing Valkey CLI on {hostname}: {e}")
 
     raise ValueError("No primary node found in the cluster")
-
-
-def get_primary_endpoint(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> str:
-    """Get the primary endpoint of the Valkey cluster.
-
-    Returns:
-        The endpoint of the primary node. It will be the IP for VMs and the hostname for k8s.
-    """
-    hostnames = get_cluster_hostnames(juju, app)
-    result = exec_valkey_cli(
-        hostname=hostnames[0],
-        username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
-        command="SENTINEL get-master-addr-by-name primary",
-        sentinel=True,
-        tls_enabled=tls_enabled,
-    )
-    return result.stdout.split()[0]
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
