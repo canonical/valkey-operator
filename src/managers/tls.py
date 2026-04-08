@@ -98,7 +98,7 @@ class TLSManager(ManagerStatusProtocol):
         sans_ip = set()
 
         # Rely fully on FQDN on k8s
-        if not self.state.peer_relation or self.state.substrate == "k8s":
+        if not self.state.unit_server.model or self.state.substrate == "k8s":
             return frozenset(sans_ip)
 
         if self.extra_sans_config_is_valid() and (
@@ -121,21 +121,21 @@ class TLSManager(ManagerStatusProtocol):
             frozenset[str]: The SANs DNS.
         """
         sans_dns = set()
-        sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
 
-        if not self.state.peer_relation:
+        if not self.state.unit_server.model:
             return frozenset(sans_dns)
 
         if self.extra_sans_config_is_valid() and (
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
             extra_sans = [san.strip() for san in extra_sans_config.split(",")]
-            sans_dns |= {
+            sans_dns = {
                 san.replace("{unit}", str(self.state.unit_server.unit_id))
                 for san in extra_sans
                 if not self._is_ip_address(san)
             }
 
+        sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
         sans_dns.add(self.state.hostname)
 
         return frozenset(sans_dns)
