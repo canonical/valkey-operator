@@ -403,6 +403,24 @@ def get_primary_ip(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> 
     raise ValueError("No primary node found in the cluster")
 
 
+def get_primary_endpoint(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> str:
+    """Get the primary endpoint of the Valkey cluster.
+
+    Returns:
+        The endpoint of the primary node. It will be the IP for VMs and the hostname for k8s.
+    """
+    hostnames = get_cluster_hostnames(juju, app)
+    result = exec_valkey_cli(
+        hostname=hostnames[0],
+        username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+        command="SENTINEL get-master-addr-by-name primary",
+        sentinel=True,
+        tls_enabled=tls_enabled,
+    )
+    return result.stdout.split()[0]
+
+
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
     """Retrieve the password for a given internal user from Juju secrets.
 
