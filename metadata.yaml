@@ -50,7 +50,6 @@ requires:
     optional: true
   certificate-transfer:
     interface: certificate_transfer
-    limit: 1
     optional: true
 
 storage:

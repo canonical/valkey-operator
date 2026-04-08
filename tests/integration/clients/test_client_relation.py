@@ -53,8 +53,8 @@ def test_build_and_deploy(
         config={"data-interfaces-version": "1"},
     )
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
-    juju.deploy(REQUIRER_V1_TLS_PROVIDER, channel=TLS_CHANNEL)
-    juju.deploy(REQUIRER_V0_TLS_PROVIDER, channel=TLS_CHANNEL)
+    juju.deploy(TLS_NAME, app=REQUIRER_V1_TLS_PROVIDER, channel=TLS_CHANNEL)
+    juju.deploy(TLS_NAME, app=REQUIRER_V0_TLS_PROVIDER, channel=TLS_CHANNEL)
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
@@ -65,7 +65,7 @@ def test_build_and_deploy(
 def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
     """Create the client integration."""
     logger.info("Integrating client applications")
-    juju.integrate(APP_NAME, REQUIRER_V0_NAME)
+    juju.integrate(f"{APP_NAME}:valkey-client", f"{REQUIRER_V0_NAME}:valkey-client")
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -101,7 +101,7 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
 def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
     """Create the client integration."""
     logger.info("Integrating client applications")
-    juju.integrate(APP_NAME, REQUIRER_V1_NAME)
+    juju.integrate(f"{APP_NAME}:valkey-client", f"{REQUIRER_V1_NAME}:valkey-client")
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -251,8 +251,8 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     )
 
     logger.info("Enable certificate transfer to Valkey")
-    juju.integrate(f"{REQUIRER_V1_NAME}:certificate-transfer", f"{APP_NAME}:certificate-transfer")
-    juju.integrate(f"{REQUIRER_V0_NAME}:certificate-transfer", f"{APP_NAME}:certificate-transfer")
+    juju.integrate(f"{APP_NAME}:certificate-transfer", REQUIRER_V1_TLS_PROVIDER)
+    juju.integrate(f"{APP_NAME}:certificate-transfer", REQUIRER_V0_TLS_PROVIDER)
     juju.wait(
         lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
         timeout=100,
