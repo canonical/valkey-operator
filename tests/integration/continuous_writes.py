@@ -329,6 +329,7 @@ class ContinuousWrites:
                 await client.close()
 
         current_val = starting_number
+        last_written_value = starting_number
         config = initial_config
 
         proc_logger.info("Starting continuous async writes from %s", current_val)
@@ -352,17 +353,18 @@ class ContinuousWrites:
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
                     proc_logger.info("Length after write: %s", res)
-                    await asyncio.sleep(in_between_sleep)
+                    last_written_value = current_val
                 except Exception as e:
                     proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
+                    await asyncio.sleep(in_between_sleep)
                     if event.is_set():
                         break
 
                 current_val += 1
 
         finally:
-            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(current_val))
+            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(last_written_value))
             proc_logger.info("Continuous writes process exiting.")
 
 
