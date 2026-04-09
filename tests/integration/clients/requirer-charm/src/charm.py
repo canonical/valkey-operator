@@ -29,8 +29,14 @@ from dpcharmlibs.interfaces import (
 logger = logging.getLogger(__name__)
 
 
+class RefreshTLSCertificatesEvent(ops.EventBase):
+    """Event for refreshing peer TLS certificates."""
+
+
 class RequirerCharm(ops.CharmBase):
     """Charm that acts as client for Valkey."""
+
+    refresh_tls_certificates_event = ops.EventSource(RefreshTLSCertificatesEvent)
 
     def __init__(self, framework: ops.Framework):
         super().__init__(framework)
@@ -39,20 +45,6 @@ class RequirerCharm(ops.CharmBase):
             self.data_interfaces_version = 0
         else:
             self.data_interfaces_version = 1
-
-        self.certificates = TLSCertificatesRequiresV4(
-            self,
-            "certificates",
-            certificate_requests=[
-                CertificateRequestAttributes(
-                    common_name=next(iter(self.credentials))
-                    if self.use_mtls
-                    else "requirer-charm",
-                    sans_ip=frozenset({socket.gethostbyname(socket.gethostname())}),
-                    sans_dns=frozenset({self.unit.name, socket.gethostname()}),
-                )
-            ],
-        )
 
         if self.data_interfaces_version == 1:
             self.valkey_interface = ResourceRequirerEventHandler(
@@ -77,8 +69,24 @@ class RequirerCharm(ops.CharmBase):
                 self.valkey_interface.on.database_created, self._on_database_created
             )
 
+        self.certificates = TLSCertificatesRequiresV4(
+            self,
+            "certificates",
+            certificate_requests=[
+                CertificateRequestAttributes(
+                    common_name=next(iter(self.credentials))
+                    if self.use_mtls
+                    else "requirer-charm",
+                    sans_ip=frozenset({socket.gethostbyname(socket.gethostname())}),
+                    sans_dns=frozenset({self.unit.name, socket.gethostname()}),
+                )
+            ],
+            refresh_events=[self.refresh_tls_certificates_event],
+        )
+
         # Event observers
         framework.observe(self.on.start, self._on_start)
+        framework.observe(self.on.config_changed, self._on_config_changed)
         framework.observe(self.on.set_action, self._on_set_action)
         framework.observe(self.on.get_action, self._on_get_action)
         framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
@@ -86,6 +94,7 @@ class RequirerCharm(ops.CharmBase):
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
+        """Return the Valkey relation."""
         if not (relations := self.valkey_interface.relations):
             return None
 
@@ -145,10 +154,10 @@ class RequirerCharm(ops.CharmBase):
     @property
     def tls_enabled(self) -> bool:
         """Retrieve the tls flag provided by Valkey."""
-        if self.data_interfaces_version == 0:
-            if not self.valkey_relation:
-                return False
+        if not self.valkey_relation:
+            return False
 
+        if self.data_interfaces_version == 0:
             return (
                 self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls")
                 == "true"
@@ -163,7 +172,11 @@ class RequirerCharm(ops.CharmBase):
     @property
     def use_mtls(self) -> bool:
         """Retrieve the value for `use-mtls` from the configuration."""
-        if self.tls_enabled and self.config.get("use-mtls", False):
+        if (
+            self.model.get_relation("certificates")
+            and self.tls_enabled
+            and self.config.get("use-mtls", False)
+        ):
             return True
 
         return False
@@ -203,6 +216,10 @@ class RequirerCharm(ops.CharmBase):
         """Handle start event."""
         self.unit.status = ops.ActiveStatus()
 
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle config changes."""
+        self.refresh_tls_certificates_event.emit()
+
     def _on_set_action(self, event: ops.ActionEvent) -> None:
         """Handle set action."""
         if not self.valkey_relation:
@@ -219,8 +236,8 @@ class RequirerCharm(ops.CharmBase):
             return
 
         client = ValkeyClient(
-            username=user if not self.use_mtls else None,
-            password=self.credentials.get(user) if not self.use_mtls else None,
+            username=user if not self.use_mtls else "",
+            password=self.credentials.get(user) if not self.use_mtls else "",
             host=self.primary_endpoint.split(":")[0],
             port=int(self.primary_endpoint.split(":")[1]),
             tls_cert=self.certificate.encode() if self.use_mtls else None,
@@ -249,8 +266,8 @@ class RequirerCharm(ops.CharmBase):
             return
 
         client = ValkeyClient(
-            username=user if not self.use_mtls else None,
-            password=self.credentials.get(user) if not self.use_mtls else None,
+            username=user if not self.use_mtls else "",
+            password=self.credentials.get(user) if not self.use_mtls else "",
             host=self.primary_endpoint.split(":")[0],
             port=int(self.primary_endpoint.split(":")[1]),
             tls_cert=self.certificate.encode() if self.use_mtls else None,

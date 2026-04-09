@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
+#
+# Test Matrix:
+#
+# Test name                             | Server TLS | mTLS  | Auth             | TLS provider
+# ----------------------------------------------------------------------------------------
+# test_integrate_client_interface_v0/1  | no         | no    | user/password    | same as Valkey
+# test_enable_tls                       | yes        | no    | user/password    | same as Valkey
+# test_certificate_transfer             | yes        | no    | user/password    | different CA
+# test_mtls                             | yes        | yes   | via certificate  | different CA
 import logging
 
 import jubilant
@@ -322,8 +331,8 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
 def test_mtls(juju: jubilant.Juju) -> None:
     """Ensure clients can use mTLS and password-less authentication."""
     logger.info("Enable config `use-mtls` for requirer charms")
-    juju.config(app=REQUIRER_V0_NAME, values={"use-mts": "true"})
-    juju.config(app=REQUIRER_V1_NAME, values={"use-mts": "true"})
+    juju.config(app=REQUIRER_V0_NAME, values={"use-mtls": "true"})
+    juju.config(app=REQUIRER_V1_NAME, values={"use-mtls": "true"})
     juju.wait(
         lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
         timeout=100,
