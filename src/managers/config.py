@@ -124,6 +124,8 @@ class ConfigManager(ManagerStatusProtocol):
             "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
             "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
             "tls-replication": "yes",
+            "tls-auth-clients": "optional",
+            "tls-auth-clients-user": "CN",
         }
 
         if (
@@ -144,6 +146,8 @@ class ConfigManager(ManagerStatusProtocol):
             "tls-key-file": self.workload.tls_paths.client_key.as_posix(),
             "tls-ca-cert-dir": self.workload.tls_paths.ca_certs_dir.as_posix(),
             "tls-replication": "yes",
+            "tls-auth-clients": "optional",
+            "tls-auth-clients-user": "CN",
         }
 
         if (

@@ -112,3 +112,7 @@ config:
       description: Version of data interfaces to use
       type: int
       default: 1
+    use-mtls:
+      description: Flag to enable use of mutual TLS
+      type: boolean
+      default: false

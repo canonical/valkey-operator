@@ -45,7 +45,9 @@ class RequirerCharm(ops.CharmBase):
             "certificates",
             certificate_requests=[
                 CertificateRequestAttributes(
-                    common_name="requirer-charm",
+                    common_name=next(iter(self.credentials))
+                    if self.use_mtls
+                    else "requirer-charm",
                     sans_ip=frozenset({socket.gethostbyname(socket.gethostname())}),
                     sans_dns=frozenset({self.unit.name, socket.gethostname()}),
                 )
@@ -159,6 +161,14 @@ class RequirerCharm(ops.CharmBase):
         return remote_responses[0].tls
 
     @property
+    def use_mtls(self) -> bool:
+        """Retrieve the value for `use-mtls` from the configuration."""
+        if self.tls_enabled and self.config.get("use-mtls", False):
+            return True
+
+        return False
+
+    @property
     def tls_ca_cert(self) -> str | None:
         """Retrieve the tls CA cert provided by Valkey."""
         if self.data_interfaces_version == 0:
@@ -209,12 +219,12 @@ class RequirerCharm(ops.CharmBase):
             return
 
         client = ValkeyClient(
-            username=user,
-            password=self.credentials.get(user),
+            username=user if not self.use_mtls else None,
+            password=self.credentials.get(user) if not self.use_mtls else None,
             host=self.primary_endpoint.split(":")[0],
             port=int(self.primary_endpoint.split(":")[1]),
-            tls_cert=self.certificate.encode() if self.tls_enabled else None,
-            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_cert=self.certificate.encode() if self.use_mtls else None,
+            tls_key=self.private_key.encode() if self.use_mtls else None,
             tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
         )
         try:
@@ -239,12 +249,12 @@ class RequirerCharm(ops.CharmBase):
             return
 
         client = ValkeyClient(
-            username=user,
-            password=self.credentials.get(user),
+            username=user if not self.use_mtls else None,
+            password=self.credentials.get(user) if not self.use_mtls else None,
             host=self.primary_endpoint.split(":")[0],
             port=int(self.primary_endpoint.split(":")[1]),
-            tls_cert=self.certificate.encode() if self.tls_enabled else None,
-            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_cert=self.certificate.encode() if self.use_mtls else None,
+            tls_key=self.private_key.encode() if self.use_mtls else None,
             tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
         )
         try:

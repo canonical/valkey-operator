@@ -313,6 +313,9 @@ class ExternalClientsEvents(ops.Object):
 
     def _on_ca_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up the relation for the certificate-transfer interface."""
+        if not self.charm.unit.is_leader():
+            return
+
         relation = self.charm.model.get_relation(
             relation_name=CERTIFICATE_TRANSFER_RELATION, relation_id=event.relation.id
         )

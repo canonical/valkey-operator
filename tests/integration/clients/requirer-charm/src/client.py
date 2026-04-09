@@ -22,8 +22,8 @@ class ValkeyClient:
 
     def __init__(
         self,
-        username: str,
-        password: str,
+        username: str | None,
+        password: str | None,
         host: str,
         port: int,
         tls_cert: bytes | None,
