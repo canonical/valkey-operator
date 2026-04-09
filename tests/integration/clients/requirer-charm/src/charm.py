@@ -191,6 +191,18 @@ class RequirerCharm(ops.CharmBase):
 
         return private_key.raw
 
+    def get_valkey_client(self, user: str) -> ValkeyClient:
+        """Get a valkey client."""
+        return ValkeyClient(
+            username=user,
+            password=self.credentials.get(user),
+            host=self.primary_endpoint.split(":")[0],
+            port=int(self.primary_endpoint.split(":")[1]),
+            tls_cert=self.certificate.encode() if self.tls_enabled else None,
+            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
+        )
+
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle start event."""
         self.unit.status = ops.ActiveStatus()
@@ -210,15 +222,7 @@ class RequirerCharm(ops.CharmBase):
             event.set_results({"ok": False})
             return
 
-        client = ValkeyClient(
-            username=user,
-            password=self.credentials.get(user),
-            host=self.primary_endpoint.split(":")[0],
-            port=int(self.primary_endpoint.split(":")[1]),
-            tls_cert=self.certificate.encode() if self.tls_enabled else None,
-            tls_key=self.private_key.encode() if self.tls_enabled else None,
-            tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
-        )
+        client = self.get_valkey_client(user)
         try:
             asyncio.run(client.set_key(key, value))
             event.set_results({"ok": True})
@@ -240,15 +244,7 @@ class RequirerCharm(ops.CharmBase):
             event.set_results({"ok": False})
             return
 
-        client = ValkeyClient(
-            username=user,
-            password=self.credentials.get(user),
-            host=self.primary_endpoint.split(":")[0],
-            port=int(self.primary_endpoint.split(":")[1]),
-            tls_cert=self.certificate.encode() if self.tls_enabled else None,
-            tls_key=self.private_key.encode() if self.tls_enabled else None,
-            tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
-        )
+        client = self.get_valkey_client(user)
         try:
             value = asyncio.run(client.get_key(key))
             event.set_results(

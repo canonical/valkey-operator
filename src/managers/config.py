@@ -196,7 +196,7 @@ class ConfigManager(ManagerStatusProtocol):
         password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
         return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
 
-    def _get_client_user_acl_lines(self, for_sentinel: bool = False) -> str | None:
+    def _get_client_user_acl_lines(self, for_sentinel: bool = False) -> str:
         """Generate the ACL lines for all external client users.
 
         Returns:
