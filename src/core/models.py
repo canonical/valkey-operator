@@ -232,7 +232,17 @@ class ValkeyCluster(RelationState):
 
     @property
     def external_users_credentials(self) -> dict[str, dict[str, str]] | None:
-        """Retrieve the user credentials for external clients from the state and return as dict."""
+        """Retrieve the user credentials for external clients from the state and return as dict.
+
+        Example:
+            "external-client-users":
+                "{
+                    "relation-3-0cbbc9781f189ea5":
+                    {"resource": "test:*", "password": "mypassword"},
+                    "relation-4-08154711":
+                    {"resource": "another_keyspace:*", "password": "anotherpassword"}
+                }"
+        """
         if not self.model or not (external_clients := self.model.external_client_users):
             return None
 
