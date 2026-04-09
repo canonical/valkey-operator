@@ -16,10 +16,10 @@ import urllib3
 import yaml
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from tenacity import RetryError, Retrying, stop_after_attempt, wait_fixed
+from tenacity import RetryError, Retrying, retry, stop_after_attempt, wait_fixed
 
 from literals import Substrate
-from tests.integration.helpers import APP_NAME, get_sentinels
+from tests.integration.helpers import APP_NAME, are_apps_active_and_agents_idle, get_sentinels
 
 logger = getLogger(__name__)
 
@@ -429,3 +429,57 @@ def is_endpoint_in_sentinels(
         return False
 
     return True
+
+
+def instance_ip(model: str, instance: str) -> str:
+    """Translate juju instance name to IP.
+
+    Args:
+        model: The name of the model
+        instance: The name of the instance
+
+    Returns:
+        The (str) IP address of the instance
+    """
+    output = subprocess.check_output(f"juju machines --model {model}".split())
+
+    for line in output.decode("utf8").splitlines():
+        if instance in line:
+            return line.split()[2]
+
+    return ""
+
+
+@retry(stop=stop_after_attempt(60), wait=wait_fixed(15))
+def wait_network_restore(
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    model_name: str,
+    app_name: str,
+    hostname: str,
+    old_ip: str,
+    ip_change: bool = True,
+    unit_count: int | None = None,
+) -> None:
+    """Wait until network is restored.
+
+    Args:
+        juju: Juju client
+        substrate: The substrate the test is running on (VM or k8s)
+        model_name: The name of the model
+        app_name: The name of the application
+        hostname: The name of the instance
+        old_ip: old registered IP address
+        ip_change: Whether to check for IP change
+        unit_count: The expected number of units for the application (optional)
+    """
+    if substrate == Substrate.VM and ip_change:
+        if instance_ip(model_name, hostname) == old_ip:
+            raise Exception("Network not restored, IP address has not changed yet.")
+    else:
+        # Wait for the network to be restored
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, app_name, unit_count=unit_count, idle_period=30
+            )
+        )

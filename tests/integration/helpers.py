@@ -239,14 +239,13 @@ def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
     Returns:
         A list of hostnames for all units in the Valkey application.
     """
-    # returns the real ip addresses even if they are not updated on juju's status
-    ips = []
-    for unit in juju.status().get_units(app_name):
-        try:
-            ips.append(juju.exec("unit-get private-address", unit=unit, wait=5).stdout.strip())
-        except TimeoutError as e:
-            logger.warning(f"Failed to get private address for {unit}: {e}")
-    return ips
+    status = juju.status()
+    model_info = juju.show_model()
+
+    if model_info.type == "kubernetes":
+        return [unit.address for unit in status.get_units(app_name).values()]
+
+    return [unit.public_address for unit in status.get_units(app_name).values()]
 
 
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:

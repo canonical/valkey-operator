@@ -20,6 +20,7 @@ from tests.integration.ha.helpers.helpers import (
     is_unit_reachable,
     lxd_get_controller_hostname,
     restore_network_to_unit,
+    wait_network_restore,
 )
 from tests.integration.helpers import (
     APP_NAME,
@@ -204,10 +205,15 @@ async def test_network_cut_primary(  # noqa: C901
     # restore network to the original primary unit
     logger.info("Restoring network to original primary unit at %s", primary_hostname)
     restore_network_to_unit(substrate, juju.model, machine_name, ip_change=ip_change)
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
-        )
+    wait_network_restore(
+        juju=juju,
+        substrate=substrate,
+        model_name=juju.model,
+        app_name=APP_NAME,
+        hostname=primary_hostname,
+        old_ip=primary_ip,
+        ip_change=ip_change,
+        unit_count=NUM_UNITS,
     )
     c_writes.update()
 
