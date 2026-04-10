@@ -13,6 +13,7 @@ from src.literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    PRIMARY_NAME,
     STATUS_PEERS_RELATION,
     CharmUsers,
     StartState,
@@ -344,7 +345,10 @@ def test_update_status_leader_unit(cloud_spec):
         containers={container},
     )
 
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
 
@@ -363,7 +367,10 @@ def test_update_status_non_leader_unit(cloud_spec):
         relations={relation, status_peer_relation},
         containers={container},
     )
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
 
@@ -714,7 +721,10 @@ def test_relation_changed_event_leader_setting_starting_member(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
         assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
 
@@ -736,7 +746,10 @@ def test_relation_changed_event_leader_clears_starting_member(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "2"}),
+    ):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
         assert state_out.get_relation(1).local_app_data.get("start-member") is None
 
@@ -763,6 +776,63 @@ def test_relation_changed_event_leader_leaves_starting_member_as_is(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with patch("managers.tls.TLSManager.will_certificate_expire"):
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+    ):
         state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
         assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
+
+
+def test_relation_changed_event_update_quorum(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_app_data={"start-member": "valkey/1"},
+        local_unit_data={"start-state": StartState.STARTED.value},
+        peers_data={1: {"start-state": StartState.STARTED.value}},
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with (
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+        patch("common.client.SentinelClient.set") as mock_set,
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"),
+    ):
+        ctx.run(ctx.on.relation_changed(relation), state_in)
+        mock_set.assert_called_once_with("valkey-0.valkey-endpoints", PRIMARY_NAME, "quorum", "2")
+
+
+def test_relation_changed_event_do_not_update_quorum(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_app_data={"start-member": "valkey/1"},
+        local_unit_data={"start-state": StartState.STARTED.value},
+        peers_data={
+            1: {"start-state": StartState.STARTED.value},
+            2: {"start-state": StartState.STARTED.value},
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with (
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "2"}),
+        patch("common.client.SentinelClient.set") as mock_set,
+    ):
+        ctx.run(ctx.on.relation_changed(relation), state_in)
+        mock_set.assert_not_called()

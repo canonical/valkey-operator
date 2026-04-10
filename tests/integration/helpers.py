@@ -240,14 +240,13 @@ def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
     Returns:
         A list of hostnames for all units in the Valkey application.
     """
-    # returns the real ip addresses even if they are not updated on juju's status
-    ips = []
-    for unit in juju.status().get_units(app_name):
-        try:
-            ips.append(juju.exec("unit-get private-address", unit=unit, wait=5).stdout.strip())
-        except TimeoutError as e:
-            logger.warning(f"Failed to get private address for {unit}: {e}")
-    return ips
+    status = juju.status()
+    model_info = juju.show_model()
+
+    if model_info.type == "kubernetes":
+        return [unit.address for unit in status.get_units(app_name).values()]
+
+    return [unit.public_address for unit in status.get_units(app_name).values()]
 
 
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
@@ -379,13 +378,15 @@ def download_client_certificate_from_unit(
         juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
-def get_primary_ip(juju: jubilant.Juju, app: str, tls_enabled: bool = False) -> str:
+def get_primary_ip(
+    juju: jubilant.Juju, app: str, tls_enabled: bool = False, hostnames: list[str] | None = None
+) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
-    hostnames = get_cluster_hostnames(juju, app)
+    hostnames = hostnames or get_cluster_hostnames(juju, app)
     for hostname in hostnames:
         try:
             replication_info = exec_valkey_cli(
@@ -507,6 +508,27 @@ def exec_valkey_cli(
     return valkey_cli_result(
         stdout=result.stdout.strip(), stderr=result.stderr.strip(), returncode=result.returncode
     )
+
+
+def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
+    """Get the currently configured sentinel quorum."""
+    status = juju.status()
+    model_info = juju.show_model()
+    units = status.get_units(APP_NAME)
+    unit_endpoint = (
+        units[unit_name].public_address
+        if model_info.type != "kubernetes"
+        else units[unit_name].address
+    )
+    result = exec_valkey_cli(
+        hostname=unit_endpoint,
+        username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+        command="SENTINEL primary primary",
+        sentinel=True,
+        json=True,
+    )
+    return int(json.loads(result.stdout)["quorum"])
 
 
 async def set_key(

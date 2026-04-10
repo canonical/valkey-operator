@@ -20,6 +20,7 @@ from tests.integration.ha.helpers.helpers import (
     is_unit_reachable,
     lxd_get_controller_hostname,
     restore_network_to_unit,
+    wait_network_restore,
 )
 from tests.integration.helpers import (
     APP_NAME,
@@ -136,17 +137,26 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info("Verifying new primary election...")
 
     new_primary_ip = None
-    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+    # failover should happen after 30s
+    for attempt in Retrying(stop=stop_after_attempt(4), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
-                new_primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
+                # we exclude the old primary ip because on k8s the unit is reachable by ip
+                # from outside k8s and is forming its own cluster
+                new_primary_ip = get_primary_ip(
+                    juju,
+                    APP_NAME,
+                    tls_enabled=tls_enabled,
+                    hostnames=[ip for ip in hostnames if ip != primary_ip],
+                )
                 break
             except ValueError as e:
                 logger.warning(f"Error getting primary IP after network cut: {e}")
-            logger.info("Waiting for new primary to be elected...")
+                logger.info("Waiting for new primary to be elected...")
+                raise
 
     assert new_primary_ip and new_primary_ip != primary_ip, (
-        "Primary IP did not change after cutting network to the primary unit."
+        f"Primary IP did not change after cutting network to the primary unit. {new_primary_ip} vs old primary IP: {primary_ip}"
     )
     logger.info(
         "New primary IP after network cut: %s vs old primary IP: %s",
@@ -157,7 +167,7 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info("Checking number of connected replicas after network cut...")
     # check replica number that it is down to NUM_UNITS - 2
     # retry in case cluster hasn't stabilized yet after primary cut and new primary election
-    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
                 hostnames=hostnames,
@@ -195,10 +205,15 @@ async def test_network_cut_primary(  # noqa: C901
     # restore network to the original primary unit
     logger.info("Restoring network to original primary unit at %s", primary_hostname)
     restore_network_to_unit(substrate, juju.model, machine_name, ip_change=ip_change)
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
-        )
+    wait_network_restore(
+        juju=juju,
+        substrate=substrate,
+        model_name=juju.model,
+        app_name=APP_NAME,
+        hostname=primary_hostname,
+        old_ip=primary_ip,
+        ip_change=ip_change,
+        unit_count=NUM_UNITS,
     )
     c_writes.update()
 
@@ -224,19 +239,23 @@ async def test_network_cut_primary(  # noqa: C901
     # we do not use IPs in certificates for k8s, so no need to check SANs for IP changes
     if substrate == Substrate.VM:
         # read ip from cert and check if is a different ip than before if ip_change is True
-        certificate_sans = get_sans_from_certificate("./client.pem")
-        if ip_change:
-            assert primary_ip not in certificate_sans["sans_ip"], (
-                "The old IP should not be in SANs of client certificate after network cut and IP change."
-            )
-            assert new_unit_ip in certificate_sans["sans_ip"], (
-                "The new IP should be in SANs of client certificate after network cut and IP change."
-            )
+        # tolerate delays in certificate update by retrying for up to 100 seconds with 10 second intervals
+        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
+            with attempt:
+                download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
+                certificate_sans = get_sans_from_certificate("./client.pem")
+                if ip_change:
+                    assert primary_ip not in certificate_sans["sans_ip"], (
+                        "The old IP should not be in SANs of client certificate after network cut and IP change."
+                    )
+                    assert new_unit_ip in certificate_sans["sans_ip"], (
+                        "The new IP should be in SANs of client certificate after network cut and IP change."
+                    )
 
     hostnames = get_cluster_hostnames(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
-    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
                 hostnames=hostnames,

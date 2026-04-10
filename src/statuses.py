@@ -36,14 +36,12 @@ class ClusterStatuses(Enum):
 
     VALKEY_UNHEALTHY_RESTART = StatusObject(
         status="maintenance",
-        message="Valkey unhealthy after restart",
-        running="async",
+        message="Valkey unhealthy",
     )
 
     SENTINEL_UNHEALTHY_RESTART = StatusObject(
         status="maintenance",
-        message="Sentinel unhealthy after restart",
-        running="async",
+        message="Sentinel unhealthy",
     )
 
 
@@ -134,4 +132,12 @@ class TLSStatuses(Enum):
     PRIVATE_KEY_INVALID = StatusObject(
         status="blocked",
         message="The private key provided is not valid. Please provide a valid private key",
+    )
+    SANS_CONFIG_INVALID = StatusObject(
+        status="blocked",
+        message="Invalid value for config option 'certificate-extra-sans'",
+        short_message="Invalid value `certificate-extra-sans`",
+    )
+    CERTIFICATE_DENIED = StatusObject(
+        status="blocked", message="Certificate request was denied, check logs for details"
     )

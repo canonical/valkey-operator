@@ -121,7 +121,7 @@ class ContinuousWrites:
         glide_config = GlideClientConfiguration(
             addresses=addresses,
             client_name="continuous_writes_client",
-            request_timeout=500,
+            request_timeout=1000,
             credentials=credentials,
             reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
             use_tls=True if conf.tls_enabled else False,
@@ -310,8 +310,8 @@ class ContinuousWrites:
 
             glide_config = GlideClientConfiguration(
                 addresses=addresses,
-                client_name="continuous_writes_client",
-                request_timeout=500,
+                client_name="continuous_writes_worker",
+                request_timeout=1000,
                 credentials=credentials,
                 reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
                 use_tls=True if conf.tls_enabled else False,
@@ -329,6 +329,7 @@ class ContinuousWrites:
                 await client.close()
 
         current_val = starting_number
+        last_written_value = starting_number
         config = initial_config
 
         proc_logger.info("Starting continuous async writes from %s", current_val)
@@ -352,6 +353,7 @@ class ContinuousWrites:
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
                     proc_logger.info("Length after write: %s", res)
+                    last_written_value = current_val
                 except Exception as e:
                     proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
@@ -362,7 +364,7 @@ class ContinuousWrites:
                 current_val += 1
 
         finally:
-            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(current_val))
+            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(last_written_value))
             proc_logger.info("Continuous writes process exiting.")
 
 

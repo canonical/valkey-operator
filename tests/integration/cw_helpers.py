@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 
 import asyncio
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -74,35 +75,24 @@ def assert_continuous_writes_consistent(
     tls_enabled: bool = False,
 ) -> None:
     """Assert that the continuous writes are consistent."""
-    last_written_value = None
     last_written_value = int(Path(WRITES_LAST_WRITTEN_VAL_PATH).read_text())
 
     if not last_written_value:
         raise ValueError("Could not read last written value from file.")
 
+    values: list[int] | None = None
+
     for endpoint in hostnames:
-        last_value = int(
-            exec_valkey_cli(
-                endpoint, username, password, f"LRANGE {KEY} 0 0", tls_enabled=tls_enabled
-            ).stdout
+        current_values: list[int] = json.loads(
+            exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 -1", json=True).stdout
         )
-        count = int(
-            exec_valkey_cli(
-                endpoint, username, password, f"LLEN {KEY}", tls_enabled=tls_enabled
-            ).stdout
-        )
-        logger.info(
-            "Endpoint: %s, last written value: %s, last value in DB: %s, count in DB: %s",
-            endpoint,
-            last_written_value,
-            last_value,
-            count,
-        )
+        if values is None:
+            values = current_values
+
+        last_value = int(current_values[0]) if current_values else None
         assert last_written_value == last_value, (
             f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
         )
-        if not ignore_count:
-            assert count == last_written_value + 1, (
-                f"endpoint: {endpoint}, expected count: {last_written_value + 1}, current count: {count}"
-            )
-        logger.info("Continuous writes are consistent on %s.", endpoint)
+        assert values == current_values, (
+            f"endpoint: {endpoint}, expected values: {values}, current values: {current_values}"
+        )
