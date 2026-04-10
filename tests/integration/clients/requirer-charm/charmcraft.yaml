@@ -1,7 +1,6 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-
 type: charm
 
 platforms:
@@ -45,11 +44,11 @@ parts:
     source: .
     after:
       - poetry-deps
-    poetry-export-extra-args: ['--without-hashes']
+    poetry-export-extra-args: ["--without-hashes"]
     build-packages:
-      - libffi-dev  # Needed to build Python dependencies with Rust from source
-      - libssl-dev  # Needed to build Python dependencies with Rust from source
-      - pkg-config  # Needed to build Python dependencies with Rust from source
+      - libffi-dev # Needed to build Python dependencies with Rust from source
+      - libssl-dev # Needed to build Python dependencies with Rust from source
+      - pkg-config # Needed to build Python dependencies with Rust from source
       - libprotobuf-dev # Needed to build Valkey-glide
       - protobuf-compiler # Needed to build Valkey-glide
       - git
@@ -149,7 +148,7 @@ config:
       description: >
         Valkey username. Required when connection-source is "config".
       type: string
-      default: ""
+      default: "charmed-operator"
     password:
       description: >
         Valkey password. Required when connection-source is "config".
