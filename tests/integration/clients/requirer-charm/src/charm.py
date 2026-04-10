@@ -5,6 +5,7 @@
 """Charm the application."""
 
 import asyncio
+import base64
 import enum
 import json
 import logging
@@ -78,6 +79,7 @@ class CWPath(enum.Enum):
     CONFIG = Path("/tmp/cw_config.json")
     STATE = Path("/tmp/cw_state.json")
     PID = Path("/tmp/cw_daemon.pid")
+    LOG = Path("/tmp/cw_daemon.log")
     CERT = Path("/tmp/cw_client.pem")
     KEY = Path("/tmp/cw_client.key")
     CA = Path("/tmp/cw_client_ca.pem")
@@ -238,7 +240,8 @@ class RequirerCharm(ops.CharmBase):
     def tls_ca_cert(self) -> str | None:
         """Retrieve the TLS CA cert from config or relation."""
         if self._use_config:
-            return str(self.config["ca-cert"]) or None
+            raw = str(self.config["ca-cert"])
+            return base64.b64decode(raw).decode() if raw else None
 
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
@@ -256,7 +259,8 @@ class RequirerCharm(ops.CharmBase):
     def certificate(self) -> str | None:
         """Retrieve the client certificate from config or the certificates relation."""
         if self._use_config:
-            return str(self.config["cert"]) or None
+            raw = str(self.config["cert"])
+            return base64.b64decode(raw).decode() if raw else None
 
         certificates, _ = self.certificates.get_assigned_certificates()
         if not certificates:
@@ -268,7 +272,8 @@ class RequirerCharm(ops.CharmBase):
     def private_key(self) -> str | None:
         """Retrieve the client private key from config or the certificates relation."""
         if self._use_config:
-            return str(self.config["key"]) or None
+            raw = str(self.config["key"])
+            return base64.b64decode(raw).decode() if raw else None
 
         _, private_key = self.certificates.get_assigned_certificates()
         if not private_key:
@@ -419,13 +424,19 @@ class RequirerCharm(ops.CharmBase):
         ).to_file(CWPath.CONFIG.value)
 
         daemon_script = Path(__file__).parent / "continuous_writes.py"
+        log_file = CWPath.LOG.value.open("w")
         proc = subprocess.Popen(
             [sys.executable, str(daemon_script), str(CWPath.CONFIG.value), str(sleep_interval)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
             start_new_session=True,
         )
-        logger.info("Started continuous-writes daemon with PID %d", proc.pid)
+        log_file.close()
+        logger.info(
+            "Started continuous-writes daemon with PID %d (log: %s)",
+            proc.pid,
+            CWPath.LOG.value,
+        )
         event.set_results({"ok": True, "pid": proc.pid})
 
     def _on_stop_continuous_writes_action(self, event: ops.ActionEvent) -> None:
@@ -448,7 +459,9 @@ class RequirerCharm(ops.CharmBase):
 
         # Wait for the daemon to exit and flush its final state, with retries
         if not _wait_for_pid_exit(pid):
-            logger.warning("Daemon PID %d had to be force-killed; state file may be incomplete.", pid)
+            logger.warning(
+                "Daemon PID %d had to be force-killed; state file may be incomplete.", pid
+            )
 
         if not CWPath.STATE.value.exists():
             event.fail("State file not found — the daemon may not have written anything.")
