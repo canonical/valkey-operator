@@ -584,7 +584,7 @@ class BaseEvents(ops.Object):
                 }
             )
 
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY.value})
 
     def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
         """Handle the restart_workload event."""
@@ -609,36 +609,17 @@ class BaseEvents(ops.Object):
             if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
                 check_replica_sync=False
             ):
-                self.charm.status.set_running_status(
-                    ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
+                self.charm.state.unit_server.update({"is_valkey_healthy": False})
                 event.defer()
                 return
-
-            self.charm.state.statuses.delete(
-                ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
+            self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
             if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-                self.charm.status.set_running_status(
-                    ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
+                self.charm.state.unit_server.update({"is_sentinel_healthy": False})
                 event.defer()
                 return
 
-            self.charm.state.statuses.delete(
-                ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
+            self.charm.state.unit_server.update({"is_sentinel_healthy": True})
         except ValkeyServicesFailedToStartError as e:
             logger.error(e)
             event.defer()

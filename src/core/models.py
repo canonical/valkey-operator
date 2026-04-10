@@ -74,6 +74,8 @@ class PeerUnitModel(PeerModel):
     client_cert_ready: bool = Field(default=False)
     tls_ca_rotation: str = Field(default="")
     tls_certificate_expiring: bool = Field(default=False)
+    is_valkey_healthy: bool = Field(default=True)
+    is_sentinel_healthy: bool = Field(default=True)
 
 
 class RelationState:
