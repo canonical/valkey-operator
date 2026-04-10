@@ -158,19 +158,19 @@ config:
       default: false
     ca-cert:
       description: >
-        PEM-encoded CA certificate. Required when connection-source is "config"
-        and tls-enabled is true.
+        Base64-encoded PEM CA certificate. Required when connection-source is
+        "config" and tls-enabled is true.
       type: string
       default: ""
     cert:
       description: >
-        PEM-encoded client certificate. Required when connection-source is
-        "config" and tls-enabled is true.
+        Base64-encoded PEM client certificate. Required when connection-source
+        is "config" and tls-enabled is true.
       type: string
       default: ""
     key:
       description: >
-        PEM-encoded client private key. Required when connection-source is
-        "config" and tls-enabled is true.
+        Base64-encoded PEM client private key. Required when connection-source
+        is "config" and tls-enabled is true.
       type: string
       default: ""
