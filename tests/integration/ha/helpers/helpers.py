@@ -31,6 +31,21 @@ K8S_RESTART_DELAY_DEFAULT = 5
 RESTART_DELAY_PATCHED = 120
 
 
+EXTEND_PEBBLE_RESTART_DELAY_YAML = """services:
+  valkey:
+    override: merge
+    backoff-delay: {delay}s
+    backoff-limit: {delay}s
+"""
+
+RESTORE_PEBBLE_RESTART_DELAY_YAML = """services:
+  valkey:
+    override: merge
+    backoff-delay: 500ms
+    backoff-limit: 30s
+"""
+
+
 def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     """Cut network from a lxc container in a way the changes the IP."""
     # apply a mask (device type `none`)
@@ -465,7 +480,9 @@ def send_process_control_signal(
             command, stderr=subprocess.PIPE, shell=True, universal_newlines=True, timeout=3
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
+        logger.error(
+            "failed to send signal %s to process %s on unit %s", signal, db_process, unit_name
+        )
     logger.info(f"Signal {signal} sent to database process on unit {unit_name}.")
 
 
@@ -479,21 +496,6 @@ def lxd_patch_restart_delay(juju: jubilant.Juju, unit_name: str, delay: int | No
 
     # reload the daemon for systemd to reflect changes
     juju.exec(command="sudo systemctl daemon-reload", unit=unit_name)
-
-
-EXTEND_PEBBLE_RESTART_DELAY_YAML = """services:
-  valkey:
-    override: merge
-    backoff-delay: {delay}s
-    backoff-limit: {delay}s
-"""
-
-RESTORE_PEBBLE_RESTART_DELAY_YAML = """services:
-  valkey:
-    override: merge
-    backoff-delay: 500ms
-    backoff-limit: 30s
-"""
 
 
 def pebble_patch_restart_delay(
@@ -653,7 +655,8 @@ def reboot_unit(juju: jubilant.Juju, unit_name: str, substrate: Substrate) -> No
         delete_pod(unit_name.replace("/", "-"), juju.model)
 
 
-def delete_pod(pod_name: str, namespace="testing"):
+def delete_pod(pod_name: str, namespace="testing") -> None:
+    """Delete a pod from the cluster."""
     # Load the kubeconfig file from your local machine (~/.kube/config)
     # Note: If running this script INSIDE a pod, use config.load_incluster_config() instead.
     config.load_kube_config()

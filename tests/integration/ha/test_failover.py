@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 
 import asyncio
+import json
 import logging
 
 import jubilant
@@ -114,7 +115,6 @@ async def test_kill_db_process_on_primary(
     primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from valkey."
 
-    # Cut the network to the primary unit
     logger.info("Axing away primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
 
@@ -174,8 +174,6 @@ async def test_kill_db_process_on_primary(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
-        tls_enabled=tls_enabled,
     )
 
 
@@ -208,7 +206,6 @@ async def test_freeze_db_process_on_primary(
     primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from valkey."
 
-    # Cut the network to the primary unit
     logger.info("Axing away primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
 
@@ -236,6 +233,10 @@ async def test_freeze_db_process_on_primary(
     new_primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert new_primary_ip != primary_ip, "Primary IP did not change after failover delay."
     logger.info("Failover successful, new primary is at %s", new_primary_ip)
+
+    new_primary_unit_name = get_unit_name_from_primary_ip(juju, new_primary_ip, substrate)
+    new_primary_hostname = f"{new_primary_unit_name.replace('/', '-')}.{app_name}-endpoints"
+    new_primary_endpoint = new_primary_ip if substrate == Substrate.VM else new_primary_hostname
 
     number_of_replicas = await get_number_connected_replicas(
         hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
@@ -290,6 +291,21 @@ async def test_freeze_db_process_on_primary(
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
 
+    for hostname in hostnames:
+        # Make sure all sentinels are connected to new primary
+        master_addr = exec_valkey_cli(
+            hostname=hostname,
+            username=CharmUsers.SENTINEL_CHARM_ADMIN,
+            password=get_password(juju, CharmUsers.SENTINEL_CHARM_ADMIN),
+            command="sentinel get-master-addr-by-name primary",
+            tls_enabled=tls_enabled,
+            sentinel=True,
+            json=True,
+        ).stdout
+        assert json.loads(master_addr)[0] == new_primary_endpoint, (
+            f"Sentinel at {hostname} is not connected to the new primary."
+        )
+
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
@@ -305,8 +321,6 @@ async def test_freeze_db_process_on_primary(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
-        tls_enabled=tls_enabled,
     )
 
 
@@ -400,8 +414,6 @@ async def test_full_cluster_restart(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
-        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -504,8 +516,6 @@ async def test_full_cluster_crash(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
-        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -602,8 +612,6 @@ async def test_reboot_primary(
         hostnames=get_cluster_hostnames(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        tls_enabled=tls_enabled,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
     )
 
 
@@ -690,6 +698,4 @@ async def test_full_cluster_reboot(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
-        tls_enabled=tls_enabled,
-        ignore_count=True,  # we ignore count here as we know we will miss writes during primary down
     )

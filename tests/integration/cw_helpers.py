@@ -71,8 +71,6 @@ def assert_continuous_writes_consistent(
     hostnames: list[str],
     username: str,
     password: str,
-    ignore_count: bool = False,
-    tls_enabled: bool = False,
 ) -> None:
     """Assert that the continuous writes are consistent."""
     last_written_value = int(Path(WRITES_LAST_WRITTEN_VAL_PATH).read_text())
