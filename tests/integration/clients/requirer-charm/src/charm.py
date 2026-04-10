@@ -143,6 +143,7 @@ class RequirerCharm(ops.CharmBase):
             self.on.stop_continuous_writes_action, self._on_stop_continuous_writes_action
         )
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
+        framework.observe(self.on.config_changed, self._on_config_changed)
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
@@ -385,16 +386,20 @@ class RequirerCharm(ops.CharmBase):
                 return
 
         sleep_interval = float(event.params.get("sleep-interval", 1.0))
+        clear_existing = bool(event.params.get("clear-existing", True))
 
-        # Stop any running daemon first
+        # Fail if a daemon is already running
         if CWPath.PID.value.exists():
             try:
                 pid = int(CWPath.PID.value.read_text().strip())
-                os.kill(pid, signal.SIGTERM)
-                time.sleep(1)
-            except (ProcessLookupError, ValueError, OSError):
-                pass
-            CWPath.PID.value.unlink(missing_ok=True)
+                os.kill(pid, 0)  # check existence without signalling
+                event.fail(f"Continuous-writes daemon is already running with PID {pid}.")
+                return
+            except ProcessLookupError:
+                # Stale PID file — clean up and proceed
+                CWPath.PID.value.unlink(missing_ok=True)
+            except ValueError:
+                CWPath.PID.value.unlink(missing_ok=True)
 
         # Clear previous state so the new run starts fresh
         CWPath.STATE.value.unlink(missing_ok=True)
@@ -421,6 +426,7 @@ class RequirerCharm(ops.CharmBase):
             password=password,
             tls=tls_config,
             initial_count=0,
+            clear_existing=clear_existing,
         ).to_file(CWPath.CONFIG.value)
 
         daemon_script = Path(__file__).parent / "continuous_writes.py"
@@ -499,6 +505,54 @@ class RequirerCharm(ops.CharmBase):
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
         logger.info("Database created")
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Hot-reload the continuous-writes daemon when endpoints config changes."""
+        if not self._use_config or not CWPath.PID.value.exists():
+            return
+
+        try:
+            current_config = DaemonConfig.from_file(CWPath.CONFIG.value)
+        except Exception:
+            return
+
+        if current_config.endpoints == self.primary_endpoint:
+            return
+
+        logger.info(
+            "Endpoints changed from %s to %s; reloading continuous-writes daemon.",
+            current_config.endpoints,
+            self.primary_endpoint,
+        )
+
+        username, password = next(iter(self.credentials.items()))
+        tls_config = current_config.tls
+        if self.tls_enabled and self.certificate and self.private_key and self.tls_ca_cert:
+            from continuous_writes import TlsConfig
+
+            CWPath.CERT.value.write_bytes(self.certificate.encode())
+            CWPath.KEY.value.write_bytes(self.private_key.encode())
+            CWPath.CA.value.write_bytes(self.tls_ca_cert.encode())
+            tls_config = TlsConfig(
+                cert_path=str(CWPath.CERT.value),
+                key_path=str(CWPath.KEY.value),
+                ca_path=str(CWPath.CA.value),
+            )
+
+        DaemonConfig(
+            endpoints=self.primary_endpoint,
+            username=username,
+            password=password,
+            tls=tls_config,
+            initial_count=0,
+        ).to_file(CWPath.CONFIG.value)
+
+        try:
+            pid = int(CWPath.PID.value.read_text().strip())
+            os.kill(pid, signal.SIGUSR1)
+            logger.info("Sent SIGUSR1 to continuous-writes daemon PID %d.", pid)
+        except (ProcessLookupError, ValueError, OSError) as exc:
+            logger.warning("Failed to send SIGUSR1 to daemon: %s", exc)
 
 
 if __name__ == "__main__":  # pragma: nocover

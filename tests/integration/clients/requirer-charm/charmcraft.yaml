@@ -116,6 +116,10 @@ actions:
         description: Seconds to sleep between writes (float, default 1.0)
         type: number
         default: 1.0
+      clear-existing:
+        description: Delete any existing list values before starting (default true)
+        type: boolean
+        default: true
 
   stop-continuous-writes:
     description: >
