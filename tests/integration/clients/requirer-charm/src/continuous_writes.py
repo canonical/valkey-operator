@@ -33,7 +33,8 @@ import logging
 import os
 import signal
 import sys
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from glide import (
@@ -66,14 +67,6 @@ class TlsConfig:
     cert_path: str
     key_path: str
     ca_path: str
-
-    def to_dict(self) -> dict[str, str]:
-        """Serialise TLS config to a dict."""
-        return {
-            "cert_path": self.cert_path,
-            "key_path": self.key_path,
-            "ca_path": self.ca_path,
-        }
 
 
 @dataclass
@@ -118,7 +111,7 @@ class DaemonConfig:
             "clear_existing": self.clear_existing,
         }
         if self.tls is not None:
-            data.update(self.tls.to_dict())
+            data.update(asdict(self.tls))
         path.write_text(json.dumps(data))
 
 
@@ -164,14 +157,21 @@ async def _make_client(config: DaemonConfig) -> GlideClient:
     return await GlideClient.create(glide_config)
 
 
-async def clear(config: DaemonConfig) -> None:
-    """Delete the continuous-writes list key from Valkey."""
+@asynccontextmanager
+async def _client(config: DaemonConfig):
+    """Async context manager that creates and closes a GlideClient."""
     client = await _make_client(config)
     try:
-        await client.delete([KEY])
-        logger.info("Cleared existing values for key '%s'.", KEY)
+        yield client
     finally:
         await client.close()
+
+
+async def clear(config: DaemonConfig) -> None:
+    """Delete the continuous-writes list key from Valkey."""
+    async with _client(config) as client:
+        await client.delete([KEY])
+        logger.info("Cleared existing values for key '%s'.", KEY)
 
 
 async def _initial_count(config: DaemonConfig) -> tuple[int, int]:
@@ -193,28 +193,12 @@ async def _initial_count(config: DaemonConfig) -> tuple[int, int]:
 
     count = 0
     try:
-        client = await _make_client(config)
-        try:
+        async with _client(config) as client:
             count = await client.llen(KEY)
-        finally:
-            await client.close()
     except Exception:
         pass
 
     return counter, count
-
-
-async def _write_one(config: DaemonConfig, counter: int) -> int:
-    """Write counter to Valkey. Returns new list length, or None on failure."""
-    client = await _make_client(config)
-    try:
-        new_len = await asyncio.wait_for(client.lpush(KEY, [str(counter)]), timeout=5)
-    finally:
-        await client.close()
-
-    if not new_len:
-        raise RuntimeError("LPUSH returned 0/None")
-    return new_len
 
 
 def _try_reload(old: DaemonConfig) -> DaemonConfig:
@@ -259,7 +243,10 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
 
     while not stop.is_set():
         try:
-            new_len = await _write_one(config, counter)
+            async with _client(config) as client:
+                new_len = await client.lpush(KEY, [str(counter)])
+            if not new_len:
+                raise RuntimeError("LPUSH returned 0/None")
             last_written = counter
             count = new_len
             _write_state_atomic(last_written, count)
