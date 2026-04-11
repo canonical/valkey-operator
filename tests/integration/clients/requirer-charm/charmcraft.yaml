@@ -120,6 +120,11 @@ actions:
         type: boolean
         default: true
 
+  clear-continuous-writes:
+    description: >
+      Delete the continuous-writes key from Valkey. Can be run while the daemon
+      is stopped to reset data between test runs.
+
   stop-continuous-writes:
     description: >
       Stop the continuous-writes daemon and return the last written value and

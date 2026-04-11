@@ -142,6 +142,9 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(
             self.on.stop_continuous_writes_action, self._on_stop_continuous_writes_action
         )
+        framework.observe(
+            self.on.clear_continuous_writes_action, self._on_clear_continuous_writes_action
+        )
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
         framework.observe(self.on.config_changed, self._on_config_changed)
 
@@ -497,6 +500,21 @@ class RequirerCharm(ops.CharmBase):
                 "count": state["count"],
             }
         )
+
+    def _on_clear_continuous_writes_action(self, event: ops.ActionEvent) -> None:
+        """Handle clear-continuous-writes action."""
+        if not CWPath.CONFIG.value.exists():
+            event.fail("No continuous-writes config found — run start-continuous-writes first.")
+            return
+
+        try:
+            daemon_config = DaemonConfig.from_file(CWPath.CONFIG.value)
+            asyncio.run(cw_clear(daemon_config))
+        except Exception as exc:
+            event.fail(f"Failed to clear continuous-writes data: {exc}")
+            return
+
+        event.set_results({"ok": True})
 
     def _on_resource_created(self, event: ResourceCreatedEvent[ResourceProviderModel]) -> None:
         """Handle resource created event."""
