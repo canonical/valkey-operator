@@ -222,19 +222,19 @@ def assert_charm_continuous_writes_consistent(
     hostnames: list[str],
     username: str,
     password: str,
-    stats: SimpleNamespace,
+    last_written_value: int,
 ) -> None:
     """Assert consistency of continuous-writes data across all Valkey instances.
 
     Checks two properties:
-    - The head of the list on every replica matches ``stats.last_written_value``.
+    - The head of the list on every replica matches ``last_written_value``.
     - Every replica holds an identical copy of the list.
 
     Args:
         hostnames: List of Valkey hostnames to check.
         username: Valkey username.
         password: Valkey password.
-        stats: Write statistics returned by ``stop_charm_continuous_writes``.
+        last_written_value: Last integer successfully written, from ``stop_charm_continuous_writes``.
     """
     reference: list[int] | None = None
 
@@ -244,9 +244,9 @@ def assert_charm_continuous_writes_consistent(
         )
 
         last_value = int(current_values[0]) if current_values else None
-        assert last_value == stats.last_written_value, (
+        assert last_value == last_written_value, (
             f"endpoint {endpoint}: head of list is {last_value}, "
-            f"expected last_written_value={stats.last_written_value}"
+            f"expected last_written_value={last_written_value}"
         )
 
         if reference is None:
