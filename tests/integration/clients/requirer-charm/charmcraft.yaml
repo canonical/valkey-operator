@@ -125,6 +125,11 @@ actions:
       Stop the continuous-writes daemon and return the last written value and
       total count of successful writes. Use this after a disruptive operation
       to retrieve stats for consistency verification.
+    params:
+      clear:
+        description: Delete continuous-writes data from Valkey after stopping (default false)
+        type: boolean
+        default: false
 
 config:
   options:

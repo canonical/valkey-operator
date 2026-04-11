@@ -24,7 +24,7 @@ from charmlibs.interfaces.tls_certificates import (
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseCreatedEvent, DatabaseRequires
 from client import ValkeyClient
-from continuous_writes import DaemonConfig
+from continuous_writes import DaemonConfig, TlsConfig, clear as cw_clear
 from dpcharmlibs.interfaces import (
     DataContractV1,
     RequirerCommonModel,
@@ -412,8 +412,6 @@ class RequirerCharm(ops.CharmBase):
             CWPath.CERT.value.write_bytes(self.certificate.encode())
             CWPath.KEY.value.write_bytes(self.private_key.encode())
             CWPath.CA.value.write_bytes(self.tls_ca_cert.encode())
-            from continuous_writes import TlsConfig
-
             tls_config = TlsConfig(
                 cert_path=str(CWPath.CERT.value),
                 key_path=str(CWPath.KEY.value),
@@ -484,6 +482,14 @@ class RequirerCharm(ops.CharmBase):
             state["last_written"],
             state["count"],
         )
+
+        if bool(event.params.get("clear", False)):
+            try:
+                daemon_config = DaemonConfig.from_file(CWPath.CONFIG.value)
+                asyncio.run(cw_clear(daemon_config))
+            except Exception as exc:
+                logger.warning("Failed to clear continuous-writes data: %s", exc)
+
         event.set_results(
             {
                 "ok": True,
@@ -528,8 +534,6 @@ class RequirerCharm(ops.CharmBase):
         username, password = next(iter(self.credentials.items()))
         tls_config = current_config.tls
         if self.tls_enabled and self.certificate and self.private_key and self.tls_ca_cert:
-            from continuous_writes import TlsConfig
-
             CWPath.CERT.value.write_bytes(self.certificate.encode())
             CWPath.KEY.value.write_bytes(self.private_key.encode())
             CWPath.CA.value.write_bytes(self.tls_ca_cert.encode())
