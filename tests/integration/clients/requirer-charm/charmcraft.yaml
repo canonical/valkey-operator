@@ -147,7 +147,7 @@ config:
         Whether to read connection info from the Valkey relation ("relation")
         or from the config options below ("config").
       type: string
-      default: relation
+      default: config
     endpoints:
       description: >
         Comma-separated list of Valkey endpoints in "host:port" form.
