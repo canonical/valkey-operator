@@ -244,7 +244,7 @@ class RequirerCharm(ops.CharmBase):
     def tls_ca_cert(self) -> str | None:
         """Retrieve the TLS CA cert from config or relation."""
         if self._use_config:
-            raw = str(self.config["ca-cert"])
+            raw = str(self.config["cacert"])
             return base64.b64decode(raw).decode() if raw else None
 
         if self.data_interfaces_version == 0:

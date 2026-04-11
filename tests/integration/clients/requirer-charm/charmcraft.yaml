@@ -169,7 +169,7 @@ config:
         Whether TLS is enabled. Used when connection-source is "config".
       type: boolean
       default: false
-    ca-cert:
+    cacert:
       description: >
         Base64-encoded PEM CA certificate. Required when connection-source is
         "config" and tls-enabled is true.
