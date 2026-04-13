@@ -30,7 +30,7 @@ from tests.integration.helpers import (
     CharmUsers,
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
     get_password,
@@ -84,7 +84,7 @@ async def test_network_cut_primary(  # noqa: C901
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
     download_client_certificate_from_unit(juju, APP_NAME)
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
 
     c_writes.tls_enabled = tls_enabled
     await c_writes.async_clear()
@@ -147,7 +147,7 @@ async def test_network_cut_primary(  # noqa: C901
                     juju,
                     APP_NAME,
                     tls_enabled=tls_enabled,
-                    hostnames=[ip for ip in hostnames if ip != primary_ip],
+                    addresses=[address for address in addresses if address != primary_ip],
                 )
                 break
             except ValueError as e:
@@ -170,7 +170,7 @@ async def test_network_cut_primary(  # noqa: C901
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
-                hostnames=hostnames,
+                addresses=addresses,
                 username=CharmUsers.VALKEY_ADMIN.value,
                 password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
                 tls_enabled=tls_enabled,
@@ -182,21 +182,21 @@ async def test_network_cut_primary(  # noqa: C901
     logger.info(
         "Verifying that new primary endpoint is marked as down in sentinels list of other replicas..."
     )
-    for hostname in hostnames:
-        if hostname == primary_ip:
+    for address in addresses:
+        if address == primary_ip:
             continue
         assert is_endpoint_in_sentinels(
             juju,
             endpoint=primary_endpoint,
-            hostname=hostname,
+            hostname=address,
             status="s_down",
             tls_enabled=tls_enabled,
         ), (
-            f"The old primary endpoint should be marked as down in sentinels list of hostname {hostname} after network cut."
+            f"The old primary endpoint should be marked as down in sentinels list of hostname {address} after network cut."
         )
 
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=tls_enabled,
@@ -252,13 +252,13 @@ async def test_network_cut_primary(  # noqa: C901
                         "The new IP should be in SANs of client certificate after network cut and IP change."
                     )
 
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
             number_of_replicas = await get_number_connected_replicas(
-                hostnames=hostnames,
+                addresses=addresses,
                 username=CharmUsers.VALKEY_ADMIN.value,
                 password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
                 tls_enabled=tls_enabled,
@@ -269,29 +269,27 @@ async def test_network_cut_primary(  # noqa: C901
 
     logger.info("Verifying endpoint presence in sentinels")
 
-    for hostname in hostnames:
-        if hostname == new_unit_ip:
+    for address in addresses:
+        if address == new_unit_ip:
             continue
         if ip_change:
             assert not is_endpoint_in_sentinels(
-                juju, primary_endpoint, hostname, tls_enabled=tls_enabled
+                juju, primary_endpoint, address, tls_enabled=tls_enabled
             ), (
-                f"The old primary endpoint should not be present in sentinels list of hostname {hostname} after network cut and IP change."
+                f"The old primary endpoint should not be present in sentinels list of hostname {address} after network cut and IP change."
             )
-            assert is_endpoint_in_sentinels(
-                juju, new_unit_ip, hostname, tls_enabled=tls_enabled
-            ), (
-                f"The new primary IP should be present in sentinels list of hostname {hostname} after network cut and IP change."
+            assert is_endpoint_in_sentinels(juju, new_unit_ip, address, tls_enabled=tls_enabled), (
+                f"The new primary IP should be present in sentinels list of hostname {address} after network cut and IP change."
             )
         else:
             assert is_endpoint_in_sentinels(
-                juju, primary_endpoint, hostname, tls_enabled=tls_enabled
+                juju, primary_endpoint, address, tls_enabled=tls_enabled
             ), (
-                f"The old primary endpoint should be present in sentinels list of hostname {hostname} after network cut and no IP change."
+                f"The old primary endpoint should be present in sentinels list of hostname {address} after network cut and no IP change."
             )
 
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=tls_enabled,
