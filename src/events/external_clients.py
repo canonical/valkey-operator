@@ -30,7 +30,6 @@ from common.exceptions import (
     ValkeyWorkloadCommandError,
 )
 from literals import CERTIFICATE_TRANSFER_RELATION, EXTERNAL_CLIENTS_RELATION, PEER_RELATION
-from statuses import ExternalClientsStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -172,22 +171,11 @@ class ExternalClientsEvents(ops.Object):
             ValkeyWorkloadCommandError,
         ) as e:
             logger.error(e)
-            self.charm.status.set_running_status(
-                ExternalClientsStatuses.USER_SETUP_FAILED.value,
-                scope="unit",
-                statuses_state=self.charm.state.statuses,
-                component_name=self.charm.client_manager.name,
-            )
             event.defer()
             return
 
         self.valkey_provides.set_responses(event.relation.id, responses)
         self.charm.state.cluster.update({"client_user_epoch": time.time()})
-        self.charm.state.statuses.delete(
-            ExternalClientsStatuses.USER_SETUP_FAILED.value,
-            scope="unit",
-            component=self.charm.client_manager.name,
-        )
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle peer relation changes in regard to external client relations."""
@@ -228,21 +216,10 @@ class ExternalClientsEvents(ops.Object):
             ValkeyWorkloadCommandError,
         ) as e:
             logger.error(e)
-            self.charm.status.set_running_status(
-                ExternalClientsStatuses.USER_SETUP_FAILED.value,
-                scope="unit",
-                statuses_state=self.charm.state.statuses,
-                component_name=self.charm.client_manager.name,
-            )
             event.defer()
             return
 
         self.charm.state.unit_server.update({"client_user_epoch": time.time()})
-        self.charm.state.statuses.delete(
-            ExternalClientsStatuses.USER_SETUP_FAILED.value,
-            scope="unit",
-            component=self.charm.client_manager.name,
-        )
 
     def _on_client_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the relation-broken event."""

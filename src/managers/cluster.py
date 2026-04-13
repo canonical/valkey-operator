@@ -15,6 +15,7 @@ from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyConfigSetError,
+    ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
@@ -97,9 +98,13 @@ class ClusterManager(ManagerStatusProtocol):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
 
-        if (
-            persistence_info := client.info_persistence(hostname=self.state.endpoint)
-        ) and persistence_info.get("loading", "") != "0":
+        try:
+            persistence_info = client.info_persistence(hostname=self.state.endpoint)
+        except ValkeyWorkloadCommandError as e:
+            logger.error(e)
+            return False
+
+        if persistence_info.get("loading", "") != "0":
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False
 

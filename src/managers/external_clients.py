@@ -108,11 +108,17 @@ class ExternalClientsManager(ManagerStatusProtocol):
         ).root
 
         # Peer relation not established yet, model not built yet or no users added
+        if not self.state.cluster.model or not self.state.external_client_relations:
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
         if (
-            not self.state.cluster.model
-            or not self.state.external_client_relations
-            or scope != "app"
+            not self.state.charm.unit.is_leader()
+            and self.state.unit_server.model.client_user_epoch
+            < self.state.cluster.model.client_user_epoch
         ):
+            status_list.append(ExternalClientsStatuses.USER_ACL_OUT_OF_DATE.value)
+
+        if scope != "app":
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if not self.state.cluster.external_users_credentials:

@@ -318,7 +318,7 @@ def test_client_request_acl_load_failed(cloud_spec):
         ),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
-        assert status_is(state_out, ExternalClientsStatuses.USER_SETUP_FAILED.value)
+        assert "bulk_resources_requested" in [e.name for e in state_out.deferred]
 
 
 def test_add_new_client_user_non_leader(cloud_spec):
