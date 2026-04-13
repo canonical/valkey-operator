@@ -79,7 +79,7 @@ async def test_network_cut_primary(  # noqa: C901
     juju: jubilant.Juju,
     substrate: Substrate,
     chaos_mesh,
-    c_writes,
+    glide_runner,
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if ip_change and substrate == Substrate.K8S:

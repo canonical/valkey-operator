@@ -12,11 +12,11 @@ from tests.integration.helpers import are_apps_active_and_agents_idle
 
 logger = logging.getLogger(__name__)
 
-CW_RUNNER_NAME = "cw-runner"
+GLIDE_RUNNER_NAME = "glide-runner"
 
 
 @pytest.fixture
-def cw_runner_charm(arch: str) -> str:
+def glide_runner_charm(arch: str) -> str:
     """Path to the charm file to use for testing."""
     # Return str instead of pathlib.Path since python-libjuju's model.deploy(), juju deploy, and
     # juju bundle files expect local charms to begin with `./` or `/` to distinguish them from
@@ -25,12 +25,14 @@ def cw_runner_charm(arch: str) -> str:
 
 
 @pytest.fixture(scope="function")
-def c_writes(juju: jubilant.Juju, cw_runner_charm: str) -> None:
+def glide_runner(juju: jubilant.Juju, glide_runner_charm: str) -> None:
     """Deploy continous writes runner charm if not already deployed."""
-    if CW_RUNNER_NAME not in juju.status().apps:
-        juju.deploy(cw_runner_charm, app=CW_RUNNER_NAME)
+    if GLIDE_RUNNER_NAME not in juju.status().apps:
+        juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
         juju.wait(
-            lambda status: are_apps_active_and_agents_idle(status, CW_RUNNER_NAME, idle_period=30),
+            lambda status: are_apps_active_and_agents_idle(
+                status, GLIDE_RUNNER_NAME, idle_period=30
+            ),
             timeout=600,
             delay=5,
             successes=3,

@@ -71,7 +71,7 @@ async def test_check_quorum(juju: jubilant.Juju) -> None:
     )
 
 
-async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
+async def test_scale_up(juju: jubilant.Juju, glide_runner) -> None:
     """Make sure new units are added to the valkey downtime."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
@@ -119,7 +119,9 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     )
 
 
-async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
+async def test_scale_down_one_unit(
+    juju: jubilant.Juju, substrate: Substrate, glide_runner
+) -> None:
     """Make sure scale down operations complete successfully."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
@@ -189,7 +191,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
 
 
 async def test_scale_down_multiple_units(
-    juju: jubilant.Juju, substrate: Substrate, c_writes
+    juju: jubilant.Juju, substrate: Substrate, glide_runner
 ) -> None:
     """Make sure multiple scale down operations complete successfully."""
     app_name = existing_app(juju) or APP_NAME
@@ -261,7 +263,7 @@ async def test_scale_down_multiple_units(
 
 
 async def test_scale_down_to_zero_and_back_up(
-    juju: jubilant.Juju, substrate: Substrate, c_writes
+    juju: jubilant.Juju, substrate: Substrate, glide_runner
 ) -> None:
     """Make sure that removing all units and then adding them again works."""
     app_name = existing_app(juju) or APP_NAME
@@ -309,7 +311,7 @@ async def test_scale_down_to_zero_and_back_up(
     )
 
 
-async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_writes) -> None:
+async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, glide_runner) -> None:
     """Make sure that removing the primary unit triggers a new primary to be elected and the cluster remains available."""
     if substrate == Substrate.K8S:
         pytest.skip("Primary unit can only targeted on VM")
