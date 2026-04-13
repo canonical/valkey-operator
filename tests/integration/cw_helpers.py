@@ -2,7 +2,6 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import asyncio
 import base64
 import json
 import logging
@@ -18,7 +17,6 @@ from tests.integration.helpers import (
     TLS_CERT_FILE,
     TLS_KEY_FILE,
     CharmUsers,
-    create_valkey_client,
     download_client_certificate_from_unit,
     exec_valkey_cli,
     get_cluster_addresses,
@@ -145,6 +143,30 @@ def stop_continuous_writes(
     return stats
 
 
+def assert_continuous_writes_increasing(
+    juju: jubilant.Juju,
+    unit: str = f"{CW_RUNNER_NAME}/0",
+    wait: float = 10.0,
+) -> None:
+    """Run the assert-continuous-writes-increasing action on the requirer charm unit.
+
+    Args:
+        juju: Juju client instance.
+        unit: Unit name to run the action on.
+        wait: Seconds to wait between state samples inside the charm.
+    """
+    result = juju.run(unit, "assert-continuous-writes-increasing", {"wait": wait})
+    assert result.status == "completed" and result.results.get("ok"), (
+        f"assert-continuous-writes-increasing failed: {result}"
+    )
+    logger.info(
+        "Continuous writes are increasing on %s (count %s -> %s)",
+        unit,
+        result.results.get("count-before"),
+        result.results.get("count-after"),
+    )
+
+
 def clear_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
     """Trigger the clear-continuous-writes action on the requirer charm unit.
 
@@ -158,33 +180,6 @@ def clear_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
     result = juju.run(unit, "clear-continuous-writes")
     assert result.results.get("ok"), f"clear-continuous-writes failed: {result}"
     logger.info("Continuous-writes data cleared on %s", unit)
-
-
-async def assert_continuous_writes_increasing(
-    hostnames: list[str],
-    username: str,
-    password: str,
-    tls_enabled: bool = False,
-) -> None:
-    """Assert that the continuous writes are increasing.
-
-    Args:
-        hostnames: List of Valkey hostnames to connect to.
-        username: Valkey username.
-        password: Valkey password.
-        tls_enabled: Whether TLS is enabled.
-    """
-    async with create_valkey_client(
-        hostnames,
-        username=username,
-        password=password,
-        tls_enabled=tls_enabled,
-    ) as client:
-        writes_count = await client.llen(KEY)
-        await asyncio.sleep(10)
-        more_writes = await client.llen(KEY)
-        assert more_writes > writes_count, "Writes not continuing to DB"
-        logger.info("Continuous writes are increasing.")
 
 
 def assert_continuous_writes_consistent(

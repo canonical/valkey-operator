@@ -195,12 +195,7 @@ async def test_network_cut_primary(  # noqa: C901
             f"The old primary endpoint should be marked as down in sentinels list of hostname {address} after network cut."
         )
 
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
     # restore network to the original primary unit
     logger.info("Restoring network to original primary unit at %s", primary_hostname)
@@ -290,9 +285,4 @@ async def test_network_cut_primary(  # noqa: C901
                 f"The old primary endpoint should be present in sentinels list of hostname {address} after network cut and no IP change."
             )
 
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
