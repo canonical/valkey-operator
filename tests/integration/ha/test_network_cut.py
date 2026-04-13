@@ -10,6 +10,8 @@ from tenacity import Retrying, stop_after_attempt, wait_fixed
 from literals import Substrate
 from tests.integration.cw_helpers import (
     assert_continuous_writes_increasing,
+    configure_cw_runner,
+    start_continuous_writes,
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
@@ -77,7 +79,6 @@ async def test_network_cut_primary(  # noqa: C901
     substrate: Substrate,
     chaos_mesh,
     c_writes,
-    c_writes_async_clean,
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if ip_change and substrate == Substrate.K8S:
@@ -86,9 +87,8 @@ async def test_network_cut_primary(  # noqa: C901
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
 
-    c_writes.tls_enabled = tls_enabled
-    await c_writes.async_clear()
-    c_writes.start()
+    configure_cw_runner(juju, valkey_app=APP_NAME, tls_enabled=tls_enabled)
+    start_continuous_writes(juju, clear=True)
 
     # Get the current primary unit
     primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
@@ -215,7 +215,9 @@ async def test_network_cut_primary(  # noqa: C901
         ip_change=ip_change,
         unit_count=NUM_UNITS,
     )
-    c_writes.update()
+    configure_cw_runner(
+        juju, valkey_app=APP_NAME, tls_enabled=tls_enabled
+    )  # update hostnames after network restore
 
     logger.info(
         "Verifying that all units can reach the original primary unit at %s...",

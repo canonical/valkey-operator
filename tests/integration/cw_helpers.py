@@ -6,13 +6,12 @@ import asyncio
 import base64
 import json
 import logging
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
+from typing import NamedTuple
 
 import jubilant
 
-from tests.integration.continuous_writes import ContinuousWrites
+from tests.integration.conftest import CW_RUNNER_NAME
 from tests.integration.helpers import (
     APP_NAME,
     TLS_CA_FILE,
@@ -22,88 +21,28 @@ from tests.integration.helpers import (
     create_valkey_client,
     download_client_certificate_from_unit,
     exec_valkey_cli,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_password,
 )
 
 logger = logging.getLogger(__name__)
 
-# WRITES_LAST_WRITTEN_VAL_PATH = "last_written_value"
-# KEY = "cw_key"
 
-KEY = ContinuousWrites.KEY
-WRITES_LAST_WRITTEN_VAL_PATH = ContinuousWrites.LAST_WRITTEN_VAL_PATH
-
-
-def start_continuous_writes(
-    endpoints: str,
-    valkey_user: str,
-    valkey_password: str,
-    sentinel_user: str,
-    sentinel_password: str,
-) -> None:
-    """Create a subprocess instance of continuous writes and start writing data to Valkey.
-
-    Args:
-        endpoints: Comma-separated list of Valkey endpoints.
-        valkey_user: Valkey username.
-        valkey_password: Valkey password.
-        sentinel_user: Sentinel username.
-        sentinel_password: Sentinel password.
-    """
-    subprocess.Popen(
-        [
-            "python3",
-            "tests/integration/continuous_writes.py",
-            endpoints,
-            valkey_user,
-            valkey_password,
-            sentinel_user,
-            sentinel_password,
-        ]
-    )
+class ContinuousWritesStats(NamedTuple):
+    last_written_value: int
+    total_count: int
 
 
-def stop_continuous_writes() -> None:
-    """Shut down the subprocess instance of the continuous writes."""
-    proc = subprocess.Popen(["pkill", "-15", "-f", "continuous_writes.py"])
-    proc.communicate()
+KEY = "cw_key"
 
 
-async def assert_continuous_writes_increasing(
-    hostnames: list[str],
-    username: str,
-    password: str,
-    tls_enabled: bool = False,
-) -> None:
-    """Assert that the continuous writes are increasing.
-
-    Args:
-        hostnames: List of Valkey hostnames to connect to.
-        username: Valkey username.
-        password: Valkey password.
-        tls_enabled: Whether TLS is enabled.
-    """
-    async with create_valkey_client(
-        hostnames,
-        username=username,
-        password=password,
-        tls_enabled=tls_enabled,
-    ) as client:
-        writes_count = await client.llen(KEY)
-        await asyncio.sleep(10)
-        more_writes = await client.llen(KEY)
-        assert more_writes > writes_count, "Writes not continuing to DB"
-        logger.info("Continuous writes are increasing.")
-
-
-def configure_requirer_charm(
+def configure_cw_runner(
     juju: jubilant.Juju,
-    app: str,
+    app: str = CW_RUNNER_NAME,
     valkey_app: str = APP_NAME,
     tls_enabled: bool = False,
 ) -> None:
-    """Configure the requirer charm to connect to Valkey via config options.
+    """Configure the continuous writes runner charm to connect to Valkey via config options.
 
     Endpoints and the admin password are fetched automatically from the Juju
     model. When ``tls_enabled`` is True, client certificates are downloaded
@@ -111,11 +50,11 @@ def configure_requirer_charm(
 
     Args:
         juju: Juju client instance.
-        app: Name of the requirer charm application to configure.
+        app: Name of the continuous writes runner charm application to configure.
         valkey_app: Name of the Valkey application to fetch endpoints from.
         tls_enabled: Whether TLS is enabled.
     """
-    hostnames = get_cluster_hostnames(juju, valkey_app)
+    hostnames = get_cluster_addresses(juju, valkey_app)
     endpoints = ",".join(f"{h}:6379" for h in hostnames)
     password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
 
@@ -139,9 +78,9 @@ def configure_requirer_charm(
     juju.config(app=app, values=values)
 
 
-def start_charm_continuous_writes(
+def start_continuous_writes(
     juju: jubilant.Juju,
-    unit: str,
+    unit: str = f"{CW_RUNNER_NAME}/0",
     sleep_interval: float = 1.0,
     config: dict | None = None,
     clear: bool = True,
@@ -177,7 +116,9 @@ def start_charm_continuous_writes(
     return pid
 
 
-def stop_charm_continuous_writes(juju: jubilant.Juju, unit: str) -> SimpleNamespace:
+def stop_continuous_writes(
+    juju: jubilant.Juju, unit: str = f"{CW_RUNNER_NAME}/0"
+) -> ContinuousWritesStats:
     """Trigger the stop-continuous-writes action and return write statistics.
 
     Args:
@@ -185,25 +126,26 @@ def stop_charm_continuous_writes(juju: jubilant.Juju, unit: str) -> SimpleNamesp
         unit: Unit name to run the action on.
 
     Returns:
-        Namespace with ``last_written_value`` (last integer successfully
-        written to Valkey) and ``count`` (number of items in the list).
+        ``ContinuousWritesStats`` with ``last_written_value`` (last integer
+        successfully written to Valkey) and ``total_count`` (number of items
+        in the list).
     """
     result = juju.run(unit, "stop-continuous-writes")
     assert result.results.get("ok"), f"stop-continuous-writes failed: {result}"
-    stats = SimpleNamespace(
+    stats = ContinuousWritesStats(
         last_written_value=int(result.results["last-written-value"]),
-        count=int(result.results["count"]),
+        total_count=int(result.results["count"]),
     )
     logger.info(
         "Continuous-writes stopped on %s — last_written=%d, count=%d",
         unit,
         stats.last_written_value,
-        stats.count,
+        stats.total_count,
     )
     return stats
 
 
-def clear_charm_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
+def clear_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
     """Trigger the clear-continuous-writes action on the requirer charm unit.
 
     Deletes the continuous-writes key from Valkey. Can be called while the
@@ -218,7 +160,34 @@ def clear_charm_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
     logger.info("Continuous-writes data cleared on %s", unit)
 
 
-def assert_charm_continuous_writes_consistent(
+async def assert_continuous_writes_increasing(
+    hostnames: list[str],
+    username: str,
+    password: str,
+    tls_enabled: bool = False,
+) -> None:
+    """Assert that the continuous writes are increasing.
+
+    Args:
+        hostnames: List of Valkey hostnames to connect to.
+        username: Valkey username.
+        password: Valkey password.
+        tls_enabled: Whether TLS is enabled.
+    """
+    async with create_valkey_client(
+        hostnames,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    ) as client:
+        writes_count = await client.llen(KEY)
+        await asyncio.sleep(10)
+        more_writes = await client.llen(KEY)
+        assert more_writes > writes_count, "Writes not continuing to DB"
+        logger.info("Continuous writes are increasing.")
+
+
+def assert_continuous_writes_consistent(
     hostnames: list[str],
     username: str,
     password: str,
@@ -234,7 +203,7 @@ def assert_charm_continuous_writes_consistent(
         hostnames: List of Valkey hostnames to check.
         username: Valkey username.
         password: Valkey password.
-        last_written_value: Last integer successfully written, from ``stop_charm_continuous_writes``.
+        last_written_value: Last integer successfully written, from ``stop_continuous_writes``.
     """
     reference: list[int] | None = None
 
@@ -262,38 +231,3 @@ def assert_charm_continuous_writes_consistent(
         len(hostnames),
         len(reference or []),
     )
-
-
-def assert_continuous_writes_consistent(
-    hostnames: list[str],
-    username: str,
-    password: str,
-) -> None:
-    """Assert that the continuous writes are consistent.
-
-    Args:
-        hostnames: List of Valkey hostnames to check.
-        username: Valkey username.
-        password: Valkey password.
-    """
-    last_written_value = int(Path(WRITES_LAST_WRITTEN_VAL_PATH).read_text())
-
-    if not last_written_value:
-        raise ValueError("Could not read last written value from file.")
-
-    values: list[int] | None = None
-
-    for endpoint in hostnames:
-        current_values: list[int] = json.loads(
-            exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 -1", json=True).stdout
-        )
-        if values is None:
-            values = current_values
-
-        last_value = int(current_values[0]) if current_values else None
-        assert last_written_value == last_value, (
-            f"endpoint: {endpoint}, expected value: {last_written_value}, current value: {last_value}"
-        )
-        assert values == current_values, (
-            f"endpoint: {endpoint}, expected values: {values}, current values: {current_values}"
-        )
