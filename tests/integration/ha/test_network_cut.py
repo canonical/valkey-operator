@@ -12,6 +12,7 @@ from tests.integration.cw_helpers import (
     assert_continuous_writes_increasing,
     configure_cw_runner,
     start_continuous_writes,
+    stop_continuous_writes,
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
@@ -286,3 +287,4 @@ async def test_network_cut_primary(  # noqa: C901
             )
 
     assert_continuous_writes_increasing(juju)
+    stop_continuous_writes(juju)

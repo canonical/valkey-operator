@@ -106,7 +106,7 @@ def start_continuous_writes(
     result = juju.run(
         unit,
         "start-continuous-writes",
-        {"sleep-interval": sleep_interval, "clear-existing": clear},
+        params={"sleep-interval": sleep_interval, "clear-existing": clear},
     )
     assert result.results.get("ok"), f"start-continuous-writes failed: {result}"
     pid = int(result.results["pid"])
