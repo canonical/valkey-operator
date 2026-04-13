@@ -266,7 +266,7 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
 
         # Poll the pod status until it completes
         phase = None
-        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2)):
+        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2), reraise=True):
             with attempt:
                 pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
                 phase = pod_status.status.phase
@@ -309,7 +309,9 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
 def is_unit_reachable_lxd(from_host: str, to_host: str, number_of_retries: int = 10) -> bool:
     """Test network reachability between LXD hosts."""
     try:
-        for attempt in Retrying(stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10)):
+        for attempt in Retrying(
+            stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10), reraise=True
+        ):
             with attempt:
                 ping = subprocess.call(
                     f"lxc exec {from_host} -- ping -c 5 -W 2 {to_host}".split(),
@@ -450,7 +452,7 @@ def instance_ip(model: str, instance: str) -> str:
     return ""
 
 
-@retry(stop=stop_after_attempt(60), wait=wait_fixed(15))
+@retry(stop=stop_after_attempt(60), wait=wait_fixed(15), reraise=True)
 def wait_network_restore(
     juju: jubilant.Juju,
     substrate: Substrate,
