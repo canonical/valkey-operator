@@ -92,6 +92,7 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(self.on.start, self._on_start)
         framework.observe(self.on.set_action, self._on_set_action)
         framework.observe(self.on.get_action, self._on_get_action)
+        framework.observe(self.on.execute_action, self._on_execute_action)
         framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
         framework.observe(
             self.on.start_continuous_writes_action, self._on_start_continuous_writes_action
@@ -139,10 +140,10 @@ class RequirerCharm(ops.CharmBase):
         return self.config.get("connection-source") == "config"
 
     @property
-    def credentials(self) -> dict[str | None, str | None]:
+    def credentials(self) -> dict[str, str | None]:
         """Retrieve the client credentials from config or relation."""
         if self._use_config:
-            username = str(self.config["username"]) or None
+            username = str(self.config["username"]) or ""
             password = str(self.config["password"]) or None
             return {username: password}
 
@@ -252,11 +253,18 @@ class RequirerCharm(ops.CharmBase):
 
     def get_valkey_client(self, user: str) -> ValkeyClient:
         """Get a valkey client."""
+        if not self.primary_endpoint:
+            raise ValueError("No endpoint available.")
+        if not self.credentials:
+            raise ValueError("No credentials available.")
+        if self.tls_enabled and (
+            not self.certificate or not self.private_key or not self.tls_ca_cert
+        ):
+            raise ValueError("TLS is enabled but certificates are not yet available.")
         return ValkeyClient(
             username=user,
             password=self.credentials.get(user),
-            host=self.primary_endpoint.split(":")[0],
-            port=int(self.primary_endpoint.split(":")[1]),
+            endpoints=self.primary_endpoint.split(","),
             tls_cert=self.certificate.encode() if self.tls_enabled else None,
             tls_key=self.private_key.encode() if self.tls_enabled else None,
             tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
@@ -315,6 +323,31 @@ class RequirerCharm(ops.CharmBase):
         except Exception as e:
             event.fail(f"Failed to read data: {e}")
             logger.error("Failed to read data: %s", e)
+
+    def _on_execute_action(self, event: ops.ActionEvent) -> None:
+        """Handle execute action."""
+        if not self._use_config and not self.valkey_relation:
+            event.fail(
+                "The action can be run only after a relation is created or connection-source is set to 'config'."
+            )
+            event.set_results({"ok": False})
+            return
+
+        command = str(event.params.get("command", ""))
+        if not command:
+            event.fail("Parameter command is required.")
+            event.set_results({"ok": False})
+            return
+
+        user, _ = next(iter(self.credentials.items()))
+        args = command.split()
+        client = self.get_valkey_client(user)
+        try:
+            result = asyncio.run(client.execute_command(args))
+            event.set_results({"ok": True, "result": result})
+        except Exception as e:
+            event.fail(f"Failed to execute command: {e}")
+            logger.error("Failed to execute command: %s", e)
 
     def _on_get_credentials_action(self, event: ops.ActionEvent) -> None:
         """Return the credentials an action response."""
