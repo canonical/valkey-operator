@@ -120,6 +120,11 @@ actions:
         type: boolean
         default: true
 
+  get-continuous-writes-state:
+    description: >
+      Return the last written value and total count from the continuous-writes
+      state file without stopping the daemon.
+
   clear-continuous-writes:
     description: >
       Delete the continuous-writes key from Valkey. Can be run while the daemon

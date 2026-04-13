@@ -145,6 +145,10 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(
             self.on.clear_continuous_writes_action, self._on_clear_continuous_writes_action
         )
+        framework.observe(
+            self.on.get_continuous_writes_state_action,
+            self._on_get_continuous_writes_state_action,
+        )
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
         framework.observe(self.on.config_changed, self._on_config_changed)
 
@@ -515,6 +519,26 @@ class RequirerCharm(ops.CharmBase):
             return
 
         event.set_results({"ok": True})
+
+    def _on_get_continuous_writes_state_action(self, event: ops.ActionEvent) -> None:
+        """Handle get-continuous-writes-state action."""
+        if not CWPath.STATE.value.exists():
+            event.fail("State file not found — the daemon may not have written anything yet.")
+            return
+
+        try:
+            state = json.loads(CWPath.STATE.value.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            event.fail(f"Failed to read state file: {exc}")
+            return
+
+        event.set_results(
+            {
+                "ok": True,
+                "last-written-value": state["last_written"],
+                "count": state["count"],
+            }
+        )
 
     def _on_resource_created(self, event: ResourceCreatedEvent[ResourceProviderModel]) -> None:
         """Handle resource created event."""
