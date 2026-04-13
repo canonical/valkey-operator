@@ -230,15 +230,15 @@ def verify_unit_count(
     return all(count == len(status.get_units(app)) for app, count in unit_count.items())
 
 
-def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
-    """Get the hostnames of all units in the Valkey application.
+def get_cluster_addresses(juju: jubilant.Juju, app_name: str) -> list[str]:
+    """Get the addresses of all units in the Valkey application.
 
     Args:
         juju: The Juju client instance.
         app_name: The name of the Valkey application.
 
     Returns:
-        A list of hostnames for all units in the Valkey application.
+        A list of addresses for all units in the Valkey application.
     """
     status = juju.status()
     model_info = juju.show_model()
@@ -379,18 +379,18 @@ def download_client_certificate_from_unit(
 
 
 def get_primary_ip(
-    juju: jubilant.Juju, app: str, tls_enabled: bool = False, hostnames: list[str] | None = None
+    juju: jubilant.Juju, app: str, tls_enabled: bool = False, addresses: list[str] | None = None
 ) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
-    hostnames = hostnames or get_cluster_hostnames(juju, app)
-    for hostname in hostnames:
+    addresses = addresses or get_cluster_addresses(juju, app)
+    for address in addresses:
         try:
             replication_info = exec_valkey_cli(
-                hostname,
+                address,
                 username=CharmUsers.VALKEY_ADMIN.value,
                 password=get_password(juju),
                 command="info replication",
@@ -398,9 +398,9 @@ def get_primary_ip(
             ).stdout
             # if master then we return the hostname
             if "role:master" in replication_info:
-                return hostname
+                return address
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning(f"Error executing Valkey CLI on {hostname}: {e}")
+            logger.warning(f"Error executing Valkey CLI on {address}: {e}")
 
     raise ValueError("No primary node found in the cluster")
 
@@ -421,7 +421,7 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
 
 async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     # Connect to Valkey
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
 
     # Configuration
     value_size_bytes = 1024  # 1KB per value
@@ -441,7 +441,7 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
 
     # Generate a fixed random block to reuse (saves CPU cycles on generation)
     random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
-    async with create_valkey_client(hostnames, password=get_password(juju)) as client:
+    async with create_valkey_client(addresses, password=get_password(juju)) as client:
         try:
             while keys_added < total_keys:
                 data = {
@@ -628,7 +628,7 @@ async def ping_cluster(
 
 
 async def get_number_connected_replicas(
-    hostnames: list[str],
+    addresses: list[str],
     username: str,
     password: str,
     tls_enabled: bool = False,
@@ -636,7 +636,7 @@ async def get_number_connected_replicas(
     """Get the number of connected replicas in the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        addresses: List of addresses of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
@@ -645,7 +645,7 @@ async def get_number_connected_replicas(
         The number of connected replicas.
     """
     async with create_valkey_client(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=username,
         password=password,
         tls_enabled=tls_enabled,

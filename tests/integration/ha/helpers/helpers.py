@@ -288,7 +288,7 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
 
         # Poll the pod status until it completes
         phase = None
-        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2)):
+        for attempt in Retrying(stop=stop_after_attempt(30), wait=wait_fixed(2), reraise=True):
             with attempt:
                 pod_status = v1.read_namespaced_pod(name=temp_pod_name, namespace=namespace)
                 phase = pod_status.status.phase
@@ -703,7 +703,7 @@ def instance_ip(model: str, instance: str) -> str:
     return ""
 
 
-@retry(stop=stop_after_attempt(60), wait=wait_fixed(15))
+@retry(stop=stop_after_attempt(60), wait=wait_fixed(15), reraise=True)
 def wait_network_restore(
     juju: jubilant.Juju,
     substrate: Substrate,
