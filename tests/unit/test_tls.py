@@ -717,6 +717,7 @@ def test_internal_peer_ca_rotation_single_unit(cloud_spec):
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation, remote_unit=1), state_in)
 
@@ -758,6 +759,7 @@ def test_internal_peer_ca_rotation_started(cloud_spec):
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation, remote_unit=1), state_in)
 
@@ -802,6 +804,7 @@ def test_ca_rotation_not_all_units_added(cloud_spec):
     )
     with (
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation), state_in)
 
@@ -847,6 +850,7 @@ def test_ca_rotation_all_units_added(cloud_spec):
     with (
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation), state_in)
 
@@ -891,6 +895,7 @@ def test_ca_rotation_not_all_units_ca_updated(cloud_spec):
     )
     with (
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation), state_in)
 
@@ -937,6 +942,7 @@ def test_ca_rotation_all_units_ca_updated(cloud_spec):
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         patch("managers.sentinel.SentinelManager.restart_service"),
         patch("managers.tls.TLSManager.rehash_ca_certificates"),
+        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
     ):
         state_out = ctx.run(ctx.on.relation_changed(peer_relation), state_in)
 
@@ -1110,7 +1116,7 @@ def test_set_extra_sans_config_option(cloud_spec):
 
     current_sans_value = (
         "X509v3 Subject Alternative Name: \n    "
-        "DNS:valkey-0.valkey-endpoints, "
+        "DNS:valkey0, DNS:valkey-0.valkey-endpoints, "
         "IP Address:127.1.1.1, IP Address:192.0.2.0"
     )
     with (
@@ -1144,7 +1150,7 @@ def test_set_extra_sans_config_option_unit_placeholder(cloud_spec):
 
     current_sans_value = (
         "X509v3 Subject Alternative Name: \n    "
-        "DNS:myhostname, DNS:valkey-0.valkey-endpoints, "
+        "DNS:myhostname, DNS:valkey0, DNS:valkey-0.valkey-endpoints, "
         "IP Address:127.1.1.1, IP Address:192.168.1.100, IP Address:192.0.2.0"
     )
     with (
@@ -1254,7 +1260,7 @@ def test_set_extra_sans_config_option_no_update(cloud_spec):
 
     current_sans_value = (
         "X509v3 Subject Alternative Name: \n    "
-        "DNS:myhostname, DNS:valkey-0.valkey-endpoints, "
+        "DNS:myhostname, DNS:valkey0, DNS:valkey-0.valkey-endpoints, "
         "IP Address:127.1.1.1, IP Address:192.168.1.100, IP Address:192.0.2.0"
     )
     with (

@@ -108,6 +108,7 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
     assert expected_sans in client_cert_sans, (
         f"expected sans {expected_sans} not found in certificate sans {client_cert_sans}"
     )
+    assert unit_name.replace("/", "") in client_cert_sans, "unit name not found in DNS SANs"
 
     logger.info("Resetting configuration for extra-sans")
     juju.config(app=APP_NAME, reset="certificate-extra-sans")
