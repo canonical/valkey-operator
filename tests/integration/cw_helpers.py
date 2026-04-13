@@ -78,7 +78,7 @@ def configure_cw_runner(
 
 def start_continuous_writes(
     juju: jubilant.Juju,
-    unit: str = f"{CW_RUNNER_NAME}/0",
+    unit: str = f"{CW_RUNNER_NAME}/leader",
     sleep_interval: float = 1.0,
     config: dict | None = None,
     clear: bool = True,
@@ -115,7 +115,7 @@ def start_continuous_writes(
 
 
 def stop_continuous_writes(
-    juju: jubilant.Juju, unit: str = f"{CW_RUNNER_NAME}/0"
+    juju: jubilant.Juju, unit: str = f"{CW_RUNNER_NAME}/leader"
 ) -> ContinuousWritesStats:
     """Trigger the stop-continuous-writes action and return write statistics.
 
@@ -145,7 +145,7 @@ def stop_continuous_writes(
 
 def assert_continuous_writes_increasing(
     juju: jubilant.Juju,
-    unit: str = f"{CW_RUNNER_NAME}/0",
+    unit: str = f"{CW_RUNNER_NAME}/leader",
     wait: float = 10.0,
 ) -> None:
     """Run the assert-continuous-writes-increasing action on the requirer charm unit.
