@@ -35,7 +35,7 @@ from ..helpers import (
     download_client_certificate_from_unit,
     exec_valkey_cli,
     existing_app,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
     get_password,
@@ -49,8 +49,7 @@ NUM_UNITS = 3
 FAILOVER_DELAY = 45
 TEST_KEY = "test_key"
 TEST_VALUE = "42"
-VM_PROCESS_PATTERN = "/usr/bin/valkey-server"
-K8S_PROCESS_PATTERN = "valkey-server"
+PROCESS_PATTERN = "valkey-server"
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
@@ -84,8 +83,12 @@ def test_build_and_deploy(
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_kill_db_process_on_primary(
+@pytest.mark.parametrize("signal", ["SIGKILL", "SIGTERM"], ids=["sigkill", "sigterm"])
+@pytest.mark.parametrize("patched_delay", [False, True], ids=["default_delay", "patched_delay"])
+async def test_signal_db_process_on_primary(
     tls_enabled: bool,
+    signal: str,
+    patched_delay: bool,
     juju: jubilant.Juju,
     substrate: Substrate,
     c_writes: ContinuousWrites,
@@ -118,17 +121,23 @@ async def test_kill_db_process_on_primary(
     logger.info("Axing away primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
 
-    db_process_name = K8S_PROCESS_PATTERN if substrate == Substrate.K8S else VM_PROCESS_PATTERN
+    if patched_delay:
+        logger.info("Patching restart delay to %s seconds.", RESTART_DELAY_PATCHED)
+        patch_restart_delay(
+            juju=juju,
+            unit_name=primary_unit_name,
+            delay=RESTART_DELAY_PATCHED,
+            substrate=substrate,
+        )
 
     # axe away the database process of the primary
     send_process_control_signal(
         unit_name=primary_unit_name,
         model_full_name=juju.model,
-        signal="SIGKILL",
-        db_process=db_process_name,
+        signal=signal,
+        db_process=PROCESS_PATTERN,
         substrate=substrate,
     )
-    # We have 20s before systemd restarts the process
     # make sure the process is stopped
     admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
     if substrate == Substrate.VM:
@@ -136,13 +145,20 @@ async def test_kill_db_process_on_primary(
         logger.info("Pinging primary unit to ensure it's down.")
         assert not ping(
             primary_ip, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-        ), "Primary unit is still responding after SIGKILL."
+        ), f"Primary unit is still responding after {signal}."
 
     # ensure the stopped unit was restarted
-    logger.info("Waiting for primary unit to restart.")
-    await asyncio.sleep(
+    restart_delay = (
         VM_RESTART_DELAY_DEFAULT if substrate == Substrate.VM else K8S_RESTART_DELAY_DEFAULT
     )
+    if patched_delay:
+        restart_delay = RESTART_DELAY_PATCHED
+
+    restart_delay += 10  # add some buffer to the restart delay
+    logger.info("Waiting for primary unit to restart. Restart delay is %s seconds.", restart_delay)
+    await asyncio.sleep(restart_delay)
+
+    logger.info("Pinging primary unit to ensure it's up.")
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(5), reraise=True):
         with attempt:
             assert ping(
@@ -150,19 +166,45 @@ async def test_kill_db_process_on_primary(
             ), "Primary unit is not responding after restart delay."
             logger.info("Primary unit is available again.")
 
+    # SIGKILL without patching we have 20s before systemd restarts the process not enough for failover
+    # SIGTERM just restarts the process so failover should not happen
+    addresses = get_cluster_addresses(juju, app_name)
+    if patched_delay:
+        # failover should have happened during the downtime of the primary since the restart delay is longer than the failover delay
+        new_primary_ip = get_primary_ip(
+            juju,
+            app_name,
+            tls_enabled=tls_enabled,
+            addresses=[ip for ip in addresses if ip != primary_ip],
+        )
+        assert new_primary_ip != primary_ip, "Primary IP did not change after failover delay."
+        logger.info(
+            "Failover successful, new primary is at %s vs old at %s", new_primary_ip, primary_ip
+        )
+
+        # reset the restart delay to the original value
+        patch_restart_delay(
+            juju,
+            unit_name=primary_unit_name,
+            delay=None,
+            substrate=substrate,
+        )
+
     logger.info("Checking number of connected replicas after primary restart.")
-    hostnames = get_cluster_hostnames(juju, app_name)
-    number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
-    assert number_of_replicas == init_units_count - 1, (
-        f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
-    )
+    # if failover happened the old primary will need some time to restart and sync with the new primary before it shows up as a connected replica
+    for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
+        with attempt:
+            number_of_replicas = await get_number_connected_replicas(
+                addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+            )
+            assert number_of_replicas == init_units_count - 1, (
+                f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
+            )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -171,7 +213,7 @@ async def test_kill_db_process_on_primary(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )
@@ -183,7 +225,7 @@ async def test_freeze_db_process_on_primary(
 ) -> None:
     """Make sure the cluster can self-heal when the leader goes down."""
     app_name = existing_app(juju) or APP_NAME
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
         c_writes.tls_enabled = tls_enabled
@@ -209,14 +251,12 @@ async def test_freeze_db_process_on_primary(
     logger.info("Axing away primary unit at %s", primary_ip)
     primary_unit_name = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
 
-    db_process_name = K8S_PROCESS_PATTERN if substrate == Substrate.K8S else VM_PROCESS_PATTERN
-
     # axe away the database process of the primary
     send_process_control_signal(
         unit_name=primary_unit_name,
         model_full_name=juju.model,
         signal="SIGSTOP",
-        db_process=db_process_name,
+        db_process=PROCESS_PATTERN,
         substrate=substrate,
     )
     # make sure the process is stopped
@@ -239,14 +279,14 @@ async def test_freeze_db_process_on_primary(
     new_primary_endpoint = new_primary_ip if substrate == Substrate.VM else new_primary_hostname
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
     )
     assert number_of_replicas == init_units_count - 2, (
         f"Expected {init_units_count - 2} replicas to be connected, got {number_of_replicas}"
     )
 
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -256,7 +296,7 @@ async def test_freeze_db_process_on_primary(
         unit_name=primary_unit_name,
         model_full_name=juju.model,
         signal="SIGCONT",
-        db_process=db_process_name,
+        db_process=PROCESS_PATTERN,
         substrate=substrate,
     )
 
@@ -285,16 +325,16 @@ async def test_freeze_db_process_on_primary(
 
     logger.info("Checking number of connected replicas after primary restart.")
     number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
     )
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
 
-    for hostname in hostnames:
+    for ip_address in addresses:
         # Make sure all sentinels are connected to new primary
         master_addr = exec_valkey_cli(
-            hostname=hostname,
+            hostname=ip_address,
             username=CharmUsers.SENTINEL_CHARM_ADMIN,
             password=get_password(juju, CharmUsers.SENTINEL_CHARM_ADMIN),
             command="sentinel get-master-addr-by-name primary",
@@ -303,13 +343,13 @@ async def test_freeze_db_process_on_primary(
             json=True,
         ).stdout
         assert json.loads(master_addr)[0] == new_primary_endpoint, (
-            f"Sentinel at {hostname} is not connected to the new primary."
+            f"Sentinel at {ip_address} is not connected to the new primary."
         )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -318,7 +358,7 @@ async def test_freeze_db_process_on_primary(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )
@@ -358,13 +398,12 @@ async def test_full_cluster_restart(
             substrate=substrate,
         )
 
-    db_process_name = K8S_PROCESS_PATTERN if substrate == Substrate.K8S else VM_PROCESS_PATTERN
     for unit in juju.status().get_units(app_name):
         send_process_control_signal(
             unit_name=unit,
             model_full_name=juju.model,
             signal="SIGTERM",
-            db_process=db_process_name,
+            db_process=PROCESS_PATTERN,
             substrate=substrate,
         )
 
@@ -391,9 +430,9 @@ async def test_full_cluster_restart(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
     number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
     )
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
@@ -402,7 +441,7 @@ async def test_full_cluster_restart(
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -411,7 +450,7 @@ async def test_full_cluster_restart(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )
@@ -460,13 +499,12 @@ async def test_full_cluster_crash(
             substrate=substrate,
         )
 
-    db_process_name = K8S_PROCESS_PATTERN if substrate == Substrate.K8S else VM_PROCESS_PATTERN
     for unit in juju.status().get_units(app_name):
         send_process_control_signal(
             unit_name=unit,
             model_full_name=juju.model,
             signal="SIGKILL",
-            db_process=db_process_name,
+            db_process=PROCESS_PATTERN,
             substrate=substrate,
         )
 
@@ -493,9 +531,9 @@ async def test_full_cluster_crash(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
     number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
     )
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
@@ -504,7 +542,7 @@ async def test_full_cluster_crash(
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -513,7 +551,7 @@ async def test_full_cluster_crash(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )
@@ -590,7 +628,7 @@ async def test_reboot_primary(
     )
 
     number_of_replicas = await get_number_connected_replicas(
-        get_cluster_hostnames(juju, app_name),
+        get_cluster_addresses(juju, app_name),
         CharmUsers.VALKEY_ADMIN,
         admin_password,
         tls_enabled=tls_enabled,
@@ -600,7 +638,7 @@ async def test_reboot_primary(
     )
 
     await assert_continuous_writes_increasing(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -609,7 +647,7 @@ async def test_reboot_primary(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )
@@ -675,9 +713,9 @@ async def test_full_cluster_reboot(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
     number_of_replicas = await get_number_connected_replicas(
-        hostnames, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
+        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
     )
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
@@ -686,7 +724,7 @@ async def test_full_cluster_reboot(
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
         tls_enabled=tls_enabled,
@@ -695,7 +733,7 @@ async def test_full_cluster_reboot(
     await c_writes.async_stop()
 
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
     )

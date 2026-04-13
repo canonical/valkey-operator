@@ -473,17 +473,20 @@ def send_process_control_signal(
         # For k8s, we exec into the pod and send the signal to the process
         command = f"JUJU_MODEL={model_full_name} juju ssh --container valkey {unit_name} pkill --signal {signal} {db_process}"
     else:
-        command = f"JUJU_MODEL={model_full_name} juju ssh {unit_name} sudo -i 'pkill --signal {signal} -f {db_process}'"
+        command = f"JUJU_MODEL={model_full_name} juju ssh {unit_name} -- sudo -i 'pkill --signal {signal} {db_process}'"
 
     try:
         subprocess.check_output(
             command, stderr=subprocess.PIPE, shell=True, universal_newlines=True, timeout=3
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.error(
             "failed to send signal %s to process %s on unit %s", signal, db_process, unit_name
         )
+        logger.error("Error details: %s", e)
+        raise
     logger.info(f"Signal {signal} sent to database process on unit {unit_name}.")
+    time.sleep(3)  # give some time for the signal to take effect before the test continues
 
 
 def lxd_patch_restart_delay(juju: jubilant.Juju, unit_name: str, delay: int | None = None) -> None:
