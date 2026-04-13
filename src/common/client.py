@@ -125,14 +125,14 @@ class ValkeyClient(CliClient):
         except ValkeyWorkloadCommandError:
             return False
 
-    def info_persistence(self, hostname: str) -> dict[str, str] | None:
+    def info_persistence(self, hostname: str) -> dict[str, str]:
         """Get the persistence information of the Valkey server.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            dict[str, str] | None: The persistence information retrieved from the server.
+            dict[str, str]: The persistence information retrieved from the server.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
@@ -141,10 +141,10 @@ class ValkeyClient(CliClient):
         output = self.exec_cli_command(
             ["info", "persistence"], hostname=hostname, json_output=False
         )
-        values = {}
         if not output.strip():
-            logger.warning("No persistence info found on Valkey server at %s.", hostname)
-            return None
+            raise ValkeyWorkloadCommandError("Failed to query persistence info")
+
+        values = {}
         for line in output.strip().splitlines():
             if line.startswith("#"):
                 continue
@@ -152,23 +152,23 @@ class ValkeyClient(CliClient):
             values[values_parts[0]] = values_parts[1]
         return values
 
-    def info_server(self, hostname: str) -> dict[str, str] | None:
+    def info_server(self, hostname: str) -> dict[str, str]:
         """Get the server information of the Valkey server.
 
         Args:
             hostname (str): The hostname to connect to.
 
         Returns:
-            dict[str, str] | None: The server information retrieved from Valkey.
+            dict[str, str] The server information retrieved from Valkey.
 
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
         output = self.exec_cli_command(["info", "server"], hostname=hostname, json_output=False)
-        values = {}
         if not output.strip():
-            logger.warning("No server info found on Valkey server at %s.", hostname)
-            return None
+            raise ValkeyWorkloadCommandError("Failed to query server info")
+
+        values = {}
         for line in output.strip().splitlines():
             if line.startswith("#"):
                 continue
