@@ -125,6 +125,17 @@ actions:
       Return the last written value and total count from the continuous-writes
       state file without stopping the daemon.
 
+  assert-continuous-writes-increasing:
+    description: >
+      Assert that the continuous-writes daemon is actively writing by sampling
+      the state file twice with a configurable wait between samples and
+      verifying the count has increased.
+    params:
+      wait:
+        description: Seconds to wait between the two state samples (default 5)
+        type: number
+        default: 10
+
   clear-continuous-writes:
     description: >
       Delete the continuous-writes key from Valkey. Can be run while the daemon

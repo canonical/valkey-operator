@@ -6,7 +6,6 @@
 
 import asyncio
 import base64
-import enum
 import json
 import logging
 import os
@@ -24,7 +23,9 @@ from charmlibs.interfaces.tls_certificates import (
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseCreatedEvent, DatabaseRequires
 from client import ValkeyClient
-from continuous_writes import DaemonConfig, TlsConfig, clear as cw_clear
+from continuous_writes import DaemonConfig, TlsConfig
+from continuous_writes import clear as cw_clear
+from cw_helpers import CWPath, cw_llen, wait_for_pid_exit
 from dpcharmlibs.interfaces import (
     DataContractV1,
     RequirerCommonModel,
@@ -39,50 +40,6 @@ from dpcharmlibs.interfaces import (
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "some-service"  # Name of Pebble service that runs in the workload container.
-
-
-def _wait_for_pid_exit(
-    pid: int, poll_interval: int = 1, max_attempts: int = 10, force_kill: bool = True
-) -> bool:
-    """Wait for a process to exit.
-
-    Returns True if the process exited cleanly within max_attempts, False otherwise.
-    If force_kill is True and the process is still running after max_attempts, sends SIGKILL.
-    """
-    for attempt in range(max_attempts):
-        time.sleep(poll_interval)
-        try:
-            os.kill(pid, 0)  # signal 0 checks existence without sending a signal
-        except ProcessLookupError:
-            logger.info("Daemon PID %d exited after %d second(s).", pid, attempt * poll_interval)
-            return True
-        except OSError:
-            pass  # EPERM — process exists but unowned; treat as still running
-
-    logger.warning(
-        "Daemon PID %d did not exit after %d second(s).",
-        pid,
-        max_attempts * poll_interval,
-    )
-    if force_kill:
-        logger.warning("Sending SIGKILL to daemon PID %d.", pid)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-    return False
-
-
-class CWPath(enum.Enum):
-    """Paths used by the continuous-writes daemon."""
-
-    CONFIG = Path("/tmp/cw_config.json")
-    STATE = Path("/tmp/cw_state.json")
-    PID = Path("/tmp/cw_daemon.pid")
-    LOG = Path("/tmp/cw_daemon.log")
-    CERT = Path("/tmp/cw_client.pem")
-    KEY = Path("/tmp/cw_client.key")
-    CA = Path("/tmp/cw_client_ca.pem")
 
 
 class RequirerCharm(ops.CharmBase):
@@ -148,6 +105,10 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(
             self.on.get_continuous_writes_state_action,
             self._on_get_continuous_writes_state_action,
+        )
+        framework.observe(
+            self.on.assert_continuous_writes_increasing_action,
+            self._on_assert_continuous_writes_increasing_action,
         )
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
         framework.observe(self.on.config_changed, self._on_config_changed)
@@ -469,7 +430,7 @@ class RequirerCharm(ops.CharmBase):
             return
 
         # Wait for the daemon to exit and flush its final state, with retries
-        if not _wait_for_pid_exit(pid):
+        if not wait_for_pid_exit(pid):
             logger.warning(
                 "Daemon PID %d had to be force-killed; state file may be incomplete.", pid
             )
@@ -537,6 +498,48 @@ class RequirerCharm(ops.CharmBase):
                 "ok": True,
                 "last-written-value": state["last_written"],
                 "count": state["count"],
+            }
+        )
+
+    def _on_assert_continuous_writes_increasing_action(self, event: ops.ActionEvent) -> None:
+        """Handle assert-continuous-writes-increasing action."""
+        if not CWPath.CONFIG.value.exists():
+            event.fail("No continuous-writes config found — run start-continuous-writes first.")
+            return
+
+        try:
+            config = DaemonConfig.from_file(CWPath.CONFIG.value)
+        except Exception as exc:
+            event.fail(f"Failed to load continuous-writes config: {exc}")
+            return
+
+        try:
+            count_before = asyncio.run(cw_llen(config))
+        except Exception as exc:
+            event.fail(f"Failed to read list length from Valkey: {exc}")
+            return
+
+        wait = float(event.params.get("wait", 10.0))
+        time.sleep(wait)
+
+        try:
+            count_after = asyncio.run(cw_llen(config))
+        except Exception as exc:
+            event.fail(f"Failed to read list length from Valkey after wait: {exc}")
+            return
+
+        if count_after <= count_before:
+            event.fail(
+                f"Writes are not increasing: list length was {count_before} before and"
+                f" {count_after} after {wait}s."
+            )
+            return
+
+        event.set_results(
+            {
+                "ok": True,
+                "count-before": count_before,
+                "count-after": count_after,
             }
         )
 

@@ -158,7 +158,7 @@ async def _make_client(config: DaemonConfig) -> GlideClient:
 
 
 @asynccontextmanager
-async def _client(config: DaemonConfig):
+async def glide_client(config: DaemonConfig):
     """Async context manager that creates and closes a GlideClient."""
     client = await _make_client(config)
     try:
@@ -169,7 +169,7 @@ async def _client(config: DaemonConfig):
 
 async def clear(config: DaemonConfig) -> None:
     """Delete the continuous-writes list key from Valkey."""
-    async with _client(config) as client:
+    async with glide_client(config) as client:
         await client.delete([KEY])
         logger.info("Cleared existing values for key '%s'.", KEY)
 
@@ -193,7 +193,7 @@ async def _initial_count(config: DaemonConfig) -> tuple[int, int]:
 
     count = 0
     try:
-        async with _client(config) as client:
+        async with glide_client(config) as client:
             count = await client.llen(KEY)
     except Exception:
         pass
@@ -243,7 +243,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
 
     while not stop.is_set():
         try:
-            async with _client(config) as client:
+            async with glide_client(config) as client:
                 new_len = await client.lpush(KEY, [str(counter)])
             if not new_len:
                 raise RuntimeError("LPUSH returned 0/None")
