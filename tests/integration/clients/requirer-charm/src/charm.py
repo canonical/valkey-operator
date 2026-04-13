@@ -117,8 +117,7 @@ class RequirerCharm(ops.CharmBase):
                 ): self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "password")
             }
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return {"": None}
 
         credentials = {}
@@ -136,8 +135,7 @@ class RequirerCharm(ops.CharmBase):
 
             return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "endpoints")
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return None
 
         return remote_responses[0].endpoints
@@ -154,8 +152,7 @@ class RequirerCharm(ops.CharmBase):
                 == "true"
             )
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return False
 
         return remote_responses[0].tls
@@ -169,8 +166,7 @@ class RequirerCharm(ops.CharmBase):
 
             return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls-ca")
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return None
 
         return remote_responses[0].tls_ca

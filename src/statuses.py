@@ -140,8 +140,6 @@ class ExternalClientsStatuses(Enum):
         status="maintenance", message="Client relation: Request not processed yet"
     )
 
-    USER_SETUP_FAILED = StatusObject(
-        status="blocked",
-        message="Client relation: Failed to add ACLs for client user",
-        running="async",
+    USER_ACL_OUT_OF_DATE = StatusObject(
+        status="maintenance", message="Client relation: Unit has not updated ACLs for client users"
     )
