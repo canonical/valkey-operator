@@ -309,9 +309,7 @@ def is_unit_reachable_k8s(namespace: str, source_pod_name: str, to_host: str) ->
 def is_unit_reachable_lxd(from_host: str, to_host: str, number_of_retries: int = 10) -> bool:
     """Test network reachability between LXD hosts."""
     try:
-        for attempt in Retrying(
-            stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10), reraise=True
-        ):
+        for attempt in Retrying(stop=stop_after_attempt(number_of_retries), wait=wait_fixed(10)):
             with attempt:
                 ping = subprocess.call(
                     f"lxc exec {from_host} -- ping -c 5 -W 2 {to_host}".split(),
