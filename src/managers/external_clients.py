@@ -112,7 +112,8 @@ class ExternalClientsManager(ManagerStatusProtocol):
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if (
-            self.state.unit_server.model.client_user_epoch
+            not self.state.charm.unit.is_leader()
+            and self.state.unit_server.model.client_user_epoch
             < self.state.cluster.model.client_user_epoch
         ):
             status_list.append(ExternalClientsStatuses.USER_ACL_OUT_OF_DATE.value)
