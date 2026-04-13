@@ -9,7 +9,8 @@
 # test_integrate_client_interface_v0/1  | no         | no    | user/password    | same as Valkey
 # test_enable_tls                       | yes        | no    | user/password    | same as Valkey
 # test_certificate_transfer             | yes        | no    | user/password    | different CA
-# test_mtls                             | yes        | yes   | via certificate  | different CA
+# test_mtls                             | yes        | yes   | user/password    | different CA
+# test_certificate_authentication       | yes        | yes   | via certificate  | different CA
 import logging
 
 import jubilant
@@ -329,7 +330,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
 
 
 def test_mtls(juju: jubilant.Juju) -> None:
-    """Ensure clients can use mTLS and password-less authentication."""
+    """Ensure clients can use mTLS and password-authentication."""
     logger.info("Enable config `use-mtls` for requirer charms")
     juju.config(app=REQUIRER_V0_NAME, values={"use-mtls": "true"})
     juju.config(app=REQUIRER_V1_NAME, values={"use-mtls": "true"})
@@ -360,6 +361,64 @@ def test_mtls(juju: jubilant.Juju) -> None:
     assert result == TEST_VALUE
 
     logger.info("Ensure mTLS access for v1 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    usernames = get_credentials_action.results["usernames"]
+    user_restricted_keyspace = usernames.split(",")[0]
+
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={
+            "key": f"requirer-charm:{TEST_KEY}",
+            "value": TEST_VALUE,
+            "user": user_restricted_keyspace,
+        },
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+
+def test_certificate_authentication(juju: jubilant.Juju) -> None:
+    """Ensure clients can use mTLS and password-less authentication."""
+    logger.info("Enable config `use-certificate-auth` for requirer charms")
+    juju.config(app=REQUIRER_V0_NAME, values={"use-certificate-auth": "true"})
+    juju.config(app=REQUIRER_V1_NAME, values={"use-certificate-auth": "true"})
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    logger.info("Ensure password-less access for v0 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    username = get_credentials_action.results["usernames"]
+
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Ensure password-less access for v1 client")
     requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     usernames = get_credentials_action.results["usernames"]

@@ -172,14 +172,11 @@ class RequirerCharm(ops.CharmBase):
     @property
     def use_mtls(self) -> bool:
         """Retrieve the value for `use-mtls` from the configuration."""
-        if (
+        return (
             self.model.get_relation("certificates")
             and self.tls_enabled
             and self.config.get("use-mtls", False)
-        ):
-            return True
-
-        return False
+        )
 
     @property
     def tls_ca_cert(self) -> str | None:
@@ -215,8 +212,8 @@ class RequirerCharm(ops.CharmBase):
     def get_valkey_client(self, user: str) -> ValkeyClient:
         """Get a valkey client."""
         return ValkeyClient(
-            username=user if not self.use_mtls else "",
-            password=self.credentials.get(user) if not self.use_mtls else "",
+            username="" if self.config.get("use-certificate-auth") else user,
+            password="" if self.config.get("use-certificate-auth") else self.credentials.get(user),
             host=self.primary_endpoint.split(":")[0],
             port=int(self.primary_endpoint.split(":")[1]),
             tls_cert=self.certificate.encode() if self.use_mtls else None,
