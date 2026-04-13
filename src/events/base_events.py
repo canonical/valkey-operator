@@ -584,7 +584,7 @@ class BaseEvents(ops.Object):
                 }
             )
 
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY.value})
 
     def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
         """Handle the restart_workload event."""
@@ -605,45 +605,29 @@ class BaseEvents(ops.Object):
                 self.charm.workload.restart(self.charm.workload.valkey_service)
             if event.restart_sentinel:
                 self.charm.sentinel_manager.restart_service()
-
-            if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
-                check_replica_sync=False
-            ):
-                self.charm.status.set_running_status(
-                    ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
-                event.defer()
-                return
-
-            self.charm.state.statuses.delete(
-                ClusterStatuses.VALKEY_UNHEALTHY_RESTART.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
-
-            if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-                self.charm.status.set_running_status(
-                    ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
-                    scope="unit",
-                    component_name=self.charm.cluster_manager.name,
-                    statuses_state=self.charm.state.statuses,
-                )
-                event.defer()
-                return
-
-            self.charm.state.statuses.delete(
-                ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value,
-                scope="unit",
-                component=self.charm.cluster_manager.name,
-            )
         except ValkeyServicesFailedToStartError as e:
             logger.error(e)
-            event.defer()
-        finally:
             restart_lock.release_lock()
+            event.defer()
+            return
+
+        if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
+            check_replica_sync=False
+        ):
+            self.charm.state.unit_server.update({"is_valkey_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+        self.charm.state.unit_server.update({"is_valkey_healthy": True})
+
+        if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
+        restart_lock.release_lock()
 
     def _reconfigure_quorum_if_necessary(self) -> None:
         """Reconfigure the sentinel quorum if it does not match the current cluster size."""

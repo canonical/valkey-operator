@@ -36,14 +36,12 @@ class ClusterStatuses(Enum):
 
     VALKEY_UNHEALTHY_RESTART = StatusObject(
         status="maintenance",
-        message="Valkey unhealthy after restart",
-        running="async",
+        message="Valkey unhealthy",
     )
 
     SENTINEL_UNHEALTHY_RESTART = StatusObject(
         status="maintenance",
-        message="Sentinel unhealthy after restart",
-        running="async",
+        message="Sentinel unhealthy",
     )
 
 

@@ -21,7 +21,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_password,
     set_key,
 )
@@ -259,9 +259,9 @@ async def test_certificate_denied(juju: jubilant.Juju) -> None:
     )
 
     logger.info("Ensure access without TLS is still possible")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,

@@ -20,7 +20,7 @@ from tests.integration.helpers import (
     auth_test,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_key,
     get_password,
     set_key,
@@ -74,9 +74,9 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -86,7 +86,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with TLS enabled"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -104,7 +104,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     logger.info("Check access with previous certificate fails after expiration")
     with pytest.raises(Exception) as exc_info:
         await auth_test(
-            hostnames=hostnames,
+            hostnames=addresses,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -125,7 +125,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     logger.info("Check access with updated certificate")
     download_client_certificate_from_unit(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -135,7 +135,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with updated certificate"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -188,9 +188,9 @@ async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     assert old_certificate != new_certificate, "Certificate was not updated"
 
     logger.info("Check access with updated certificate")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -200,7 +200,7 @@ async def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with updated certificate"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -253,9 +253,9 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert old_certificate, "Failed to get current certificate"
 
     logger.info("Check access with current TLS certificate")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -265,7 +265,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with TLS enabled"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -282,7 +282,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     logger.info("Check access with previous certificate fails after expiration")
     with pytest.raises(Exception) as exc_info:
         await auth_test(
-            hostnames=hostnames,
+            hostnames=addresses,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -303,9 +303,9 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert old_certificate != new_certificate, "Certificate was not updated"
 
     logger.info("Check access with updated certificate")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -315,7 +315,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with updated certificate"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
