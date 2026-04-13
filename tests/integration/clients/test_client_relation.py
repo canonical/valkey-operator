@@ -182,6 +182,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     username = get_credentials_action.results["usernames"]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -189,6 +190,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -204,6 +206,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -215,6 +218,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -224,6 +228,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     result = get_action.results["result"]
     assert result == TEST_VALUE
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -231,6 +236,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -270,6 +276,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     username = get_credentials_action.results["usernames"]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -277,6 +284,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -292,6 +300,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -303,6 +312,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -312,6 +322,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     result = get_action.results["result"]
     assert result == TEST_VALUE
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -319,6 +330,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -344,6 +356,7 @@ def test_mtls(juju: jubilant.Juju) -> None:
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     username = get_credentials_action.results["usernames"]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -351,6 +364,7 @@ def test_mtls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -366,6 +380,7 @@ def test_mtls(juju: jubilant.Juju) -> None:
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace = usernames.split(",")[0]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -377,6 +392,7 @@ def test_mtls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -402,6 +418,7 @@ def test_certificate_authentication(juju: jubilant.Juju) -> None:
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     username = get_credentials_action.results["usernames"]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -409,6 +426,7 @@ def test_certificate_authentication(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -424,6 +442,7 @@ def test_certificate_authentication(juju: jubilant.Juju) -> None:
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace = usernames.split(",")[0]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -435,6 +454,7 @@ def test_certificate_authentication(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
