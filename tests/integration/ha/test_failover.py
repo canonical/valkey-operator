@@ -216,6 +216,7 @@ async def test_signal_db_process_on_primary(
         hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -361,6 +362,7 @@ async def test_freeze_db_process_on_primary(
         hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -453,6 +455,7 @@ async def test_full_cluster_restart(
         hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -554,6 +557,7 @@ async def test_full_cluster_crash(
         hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -650,6 +654,7 @@ async def test_reboot_primary(
         hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -736,4 +741,5 @@ async def test_full_cluster_reboot(
         hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN,
         password=admin_password,
+        tls_enabled=tls_enabled,
     )
