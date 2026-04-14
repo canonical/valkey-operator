@@ -752,9 +752,12 @@ def existing_app(juju: jubilant.Juju) -> str | None:
     return None
 
 
-def get_ip_from_unit(juju: jubilant.Juju, unit_name: str) -> str:
+def get_ip_from_unit(juju: jubilant.Juju, unit_name: str, substrate: Substrate) -> str:
     """Get the IP address of a unit based on the substrate type."""
-    return juju.exec("unit-get", "private-address", unit=unit_name).stdout.strip()
+    for unit, unit_info in juju.status().get_units(unit_name.split("/")[0]).items():
+        if unit == unit_name:
+            return unit_info.public_address if substrate == Substrate.VM else unit_info.address
+    raise ValueError(f"Unit {unit_name} not found in Juju status")
 
 
 def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = False) -> list[dict]:
