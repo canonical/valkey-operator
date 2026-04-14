@@ -30,3 +30,6 @@ sphinx-sitemap
 # Vale dependencies
 rst2html
 vale
+
+# https://github.com/canonical/sphinx-docs-starter-pack/pull/496#issuecomment-3754584055
+myst-parser~=4.0
