@@ -6,7 +6,7 @@ package-mode = false
 requires-poetry = ">=2.0.0"
 
 [tool.poetry.dependencies]
-python = "^3.12"                  # switch to 3.14 once charm base is 26.04
+python = "^3.12"                                  # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 charmlibs-snap = "^1.0.1"
@@ -93,6 +93,7 @@ extend-exclude = [
     "__pycache__",
     "*.egg_info",
     "../../common/common/lib/charms/**",
+    "tests/integration/clients/requirer-charm/lib/charms/**",
 ]
 lint.per-file-ignores = { "tests/*" = ["D100", "D101", "D102", "D103", "D104"] }
 

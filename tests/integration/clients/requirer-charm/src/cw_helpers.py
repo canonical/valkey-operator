@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from continuous_writes import KEY as CW_KEY
-from continuous_writes import DaemonConfig, glide_client as cw_client
+from continuous_writes import DaemonConfig
+from continuous_writes import glide_client as cw_client
 
 logger = logging.getLogger(__name__)
 

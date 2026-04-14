@@ -36,8 +36,6 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from glide import (
     AdvancedGlideClientConfiguration,
     BackoffStrategy,
@@ -47,6 +45,7 @@ from glide import (
     ServerCredentials,
     TlsAdvancedConfiguration,
 )
+from pydantic import BaseModel
 
 KEY = "cw_key"
 CONFIG_PATH = Path("/tmp/cw_config.json")

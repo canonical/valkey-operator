@@ -24,7 +24,7 @@ def glide_runner_charm(arch: str) -> str:
 
 @pytest.fixture(scope="function")
 def glide_runner(juju: jubilant.Juju, glide_runner_charm: str) -> None:
-    """Deploy continous writes runner charm if not already deployed."""
+    """Deploy continuous writes runner charm if not already deployed."""
     if GLIDE_RUNNER_NAME not in juju.status().apps:
         juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
         juju.wait(
