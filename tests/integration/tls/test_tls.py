@@ -8,6 +8,7 @@ import jubilant
 from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -28,7 +29,9 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_build_and_deploy(
+    charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str
+) -> None:
     """Deploy the charm under test and a TLS provider."""
     juju.deploy(
         charm,
@@ -36,10 +39,20 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=NUM_UNITS,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(
+            status,
+            APP_NAME,
+            GLIDE_RUNNER_NAME,
+            idle_period=30,
+            unit_count={
+                APP_NAME: NUM_UNITS,
+                GLIDE_RUNNER_NAME: 1,
+            },
+        ),
         timeout=600,
     )
 

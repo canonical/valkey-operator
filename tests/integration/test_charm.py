@@ -14,6 +14,7 @@ from literals import (
 from statuses import CharmStatuses, ClusterStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     INTERNAL_USERS_SECRET_LABEL,
     NoAuthError,
@@ -39,7 +40,9 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_build_and_deploy(
+    charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str
+) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(
         charm,
@@ -47,8 +50,11 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=NUM_UNITS,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
         timeout=600,
         delay=5,
         successes=3,
