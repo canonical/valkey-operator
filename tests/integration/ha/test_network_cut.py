@@ -86,7 +86,7 @@ async def test_network_cut_primary(  # noqa: C901
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
 
-    configure_cw_runner(juju, valkey_app=APP_NAME, tls_enabled=tls_enabled)
+    configure_cw_runner(juju, valkey_app=APP_NAME, tls_enabled=tls_enabled, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
     # Get the current primary unit
@@ -205,7 +205,7 @@ async def test_network_cut_primary(  # noqa: C901
         unit_count=NUM_UNITS,
     )
     configure_cw_runner(
-        juju, valkey_app=APP_NAME, tls_enabled=tls_enabled
+        juju, valkey_app=APP_NAME, tls_enabled=tls_enabled, substrate=substrate
     )  # update hostnames after network restore
 
     logger.info(

@@ -71,11 +71,11 @@ async def test_check_quorum(juju: jubilant.Juju) -> None:
     )
 
 
-async def test_scale_up(juju: jubilant.Juju, glide_runner) -> None:
+async def test_scale_up(juju: jubilant.Juju, glide_runner, substrate: Substrate) -> None:
     """Make sure new units are added to the valkey downtime."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
     # scale up
@@ -137,7 +137,7 @@ async def test_scale_down_one_unit(
         f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
 
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
     await asyncio.sleep(10)  # let the continuous writes write some data
 
@@ -164,7 +164,7 @@ async def test_scale_down_one_unit(
     )
 
     # update hostnames after scale down
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
 
     assert_continuous_writes_increasing(juju)
 
@@ -199,7 +199,7 @@ async def test_scale_down_multiple_units(
         f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
 
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
     await asyncio.sleep(10)  # let the continuous writes write some data
@@ -227,7 +227,9 @@ async def test_scale_down_multiple_units(
             f"Unexpected quorum value for unit {unit} after scale down"
         )
 
-    configure_cw_runner(juju, valkey_app=app_name)  # update hostnames after scale down
+    configure_cw_runner(
+        juju, valkey_app=app_name, substrate=substrate
+    )  # update hostnames after scale down
 
     assert_continuous_writes_increasing(juju)
 
@@ -270,7 +272,7 @@ async def test_scale_down_to_zero_and_back_up(
         f"Expected {NUM_UNITS - 1} connected replicas, got {connected_replicas}."
     )
 
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
     await asyncio.sleep(10)  # let the continuous writes write some data
@@ -304,7 +306,7 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, gli
         )
         init_units_count = NUM_UNITS
 
-    configure_cw_runner(juju, valkey_app=app_name)
+    configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
     await asyncio.sleep(10)  # let the continuous writes write some data
 
@@ -326,7 +328,9 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, gli
             status, app_name, unit_count=init_units_count - 1, idle_period=10
         )
     )
-    configure_cw_runner(juju, valkey_app=app_name)  # update hostnames after primary unit removal
+    configure_cw_runner(
+        juju, valkey_app=app_name, substrate=substrate
+    )  # update hostnames after primary unit removal
     new_primary_endpoint = get_primary_ip(juju, app_name)
     assert new_primary_endpoint != primary_endpoint, (
         "Primary endpoint did not change after removing primary unit."

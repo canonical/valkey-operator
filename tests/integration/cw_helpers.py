@@ -10,6 +10,7 @@ from typing import NamedTuple
 
 import jubilant
 
+from literals import CLIENT_PORT, TLS_PORT, Substrate
 from tests.integration.conftest import GLIDE_RUNNER_NAME
 from tests.integration.helpers import (
     APP_NAME,
@@ -39,6 +40,7 @@ def configure_cw_runner(
     app: str = GLIDE_RUNNER_NAME,
     valkey_app: str = APP_NAME,
     tls_enabled: bool = False,
+    substrate: Substrate = Substrate.VM,
 ) -> None:
     """Configure the continuous writes runner charm to connect to Valkey via config options.
 
@@ -51,9 +53,19 @@ def configure_cw_runner(
         app: Name of the continuous writes runner charm application to configure.
         valkey_app: Name of the Valkey application to fetch endpoints from.
         tls_enabled: Whether TLS is enabled.
+        substrate: The substrate type (VM or Kubernetes).
     """
-    hostnames = get_cluster_addresses(juju, valkey_app)
-    endpoints = ",".join(f"{h}:6379" for h in hostnames)
+    if substrate == Substrate.VM:
+        addresses = get_cluster_addresses(juju, valkey_app)
+    else:
+        # for k8s we construct the hostname
+        addresses = [
+            unit_name.replace("/", "-") + "." + valkey_app + "-endpoints"
+            for unit_name in juju.status().get_units(valkey_app)
+        ]
+
+    port = TLS_PORT if tls_enabled else CLIENT_PORT
+    endpoints = ",".join(f"{h}:{port}" for h in addresses)
     password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
 
     cacert = cert = key = ""
