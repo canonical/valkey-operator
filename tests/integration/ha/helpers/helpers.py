@@ -220,10 +220,8 @@ def get_unit_name_from_primary_ip(
     """
     for unit_name, unit in juju.status().apps[APP_NAME].units.items():
         try:
-            if (
-                juju.exec("unit-get private-address", unit=unit_name, wait=5).stdout.strip()
-                == primary_ip
-            ):
+            unit_ip = unit.public_address if substrate == Substrate.VM else unit.address
+            if unit_ip == primary_ip:
                 return unit_name
         except TimeoutError as e:
             logger.warning(f"Failed to get private address for {unit_name}: {e}")
