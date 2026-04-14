@@ -580,6 +580,7 @@ def ping(
     hostname: str,
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> bool:
     """Ping a Valkey cluster node.
 
@@ -587,17 +588,26 @@ def ping(
         hostname: The hostname of the Valkey cluster node.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         True if the node responds to a ping, False otherwise.
     """
-    return exec_valkey_cli(hostname, username, password, "ping").stdout == "PONG"
+    try:
+        return (
+            exec_valkey_cli(hostname, username, password, "ping", tls_enabled=tls_enabled).stdout
+            == "PONG"
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.warning(f"Error executing Valkey CLI ping on {hostname}: {e}")
+        return False
 
 
 async def ping_cluster(
     hostnames: list[str],
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> bool:
     """Ping all nodes in the Valkey cluster.
 
@@ -605,12 +615,13 @@ async def ping_cluster(
         hostnames: List of hostnames of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         True if all nodes respond to a ping, False otherwise.
     """
     async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password
+        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
     ) as client:
         return await client.ping() == "PONG".encode()
 

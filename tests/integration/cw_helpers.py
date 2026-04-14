@@ -200,6 +200,7 @@ def assert_continuous_writes_consistent(
     username: str,
     password: str,
     last_written_value: int,
+    tls_enabled: bool = False,
 ) -> None:
     """Assert consistency of continuous-writes data across all Valkey instances.
 
@@ -217,7 +218,14 @@ def assert_continuous_writes_consistent(
 
     for endpoint in hostnames:
         current_values: list[int] = json.loads(
-            exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 -1", json=True).stdout
+            exec_valkey_cli(
+                endpoint,
+                username,
+                password,
+                f"LRANGE {KEY} 0 -1",
+                json=True,
+                tls_enabled=tls_enabled,
+            ).stdout
         )
 
         last_value = int(current_values[0]) if current_values else None
