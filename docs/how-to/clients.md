@@ -4,13 +4,12 @@
 applications with compatible endpoints. These connections simplify creating and 
 managing users, passwords, and other shared data.
 
-#todo: add link to Charmlib reference
 Relations to Valkey are supported via the {spellexception}`valkey_client` interface.
 
-## Integrate a charm with Valkey
+## Integrate an application charm with Valkey
 
-If the charm supports the `valkey_client` relation interface, just create an integration
-between the two charms:
+If the application charm supports the `valkey_client` relation interface, just create 
+an integration between the two charms:
 
 ```shell
 juju integrate valkey application
@@ -23,7 +22,7 @@ The Charmed Valkey operator provides the following information over the relation
 - `endpoints`: The endpoints for read and write access (Primary endpoints).
 - `read_only_endpoints` The endpoints for read-only access (Replica endpoints).
 - `sentinel_endpoints` The endpoints of Valkey Sentinel, if Valkey HA runs in Sentinel-mode.
-- `mode`: The High Availablity mode Valkey is operating in (can be `sentinel` only currently).
+- `mode`: The High Availability mode Valkey is operating in (can be `sentinel` only currently).
 - `tls`: Whether TLS is enabled. This is `True` if TLS is enabled and `False` otherwise.
 - `tls_ca`: The CA certificate used to sign the server certificate.
 - `version`: The version of Valkey that is being deployed.
@@ -98,7 +97,7 @@ def _on_resource_created(self, event: ResourceCreatedEvent) -> None:
     ...
 ```
 
-For more information, please refer to the [Readme of data-interfaces](https://github.com/canonical/data-platform-charmlibs/blob/main/interfaces/README.md#requirer-charm)
+For more information, please refer to the [README of data-interfaces](https://github.com/canonical/data-platform-charmlibs/blob/main/interfaces/README.md#requirer-charm)
 
 Charmed Valkey also supports backwards compatibility with `data-interfaces v0`.
 
