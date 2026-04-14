@@ -213,6 +213,7 @@ def assert_continuous_writes_consistent(
         username: Valkey username.
         password: Valkey password.
         last_written_value: Last integer successfully written, from ``stop_continuous_writes``.
+        tls_enabled: Whether to use TLS when connecting to Valkey.
     """
     reference: list[int] | None = None
 
