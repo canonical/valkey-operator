@@ -55,13 +55,13 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
 
-async def test_authentication(juju: jubilant.Juju) -> None:
+def test_authentication(juju: jubilant.Juju) -> None:
     """Assert that we can authenticate to valkey."""
     addresses = get_cluster_addresses(juju, APP_NAME)
 
     # try without authentication
     with pytest.raises(NoAuthError):
-        await auth_test(addresses, username=None, password=None)
+        auth_test(juju, cluster_addresses=addresses, username=None, password=None)
 
     # Authenticate with internal user
     password = get_password(juju, user=CharmUsers.VALKEY_ADMIN)
@@ -74,7 +74,7 @@ async def test_authentication(juju: jubilant.Juju) -> None:
         ), "Failed to authenticate with Valkey cluster using CLI"
 
 
-async def test_update_admin_password(juju: jubilant.Juju) -> None:
+def test_update_admin_password(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     # create a user secret and grant it to the application
     logger.info("Updating operator password")
@@ -94,17 +94,21 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
     addresses = get_cluster_addresses(juju, APP_NAME)
     # confirm old password no longer works
     with pytest.raises(WrongPassError):
-        await auth_test(addresses, username=CharmUsers.VALKEY_ADMIN.value, password=old_password)
+        auth_test(
+            juju,
+            cluster_addresses=addresses,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=old_password,
+        )
 
     assert (
-        await ping_cluster(
-            addresses, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
-        )
+        ping_cluster(juju, APP_NAME, addresses, CharmUsers.VALKEY_ADMIN.value, new_password)
         is True
     ), "Failed to authenticate with new admin password"
 
     assert (
-        await set_key(
+        set_key(
+            juju,
             addresses,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=new_password,
@@ -138,7 +142,7 @@ async def test_update_admin_password(juju: jubilant.Juju) -> None:
         ), f"Failed to read data after admin password update on host {address}"
 
 
-async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
+def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None:
     """Assert the admin password is updated when adding a user secret to the config."""
     # create a user secret and grant it to the application
     secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
@@ -170,8 +174,10 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
 
     # perform read operation with the updated password
     assert (
-        await ping_cluster(
-            get_cluster_addresses(juju, APP_NAME),
+        ping_cluster(
+            juju=juju,
+            app_name=APP_NAME,
+            endpoints=get_cluster_addresses(juju, APP_NAME),
             username=CharmUsers.VALKEY_ADMIN.value,
             password=new_password,
         )
@@ -179,8 +185,9 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
     ), "Failed to authenticate with new admin password"
 
     assert (
-        await set_key(
-            get_cluster_addresses(juju, APP_NAME),
+        set_key(
+            juju=juju,
+            endpoints=get_cluster_addresses(juju, APP_NAME),
             username=CharmUsers.VALKEY_ADMIN.value,
             password=new_password,
             key=TEST_KEY,
@@ -199,7 +206,7 @@ async def test_update_admin_password_wrong_username(juju: jubilant.Juju) -> None
         )
 
 
-async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
+def test_user_secret_permissions(juju: jubilant.Juju) -> None:
     """If a user secret is not granted, ensure we can process updated permissions."""
     logger.info("Creating new user secret")
     secret_name = "my_secret"
@@ -230,13 +237,18 @@ async def test_user_secret_permissions(juju: jubilant.Juju) -> None:
 
     # perform read operation with the updated password
     addresses = get_cluster_addresses(juju, APP_NAME)
-    assert await ping_cluster(
-        addresses, username=CharmUsers.VALKEY_ADMIN.value, password=new_password
+    assert ping_cluster(
+        juju=juju,
+        app_name=APP_NAME,
+        endpoints=addresses,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=new_password,
     ), "Failed to authenticate with new admin password"
 
     assert (
-        await set_key(
-            addresses,
+        set_key(
+            juju=juju,
+            endpoints=addresses,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=new_password,
             key=TEST_KEY,

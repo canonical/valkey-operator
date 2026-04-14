@@ -38,6 +38,7 @@ from literals import (
     CharmUsers,
     Substrate,
 )
+from tests.integration.glide_helpers import serialize_glide_config
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,51 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
             return revealed_secret.content
 
     raise SecretNotFoundError(f"Secret with label {label} not found")
+
+
+def get_glide_config(
+    juju: jubilant.Juju,
+    app_name: str,
+    cluster_addresses: list[str] | None = None,
+    username: str | None = CharmUsers.VALKEY_ADMIN.value,
+    password: str | None = None,
+    tls_enabled: bool = False,
+) -> GlideClientConfiguration:
+    """Construct a GlideClientConfiguration from Juju model information and secrets."""
+    cluster_addresses = cluster_addresses or get_cluster_addresses(juju, app_name)
+    addresses = [
+        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT)
+        for host in cluster_addresses
+    ]
+
+    credentials = None
+    if username or password:
+        credentials = ServerCredentials(username=username, password=password)
+
+    tls_cert = tls_key = tls_ca_cert = None
+    if tls_enabled:
+        download_client_certificate_from_unit(juju, app_name=app_name)
+        # Read locally stored certificate files
+        with open("client.pem", "rb") as f:
+            tls_cert = f.read()
+        with open("client.key", "rb") as f:
+            tls_key = f.read()
+        with open("client_ca.pem", "rb") as f:
+            tls_ca_cert = f.read()
+
+    tls_config = TlsAdvancedConfiguration(
+        client_cert_pem=tls_cert if tls_enabled else None,
+        client_key_pem=tls_key if tls_enabled else None,
+        root_pem_cacerts=tls_ca_cert if tls_enabled else None,
+    )
+
+    client_config = GlideClientConfiguration(
+        addresses,
+        credentials=credentials,
+        use_tls=True if tls_enabled else False,
+        advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
+    )
+    return client_config
 
 
 @asynccontextmanager
@@ -530,28 +576,42 @@ def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
     return int(json.loads(result.stdout)["quorum"])
 
 
-async def set_key(
-    hostnames: list[str],
+def set_key(
+    juju: jubilant.Juju,
+    endpoints: list[str],
     username: str,
     password: str,
     key: str,
     value: str,
     tls_enabled: bool = False,
-) -> bytes | None:
+) -> str:
     """Write a key-value pair to the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to write.
-        value: The value to write.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        endpoints: List of endpoints of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        key: The key to set.
+        value: The value to set.
         tls_enabled: Whether TLS certificates are needed.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.set(key, value)
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        cluster_addresses=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": f"SET {key} {value}", "config": serialize_glide_config(glide_config)},
+    )
+    if task.status != "completed":
+        raise RuntimeError(f"Command execution failed: {task.results}")
+    return json.loads(task.results.get("result", "null"))
 
 
 async def get_key(
@@ -603,8 +663,10 @@ def ping(
         return False
 
 
-async def ping_cluster(
-    hostnames: list[str],
+def ping_cluster(
+    juju: jubilant.Juju,
+    app_name: str,
+    endpoints: list[str],
     username: str,
     password: str,
     tls_enabled: bool = False,
@@ -612,7 +674,9 @@ async def ping_cluster(
     """Ping all nodes in the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app_name: The name of the Valkey application
+        endpoints: List of endpoints of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
@@ -620,10 +684,20 @@ async def ping_cluster(
     Returns:
         True if all nodes respond to a ping, False otherwise.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.ping() == "PONG".encode()
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=app_name,
+        cluster_addresses=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": "ping", "config": serialize_glide_config(glide_config)},
+    )
+    return task.status == "completed" and json.loads(task.results.get("result", "")) == "PONG"
 
 
 def get_number_connected_replicas(
@@ -654,33 +728,55 @@ class WrongPassError(Exception):
     """Raised when authentication fails due to incorrect credentials."""
 
 
-async def auth_test(
-    hostnames: list[str], username: str | None, password: str | None, tls_enabled: bool = False
+def auth_test(
+    juju: jubilant.Juju,
+    cluster_addresses: list[str] | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    tls_enabled: bool = False,
+    glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader",
 ) -> bool:
     """Test authentication to the Valkey cluster by attempting to ping it.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        cluster_addresses: List of hostnames of the Valkey cluster nodes. If None, will be retrieved from Juju.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
+        glide_runner_unit: The unit name of the glide-runner to execute the command on
 
     Returns:
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
-    try:
-        async with create_valkey_client(
-            hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-        ) as client:
-            return await client.ping() == "PONG".encode()
-    except Exception as e:
-        error_message = str(e)
-        if "NOAUTH" in error_message:
-            raise NoAuthError("Authentication failed: NOAUTH error") from e
-        elif "WRONGPASS" in error_message:
-            raise WrongPassError("Authentication failed: WRONGPASS error") from e
-        else:
-            raise e
+    glide_config = get_glide_config(
+        juju=juju,
+        cluster_addresses=cluster_addresses,
+        app_name=APP_NAME,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        glide_runner_unit,
+        "execute",
+        params={"command": "ping", "config": serialize_glide_config(glide_config)},
+    )
+    result = json.loads(task.results.get("result", ""))
+    if "NOAUTH" in result:
+        raise NoAuthError("Authentication failed: NOAUTH error")
+    elif "WRONGPASS" in result:
+        raise WrongPassError("Authentication failed: WRONGPASS error")
+    return task.status == "completed" and result == "PONG"
+
+    # except Exception as e:
+    #     error_message = str(e)
+    #     if "NOAUTH" in error_message:
+    #         raise NoAuthError("Authentication failed: NOAUTH error") from e
+    #     elif "WRONGPASS" in error_message:
+    #         raise WrongPassError("Authentication failed: WRONGPASS error") from e
+    #     else:
+    #         raise e
 
 
 def remove_number_units(
