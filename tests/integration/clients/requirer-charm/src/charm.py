@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+from pydantic import BaseModel
+
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateRequestAttributes,
@@ -40,6 +42,25 @@ from dpcharmlibs.interfaces import (
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "some-service"  # Name of Pebble service that runs in the workload container.
+
+
+class GlideConfig(BaseModel):
+    """Represents the glide-config charm configuration option."""
+
+    endpoints: str
+    username: str
+    password: str
+    tls_enabled: bool = False
+    cacert: str = ""
+    cert: str = ""
+    key: str = ""
+
+    @classmethod
+    def from_json(cls, raw: str) -> "GlideConfig":
+        return cls.model_validate_json(raw)
+
+    def to_json(self) -> str:
+        return self.model_dump_json()
 
 
 class RequirerCharm(ops.CharmBase):
@@ -135,17 +156,23 @@ class RequirerCharm(ops.CharmBase):
         ).requests
 
     @property
+    def _glide_config(self) -> GlideConfig | None:
+        """Parse the glide-config JSON option, or None if not set."""
+        raw = str(self.config.get("glide-config", "")).strip()
+        if not raw:
+            return None
+        return GlideConfig.from_json(raw)
+
+    @property
     def _use_config(self) -> bool:
-        """Return True when connection-source is set to "config"."""
-        return self.config.get("connection-source") == "config"
+        """Return True when glide-config is set."""
+        return self._glide_config is not None
 
     @property
     def credentials(self) -> dict[str, str | None]:
         """Retrieve the client credentials from config or relation."""
-        if self._use_config:
-            username = str(self.config["username"]) or ""
-            password = str(self.config["password"]) or None
-            return {username: password}
+        if (cfg := self._glide_config) is not None:
+            return {cfg.username: cfg.password or None}
 
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
@@ -170,8 +197,8 @@ class RequirerCharm(ops.CharmBase):
     @property
     def primary_endpoint(self) -> str | None:
         """Retrieve the write-endpoints from config or relation."""
-        if self._use_config:
-            return str(self.config["endpoints"]) or None
+        if (cfg := self._glide_config) is not None:
+            return cfg.endpoints or None
 
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
@@ -188,8 +215,8 @@ class RequirerCharm(ops.CharmBase):
     @property
     def tls_enabled(self) -> bool:
         """Retrieve the TLS flag from config or relation."""
-        if self._use_config:
-            return bool(self.config.get("tls-enabled"))
+        if (cfg := self._glide_config) is not None:
+            return cfg.tls_enabled
 
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
@@ -209,9 +236,8 @@ class RequirerCharm(ops.CharmBase):
     @property
     def tls_ca_cert(self) -> str | None:
         """Retrieve the TLS CA cert from config or relation."""
-        if self._use_config:
-            raw = str(self.config["cacert"])
-            return base64.b64decode(raw).decode() if raw else None
+        if (cfg := self._glide_config) is not None:
+            return base64.b64decode(cfg.cacert).decode() if cfg.cacert else None
 
         if self.data_interfaces_version == 0:
             if not self.valkey_relation:
@@ -228,9 +254,8 @@ class RequirerCharm(ops.CharmBase):
     @property
     def certificate(self) -> str | None:
         """Retrieve the client certificate from config or the certificates relation."""
-        if self._use_config:
-            raw = str(self.config["cert"])
-            return base64.b64decode(raw).decode() if raw else None
+        if (cfg := self._glide_config) is not None:
+            return base64.b64decode(cfg.cert).decode() if cfg.cert else None
 
         certificates, _ = self.certificates.get_assigned_certificates()
         if not certificates:
@@ -241,9 +266,8 @@ class RequirerCharm(ops.CharmBase):
     @property
     def private_key(self) -> str | None:
         """Retrieve the client private key from config or the certificates relation."""
-        if self._use_config:
-            raw = str(self.config["key"])
-            return base64.b64decode(raw).decode() if raw else None
+        if (cfg := self._glide_config) is not None:
+            return base64.b64decode(cfg.key).decode() if cfg.key else None
 
         _, private_key = self.certificates.get_assigned_certificates()
         if not private_key:
@@ -328,7 +352,7 @@ class RequirerCharm(ops.CharmBase):
         """Handle execute action."""
         if not self._use_config and not self.valkey_relation:
             event.fail(
-                "The action can be run only after a relation is created or connection-source is set to 'config'."
+                "The action can be run only after a relation is created or glide-config is set."
             )
             event.set_results({"ok": False})
             return
@@ -368,7 +392,7 @@ class RequirerCharm(ops.CharmBase):
         """Handle start-continuous-writes action."""
         if not self._use_config and not self.valkey_relation:
             event.fail(
-                "The action can be run only after a relation is created or connection-source is set to 'config'."
+                "The action can be run only after a relation is created or glide-config is set."
             )
             return
 
@@ -590,7 +614,7 @@ class RequirerCharm(ops.CharmBase):
         logger.info("Database created")
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Hot-reload the continuous-writes daemon when endpoints config changes."""
+        """Hot-reload the continuous-writes daemon when glide-config changes."""
         if not self._use_config or not CWPath.PID.value.exists():
             return
 

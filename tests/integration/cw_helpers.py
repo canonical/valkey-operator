@@ -75,17 +75,16 @@ def configure_cw_runner(
         cert = base64.b64encode(Path(TLS_CERT_FILE).read_bytes()).decode()
         key = base64.b64encode(Path(TLS_KEY_FILE).read_bytes()).decode()
 
-    values: dict = {
-        "connection-source": "config",
+    glide_config = json.dumps({
         "endpoints": endpoints,
         "username": CharmUsers.VALKEY_ADMIN.value,
         "password": password,
-        "tls-enabled": tls_enabled,
+        "tls_enabled": tls_enabled,
         "cacert": cacert,
         "cert": cert,
         "key": key,
-    }
-    juju.config(app=app, values=values)
+    })
+    juju.config(app=app, values={"glide-config": glide_config})
 
 
 def start_continuous_writes(

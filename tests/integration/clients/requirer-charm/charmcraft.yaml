@@ -165,48 +165,13 @@ config:
       description: Version of data interfaces to use
       type: int
       default: 1
-    connection-source:
+    glide-config:
       description: >
-        Whether to read connection info from the Valkey relation ("relation")
-        or from the config options below ("config").
-      type: string
-      default: config
-    endpoints:
-      description: >
-        Comma-separated list of Valkey endpoints in "host:port" form.
-        Required when connection-source is "config".
-      type: string
-      default: ""
-    username:
-      description: >
-        Valkey username. Required when connection-source is "config".
-      type: string
-      default: "charmed-operator"
-    password:
-      description: >
-        Valkey password. Required when connection-source is "config".
-      type: string
-      default: ""
-    tls-enabled:
-      description: >
-        Whether TLS is enabled. Used when connection-source is "config".
-      type: boolean
-      default: false
-    cacert:
-      description: >
-        Base64-encoded PEM CA certificate. Required when connection-source is
-        "config" and tls-enabled is true.
-      type: string
-      default: ""
-    cert:
-      description: >
-        Base64-encoded PEM client certificate. Required when connection-source
-        is "config" and tls-enabled is true.
-      type: string
-      default: ""
-    key:
-      description: >
-        Base64-encoded PEM client private key. Required when connection-source
-        is "config" and tls-enabled is true.
+        JSON string with Glide connection options. When set, the charm uses
+        config-based connection instead of the Valkey relation. Expected keys:
+        endpoints (comma-separated "host:port" string), username (string),
+        password (string), tls_enabled (bool), cacert (base64-encoded PEM CA
+        certificate string), cert (base64-encoded PEM client certificate
+        string), key (base64-encoded PEM client private key string).
       type: string
       default: ""

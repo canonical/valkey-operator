@@ -34,8 +34,9 @@ import os
 import signal
 import sys
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from pydantic import BaseModel
 
 from glide import (
     AdvancedGlideClientConfiguration,
@@ -60,8 +61,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class TlsConfig:
+class TlsConfig(BaseModel):
     """TLS certificate paths for the Glide client."""
 
     cert_path: str
@@ -69,8 +69,7 @@ class TlsConfig:
     ca_path: str
 
 
-@dataclass
-class DaemonConfig:
+class DaemonConfig(BaseModel):
     """Connection configuration for the continuous-writes daemon."""
 
     endpoints: str
@@ -83,36 +82,11 @@ class DaemonConfig:
     @classmethod
     def from_file(cls, path: Path) -> "DaemonConfig":
         """Load and validate config from a JSON file."""
-        data = json.loads(path.read_text())
-        tls = (
-            TlsConfig(
-                cert_path=data["cert_path"], key_path=data["key_path"], ca_path=data["ca_path"]
-            )
-            if data.get("tls_enabled")
-            else None
-        )
-        return cls(
-            endpoints=data["endpoints"],
-            username=data["username"],
-            password=data["password"],
-            tls=tls,
-            initial_count=data.get("initial_count", 0),
-            clear_existing=data.get("clear_existing", False),
-        )
+        return cls.model_validate_json(path.read_text())
 
     def to_file(self, path: Path) -> None:
         """Serialise config to a JSON file."""
-        data: dict[str, object] = {
-            "endpoints": self.endpoints,
-            "username": self.username,
-            "password": self.password,
-            "tls_enabled": self.tls is not None,
-            "initial_count": self.initial_count,
-            "clear_existing": self.clear_existing,
-        }
-        if self.tls is not None:
-            data.update(asdict(self.tls))
-        path.write_text(json.dumps(data))
+        path.write_text(self.model_dump_json())
 
 
 def _write_state_atomic(last_written: int, count: int) -> None:
