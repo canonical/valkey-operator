@@ -225,7 +225,7 @@ async def test_network_cut_primary(  # noqa: C901
         )
 
     download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
-    new_unit_ip = get_ip_from_unit(juju, primary_unit_name)
+    new_unit_ip = get_ip_from_unit(juju, primary_unit_name, substrate)
 
     # we do not use IPs in certificates for k8s, so no need to check SANs for IP changes
     if substrate == Substrate.VM:
