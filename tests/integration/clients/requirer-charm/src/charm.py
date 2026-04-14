@@ -16,8 +16,6 @@ import sys
 import time
 from pathlib import Path
 
-from pydantic import BaseModel
-
 import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateRequestAttributes,
@@ -38,6 +36,9 @@ from dpcharmlibs.interfaces import (
     ValkeyResponseModel,
     build_model,
 )
+from glide import GlideClient
+from glide_helpers import deserialize_glide_config, parse_custom_command_result
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -350,25 +351,33 @@ class RequirerCharm(ops.CharmBase):
 
     def _on_execute_action(self, event: ops.ActionEvent) -> None:
         """Handle execute action."""
-        if not self._use_config and not self.valkey_relation:
-            event.fail(
-                "The action can be run only after a relation is created or glide-config is set."
-            )
-            event.set_results({"ok": False})
-            return
-
         command = str(event.params.get("command", ""))
         if not command:
             event.fail("Parameter command is required.")
             event.set_results({"ok": False})
             return
 
-        user, _ = next(iter(self.credentials.items()))
         args = command.split()
-        client = self.get_valkey_client(user)
+
         try:
-            result = asyncio.run(client.execute_command(args))
-            event.set_results({"ok": True, "result": result})
+            glide_config = deserialize_glide_config(str(event.params["config"]))
+        except Exception as e:
+            event.fail(f"Failed to deserialize config: {e}")
+            event.set_results({"ok": False})
+            return
+
+        async def _run():
+            client = await GlideClient.create(glide_config)
+            try:
+                return await client.custom_command(args)
+            finally:
+                await client.close()
+
+        try:
+            result = asyncio.run(_run())
+            event.set_results(
+                {"ok": True, "result": json.dumps(parse_custom_command_result(result))}
+            )
         except Exception as e:
             event.set_results({"ok": False, "result": json.dumps(str(e))})
 
