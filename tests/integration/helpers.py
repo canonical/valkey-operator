@@ -614,8 +614,9 @@ def set_key(
     return json.loads(task.results.get("result", "null"))
 
 
-async def get_key(
-    hostnames: list[str],
+def get_key(
+    juju: jubilant.Juju,
+    endpoints: list[str],
     username: str,
     password: str,
     key: str,
@@ -624,16 +625,29 @@ async def get_key(
     """Read a value from the Valkey cluster by key.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        endpoints: List of endpoints of the Valkey cluster nodes.
         key: The key to read.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.get(key)
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        cluster_addresses=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": f"GET {key}", "config": serialize_glide_config(glide_config)},
+    )
+    if task.status != "completed":
+        raise RuntimeError(f"Command execution failed: {task.results}")
+    return json.loads(task.results.get("result", "null"))
 
 
 def ping(
@@ -768,15 +782,6 @@ def auth_test(
     elif "WRONGPASS" in result:
         raise WrongPassError("Authentication failed: WRONGPASS error")
     return task.status == "completed" and result == "PONG"
-
-    # except Exception as e:
-    #     error_message = str(e)
-    #     if "NOAUTH" in error_message:
-    #         raise NoAuthError("Authentication failed: NOAUTH error") from e
-    #     elif "WRONGPASS" in error_message:
-    #         raise WrongPassError("Authentication failed: WRONGPASS error") from e
-    #     else:
-    #         raise e
 
 
 def remove_number_units(

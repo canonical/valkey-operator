@@ -4,7 +4,6 @@
 import logging
 
 import jubilant
-import pytest
 
 from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
@@ -45,15 +44,16 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
 
-async def test_tls_enabled(juju: jubilant.Juju) -> None:
+def test_tls_enabled(juju: jubilant.Juju) -> None:
     """Check if the TLS has been enabled on app startup."""
     logger.info("Downloading TLS certificates from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
 
     addresses = get_cluster_addresses(juju, APP_NAME)
     logger.info("Check access with TLS enabled")
-    result = await set_key(
-        hostnames=addresses,
+    result = set_key(
+        juju=juju,
+        endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -62,18 +62,21 @@ async def test_tls_enabled(juju: jubilant.Juju) -> None:
     )
     assert result == "OK", "Failed to write data with TLS enabled"
 
-    assert await get_key(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+    assert (
+        get_key(
+            juju=juju,
+            endpoints=addresses,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=True,
+            key=TEST_KEY,
+        )
+        == TEST_VALUE
+    ), "Failed to read data with TLS enabled"
 
     logger.info("Check access without certs fails when TLS enabled")
-    with pytest.raises(Exception) as exc_info:
-        await auth_test(addresses, username=None, password=None)
-    assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
+
+    assert not auth_test(juju, addresses, username=None, password=None)
 
 
 def test_scale_up_with_tls_enabled(juju: jubilant.Juju) -> None:
@@ -88,7 +91,7 @@ def test_scale_up_with_tls_enabled(juju: jubilant.Juju) -> None:
     )
 
 
-async def test_disable_tls(juju: jubilant.Juju) -> None:
+def test_disable_tls(juju: jubilant.Juju) -> None:
     """Disable TLS on a running cluster and check if it is still accessible."""
     logger.info("Removing client-certificates relation")
     juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
@@ -100,8 +103,9 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
 
     addresses = get_cluster_addresses(juju, APP_NAME)
     logger.info("Check access with TLS disabled")
-    result = await set_key(
-        hostnames=addresses,
+    result = set_key(
+        juju=juju,
+        endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,
@@ -110,16 +114,20 @@ async def test_disable_tls(juju: jubilant.Juju) -> None:
     )
     assert result == "OK", "Failed to write data after TLS was disabled"
 
-    assert await get_key(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=False,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data after TLS was disabled"
+    assert (
+        get_key(
+            juju=juju,
+            endpoints=addresses,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=False,
+            key=TEST_KEY,
+        )
+        == TEST_VALUE
+    ), "Failed to read data after TLS was disabled"
 
 
-async def test_enable_tls(juju: jubilant.Juju) -> None:
+def test_enable_tls(juju: jubilant.Juju) -> None:
     """Enable TLS on a running cluster and check if it is still accessible."""
     logger.info("Enabling client TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
@@ -133,8 +141,9 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
 
     addresses = get_cluster_addresses(juju, APP_NAME)
     logger.info("Check access with TLS enabled")
-    result = await set_key(
-        hostnames=addresses,
+    result = set_key(
+        juju=juju,
+        endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -143,15 +152,17 @@ async def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert result == "OK", "Failed to write data with TLS enabled"
 
-    assert await get_key(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+    assert (
+        get_key(
+            juju=juju,
+            endpoints=addresses,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=True,
+            key=TEST_KEY,
+        )
+        == TEST_VALUE
+    ), "Failed to read data with TLS enabled"
 
     logger.info("Check access without certs fails when TLS enabled")
-    with pytest.raises(Exception) as exc_info:
-        await auth_test(addresses, username=None, password=None)
-    assert "Connection error" in str(exc_info.value), "Access without TLS did not fail as expected"
+    assert not auth_test(juju, addresses, username=None, password=None)
