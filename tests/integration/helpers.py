@@ -343,10 +343,10 @@ def set_password(
 
 
 @contextmanager
-def fast_forward(juju: jubilant.Juju):
+def fast_forward(juju: jubilant.Juju, update_interval: str = "10s"):
     """Context manager that temporarily speeds up update-status hooks to fire every 10s."""
     old = juju.model_config()["update-status-hook-interval"]
-    juju.model_config({"update-status-hook-interval": "10s"})
+    juju.model_config({"update-status-hook-interval": update_interval})
     try:
         yield
     finally:
