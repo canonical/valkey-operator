@@ -279,7 +279,6 @@ def get_glide_config(
 
     tls_cert = tls_key = tls_ca_cert = None
     if tls_enabled:
-        download_client_certificate_from_unit(juju, app_name=app_name)
         # Read locally stored certificate files
         with open("client.pem", "rb") as f:
             tls_cert = f.read()
