@@ -11,7 +11,7 @@ by Charmed Valkey.
 We will go through setting a user-defined password for this admin user and configuring
 Valkey.
 
-To create an external client user, refer to [client connections](clients.md#non-charmed-applications-and-external-clients).
+To create an external client user, refer to [client connections](clients).
 
 ## Auto-generated credentials
 
