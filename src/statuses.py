@@ -63,7 +63,6 @@ class StartStatuses(Enum):
     SERVICE_STARTING = StatusObject(
         status="maintenance",
         message="Waiting for Valkey to start...",
-        running="async",
     )
     WAITING_FOR_SENTINEL_DISCOVERY = StatusObject(
         status="maintenance",
