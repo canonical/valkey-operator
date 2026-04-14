@@ -204,7 +204,7 @@ valkey-1.valkey-endpoints:6379> AUTH relation-5-40749865b6c7d821 <PASSWORD>
 ## Enable authentication through client certificate
 
 Charmed Valkey also supports password-less authentication via client certificates.
-This requires [mutual TLS](#enable-mutual-tls).
+This requires [mutual TLS](clients.md#enable-mutual-tls).
 
 Clients can log in to Valkey without providing a username and password, when the 
 common name (CN) of the presented client certificates matches the username that
