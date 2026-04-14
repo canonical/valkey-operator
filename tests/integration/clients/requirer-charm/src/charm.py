@@ -346,8 +346,7 @@ class RequirerCharm(ops.CharmBase):
             result = asyncio.run(client.execute_command(args))
             event.set_results({"ok": True, "result": result})
         except Exception as e:
-            event.fail(f"Failed to execute command: {e}")
-            logger.error("Failed to execute command: %s", e)
+            event.set_results({"ok": False, "result": json.dumps(str(e))})
 
     def _on_get_credentials_action(self, event: ops.ActionEvent) -> None:
         """Return the credentials an action response."""

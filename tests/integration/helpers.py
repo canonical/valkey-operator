@@ -21,7 +21,6 @@ from glide import (
     AdvancedGlideClientConfiguration,
     GlideClient,
     GlideClientConfiguration,
-    InfoSection,
     NodeAddress,
     ServerCredentials,
     TlsAdvancedConfiguration,
@@ -45,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
+GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
@@ -615,31 +615,21 @@ async def ping_cluster(
         return await client.ping() == "PONG".encode()
 
 
-async def get_number_connected_replicas(
-    addresses: list[str],
-    username: str,
-    password: str,
-    tls_enabled: bool = False,
+def get_number_connected_replicas(
+    juju: jubilant.Juju, glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader"
 ) -> int:
     """Get the number of connected replicas in the Valkey cluster.
 
     Args:
-        addresses: List of addresses of the Valkey cluster nodes.
-        username: The username for authentication.
-        password: The password for authentication.
-        tls_enabled: Whether TLS certificates are needed.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        glide_runner_unit: The unit name of the glide-runner to execute the command on
 
     Returns:
         The number of connected replicas.
     """
-    async with create_valkey_client(
-        hostnames=addresses,
-        username=username,
-        password=password,
-        tls_enabled=tls_enabled,
-    ) as client:
-        info = (await client.info([InfoSection.REPLICATION])).decode()
-    search_result = re.search(r"connected_slaves:([\d+])", info)
+    task_result = juju.run(glide_runner_unit, "execute", {"command": "info replication"})
+    assert task_result.status == "completed", f"Command execution failed: {task_result.results}"
+    search_result = re.search(r"connected_slaves:([\d+])", task_result.results.get("result", ""))
     if not search_result:
         raise ValueError("Could not parse number of connected replicas from info output")
     return int(search_result.group(1))

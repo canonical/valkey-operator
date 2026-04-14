@@ -8,11 +8,9 @@ import jubilant
 import pytest
 
 from literals import Substrate
-from tests.integration.helpers import are_apps_active_and_agents_idle
+from tests.integration.helpers import GLIDE_RUNNER_NAME, are_apps_active_and_agents_idle
 
 logger = logging.getLogger(__name__)
-
-GLIDE_RUNNER_NAME = "glide-runner"
 
 
 @pytest.fixture

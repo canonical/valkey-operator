@@ -30,13 +30,11 @@ from tests.integration.helpers import (
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
-    CharmUsers,
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
     get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
-    get_password,
     get_primary_ip,
 )
 
@@ -170,12 +168,7 @@ async def test_network_cut_primary(  # noqa: C901
     # retry in case cluster hasn't stabilized yet after primary cut and new primary election
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = await get_number_connected_replicas(
-                addresses=addresses,
-                username=CharmUsers.VALKEY_ADMIN.value,
-                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-                tls_enabled=tls_enabled,
-            )
+            number_of_replicas = get_number_connected_replicas(juju)
             assert number_of_replicas == NUM_UNITS - 2, (
                 f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
             )
@@ -255,12 +248,7 @@ async def test_network_cut_primary(  # noqa: C901
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = await get_number_connected_replicas(
-                addresses=addresses,
-                username=CharmUsers.VALKEY_ADMIN.value,
-                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-                tls_enabled=tls_enabled,
-            )
+            number_of_replicas = get_number_connected_replicas(juju)
             assert number_of_replicas == NUM_UNITS - 1, (
                 f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
             )

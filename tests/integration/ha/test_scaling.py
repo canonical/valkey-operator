@@ -99,11 +99,7 @@ async def test_scale_up(juju: jubilant.Juju, glide_runner) -> None:
     # check if all units have been added to the cluster
     addresses = get_cluster_addresses(juju, app_name)
 
-    connected_replicas = await get_number_connected_replicas(
-        addresses=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    connected_replicas = get_number_connected_replicas(juju)
     assert connected_replicas == init_units_count + 1, (
         f"Expected {init_units_count + 1} connected replicas, got {connected_replicas}."
     )
@@ -136,11 +132,7 @@ async def test_scale_down_one_unit(
             timeout=1200,
         )
 
-    number_of_replicas = await get_number_connected_replicas(
-        addresses=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
@@ -166,11 +158,7 @@ async def test_scale_down_one_unit(
             f"Unexpected quorum value for unit {unit} after scale down"
         )
 
-    number_of_replicas = await get_number_connected_replicas(
-        addresses=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 2, (
         f"Expected {init_units_count - 2} connected replicas, got {number_of_replicas}."
     )
@@ -206,11 +194,7 @@ async def test_scale_down_multiple_units(
         )
         init_units_count = NUM_UNITS + 1
 
-    number_of_replicas = await get_number_connected_replicas(
-        addresses=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} connected replicas, got {number_of_replicas}."
     )
@@ -233,11 +217,7 @@ async def test_scale_down_multiple_units(
         f"Expected {init_units_count - 2} units, got {num_units}."
     )
 
-    number_of_replicas = await get_number_connected_replicas(
-        addresses=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 3, (
         f"Expected {init_units_count - 3} connected replicas, got {number_of_replicas}."
     )
@@ -285,11 +265,7 @@ async def test_scale_down_to_zero_and_back_up(
 
     addresses = get_cluster_addresses(juju, app_name)
 
-    connected_replicas = await get_number_connected_replicas(
-        addresses=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-    )
+    connected_replicas = get_number_connected_replicas(juju)
     assert connected_replicas == NUM_UNITS - 1, (
         f"Expected {NUM_UNITS - 1} connected replicas, got {connected_replicas}."
     )
