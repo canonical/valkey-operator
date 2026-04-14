@@ -626,7 +626,7 @@ async def test_reboot_primary(
     c_writes.update()
 
     # on k8s we get a new ip
-    new_ip = get_ip_from_unit(juju, primary_unit_name)
+    new_ip = get_ip_from_unit(juju, primary_unit_name, substrate)
     assert ping(new_ip, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled), (
         "Primary unit is not responding after reboot."
     )
