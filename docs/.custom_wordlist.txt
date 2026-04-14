@@ -70,3 +70,4 @@ docstrings?
 Makefile
 retrigger(ing)?
 Valkey
+failover
