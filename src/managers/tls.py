@@ -438,13 +438,13 @@ class TLSManager(ManagerStatusProtocol):
         ):
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS_FAILED.value)
 
-        if self.state.cluster.tls_client_private_key and not self.state.client_tls_relation:
-            status_list.append(TLSStatuses.PRIVATE_KEY_BUT_NO_TLS.value)
-
         if (
             private_key_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG)
         ) and self.read_and_validate_private_key(str(private_key_id)) is None:
             status_list.append(TLSStatuses.PRIVATE_KEY_INVALID.value)
+
+        if self.state.cluster.tls_client_private_key and not self.state.client_tls_relation:
+            status_list.append(TLSStatuses.PRIVATE_KEY_BUT_NO_TLS.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_NO_TLS:
             status_list.append(TLSStatuses.DISABLING_CLIENT_TLS.value)
