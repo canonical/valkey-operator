@@ -22,7 +22,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_addresses,
+    get_cluster_endpoints,
     get_password,
     set_key,
 )
@@ -269,10 +269,10 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
     )
 
     logger.info("Ensure access without TLS is still possible")
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,
