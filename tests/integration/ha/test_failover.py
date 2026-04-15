@@ -225,6 +225,7 @@ def test_signal_db_process_on_primary(
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -365,6 +366,7 @@ def test_freeze_db_process_on_primary(
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -457,6 +459,7 @@ def test_full_cluster_restart(
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -556,6 +559,7 @@ def test_full_cluster_crash(tls_enabled: bool, juju: jubilant.Juju, substrate: S
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
 
     # reset the restart delay to the original value
@@ -651,6 +655,7 @@ def test_reboot_primary(tls_enabled: bool, juju: jubilant.Juju, substrate: Subst
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
 
 
@@ -740,4 +745,5 @@ def test_full_cluster_reboot(tls_enabled: bool, juju: jubilant.Juju, substrate: 
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=stats.last_written_value,
+        tls_enabled=tls_enabled,
     )
