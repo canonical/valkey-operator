@@ -686,7 +686,17 @@ def get_number_connected_replicas(
     Returns:
         The number of connected replicas.
     """
-    task_result = juju.run(glide_runner_unit, "execute", {"command": "info replication"})
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+    )
+    task_result = juju.run(
+        glide_runner_unit,
+        "execute",
+        {"command": "info replication", "config": serialize_glide_config(glide_config)},
+    )
     assert task_result.status == "completed", f"Command execution failed: {task_result.results}"
     search_result = re.search(r"connected_slaves:([\d+])", task_result.results.get("result", ""))
     if not search_result:

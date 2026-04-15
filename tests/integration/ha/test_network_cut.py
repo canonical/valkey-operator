@@ -27,6 +27,7 @@ from tests.integration.ha.helpers.helpers import (
 )
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -45,7 +46,11 @@ NUM_UNITS = 3
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 def test_build_and_deploy(
-    tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
+    tls_enabled: bool,
+    charm: str,
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    glide_runner_charm: str,
 ) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(
@@ -54,13 +59,16 @@ def test_build_and_deploy(
         num_units=NUM_UNITS,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
 
     if tls_enabled:
         juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
         juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
 
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
         timeout=600,
     )
 
@@ -71,7 +79,7 @@ def test_build_and_deploy(
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 @pytest.mark.parametrize("ip_change", [True, False], ids=["ip_change", "no_ip_change"])
-async def test_network_cut_primary(  # noqa: C901
+def test_network_cut_primary(  # noqa: C901
     tls_enabled: bool,
     ip_change: bool,
     juju: jubilant.Juju,
