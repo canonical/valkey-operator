@@ -124,6 +124,7 @@ class RequirerCharm(ops.CharmBase):
         framework.observe(self.on.get_action, self._on_get_action)
         framework.observe(self.on.execute_action, self._on_execute_action)
         framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
+        framework.observe(self.on.seed_data_action, self._on_seed_data_action)
         framework.observe(
             self.on.start_continuous_writes_action, self._on_start_continuous_writes_action
         )
@@ -412,6 +413,27 @@ class RequirerCharm(ops.CharmBase):
                 "usernames": usernames,
             }
         )
+
+    def _on_seed_data_action(self, event: ops.ActionEvent) -> None:
+        """Handle seed-data action."""
+        if not self._use_config and not self.valkey_relation:
+            event.fail(
+                "The action can be run only after a relation is created or glide-config is set."
+            )
+            event.set_results({"ok": False})
+            return
+
+        target_gb = float(event.params.get("target-gb", 1.0))
+        key_prefix = str(event.params.get("key-prefix", "seed:key:"))
+
+        user, _ = next(iter(self.credentials.items()))
+        client = self.get_valkey_client(user)
+        try:
+            keys_added = asyncio.run(client.seed_data(target_gb=target_gb, key_prefix=key_prefix))
+            event.set_results({"ok": True, "keys-added": keys_added})
+        except Exception as e:
+            event.fail(f"Failed to seed data: {e}")
+            logger.error("Failed to seed data: %s", e)
 
     def _on_start_continuous_writes_action(self, event: ops.ActionEvent) -> None:
         """Handle start-continuous-writes action."""

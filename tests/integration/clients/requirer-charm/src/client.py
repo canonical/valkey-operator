@@ -5,6 +5,7 @@
 
 import json
 import logging
+import os
 
 from glide import (
     AdvancedGlideClientConfiguration,
@@ -80,6 +81,34 @@ class ValkeyClient:
             return value.decode() if value else ""  # Return empty string if key does not exist
         finally:
             await client.close()
+
+    async def seed_data(
+        self, target_gb: float = 1.0, key_prefix: str = "seed:key:"
+    ) -> int:
+        """Seed Valkey with random data and return the number of keys written."""
+        value_size_bytes = 1024
+        batch_size = 5000
+        total_keys = int(target_gb * 1024 * 1024 * 1024) // value_size_bytes
+
+        random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
+        keys_added = 0
+
+        client = await self.create_client()
+        try:
+            while keys_added < total_keys:
+                batch_end = min(keys_added + batch_size, total_keys)
+                data = {
+                    f"{key_prefix}{i}": random_data for i in range(keys_added, batch_end)
+                }
+                result = await client.mset(data)
+                if result != "OK":
+                    raise RuntimeError(f"mset failed: {result}")
+                keys_added = batch_end
+                logger.info("Seeding progress: %d/%d keys", keys_added, total_keys)
+        finally:
+            await client.close()
+
+        return keys_added
 
     async def execute_command(self, args: list[str]) -> str:
         """Execute an arbitrary Valkey command and return the result as a string."""

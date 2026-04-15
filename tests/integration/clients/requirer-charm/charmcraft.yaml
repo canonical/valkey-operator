@@ -166,6 +166,20 @@ actions:
         type: boolean
         default: false
 
+  seed-data:
+    description: >
+      Seed Valkey with random 1 KB values using the relation-provided credentials.
+      Keys are written in batches of 5000 using MSET and named "<key-prefix><index>".
+    params:
+      target-gb:
+        description: Target amount of data to seed in GB (default 1.0)
+        type: number
+        default: 1.0
+      key-prefix:
+        description: Prefix for generated keys (default "seed:key:")
+        type: string
+        default: "seed:key:"
+
 config:
   options:
     data-interfaces-version:
