@@ -176,7 +176,7 @@ def test_network_cut_primary(  # noqa: C901
     # retry in case cluster hasn't stabilized yet after primary cut and new primary election
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = get_number_connected_replicas(juju)
+            number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
             assert number_of_replicas == NUM_UNITS - 2, (
                 f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
             )
@@ -256,7 +256,7 @@ def test_network_cut_primary(  # noqa: C901
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = get_number_connected_replicas(juju)
+            number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
             assert number_of_replicas == NUM_UNITS - 1, (
                 f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
             )

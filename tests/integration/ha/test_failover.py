@@ -209,7 +209,7 @@ def test_signal_db_process_on_primary(
     # if failover happened the old primary will need some time to restart and sync with the new primary before it shows up as a connected replica
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = get_number_connected_replicas(juju)
+            number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
             assert number_of_replicas == init_units_count - 1, (
                 f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
             )
@@ -295,7 +295,7 @@ def test_freeze_db_process_on_primary(
     new_primary_hostname = f"{new_primary_unit_name.replace('/', '-')}.{app_name}-endpoints"
     new_primary_endpoint = new_primary_ip if substrate == Substrate.VM else new_primary_hostname
 
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 2, (
         f"Expected {init_units_count - 2} replicas to be connected, got {number_of_replicas}"
     )
@@ -334,7 +334,7 @@ def test_freeze_db_process_on_primary(
     logger.info("Old primary unit is available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
@@ -441,7 +441,7 @@ def test_full_cluster_restart(
 
     logger.info("Checking number of connected replicas after primary restart.")
 
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
@@ -540,7 +540,7 @@ def test_full_cluster_crash(tls_enabled: bool, juju: jubilant.Juju, substrate: S
 
     logger.info("Checking number of connected replicas after primary restart.")
 
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
@@ -637,7 +637,7 @@ def test_reboot_primary(tls_enabled: bool, juju: jubilant.Juju, substrate: Subst
         "Primary unit is not responding after reboot."
     )
 
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected, got {number_of_replicas}"
     )
@@ -724,7 +724,7 @@ def test_full_cluster_reboot(tls_enabled: bool, juju: jubilant.Juju, substrate: 
 
     logger.info("Checking number of connected replicas after primary restart.")
 
-    number_of_replicas = get_number_connected_replicas(juju)
+    number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )

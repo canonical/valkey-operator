@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import subprocess
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Literal, NamedTuple
@@ -17,7 +17,6 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from dateutil.parser import parse
 from glide import (
     AdvancedGlideClientConfiguration,
-    GlideClient,
     GlideClientConfiguration,
     NodeAddress,
     ServerCredentials,
@@ -319,65 +318,6 @@ def get_glide_config(
     return client_config
 
 
-@asynccontextmanager
-async def create_valkey_client(
-    hostnames: list[str],
-    username: str | None = CharmUsers.VALKEY_ADMIN.value,
-    password: str | None = None,
-    tls_enabled: bool = False,
-):
-    """Create and return a Valkey client connected to the cluster.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        username: The username for authentication.
-        password: The password for the internal user.
-        tls_enabled: Whether TLS certificates are needed.
-
-    Returns:
-        A Valkey client instance connected to the cluster.
-    """
-    addresses = [
-        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT) for host in hostnames
-    ]
-
-    credentials = None
-    if username or password:
-        credentials = ServerCredentials(username=username, password=password)
-
-    if tls_enabled:
-        # Read locally stored certificate files
-        with open("client.pem", "rb") as f:
-            tls_cert = f.read()
-        with open("client.key", "rb") as f:
-            tls_key = f.read()
-        with open("client_ca.pem", "rb") as f:
-            tls_ca_cert = f.read()
-
-    tls_config = TlsAdvancedConfiguration(
-        client_cert_pem=tls_cert if tls_enabled else None,
-        client_key_pem=tls_key if tls_enabled else None,
-        root_pem_cacerts=tls_ca_cert if tls_enabled else None,
-        # We only set FQDN in the certs the IP is not in the cert
-        # so we need to skip hostname verification
-        # we cannot use the hostname because the runner cannot resolve it
-        use_insecure_tls=True if tls_enabled else None,
-    )
-
-    client_config = GlideClientConfiguration(
-        addresses,
-        credentials=credentials,
-        use_tls=True if tls_enabled else False,
-        advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
-    )
-
-    client = await GlideClient.create(client_config)
-    try:
-        yield client
-    finally:
-        await client.close()
-
-
 def set_password(
     juju: jubilant.Juju,
     password: str,
@@ -675,13 +615,16 @@ def ping_cluster(
 
 
 def get_number_connected_replicas(
-    juju: jubilant.Juju, glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader"
+    juju: jubilant.Juju,
+    glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader",
+    tls_enabled: bool = False,
 ) -> int:
     """Get the number of connected replicas in the Valkey cluster.
 
     Args:
         juju: An instance of Jubilant's Juju class on which to run Juju commands
         glide_runner_unit: The unit name of the glide-runner to execute the command on
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         The number of connected replicas.
@@ -691,6 +634,7 @@ def get_number_connected_replicas(
         app_name=APP_NAME,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju),
+        tls_enabled=tls_enabled,
     )
     task_result = juju.run(
         glide_runner_unit,
