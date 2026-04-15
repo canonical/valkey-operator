@@ -135,6 +135,8 @@ class RequirerCharm(ops.CharmBase):
         )
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
         framework.observe(self.on.config_changed, self._on_config_changed)
+        framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
+        framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
@@ -185,8 +187,7 @@ class RequirerCharm(ops.CharmBase):
                 ): self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "password")
             }
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return {"": None}
 
         credentials = {}
@@ -207,8 +208,7 @@ class RequirerCharm(ops.CharmBase):
 
             return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "endpoints")
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return None
 
         return remote_responses[0].endpoints
@@ -228,8 +228,7 @@ class RequirerCharm(ops.CharmBase):
                 == "true"
             )
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return False
 
         return remote_responses[0].tls
@@ -246,8 +245,7 @@ class RequirerCharm(ops.CharmBase):
 
             return self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls-ca")
 
-        remote_responses = self.remote_responses
-        if not remote_responses:
+        if not (remote_responses := self.remote_responses):
             return None
 
         return remote_responses[0].tls_ca

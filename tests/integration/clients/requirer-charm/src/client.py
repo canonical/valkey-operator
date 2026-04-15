@@ -77,7 +77,7 @@ class ValkeyClient:
 
         try:
             value = await client.get(key)
-            return value.decode()
+            return value.decode() if value else ""  # Return empty string if key does not exist
         finally:
             await client.close()
 
