@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
+#
+# Test Matrix:
+#
+# Test name                             | Server TLS | mTLS  | Auth             | TLS provider
+# ----------------------------------------------------------------------------------------
+# test_integrate_client_interface_v0/1  | no         | no    | user/password    | same as Valkey
+# test_enable_tls                       | yes        | no    | user/password    | same as Valkey
+# test_certificate_transfer             | yes        | no    | user/password    | different CA
+# test_mtls                             | yes        | yes   | user/password    | different CA
+# test_certificate_authentication       | yes        | yes   | via certificate  | different CA
 import logging
 
 import jubilant
@@ -22,6 +32,7 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 REQUIRER_V1_NAME = "req-v1"
 REQUIRER_V0_NAME = "req-v0"
+REQUIRER_TLS_PROVIDER = "ssc-req"
 
 
 @pytest.fixture
@@ -51,6 +62,7 @@ def test_build_and_deploy(
         config={"data-interfaces-version": "1"},
     )
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
+    juju.deploy(TLS_NAME, app=REQUIRER_TLS_PROVIDER, channel=TLS_CHANNEL)
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
@@ -61,7 +73,7 @@ def test_build_and_deploy(
 def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
     """Create the client integration."""
     logger.info("Integrating client applications")
-    juju.integrate(APP_NAME, REQUIRER_V0_NAME)
+    juju.integrate(f"{APP_NAME}:valkey-client", f"{REQUIRER_V0_NAME}:valkey-client")
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -97,7 +109,7 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
 def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
     """Create the client integration."""
     logger.info("Integrating client applications")
-    juju.integrate(APP_NAME, REQUIRER_V1_NAME)
+    juju.integrate(f"{APP_NAME}:valkey-client", f"{REQUIRER_V1_NAME}:valkey-client")
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -170,6 +182,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     get_credentials_action = juju.run(requirer_unit, "get-credentials")
     username = get_credentials_action.results["usernames"]
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -177,6 +190,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -192,6 +206,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     usernames = get_credentials_action.results["usernames"]
     user_restricted_keyspace, user_global_keyspace = usernames.split(",")
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -203,6 +218,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
@@ -212,6 +228,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     result = get_action.results["result"]
     assert result == TEST_VALUE
 
+    logger.info("Write data to granted keyspace")
     set_action = juju.run(
         requirer_unit,
         "set",
@@ -219,10 +236,229 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     )
     assert set_action.status == "completed", "Action should succeed"
 
+    logger.info("Read data that was just written")
     get_action = juju.run(
         requirer_unit,
         "get",
         params={"key": TEST_KEY, "user": user_global_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+
+def test_certificate_transfer(juju: jubilant.Juju) -> None:
+    """Relate Requirer charms to separate TLS providers and ensure functionality."""
+    logger.info("Enable certificate transfer to Valkey")
+    juju.integrate(f"{APP_NAME}:certificate-transfer", REQUIRER_TLS_PROVIDER)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=200,
+    )
+
+    logger.info("Switch Requirer charms to other TLS provider")
+    juju.remove_relation(f"{REQUIRER_V0_NAME}:certificates", TLS_NAME)
+    juju.remove_relation(f"{REQUIRER_V1_NAME}:certificates", TLS_NAME)
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    juju.integrate(f"{REQUIRER_V1_NAME}:certificates", REQUIRER_TLS_PROVIDER)
+    juju.integrate(f"{REQUIRER_V0_NAME}:certificates", REQUIRER_TLS_PROVIDER)
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    logger.info("Ensure TLS access for v0 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    username = get_credentials_action.results["usernames"]
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Ensure TLS access for v1 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    usernames = get_credentials_action.results["usernames"]
+    user_restricted_keyspace, user_global_keyspace = usernames.split(",")
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={
+            "key": f"requirer-charm:{TEST_KEY}",
+            "value": TEST_VALUE,
+            "user": user_restricted_keyspace,
+        },
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": TEST_KEY, "value": TEST_VALUE, "user": user_global_keyspace},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": TEST_KEY, "user": user_global_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+
+def test_mtls(juju: jubilant.Juju) -> None:
+    """Ensure clients can use mTLS and password-authentication."""
+    logger.info("Enable config `use-mtls` for requirer charms")
+    juju.config(app=REQUIRER_V0_NAME, values={"use-mtls": "true"})
+    juju.config(app=REQUIRER_V1_NAME, values={"use-mtls": "true"})
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    logger.info("Ensure mTLS access for v0 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    username = get_credentials_action.results["usernames"]
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Ensure mTLS access for v1 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    usernames = get_credentials_action.results["usernames"]
+    user_restricted_keyspace = usernames.split(",")[0]
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={
+            "key": f"requirer-charm:{TEST_KEY}",
+            "value": TEST_VALUE,
+            "user": user_restricted_keyspace,
+        },
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+
+def test_certificate_authentication(juju: jubilant.Juju) -> None:
+    """Ensure clients can use mTLS and password-less authentication."""
+    logger.info("Enable config `use-certificate-auth` for requirer charms")
+    juju.config(app=REQUIRER_V0_NAME, values={"use-certificate-auth": "true"})
+    juju.config(app=REQUIRER_V1_NAME, values={"use-certificate-auth": "true"})
+    juju.wait(
+        lambda status: are_agents_idle(status, REQUIRER_V1_NAME, idle_period=30),
+        timeout=100,
+    )
+
+    logger.info("Ensure password-less access for v0 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    username = get_credentials_action.results["usernames"]
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
+    )
+    assert get_action.status == "completed", "Action should succeed"
+    result = get_action.results["result"]
+    assert result == TEST_VALUE
+
+    logger.info("Ensure password-less access for v1 client")
+    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
+    get_credentials_action = juju.run(requirer_unit, "get-credentials")
+    usernames = get_credentials_action.results["usernames"]
+    user_restricted_keyspace = usernames.split(",")[0]
+
+    logger.info("Write data to granted keyspace")
+    set_action = juju.run(
+        requirer_unit,
+        "set",
+        params={
+            "key": f"requirer-charm:{TEST_KEY}",
+            "value": TEST_VALUE,
+            "user": user_restricted_keyspace,
+        },
+    )
+    assert set_action.status == "completed", "Action should succeed"
+
+    logger.info("Read data that was just written")
+    get_action = juju.run(
+        requirer_unit,
+        "get",
+        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
     )
     assert get_action.status == "completed", "Action should succeed"
     result = get_action.results["result"]
