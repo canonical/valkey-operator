@@ -29,6 +29,7 @@ SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
+CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
 
 CLIENT_PORT = 6379

@@ -47,8 +47,8 @@ class ValkeyClient:
 
         tls_config = TlsAdvancedConfiguration(
             client_cert_pem=self.tls_cert if self.tls_cert else None,
-            client_key_pem=self.tls_key if self.tls_cert else None,
-            root_pem_cacerts=self.tls_ca_cert if self.tls_cert else None,
+            client_key_pem=self.tls_key if self.tls_key else None,
+            root_pem_cacerts=self.tls_ca_cert if self.tls_ca_cert else None,
         )
 
         client_config = GlideClientConfiguration(

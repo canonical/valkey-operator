@@ -12,6 +12,7 @@ from ops import testing
 from charm import ValkeyCharm
 from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
 from literals import (
+    CERTIFICATE_TRANSFER_RELATION,
     CLIENT_PORT,
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
     EXTERNAL_CLIENTS_RELATION,
@@ -558,4 +559,138 @@ def test_relation_broken_non_leader(cloud_spec):
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
+
+
+def test_certificate_transfer_version_set(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    certificate_transfer_relation = testing.Relation(
+        id=5,
+        endpoint=CERTIFICATE_TRANSFER_RELATION,
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={certificate_transfer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.relation_created(relation=certificate_transfer_relation), state_in)
+    assert (
+        state_out.get_relation(certificate_transfer_relation.id).local_app_data.get("version")
+        == "1"
+    )
+
+
+def test_certificate_transfer_new_ca(cloud_spec):
+    ca_cert = "client_ca_certificate"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    certificate_transfer_relation = testing.Relation(
+        id=5,
+        endpoint=CERTIFICATE_TRANSFER_RELATION,
+        remote_app_data={"certificates": ca_cert},
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, certificate_transfer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
+        patch(
+            "charmlibs.interfaces.certificate_transfer.CertificateTransferRequires.get_all_certificates",
+            return_value=[ca_cert],
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
+        patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+    ):
+        ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
+        write_ca_certs.assert_called_once()
+        rehash_ca_certs.assert_called_once()
+        reload_tls.assert_called_once()
+        restart_sentinel.assert_called_once()
+
+
+def test_certificate_transfer_no_ca_available(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    certificate_transfer_relation = testing.Relation(id=5, endpoint=CERTIFICATE_TRANSFER_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, certificate_transfer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
+        patch(
+            "charmlibs.interfaces.certificate_transfer.CertificateTransferRequires.get_all_certificates",
+            return_value=[],
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
+        patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+    ):
+        ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
+        write_ca_certs.assert_not_called()
+        rehash_ca_certs.assert_not_called()
+        reload_tls.assert_not_called()
+        restart_sentinel.assert_not_called()
+
+
+def test_certificate_transfer_ca_removed(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    certificate_transfer_relation = testing.Relation(id=5, endpoint=CERTIFICATE_TRANSFER_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, certificate_transfer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+        patch("charmlibs.pathops.ContainerPath.mkdir"),
+        patch("workload_k8s.ValkeyK8sWorkload.remove_file") as remove_ca_certs,
+        patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
+        patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+    ):
+        ctx.run(ctx.on.relation_broken(relation=certificate_transfer_relation), state_in)
+        write_ca_certs.assert_not_called()
+        remove_ca_certs.assert_called_once()
+        rehash_ca_certs.assert_called_once()
+        reload_tls.assert_called_once()
         restart_sentinel.assert_called_once()

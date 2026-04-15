@@ -42,7 +42,9 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = "some-service"  # Name of Pebble service that runs in the workload container.
+
+class RefreshTLSCertificatesEvent(ops.EventBase):
+    """Event for refreshing peer TLS certificates."""
 
 
 class GlideConfig(BaseModel):
@@ -67,6 +69,8 @@ class GlideConfig(BaseModel):
 class RequirerCharm(ops.CharmBase):
     """Charm that acts as client for Valkey."""
 
+    refresh_tls_certificates_event = ops.EventSource(RefreshTLSCertificatesEvent)
+
     def __init__(self, framework: ops.Framework):
         super().__init__(framework)
 
@@ -74,18 +78,6 @@ class RequirerCharm(ops.CharmBase):
             self.data_interfaces_version = 0
         else:
             self.data_interfaces_version = 1
-
-        self.certificates = TLSCertificatesRequiresV4(
-            self,
-            "certificates",
-            certificate_requests=[
-                CertificateRequestAttributes(
-                    common_name="requirer-charm",
-                    sans_ip=frozenset({socket.gethostbyname(socket.gethostname())}),
-                    sans_dns=frozenset({self.unit.name, socket.gethostname()}),
-                )
-            ],
-        )
 
         if self.data_interfaces_version == 1:
             self.valkey_interface = ResourceRequirerEventHandler(
@@ -110,8 +102,24 @@ class RequirerCharm(ops.CharmBase):
                 self.valkey_interface.on.database_created, self._on_database_created
             )
 
+        self.certificates = TLSCertificatesRequiresV4(
+            self,
+            "certificates",
+            certificate_requests=[
+                CertificateRequestAttributes(
+                    common_name=next(iter(self.credentials))
+                    if self.use_mtls
+                    else "requirer-charm",
+                    sans_ip=frozenset({socket.gethostbyname(socket.gethostname())}),
+                    sans_dns=frozenset({self.unit.name, socket.gethostname()}),
+                )
+            ],
+            refresh_events=[self.refresh_tls_certificates_event],
+        )
+
         # Event observers
         framework.observe(self.on.start, self._on_start)
+        framework.observe(self.on.config_changed, self._on_config_changed)
         framework.observe(self.on.set_action, self._on_set_action)
         framework.observe(self.on.get_action, self._on_get_action)
         framework.observe(self.on.execute_action, self._on_execute_action)
@@ -140,6 +148,7 @@ class RequirerCharm(ops.CharmBase):
 
     @property
     def valkey_relation(self) -> ops.Relation | None:
+        """Return the Valkey relation."""
         if not (relations := self.valkey_interface.relations):
             return None
 
@@ -219,10 +228,10 @@ class RequirerCharm(ops.CharmBase):
         if (cfg := self._glide_config) is not None:
             return cfg.tls_enabled
 
-        if self.data_interfaces_version == 0:
-            if not self.valkey_relation:
-                return False
+        if not self.valkey_relation:
+            return False
 
+        if self.data_interfaces_version == 0:
             return (
                 self.valkey_interface.fetch_relation_field(self.valkey_relation.id, "tls")
                 == "true"
@@ -232,6 +241,15 @@ class RequirerCharm(ops.CharmBase):
             return False
 
         return remote_responses[0].tls
+
+    @property
+    def use_mtls(self) -> bool:
+        """Retrieve the value for `use-mtls` from the configuration."""
+        return (
+            self.model.get_relation("certificates")
+            and self.tls_enabled
+            and self.config.get("use-mtls", False)
+        )
 
     @property
     def tls_ca_cert(self) -> str | None:
@@ -622,6 +640,8 @@ class RequirerCharm(ops.CharmBase):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Hot-reload the continuous-writes daemon when glide-config changes."""
+        self.refresh_tls_certificates_event.emit()
+
         if not self._use_config or not CWPath.PID.value.exists():
             return
 

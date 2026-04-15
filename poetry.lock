@@ -202,6 +202,22 @@ files = [
 pycparser = {version = "*", markers = "implementation_name != \"PyPy\""}
 
 [[package]]
+name = "charmlibs-interfaces-certificate-transfer"
+version = "1.0.0"
+description = "The charmlibs.interfaces.certificate_transfer package."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "charmlibs_interfaces_certificate_transfer-1.0.0-py3-none-any.whl", hash = "sha256:21cef05199a9efa459be43207e042be6792605b70e742d8b0fed6f09c0cb232d"},
+    {file = "charmlibs_interfaces_certificate_transfer-1.0.0.tar.gz", hash = "sha256:53f230abb2b42e7c23929a2d99321b1f0e226f20595609105fbd0528fcc3cf24"},
+]
+
+[package.dependencies]
+ops = "*"
+pydantic = "*"
+
+[[package]]
 name = "charmlibs-interfaces-tls-certificates"
 version = "1.8.1"
 description = "The charmlibs.interfaces.tls_certificates package."
@@ -1525,4 +1541,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "3049a1a183fe5a959dc50fca58d315c2d7daf50fc327ba8717ce3f852aee3162"
+content-hash = "1bf4d9f6216b7c7cd55932889297619563057999e263c02090a73c7e903ccc6d"
