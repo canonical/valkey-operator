@@ -6,7 +6,7 @@ package-mode = false
 requires-poetry = ">=2.0.0"
 
 [tool.poetry.dependencies]
-python = "^3.12"                                  # switch to 3.14 once charm base is 26.04
+python = "^3.12"                                      # switch to 3.14 once charm base is 26.04
 ops = "^3.5.0"
 charmlibs-pathops = "^1.2.0"
 charmlibs-snap = "^1.0.1"
