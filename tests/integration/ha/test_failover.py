@@ -2,19 +2,21 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import asyncio
 import json
 import logging
+from time import sleep
 
 import jubilant
 import pytest
 from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from literals import CharmUsers, Substrate
-from tests.integration.continuous_writes import ContinuousWrites
 from tests.integration.cw_helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
+    configure_cw_runner,
+    start_continuous_writes,
+    stop_continuous_writes,
 )
 from tests.integration.ha.helpers.helpers import (
     K8S_RESTART_DELAY_DEFAULT,
@@ -28,6 +30,7 @@ from tests.integration.ha.helpers.helpers import (
 
 from ..helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -54,7 +57,11 @@ PROCESS_PATTERN = "valkey-server"
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 def test_build_and_deploy(
-    tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
+    tls_enabled: bool,
+    charm: str,
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    glide_runner_charm: str,
 ) -> None:
     """Build the charm-under-test and deploy it with three units."""
     if app := existing_app(juju):
@@ -68,12 +75,16 @@ def test_build_and_deploy(
         trust=True,
     )
 
+    juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
+
     if tls_enabled:
         juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
         juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
 
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
         timeout=600,
     )
 
@@ -85,20 +96,24 @@ def test_build_and_deploy(
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 @pytest.mark.parametrize("signal", ["SIGKILL", "SIGTERM"], ids=["sigkill", "sigterm"])
 @pytest.mark.parametrize("patched_delay", [False, True], ids=["default_delay", "patched_delay"])
-async def test_signal_db_process_on_primary(
+def test_signal_db_process_on_primary(
     tls_enabled: bool,
     signal: str,
     patched_delay: bool,
     juju: jubilant.Juju,
     substrate: Substrate,
-    c_writes: ContinuousWrites,
-    c_writes_async_clean,
 ) -> None:
     """Make sure the cluster can self-heal when the leader goes down."""
     app_name = existing_app(juju) or APP_NAME
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -112,8 +127,8 @@ async def test_signal_db_process_on_primary(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from valkey."
@@ -156,7 +171,7 @@ async def test_signal_db_process_on_primary(
 
     restart_delay += 10  # add some buffer to the restart delay
     logger.info("Waiting for primary unit to restart. Restart delay is %s seconds.", restart_delay)
-    await asyncio.sleep(restart_delay)
+    sleep(restart_delay)
 
     logger.info("Pinging primary unit to ensure it's up.")
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(5), reraise=True):
@@ -194,42 +209,43 @@ async def test_signal_db_process_on_primary(
     # if failover happened the old primary will need some time to restart and sync with the new primary before it shows up as a connected replica
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = await get_number_connected_replicas(
-                addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-            )
+            number_of_replicas = get_number_connected_replicas(juju)
             assert number_of_replicas == init_units_count - 1, (
                 f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
             )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_freeze_db_process_on_primary(
-    tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate, c_writes, c_writes_async_clean
+def test_freeze_db_process_on_primary(
+    tls_enabled: bool,
+    juju: jubilant.Juju,
+    substrate: Substrate,
 ) -> None:
     """Make sure the cluster can self-heal when the leader goes down."""
     app_name = existing_app(juju) or APP_NAME
     addresses = get_cluster_addresses(juju, app_name)
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -243,8 +259,8 @@ async def test_freeze_db_process_on_primary(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from valkey."
@@ -269,7 +285,7 @@ async def test_freeze_db_process_on_primary(
 
     # ensure the stopped unit was restarted
     logger.info("Waiting for failover to happen.")
-    await asyncio.sleep(FAILOVER_DELAY)
+    sleep(FAILOVER_DELAY)
 
     new_primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert new_primary_ip != primary_ip, "Primary IP did not change after failover delay."
@@ -279,19 +295,12 @@ async def test_freeze_db_process_on_primary(
     new_primary_hostname = f"{new_primary_unit_name.replace('/', '-')}.{app_name}-endpoints"
     new_primary_endpoint = new_primary_ip if substrate == Substrate.VM else new_primary_hostname
 
-    number_of_replicas = await get_number_connected_replicas(
-        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 2, (
         f"Expected {init_units_count - 2} replicas to be connected, got {number_of_replicas}"
     )
 
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
     send_process_control_signal(
         unit_name=primary_unit_name,
@@ -325,9 +334,7 @@ async def test_freeze_db_process_on_primary(
     logger.info("Old primary unit is available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    number_of_replicas = await get_number_connected_replicas(
-        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
@@ -349,32 +356,33 @@ async def test_freeze_db_process_on_primary(
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_full_cluster_restart(
-    tls_enabled: bool, juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
+def test_full_cluster_restart(
+    tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate
 ) -> None:
     """Make sure the cluster can self-heal after all members went down."""
     app_name = existing_app(juju) or APP_NAME
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -388,8 +396,8 @@ async def test_full_cluster_restart(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     # update the restart delay for all units
     for unit in juju.status().get_units(app_name):
@@ -420,7 +428,7 @@ async def test_full_cluster_restart(
 
     # ensure the stopped unit was restarted
     logger.info("Waiting for units to restart.")
-    await asyncio.sleep(RESTART_DELAY_PATCHED + 10)
+    sleep(RESTART_DELAY_PATCHED + 10)
 
     for unit, unit_info in juju.status().get_units(app_name).items():
         unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
@@ -432,30 +440,23 @@ async def test_full_cluster_restart(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    addresses = get_cluster_addresses(juju, app_name)
-    number_of_replicas = await get_number_connected_replicas(
-        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
+
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
 
     # reset the restart delay to the original value
@@ -469,14 +470,18 @@ async def test_full_cluster_restart(
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_full_cluster_crash(
-    tls_enabled: bool, juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
-) -> None:
+def test_full_cluster_crash(tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Make sure the cluster can self-heal after all members went down."""
     app_name = existing_app(juju) or APP_NAME
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -490,8 +495,8 @@ async def test_full_cluster_crash(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     # update the restart delay for all units
     for unit in juju.status().get_units(app_name):
@@ -522,7 +527,7 @@ async def test_full_cluster_crash(
 
     # ensure the stopped unit was restarted
     logger.info("Waiting for units to restart.")
-    await asyncio.sleep(RESTART_DELAY_PATCHED + 10)
+    sleep(RESTART_DELAY_PATCHED + 10)
 
     for unit, unit_info in juju.status().get_units(app_name).items():
         unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
@@ -534,30 +539,23 @@ async def test_full_cluster_crash(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    addresses = get_cluster_addresses(juju, app_name)
-    number_of_replicas = await get_number_connected_replicas(
-        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
+
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
 
     # reset the restart delay to the original value
@@ -571,14 +569,18 @@ async def test_full_cluster_crash(
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_reboot_primary(
-    tls_enabled: bool, juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
-) -> None:
+def test_reboot_primary(tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Make sure the cluster can self-heal when the leader goes down."""
     app_name = existing_app(juju) or APP_NAME
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -592,9 +594,8 @@ async def test_reboot_primary(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    await c_writes.async_clear()
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     primary_ip = get_primary_ip(juju, app_name, tls_enabled=tls_enabled)
     assert primary_ip, "Failed to get primary endpoint from valkey."
@@ -606,7 +607,7 @@ async def test_reboot_primary(
     reboot_unit(juju, primary_unit_name, substrate)
 
     # wait for unit to reboot
-    await asyncio.sleep(3)
+    sleep(3)
 
     # make sure the process is stopped
     admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
@@ -623,7 +624,12 @@ async def test_reboot_primary(
         timeout=1200,
     )
 
-    c_writes.update()
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # on k8s we get a new ip
     new_ip = get_ip_from_unit(juju, primary_unit_name, substrate)
@@ -631,42 +637,36 @@ async def test_reboot_primary(
         "Primary unit is not responding after reboot."
     )
 
-    number_of_replicas = await get_number_connected_replicas(
-        get_cluster_addresses(juju, app_name),
-        CharmUsers.VALKEY_ADMIN,
-        admin_password,
-        tls_enabled=tls_enabled,
-    )
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected, got {number_of_replicas}"
     )
 
-    await assert_continuous_writes_increasing(
-        hostnames=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_addresses(juju, app_name),
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
 
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
-async def test_full_cluster_reboot(
-    tls_enabled: bool, juju: jubilant.Juju, c_writes, c_writes_async_clean, substrate: Substrate
-) -> None:
+def test_full_cluster_reboot(tls_enabled: bool, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Make sure the cluster can self-heal after all members went down."""
     app_name = existing_app(juju) or APP_NAME
     if tls_enabled:
         download_client_certificate_from_unit(juju, APP_NAME)
-        c_writes.tls_enabled = tls_enabled
+
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     # make sure we have at least two units so we can stop one of them
     init_units_count = len(juju.status().get_units(app_name))
@@ -680,13 +680,13 @@ async def test_full_cluster_reboot(
         )
 
     init_units_count = len(juju.status().get_units(app_name))
-    c_writes.start()
-    await asyncio.sleep(10)
+    start_continuous_writes(juju, clear=True)
+    sleep(10)
 
     for unit in juju.status().get_units(app_name):
         reboot_unit(juju, unit, substrate)
 
-    await asyncio.sleep(3)
+    sleep(3)
 
     # make sure the process is stopped
     admin_password = get_password(juju, CharmUsers.VALKEY_ADMIN)
@@ -706,7 +706,12 @@ async def test_full_cluster_reboot(
         timeout=1200,
     )
 
-    c_writes.update()
+    configure_cw_runner(
+        juju,
+        valkey_app=app_name,
+        tls_enabled=tls_enabled,
+        substrate=substrate,
+    )
 
     for unit, unit_info in juju.status().get_units(app_name).items():
         unit_ip = unit_info.public_address if substrate == Substrate.VM else unit_info.address
@@ -718,28 +723,21 @@ async def test_full_cluster_reboot(
     logger.info("All units are available again.")
 
     logger.info("Checking number of connected replicas after primary restart.")
-    addresses = get_cluster_addresses(juju, app_name)
-    number_of_replicas = await get_number_connected_replicas(
-        addresses, CharmUsers.VALKEY_ADMIN, admin_password, tls_enabled=tls_enabled
-    )
+
+    number_of_replicas = get_number_connected_replicas(juju)
     assert number_of_replicas == init_units_count - 1, (
         f"Expected {init_units_count - 1} replicas to be connected after primary restart, got {number_of_replicas}"
     )
 
     # ensure data is written in the cluster
     logger.info("Checking continuous writes are increasing after primary restart.")
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
-    await c_writes.async_stop()
+    stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN,
-        password=admin_password,
-        tls_enabled=tls_enabled,
+        endpoints=get_cluster_addresses(juju, app_name),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
     )
