@@ -214,23 +214,9 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     The CA certificate should be rotated and the cluster should still be accessible.
     The rotation is triggered by the expiration of the CA cert on TLS provider side.
     """
-    logger.info("Disabling client TLS")
-    juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
-
     logger.info("Adjust CA and certificate validity on TLS provider")
     tls_config = {"certificate-validity": "4m", "root-ca-validity": "10m"}
     juju.config(app=TLS_NAME, values=tls_config)
-    juju.wait(
-        lambda status: are_agents_idle(status, TLS_NAME, idle_period=30),
-        timeout=600,
-    )
-
-    logger.info("Enabling client TLS again")
-    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
