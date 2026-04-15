@@ -21,7 +21,7 @@ from src.charm import ValkeyCharm
 from src.common.exceptions import ValkeyWorkloadCommandError
 from src.literals import (
     CLIENT_TLS_RELATION_NAME,
-    INTERNET_CERTS_SECRET_LABEL_SUFFIX,
+    INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
@@ -75,7 +75,7 @@ def test_enable_internal_tls_by_default(cloud_spec):
     with patch("charmlibs.pathops.ContainerPath.mkdir"):
         state_out = ctx.run(ctx.on.relation_created(relation=peer_relation), state_in)
         secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNET_CERTS_SECRET_LABEL_SUFFIX}"
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_CERTS_SECRET_LABEL_SUFFIX}"
         )
         assert secret_out.latest_content.get("internal-ca-certificate")
         assert secret_out.latest_content.get("internal-ca-private-key")
@@ -138,7 +138,7 @@ def test_client_tls_relation_broken(cloud_spec):
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
         secret_out = state_out.get_secret(
-            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNET_CERTS_SECRET_LABEL_SUFFIX}"
+            label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_CERTS_SECRET_LABEL_SUFFIX}"
         )
         assert secret_out.latest_content.get("internal-ca-certificate")
         assert secret_out.latest_content.get("internal-ca-private-key")

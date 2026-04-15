@@ -4,6 +4,7 @@
 
 """Collection of state objects for the Valkey relations, apps and units."""
 
+import json
 import logging
 from typing import Any, final
 
@@ -12,7 +13,7 @@ from charmlibs.interfaces.tls_certificates import (
     Certificate,
     PrivateKey,
 )
-from charms.data_platform_libs.v1.data_interfaces import (
+from dpcharmlibs.interfaces import (
     ExtraSecretStr,
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
@@ -24,8 +25,9 @@ from pydantic import Field
 from typing_extensions import Annotated
 
 from literals import (
+    CLIENTS_USERS_SECRET_LABEL_SUFFIX,
+    INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
-    INTERNET_CERTS_SECRET_LABEL_SUFFIX,
     CharmUsers,
     ScaleDownState,
     StartState,
@@ -39,8 +41,11 @@ logger = logging.getLogger(__name__)
 InternalUsersSecret = Annotated[
     OptionalSecretStr, Field(exclude=True, default=None), INTERNAL_USERS_SECRET_LABEL_SUFFIX
 ]
+ClientUsersSecret = Annotated[
+    OptionalSecretStr, Field(exclude=True, default=None), CLIENTS_USERS_SECRET_LABEL_SUFFIX
+]
 InternalCertificatesSecret = Annotated[
-    OptionalSecretStr, Field(exclude=True, default=None), INTERNET_CERTS_SECRET_LABEL_SUFFIX
+    OptionalSecretStr, Field(exclude=True, default=None), INTERNAL_CERTS_SECRET_LABEL_SUFFIX
 ]
 
 
@@ -57,6 +62,8 @@ class PeerAppModel(PeerModel):
     internal_ca_certificate: InternalCertificatesSecret = Field(default="")
     internal_ca_private_key: InternalCertificatesSecret = Field(default="")
     tls_client_private_key: ExtraSecretStr = Field(default=None)
+    external_client_users: ClientUsersSecret = Field(default="")
+    client_user_epoch: float = Field(default=0)
 
 
 class PeerUnitModel(PeerModel):
@@ -72,6 +79,7 @@ class PeerUnitModel(PeerModel):
     client_cert_ready: bool = Field(default=False)
     tls_ca_rotation: str = Field(default="")
     tls_certificate_expiring: bool = Field(default=False)
+    client_user_epoch: float = Field(default=0)
 
 
 class RelationState:
@@ -221,6 +229,24 @@ class ValkeyCluster(RelationState):
             if password := getattr(self.model, f"{user.value.replace('-', '_')}_password", ""):
                 passwords[user.value] = password
         return passwords
+
+    @property
+    def external_users_credentials(self) -> dict[str, dict[str, str]] | None:
+        """Retrieve the user credentials for external clients from the state and return as dict.
+
+        Example:
+            "external-client-users":
+                "{
+                    "relation-3-0cbbc9781f189ea5":
+                    {"resource": "test:*", "password": "mypassword"},
+                    "relation-4-08154711":
+                    {"resource": "another_keyspace:*", "password": "anotherpassword"}
+                }"
+        """
+        if not self.model or not (external_clients := self.model.external_client_users):
+            return None
+
+        return json.loads(external_clients)
 
     @property
     def internal_ca_certificate(self) -> Certificate | None:

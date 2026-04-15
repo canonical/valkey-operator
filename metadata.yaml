@@ -38,6 +38,11 @@ peers:
   status-peers:
     interface: status_peers
 
+provides:
+  valkey-client:
+    interface: valkey_client
+    optional: true
+
 requires:
   client-certificates:
     interface: tls-certificates

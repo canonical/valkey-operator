@@ -22,7 +22,14 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import PRIMARY_NAME, CharmUsers
+from literals import (
+    CLIENT_PORT,
+    PRIMARY_NAME,
+    SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
+    TLS_PORT,
+    CharmUsers,
+)
 from statuses import CharmStatuses
 
 logger = logging.getLogger(__name__)
@@ -98,7 +105,7 @@ class SentinelManager(ManagerStatusProtocol):
         This method queries the sentinels in the cluster for the primary information and returns the primary's IP address.
 
         Raises:
-            ValkeyWorkloadCommandError: If the CLI command to get primary information fails on all sentinels.
+            ValkeyCannotGetPrimaryIPError: If the CLI command to get primary information fails on all sentinels.
         """
         started_servers = [
             unit.get_endpoint(self.state.substrate)
@@ -122,6 +129,32 @@ class SentinelManager(ManagerStatusProtocol):
             started_servers,
         )
         raise ValkeyCannotGetPrimaryIPError("Could not determine primary IP from sentinels.")
+
+    def get_primary_endpoint(self) -> str:
+        """Get the endpoint of the primary node, consisting of address and port."""
+        primary_address = self.get_primary_ip()
+        port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
+
+        return f"{primary_address}:{port}"
+
+    def get_replica_endpoints(self) -> str:
+        """Get the endpoints of all replica nodes, consisting of address and port."""
+        port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
+        client = self._get_sentinel_client()
+
+        replica_list = client.replicas_primary(hostname=self.state.endpoint)
+        return ",".join(sorted([f"{replica['ip']}:{port}" for replica in replica_list]))
+
+    def get_sentinel_endpoints(self) -> str:
+        """Get the endpoints of all sentinel nodes, consisting of address and port."""
+        started_servers = [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
+        port = SENTINEL_TLS_PORT if self.state.unit_server.is_tls_enabled else SENTINEL_PORT
+
+        return ",".join(sorted([f"{server}:{port}" for server in started_servers]))
 
     @retry(
         wait=wait_fixed(5),

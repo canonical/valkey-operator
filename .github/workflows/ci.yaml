@@ -72,6 +72,7 @@ jobs:
       matrix:
         path:
           - .
+          - tests/integration/clients/requirer-charm
     name: Build charm
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:

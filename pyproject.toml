@@ -14,6 +14,7 @@ charmlibs-interfaces-tls-certificates = ">=1.6.0"
 tenacity = "*"
 data-platform-helpers = ">=0.1.7"
 validators = ">=0.35.0"
+dpcharmlibs-interfaces = ">=1.0.2"
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"
@@ -91,7 +92,7 @@ lint.ignore = ["E501", "D107"]
 extend-exclude = [
     "__pycache__",
     "*.egg_info",
-    "../../common/common/lib/charms/**",
+    "tests/integration/clients/requirer-charm/lib/charms/**",
 ]
 lint.per-file-ignores = { "tests/*" = ["D100", "D101", "D102", "D103", "D104"] }
 
