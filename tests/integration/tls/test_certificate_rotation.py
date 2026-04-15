@@ -62,7 +62,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=900,
     )
 
 
