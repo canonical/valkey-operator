@@ -141,3 +141,15 @@ class TLSStatuses(Enum):
     CERTIFICATE_DENIED = StatusObject(
         status="blocked", message="Certificate request was denied, check logs for details"
     )
+
+
+class ExternalClientsStatuses(Enum):
+    """Collection of external clients related statuses."""
+
+    RESOURCE_REQUEST_UNPROCESSED = StatusObject(
+        status="maintenance", message="Client relation: Request not processed yet"
+    )
+
+    USER_ACL_OUT_OF_DATE = StatusObject(
+        status="maintenance", message="Client relation: Unit has not updated ACLs for client users"
+    )

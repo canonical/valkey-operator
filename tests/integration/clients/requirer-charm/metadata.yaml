@@ -1,0 +1,10 @@
+name: requirer-charm
+title: Requirer client relation charm
+description: |
+  Requirer client relation charm to test valkey_client
+summary: Requirer client relation charm to test valkey_client
+requires:
+  valkey-client:
+    interface: valkey_client
+  certificates:
+    interface: tls-certificates
