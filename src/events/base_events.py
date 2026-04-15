@@ -19,7 +19,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from common.locks import ScaleDownLock, StartLock
+from common.locks import RestartLock, ScaleDownLock, StartLock
 from literals import (
     CLIENT_PORT,
     DATA_STORAGE,
@@ -39,6 +39,29 @@ if TYPE_CHECKING:
     from charm import ValkeyCharm
 
 logger = logging.getLogger(__name__)
+
+
+class RestartWorkloadEvent(ops.EventBase):
+    """Event for restarting the workload when certain events happen, e.g. IP change."""
+
+    def __init__(
+        self, handle: ops.Handle, restart_valkey: bool = True, restart_sentinel: bool = True
+    ):
+        super().__init__(handle)
+        self.restart_valkey = restart_valkey
+        self.restart_sentinel = restart_sentinel
+
+    def snapshot(self) -> dict[str, str]:
+        """Save the state of the event."""
+        return {
+            "restart_valkey": str(self.restart_valkey),
+            "restart_sentinel": str(self.restart_sentinel),
+        }
+
+    def restore(self, snapshot: dict[str, str]) -> None:
+        """Restore the state of the event."""
+        self.restart_valkey = snapshot.get("restart_valkey", "True") == "True"
+        self.restart_sentinel = snapshot.get("restart_sentinel", "True") == "True"
 
 
 class UnitFullyStarted(ops.EventBase):
@@ -66,6 +89,7 @@ class BaseEvents(ops.Object):
     """Handle all base events."""
 
     unit_fully_started = ops.EventSource(UnitFullyStarted)
+    restart_workload = ops.EventSource(RestartWorkloadEvent)
 
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="base_events")
@@ -84,6 +108,7 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
+        self.framework.observe(self.restart_workload, self._on_restart_workload)
         self.framework.observe(
             self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
         )
@@ -239,7 +264,7 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
-        for lock in [StartLock(self.charm.state)]:
+        for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
             lock.process()
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
@@ -304,12 +329,31 @@ class BaseEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        self.charm.state.unit_server.update(
-            {
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
+        # on k8s we use hostnames so we do not have to reconfigure on ip change
+        if (
+            self.charm.state.unit_server.model.private_ip
+            and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
+            and self.charm.state.substrate == Substrate.VM
+        ):
+            self.charm.config_manager.configure_services(
+                self.charm.sentinel_manager.get_primary_ip()
+            )
+
+            if self.charm.tls_manager.certificate_sans_require_update():
+                if self.charm.state.client_tls_relation:
+                    self.charm.tls_events.refresh_tls_certificates_event.emit()
+                    event.defer()
+                    return
+
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+
+            self.charm.state.unit_server.update(
+                {
+                    "hostname": self.charm.state.hostname,
+                    "private_ip": self.charm.state.bind_address,
+                }
+            )
+            self.charm.base_events.restart_workload.emit()
 
         if not self.charm.unit.is_leader():
             return
@@ -540,7 +584,50 @@ class BaseEvents(ops.Object):
                 }
             )
 
-        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY})
+        self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY.value})
+
+    def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
+        """Handle the restart_workload event."""
+        logger.info(
+            "Restarting workload Event. Restart Valkey: %s, Restart Sentinel: %s",
+            event.restart_valkey,
+            event.restart_sentinel,
+        )
+        restart_lock = RestartLock(self.charm.state)
+        restart_lock.request_lock()
+        if not restart_lock.is_held_by_this_unit:
+            logger.info("Waiting for lock to restart workload")
+            event.defer()
+            return
+
+        try:
+            if event.restart_valkey:
+                self.charm.workload.restart(self.charm.workload.valkey_service)
+            if event.restart_sentinel:
+                self.charm.sentinel_manager.restart_service()
+        except ValkeyServicesFailedToStartError as e:
+            logger.error(e)
+            restart_lock.release_lock()
+            event.defer()
+            return
+
+        if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
+            check_replica_sync=False
+        ):
+            self.charm.state.unit_server.update({"is_valkey_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+        self.charm.state.unit_server.update({"is_valkey_healthy": True})
+
+        if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
+        restart_lock.release_lock()
 
     def _reconfigure_quorum_if_necessary(self) -> None:
         """Reconfigure the sentinel quorum if it does not match the current cluster size."""

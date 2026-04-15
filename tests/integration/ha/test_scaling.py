@@ -17,7 +17,7 @@ from tests.integration.helpers import (
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
     existing_app,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_number_connected_replicas,
     get_password,
     get_primary_ip,
@@ -94,10 +94,10 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
         )
 
     # check if all units have been added to the cluster
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
 
     connected_replicas = await get_number_connected_replicas(
-        hostnames=hostnames,
+        addresses=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -106,14 +106,14 @@ async def test_scale_up(juju: jubilant.Juju, c_writes) -> None:
     )
 
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     logger.info("Stopping continuous writes after scale up test.")
     logger.info(await c_writes.async_stop())
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -136,7 +136,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
         )
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        addresses=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -166,7 +166,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
         )
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        addresses=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -178,7 +178,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     c_writes.update()
 
     await assert_continuous_writes_increasing(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -187,7 +187,7 @@ async def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, c_
     logger.info(await c_writes.async_stop())
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -211,7 +211,7 @@ async def test_scale_down_multiple_units(
         init_units_count = NUM_UNITS + 1
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        addresses=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -237,7 +237,7 @@ async def test_scale_down_multiple_units(
     )
 
     number_of_replicas = await get_number_connected_replicas(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        addresses=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -253,7 +253,7 @@ async def test_scale_down_multiple_units(
     c_writes.update()
 
     await assert_continuous_writes_increasing(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -262,7 +262,7 @@ async def test_scale_down_multiple_units(
     logger.info(await c_writes.async_stop())
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_hostnames(juju, app_name),
+        hostnames=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -290,10 +290,10 @@ async def test_scale_down_to_zero_and_back_up(
         timeout=1200,
     )
 
-    hostnames = get_cluster_hostnames(juju, app_name)
+    addresses = get_cluster_addresses(juju, app_name)
 
     connected_replicas = await get_number_connected_replicas(
-        hostnames=hostnames,
+        addresses=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -304,14 +304,14 @@ async def test_scale_down_to_zero_and_back_up(
     c_writes.start()
     await asyncio.sleep(10)  # let the continuous writes write some data
     await assert_continuous_writes_increasing(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
     logger.info("Stopping continuous writes after scale up test.")
     logger.info(await c_writes.async_stop())
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
     )
@@ -361,7 +361,7 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, c_w
         "Primary endpoint did not change after removing primary unit."
     )
     logger.info(f"New primary endpoint after scale down is {new_primary_endpoint}.")
-    hostnames = get_cluster_hostnames(juju, app_name)
+    hostnames = get_cluster_addresses(juju, app_name)
     await assert_continuous_writes_increasing(
         hostnames=hostnames,
         username=CharmUsers.VALKEY_ADMIN.value,

@@ -15,11 +15,13 @@ from typing import Optional
 
 import jubilant
 from glide import (
+    AdvancedGlideClientConfiguration,
     BackoffStrategy,
     GlideClient,
     GlideClientConfiguration,
     NodeAddress,
     ServerCredentials,
+    TlsAdvancedConfiguration,
 )
 from tenacity import (
     retry,
@@ -28,7 +30,7 @@ from tenacity import (
     wait_random,
 )
 
-from literals import CharmUsers
+from literals import CLIENT_PORT, TLS_PORT, CharmUsers
 from tests.integration.helpers import get_data_bag, get_password
 
 logger = logging.getLogger(__name__)
@@ -58,7 +60,12 @@ class ContinuousWrites:
     VALKEY_PORT = 6379
 
     def __init__(
-        self, juju: jubilant.Juju, app: str, initial_count: int = 0, in_between_sleep: float = 1.0
+        self,
+        juju: jubilant.Juju,
+        app: str,
+        initial_count: int = 0,
+        in_between_sleep: float = 1.0,
+        tls_enabled: bool = False,
     ):
         self._juju = juju
         self._app = app
@@ -69,21 +76,46 @@ class ContinuousWrites:
         self._initial_count = initial_count
         self._in_between_sleep = in_between_sleep
         self._mp_ctx = multiprocessing.get_context("spawn")
+        self.tls_enabled = tls_enabled
 
     def _get_config(self) -> SimpleNamespace:
         """Fetch current cluster configuration from Juju."""
         return SimpleNamespace(
             endpoints=get_active_hostnames(self._juju, self._app),
             valkey_password=get_password(self._juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=self.tls_enabled,
         )
 
     async def _create_glide_client(self, config: Optional[SimpleNamespace] = None) -> GlideClient:
         """Asynchronously create and return a configured GlideClient."""
         conf = config or self._get_config()
-        addresses = [NodeAddress(host, self.VALKEY_PORT) for host in conf.endpoints.split(",")]
+        addresses = [
+            NodeAddress(host, TLS_PORT if conf.tls_enabled else CLIENT_PORT)
+            for host in conf.endpoints.split(",")
+        ]
 
         credentials = ServerCredentials(
             username=CharmUsers.VALKEY_ADMIN.value, password=conf.valkey_password
+        )
+
+        tls_cert = tls_key = tls_ca_cert = None
+        if conf.tls_enabled:
+            # Read locally stored certificate files
+            with open("client.pem", "rb") as f:
+                tls_cert = f.read()
+            with open("client.key", "rb") as f:
+                tls_key = f.read()
+            with open("client_ca.pem", "rb") as f:
+                tls_ca_cert = f.read()
+            logger.info(
+                "TLS is enabled. Loaded client certificate, key, and CA cert for Glide client configuration."
+            )
+
+        tls_config = TlsAdvancedConfiguration(
+            client_cert_pem=tls_cert if conf.tls_enabled else None,
+            client_key_pem=tls_key if conf.tls_enabled else None,
+            root_pem_cacerts=tls_ca_cert if conf.tls_enabled else None,
+            use_insecure_tls=True if conf.tls_enabled else None,
         )
 
         glide_config = GlideClientConfiguration(
@@ -92,6 +124,8 @@ class ContinuousWrites:
             request_timeout=1000,
             credentials=credentials,
             reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
+            use_tls=True if conf.tls_enabled else False,
+            advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
         )
 
         return await GlideClient.create(glide_config)
@@ -132,7 +166,10 @@ class ContinuousWrites:
         if not self._is_stopped:
             result = self.stop()
 
-        asyncio.run(self._async_delete())
+        try:
+            asyncio.run(self._async_delete())
+        except Exception as e:
+            logger.warning("Failed to clear continuous writes data from Valkey: %s", e)
 
         last_written_file = Path(self.LAST_WRITTEN_VAL_PATH)
         if last_written_file.exists():
@@ -146,7 +183,10 @@ class ContinuousWrites:
         if not self._is_stopped:
             result = await self.async_stop()
 
-        await self._async_delete()
+        try:
+            await self._async_delete()
+        except Exception as e:
+            logger.warning("Failed to clear continuous writes data from Valkey: %s", e)
 
         last_written_file = Path(self.LAST_WRITTEN_VAL_PATH)
         if last_written_file.exists():
@@ -243,20 +283,41 @@ class ContinuousWrites:
 
         async def _make_client(conf: SimpleNamespace) -> GlideClient:
             addresses = [
-                NodeAddress(host, ContinuousWrites.VALKEY_PORT)
+                NodeAddress(host, TLS_PORT if conf.tls_enabled else CLIENT_PORT)
                 for host in conf.endpoints.split(",")
             ]
+
             credentials = ServerCredentials(
-                username=CharmUsers.VALKEY_ADMIN.value,
-                password=conf.valkey_password,
+                username=CharmUsers.VALKEY_ADMIN.value, password=conf.valkey_password
             )
+
+            tls_cert = tls_key = tls_ca_cert = None
+            if conf.tls_enabled:
+                # Read locally stored certificate files
+                with open("client.pem", "rb") as f:
+                    tls_cert = f.read()
+                with open("client.key", "rb") as f:
+                    tls_key = f.read()
+                with open("client_ca.pem", "rb") as f:
+                    tls_ca_cert = f.read()
+
+            tls_config = TlsAdvancedConfiguration(
+                client_cert_pem=tls_cert if conf.tls_enabled else None,
+                client_key_pem=tls_key if conf.tls_enabled else None,
+                root_pem_cacerts=tls_ca_cert if conf.tls_enabled else None,
+                use_insecure_tls=True if conf.tls_enabled else None,
+            )
+
             glide_config = GlideClientConfiguration(
                 addresses=addresses,
                 client_name="continuous_writes_worker",
                 request_timeout=1000,
                 credentials=credentials,
                 reconnect_strategy=BackoffStrategy(num_of_retries=1, factor=50, exponent_base=2),
+                use_tls=True if conf.tls_enabled else False,
+                advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
             )
+
             return await GlideClient.create(glide_config)
 
         @asynccontextmanager
@@ -268,6 +329,7 @@ class ContinuousWrites:
                 await client.close()
 
         current_val = starting_number
+        last_written_value = starting_number
         config = initial_config
 
         proc_logger.info("Starting continuous async writes from %s", current_val)
@@ -291,17 +353,18 @@ class ContinuousWrites:
                         ):
                             raise WriteFailedError("LPUSH returned 0/None")
                     proc_logger.info("Length after write: %s", res)
-                    await asyncio.sleep(in_between_sleep)
+                    last_written_value = current_val
                 except Exception as e:
                     proc_logger.warning("Write failed at %s: %s", current_val, e)
                 finally:
+                    await asyncio.sleep(in_between_sleep)
                     if event.is_set():
                         break
 
                 current_val += 1
 
         finally:
-            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(current_val))
+            Path(ContinuousWrites.LAST_WRITTEN_VAL_PATH).write_text(str(last_written_value))
             proc_logger.info("Continuous writes process exiting.")
 
 

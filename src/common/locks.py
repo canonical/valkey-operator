@@ -4,6 +4,7 @@
 """Collection of locks for cluster operations."""
 
 import logging
+import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol, override
 
@@ -52,9 +53,15 @@ class DataBagLock(Lockable):
 
     unit_request_lock_atr_name: str
     member_with_lock_atr_name: str
+    lock_timestamp: str = "databaglock_timestamp"
 
     def __init__(self, state: "ClusterState") -> None:
         self.state = state
+
+    def __init_subclass__(cls) -> None:
+        """Initialize subclass attributes."""
+        super().__init_subclass__()
+        cls.lock_timestamp = cls.__name__.lower() + "_timestamp"
 
     @property
     def units_requesting_lock(self) -> list[str]:
@@ -68,6 +75,8 @@ class DataBagLock(Lockable):
     @property
     def next_unit_to_give_lock(self) -> str | None:
         """Get the next unit to give the start lock to."""
+        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
+            return self.state.unit_server.unit_name
         return self.units_requesting_lock[0] if self.units_requesting_lock else None
 
     @property
@@ -98,11 +107,13 @@ class DataBagLock(Lockable):
 
     def request_lock(self) -> bool:
         """Request the lock for the local unit."""
-        self.state.unit_server.update(
-            {
-                self.unit_request_lock_atr_name: True,
-            }
-        )
+        if not self.state.unit_server.model[self.unit_request_lock_atr_name]:
+            self.state.unit_server.update(
+                {
+                    self.unit_request_lock_atr_name: True,
+                    self.lock_timestamp: time.time(),
+                }
+            )
         if self.state.unit_server.unit.is_leader():
             logger.info(
                 "Leader unit requesting %s lock. Triggering lock request processing.",
@@ -114,11 +125,13 @@ class DataBagLock(Lockable):
 
     def release_lock(self) -> bool:
         """Release the lock from the local unit."""
-        self.state.unit_server.update(
-            {
-                self.unit_request_lock_atr_name: False,
-            }
-        )
+        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
+            self.state.unit_server.update(
+                {
+                    self.unit_request_lock_atr_name: False,
+                    self.lock_timestamp: time.time(),
+                }
+            )
         if self.state.unit_server.unit.is_leader():
             logger.info(
                 "Leader unit releasing %s lock. Triggering lock request processing.",
@@ -157,6 +170,24 @@ class StartLock(DataBagLock):
             not self.state.cluster.model.start_member
             or not starting_unit
             or starting_unit.is_started
+            or not starting_unit.model.request_start_lock
+        )
+
+
+class RestartLock(DataBagLock):
+    """Lock for restart operations."""
+
+    unit_request_lock_atr_name = "request_restart_lock"
+    member_with_lock_atr_name = "restart_member"
+
+    @property
+    def is_lock_free_to_give(self) -> bool:
+        """Check if the unit with the restart lock has completed its operation."""
+        restarting_unit = self.unit_with_lock
+        return (
+            not self.state.cluster.model.restart_member
+            or not restarting_unit
+            or not restarting_unit.model.request_restart_lock
         )
 
 

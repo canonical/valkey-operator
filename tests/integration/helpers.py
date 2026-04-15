@@ -34,6 +34,7 @@ from literals import (
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
     SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
     TLS_PORT,
     CharmUsers,
     Substrate,
@@ -228,15 +229,15 @@ def verify_unit_count(
     return all(count == len(status.get_units(app)) for app, count in unit_count.items())
 
 
-def get_cluster_hostnames(juju: jubilant.Juju, app_name: str) -> list[str]:
-    """Get the hostnames of all units in the Valkey application.
+def get_cluster_addresses(juju: jubilant.Juju, app_name: str) -> list[str]:
+    """Get the addresses of all units in the Valkey application.
 
     Args:
         juju: The Juju client instance.
         app_name: The name of the Valkey application.
 
     Returns:
-        A list of hostnames for all units in the Valkey application.
+        A list of addresses for all units in the Valkey application.
     """
     status = juju.status()
     model_info = juju.show_model()
@@ -295,6 +296,10 @@ async def create_valkey_client(
         client_cert_pem=tls_cert if tls_enabled else None,
         client_key_pem=tls_key if tls_enabled else None,
         root_pem_cacerts=tls_ca_cert if tls_enabled else None,
+        # We only set FQDN in the certs the IP is not in the cert
+        # so we need to skip hostname verification
+        # we cannot use the hostname because the runner cannot resolve it
+        use_insecure_tls=True if tls_enabled else None,
     )
 
     client_config = GlideClientConfiguration(
@@ -353,9 +358,11 @@ def fast_forward(juju: jubilant.Juju, update_interval: str = "10s"):
         juju.model_config({"update-status-hook-interval": old})
 
 
-def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = APP_NAME) -> None:
+def download_client_certificate_from_unit(
+    juju: jubilant.Juju, app_name: str = APP_NAME, unit_name: str | None = None
+) -> None:
     """Copy the client certificate files from a unit to the host's filesystem."""
-    unit = next(iter(juju.status().get_units(app_name)))
+    unit = unit_name or next(iter(juju.status().get_units(app_name)))
     model_info = juju.show_model()
 
     if model_info.type == "kubernetes":
@@ -370,26 +377,31 @@ def download_client_certificate_from_unit(juju: jubilant.Juju, app_name: str = A
         juju.scp(f"{unit}:{tls_path}/ca_certs/{TLS_CA_FILE}", TLS_CA_FILE)
 
 
-def get_primary_ip(juju: jubilant.Juju, app: str) -> str:
+def get_primary_ip(
+    juju: jubilant.Juju, app: str, tls_enabled: bool = False, addresses: list[str] | None = None
+) -> str:
     """Get the primary node of the Valkey cluster.
 
     Returns:
         The IP address of the primary node.
     """
-    hostnames = get_cluster_hostnames(juju, app)
-    replication_info = exec_valkey_cli(
-        hostnames[0],
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju),
-        command="info replication",
-    ).stdout
-    # if master then we return the hostname
-    if "role:master" in replication_info:
-        return hostnames[0]
-    # extract ip
-    if not (match := re.search(r"master_host:([^\s]+)", replication_info)):
-        raise ValueError("Could not find master_host in replication info")
-    return match.group(1)
+    addresses = addresses or get_cluster_addresses(juju, app)
+    for address in addresses:
+        try:
+            replication_info = exec_valkey_cli(
+                address,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju),
+                command="info replication",
+                tls_enabled=tls_enabled,
+            ).stdout
+            # if master then we return the hostname
+            if "role:master" in replication_info:
+                return address
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning(f"Error executing Valkey CLI on {address}: {e}")
+
+    raise ValueError("No primary node found in the cluster")
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
@@ -408,7 +420,7 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
 
 async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
     # Connect to Valkey
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
 
     # Configuration
     value_size_bytes = 1024  # 1KB per value
@@ -428,7 +440,7 @@ async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
 
     # Generate a fixed random block to reuse (saves CPU cycles on generation)
     random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
-    async with create_valkey_client(hostnames, password=get_password(juju)) as client:
+    async with create_valkey_client(addresses, password=get_password(juju)) as client:
         try:
             while keys_added < total_keys:
                 data = {
@@ -472,13 +484,25 @@ def exec_valkey_cli(
     username: str,
     password: str,
     command: str,
-    port: int = CLIENT_PORT,
+    tls_enabled: bool = False,
     json: bool = False,
+    sentinel: bool = False,
 ) -> valkey_cli_result:
     """Execute a Valkey CLI command and returns the output as a string."""
-    command = f"valkey-cli --no-auth-warning -h {hostname} -p {port} --user {username} --pass {password} {'--json' if json else ''} {command}"
+    port = TLS_PORT if tls_enabled else CLIENT_PORT
+    if sentinel:
+        port = SENTINEL_TLS_PORT if tls_enabled else SENTINEL_PORT
+    pre_command = f"valkey-cli --no-auth-warning -h {hostname} -p {port} --user {username} --pass {password} {'--json' if json else ''}"
+    if tls_enabled:
+        pre_command += " --tls --cert client.pem --key client.key --cacert client_ca.pem"
+    exec_command = f"{pre_command} {command}"
     result = subprocess.run(
-        command.split(), check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        exec_command.split(),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
     )
     return valkey_cli_result(
         stdout=result.stdout.strip(), stderr=result.stderr.strip(), returncode=result.returncode
@@ -500,7 +524,7 @@ def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
         username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
         password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
         command="SENTINEL primary primary",
-        port=SENTINEL_PORT,
+        sentinel=True,
         json=True,
     )
     return int(json.loads(result.stdout)["quorum"])
@@ -592,22 +616,27 @@ async def ping_cluster(
 
 
 async def get_number_connected_replicas(
-    hostnames: list[str],
+    addresses: list[str],
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> int:
     """Get the number of connected replicas in the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        addresses: List of addresses of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         The number of connected replicas.
     """
     async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password
+        hostnames=addresses,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
     ) as client:
         info = (await client.info([InfoSection.REPLICATION])).decode()
     search_result = re.search(r"connected_slaves:([\d+])", info)
@@ -721,3 +750,26 @@ def existing_app(juju: jubilant.Juju) -> str | None:
             return app_name
 
     return None
+
+
+def get_ip_from_unit(juju: jubilant.Juju, unit_name: str, substrate: Substrate) -> str:
+    """Get the IP address of a unit based on the substrate type."""
+    for unit, unit_info in juju.status().get_units(unit_name.split("/")[0]).items():
+        if unit == unit_name:
+            return unit_info.public_address if substrate == Substrate.VM else unit_info.address
+    raise ValueError(f"Unit {unit_name} not found in Juju status")
+
+
+def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = False) -> list[dict]:
+    """Get the list of sentinels from the data bag."""
+    return json.loads(
+        exec_valkey_cli(
+            primary_ip,
+            username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+            tls_enabled=tls_enabled,
+            command="sentinel sentinels primary",
+            json=True,
+            sentinel=True,
+        ).stdout
+    )

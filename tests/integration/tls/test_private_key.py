@@ -18,7 +18,7 @@ from tests.integration.helpers import (
     are_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_hostnames,
+    get_cluster_addresses,
     get_key,
     get_password,
     set_key,
@@ -97,9 +97,9 @@ async def test_valid_private_key(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -109,7 +109,7 @@ async def test_valid_private_key(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with TLS enabled"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -147,9 +147,9 @@ async def test_private_key_updated(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    hostnames = get_cluster_hostnames(juju, APP_NAME)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     result = await set_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -159,7 +159,7 @@ async def test_private_key_updated(juju: jubilant.Juju) -> None:
     assert result == "OK", "Failed to write data with TLS enabled"
 
     assert await get_key(
-        hostnames=hostnames,
+        hostnames=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,

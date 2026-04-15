@@ -97,6 +97,7 @@ class TLSManager(ManagerStatusProtocol):
         """Build the SANs IP for the TLS certificate."""
         sans_ip = set()
 
+        # Rely fully on FQDN on k8s
         if not self.state.unit_server.model:
             return frozenset(sans_ip)
 
@@ -105,6 +106,9 @@ class TLSManager(ManagerStatusProtocol):
         ):
             extra_sans = [san.strip() for san in extra_sans_config.split(",")]
             sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
+
+        if self.state.substrate == "k8s":
+            return frozenset(sans_ip)
 
         sans_ip.add(self.state.bind_address)
 
