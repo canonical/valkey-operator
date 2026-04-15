@@ -9,6 +9,11 @@ import time
 from typing import TYPE_CHECKING
 
 import ops
+from charmlibs.interfaces.certificate_transfer import (
+    CertificatesAvailableEvent,
+    CertificatesRemovedEvent,
+    CertificateTransferRequires,
+)
 from dpcharmlibs.interfaces import (
     BulkResourcesRequestedEvent,
     RequirerCommonModel,
@@ -21,9 +26,10 @@ from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyServicesFailedToStartError,
+    ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import EXTERNAL_CLIENTS_RELATION, PEER_RELATION
+from literals import CERTIFICATE_TRANSFER_RELATION, EXTERNAL_CLIENTS_RELATION, PEER_RELATION
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -44,6 +50,9 @@ class ExternalClientsEvents(ops.Object):
             RequirerCommonModel,
             bulk_event=True,
         )
+        self.certificate_transfer = CertificateTransferRequires(
+            self.charm, CERTIFICATE_TRANSFER_RELATION
+        )
 
         self.framework.observe(
             self.valkey_provides.on.bulk_resources_requested, self._on_bulk_resources_requested
@@ -58,6 +67,16 @@ class ExternalClientsEvents(ops.Object):
         self.framework.observe(
             self.charm.on[EXTERNAL_CLIENTS_RELATION].relation_broken,
             self._on_client_relation_broken,
+        )
+        self.framework.observe(
+            self.charm.on[CERTIFICATE_TRANSFER_RELATION].relation_created,
+            self._on_ca_relation_created,
+        )
+        self.framework.observe(
+            self.certificate_transfer.on.certificate_set_updated, self._on_ca_available
+        )
+        self.framework.observe(
+            self.certificate_transfer.on.certificates_removed, self._on_ca_removed
         )
 
     def _on_bulk_resources_requested(
@@ -268,3 +287,71 @@ class ExternalClientsEvents(ops.Object):
                 current_response.version = version
 
             self.valkey_provides.set_responses(relation.id, responses)
+
+    def _on_ca_relation_created(self, event: ops.RelationCreatedEvent) -> None:
+        """Set up the relation for the certificate-transfer interface."""
+        if not self.charm.unit.is_leader():
+            return
+
+        relation = self.charm.model.get_relation(
+            relation_name=CERTIFICATE_TRANSFER_RELATION, relation_id=event.relation.id
+        )
+        relation.data[self.model.app]["version"] = "1"
+
+    def _on_ca_available(self, event: CertificatesAvailableEvent) -> None:
+        """Handle the CA certificates available event."""
+        if not (
+            ca_certs := self.certificate_transfer.get_all_certificates(
+                relation_id=event.relation_id
+            )
+        ):
+            logger.error("Could not retrieve CA certificates for relation %s", event.relation_id)
+            return
+
+        self.charm.workload.tls_dir.mkdir(exist_ok=True)
+        self.charm.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
+        ca_certs_file = f"external_client_cas_{event.relation_id}.pem"
+
+        try:
+            self.charm.workload.write_file(
+                content="\n".join(ca_certs),
+                path=self.charm.workload.tls_paths.ca_certs_dir / ca_certs_file,
+            )
+            self.charm.tls_manager.rehash_ca_certificates()
+            tls_config = self.charm.config_manager.generate_tls_config()
+            self.charm.cluster_manager.reload_tls_settings(tls_config)
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyServicesFailedToStartError,
+            ValkeyTLSLoadError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Error storing CA certificates for external clients: %s", e)
+            event.defer()
+            return
+
+    def _on_ca_removed(self, event: CertificatesRemovedEvent) -> None:
+        """Handle the CA certificates removed event."""
+        ca_certs_file = (
+            self.charm.workload.tls_paths.ca_certs_dir
+            / f"external_client_cas_{event.relation_id}.pem"
+        )
+
+        if not ca_certs_file.exists():
+            logger.warning("No CA certificates stored for relation %s", event.relation_id)
+            return
+
+        try:
+            self.charm.workload.remove_file(ca_certs_file)
+            self.charm.tls_manager.rehash_ca_certificates()
+            tls_config = self.charm.config_manager.generate_tls_config()
+            self.charm.cluster_manager.reload_tls_settings(tls_config)
+            self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyServicesFailedToStartError,
+            ValkeyTLSLoadError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Error removing CA certificates for external clients: %s", e)
+            event.defer()
+            return
