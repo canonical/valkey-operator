@@ -1,8 +1,8 @@
 # How to manage client connections
 
-[Relations](https://documentation.ubuntu.com/juju/latest/reference/relation/index.html) are connections between two 
-applications with compatible endpoints. These connections simplify creating and 
-managing users, passwords, and other shared data.
+This guide covers how to connect Juju charm applications and external clients 
+to Charmed Valkey, retrieve connection credentials, and configure secure authentication
+with mutual TLS or client certificates.
 
 Relations to Valkey are supported via the {spellexception}`valkey_client` interface.
 
@@ -12,7 +12,7 @@ If the application charm supports the `valkey_client` relation interface, just c
 an integration between the two charms:
 
 ```shell
-juju integrate valkey application
+juju integrate valkey <APPLICATION>
 ```
 
 The Charmed Valkey operator provides the following information over the relation interface:
@@ -20,8 +20,8 @@ The Charmed Valkey operator provides the following information over the relation
 - `username`: The username created in Valkey.
 - `password`: The password that was set for the username.
 - `endpoints`: The endpoints for read and write access (Primary endpoints).
-- `read_only_endpoints` The endpoints for read-only access (Replica endpoints).
-- `sentinel_endpoints` The endpoints of Valkey Sentinel, if Valkey HA runs in Sentinel-mode.
+- `read_only_endpoints`: The endpoints for read-only access (Replica endpoints).
+- `sentinel_endpoints`: The endpoints of Valkey Sentinel, if Valkey HA runs in Sentinel-mode.
 - `mode`: The High Availability mode Valkey is operating in (can be `sentinel` only currently).
 - `tls`: Whether TLS is enabled. This is `True` if TLS is enabled and `False` otherwise.
 - `tls_ca`: The CA certificate used to sign the server certificate.
@@ -105,7 +105,7 @@ Charmed Valkey also supports backwards compatibility with `data-interfaces v0`.
 
 The `valkey_client` interface is supported by the `data-integrator` charm. This charm
 automatically creates and manages product credentials needed to authenticate with 
-different kinds of data platform charmed products:
+different kinds of data platform charmed products.
 
 Deploy the Data Integrator charm with the desired `prefix-name`:
 
@@ -141,13 +141,13 @@ valkey:
   username: relation-5-40749865b6c7d821
 ```
 
-Use these information to connect to Valkey:
+Use this information to connect to Valkey:
 
 ```shell
-valkey-cli -h valkey-1.valkey-endpoints -p 6379 --user relation-6-4871b52b360fdb1d --pass <PASSWORD>
+valkey-cli -h valkey-1.valkey-endpoints -p 6379 --user relation-5-40749865b6c7d821 --pass <PASSWORD>
 ```
 
-Now you can access the database:
+To access the database:
 
 ```shell
 valkey-1.valkey-endpoints:6379> set test-keyspace:mykey 42
@@ -198,13 +198,13 @@ valkey-cli -h valkey-1.valkey-endpoints -p 6380 --tls --cert <YOUR_CLIENT_CERTIF
 After connecting, log in with the credentials provided through the relation interface:
 
 ```shell
-valkey-1.valkey-endpoints:6379> AUTH relation-5-40749865b6c7d821 <PASSWORD>
+valkey-1.valkey-endpoints:6380> AUTH relation-5-40749865b6c7d821 <PASSWORD>
 ```
 
 ## Enable authentication through client certificate
 
 Charmed Valkey also supports password-less authentication via client certificates.
-This requires [mutual TLS](enable-mutual-tls).
+This requires [mutual TLS](#enable-mutual-tls).
 
 Clients can log in to Valkey without providing a username and password, when the 
 common name (CN) of the presented client certificates matches the username that
