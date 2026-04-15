@@ -11,9 +11,9 @@ from typing import NamedTuple
 import jubilant
 
 from literals import CLIENT_PORT, TLS_PORT, Substrate
-from tests.integration.conftest import GLIDE_RUNNER_NAME
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     TLS_CA_FILE,
     TLS_CERT_FILE,
     TLS_KEY_FILE,
@@ -196,7 +196,7 @@ def clear_continuous_writes(juju: jubilant.Juju, unit: str) -> None:
 
 
 def assert_continuous_writes_consistent(
-    hostnames: list[str],
+    endpoints: list[str],
     username: str,
     password: str,
     last_written_value: int,
@@ -209,7 +209,7 @@ def assert_continuous_writes_consistent(
     - Every replica holds an identical copy of the list.
 
     Args:
-        hostnames: List of Valkey hostnames to check.
+        endpoints: List of Valkey endpoints to check.
         username: Valkey username.
         password: Valkey password.
         last_written_value: Last integer successfully written, from ``stop_continuous_writes``.
@@ -217,7 +217,7 @@ def assert_continuous_writes_consistent(
     """
     reference: list[int] | None = None
 
-    for endpoint in hostnames:
+    for endpoint in endpoints:
         current_values: list[int] = json.loads(
             exec_valkey_cli(
                 endpoint,
@@ -245,6 +245,6 @@ def assert_continuous_writes_consistent(
 
     logger.info(
         "Consistency check passed across %d endpoints (list len=%d).",
-        len(hostnames),
+        len(endpoints),
         len(reference or []),
     )

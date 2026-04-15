@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
-import asyncio
 import logging
+from time import sleep
 
 import jubilant
 import pytest
@@ -17,6 +17,7 @@ from tests.integration.cw_helpers import (
 )
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     are_apps_active_and_agents_idle,
     existing_app,
@@ -26,7 +27,6 @@ from tests.integration.helpers import (
     get_primary_ip,
     get_quorum,
     remove_number_units,
-    seed_valkey,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,9 +34,12 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
+SEED_KEY_PREFIX = "seed:key:"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_build_and_deploy(
+    charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm
+) -> None:
     """Build the charm-under-test and deploy it with three units."""
     if existing_app(juju):
         return
@@ -47,8 +50,11 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=1,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
         timeout=600,
     )
 
@@ -57,12 +63,22 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
 
-async def test_seed_data(juju: jubilant.Juju) -> None:
+def test_seed_data(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Seed some data to the cluster."""
-    await seed_valkey(juju, target_gb=1)
+    configure_cw_runner(juju, substrate=substrate)
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "seed-data",
+        params={
+            "target-gb": 1.0,
+            "key-prefix": SEED_KEY_PREFIX,
+        },
+    )
+    if task.status != "completed":
+        logger.error(f"Data seeding failed: {task.results}")
 
 
-async def test_check_quorum(juju: jubilant.Juju) -> None:
+def test_check_quorum(juju: jubilant.Juju) -> None:
     """Check quorum value."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
@@ -71,7 +87,7 @@ async def test_check_quorum(juju: jubilant.Juju) -> None:
     )
 
 
-async def test_scale_up(juju: jubilant.Juju, glide_runner, substrate: Substrate) -> None:
+def test_scale_up(juju: jubilant.Juju, glide_runner, substrate: Substrate) -> None:
     """Make sure new units are added to the valkey downtime."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
@@ -108,16 +124,14 @@ async def test_scale_up(juju: jubilant.Juju, glide_runner, substrate: Substrate)
     logger.info("Stopping continuous writes after scale up test.")
     cw_stats = stop_continuous_writes(juju)
     assert_continuous_writes_consistent(
-        hostnames=addresses,
+        endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=cw_stats.last_written_value,
     )
 
 
-async def test_scale_down_one_unit(
-    juju: jubilant.Juju, substrate: Substrate, glide_runner
-) -> None:
+def test_scale_down_one_unit(juju: jubilant.Juju, substrate: Substrate, glide_runner) -> None:
     """Make sure scale down operations complete successfully."""
     app_name = existing_app(juju) or APP_NAME
     init_units_count = len(juju.status().apps[app_name].units)
@@ -139,7 +153,7 @@ async def test_scale_down_one_unit(
 
     configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
-    await asyncio.sleep(10)  # let the continuous writes write some data
+    sleep(10)  # let the continuous writes write some data
 
     # scale down
     remove_number_units(juju, app_name, num_units=1, substrate=substrate)
@@ -171,14 +185,14 @@ async def test_scale_down_one_unit(
     logger.info("Stopping continuous writes after scale down test.")
     cw_stats = stop_continuous_writes(juju)
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_addresses(juju, app_name),
+        endpoints=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=cw_stats.last_written_value,
     )
 
 
-async def test_scale_down_multiple_units(
+def test_scale_down_multiple_units(
     juju: jubilant.Juju, substrate: Substrate, glide_runner
 ) -> None:
     """Make sure multiple scale down operations complete successfully."""
@@ -202,7 +216,7 @@ async def test_scale_down_multiple_units(
     configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
-    await asyncio.sleep(10)  # let the continuous writes write some data
+    sleep(10)  # let the continuous writes write some data
 
     # scale down multiple units
     remove_number_units(juju, app_name, num_units=2, substrate=substrate)
@@ -237,14 +251,14 @@ async def test_scale_down_multiple_units(
     cw_stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=get_cluster_addresses(juju, app_name),
+        endpoints=get_cluster_addresses(juju, app_name),
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=cw_stats.last_written_value,
     )
 
 
-async def test_scale_down_to_zero_and_back_up(
+def test_scale_down_to_zero_and_back_up(
     juju: jubilant.Juju, substrate: Substrate, glide_runner
 ) -> None:
     """Make sure that removing all units and then adding them again works."""
@@ -275,21 +289,21 @@ async def test_scale_down_to_zero_and_back_up(
     configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
 
-    await asyncio.sleep(10)  # let the continuous writes write some data
+    sleep(10)  # let the continuous writes write some data
     assert_continuous_writes_increasing(juju)
 
     logger.info("Stopping continuous writes after scale up test.")
     cw_stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
-        hostnames=addresses,
+        endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=cw_stats.last_written_value,
     )
 
 
-async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, glide_runner) -> None:
+def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, glide_runner) -> None:
     """Make sure that removing the primary unit triggers a new primary to be elected and the cluster remains available."""
     if substrate == Substrate.K8S:
         pytest.skip("Primary unit can only targeted on VM")
@@ -308,7 +322,7 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, gli
 
     configure_cw_runner(juju, valkey_app=app_name, substrate=substrate)
     start_continuous_writes(juju, clear=True)
-    await asyncio.sleep(10)  # let the continuous writes write some data
+    sleep(10)  # let the continuous writes write some data
 
     primary_endpoint = get_primary_ip(juju, app_name)
     primary_unit = next(
@@ -336,11 +350,11 @@ async def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, gli
         "Primary endpoint did not change after removing primary unit."
     )
     logger.info(f"New primary endpoint after scale down is {new_primary_endpoint}.")
-    hostnames = get_cluster_addresses(juju, app_name)
+    endpoints = get_cluster_addresses(juju, app_name)
     assert_continuous_writes_increasing(juju)
     cw_stats = stop_continuous_writes(juju)
     assert_continuous_writes_consistent(
-        hostnames=hostnames,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         last_written_value=cw_stats.last_written_value,

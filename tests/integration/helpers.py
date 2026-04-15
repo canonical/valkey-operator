@@ -4,10 +4,8 @@
 
 import json
 import logging
-import os
 import re
 import subprocess
-import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -50,7 +48,6 @@ IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstrea
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
-SEED_KEY_PREFIX = "seed:key:"
 TLS_NAME = "self-signed-certificates"
 TLS_CHANNEL = "1/edge"
 TLS_CERT_FILE = "client.pem"
@@ -481,62 +478,6 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
     """
     secret = get_secret_by_label(juju, label=INTERNAL_USERS_SECRET_LABEL)
     return secret.get(f"{user.value}-password", "")
-
-
-async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
-    # Connect to Valkey
-    addresses = get_cluster_addresses(juju, APP_NAME)
-
-    # Configuration
-    value_size_bytes = 1024  # 1KB per value
-    batch_size = 5000  # Commands per pipeline
-    total_bytes_target = target_gb * 1024 * 1024 * 1024
-    total_keys = total_bytes_target // value_size_bytes
-
-    logger.info(
-        "Targeting ~%sGB (%s keys of %s bytes each)",
-        target_gb,
-        total_keys,
-        value_size_bytes,
-    )
-
-    start_time = time.time()
-    keys_added = 0
-
-    # Generate a fixed random block to reuse (saves CPU cycles on generation)
-    random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
-    async with create_valkey_client(addresses, password=get_password(juju)) as client:
-        try:
-            while keys_added < total_keys:
-                data = {
-                    f"{SEED_KEY_PREFIX}{key_idx}": random_data
-                    for key_idx in range(keys_added, keys_added + batch_size)
-                }
-
-                if await client.mset(data) != "OK":
-                    raise RuntimeError("Failed to set data in Valkey cluster")
-
-                keys_added += batch_size
-
-                # Progress reporting
-                elapsed = time.time() - start_time
-                percent = (keys_added / total_keys) * 100
-                logger.info(
-                    "Progress: %.1f%% | Keys: %s | Elapsed: %.1f s",
-                    percent,
-                    keys_added,
-                    elapsed,
-                )
-
-        except Exception as e:
-            logger.error("Error: %s", e)
-        finally:
-            total_time = time.time() - start_time
-            logger.info(
-                "Seeding complete! Added %s keys in %.2f seconds.",
-                keys_added,
-                total_time,
-            )
 
 
 valkey_cli_result = NamedTuple(
