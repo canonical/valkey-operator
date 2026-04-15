@@ -16,7 +16,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     auth_test,
     download_client_certificate_from_unit,
-    get_cluster_addresses,
+    get_cluster_endpoints,
     get_key,
     get_password,
     set_key,
@@ -62,11 +62,11 @@ def test_tls_enabled(juju: jubilant.Juju) -> None:
     logger.info("Downloading TLS certificates from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
 
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     logger.info("Check access with TLS enabled")
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -78,7 +78,7 @@ def test_tls_enabled(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -89,7 +89,7 @@ def test_tls_enabled(juju: jubilant.Juju) -> None:
 
     logger.info("Check access without certs fails when TLS enabled")
 
-    assert not auth_test(juju, addresses, username=None, password=None)
+    assert not auth_test(juju, endpoints, username=None, password=None)
 
 
 def test_scale_up_with_tls_enabled(juju: jubilant.Juju) -> None:
@@ -114,11 +114,11 @@ def test_disable_tls(juju: jubilant.Juju) -> None:
         timeout=600,
     )
 
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     logger.info("Check access with TLS disabled")
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,
@@ -130,7 +130,7 @@ def test_disable_tls(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=False,
@@ -152,11 +152,11 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     logger.info("Downloading TLS certificates from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
 
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     logger.info("Check access with TLS enabled")
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -168,7 +168,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -178,4 +178,4 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     ), "Failed to read data with TLS enabled"
 
     logger.info("Check access without certs fails when TLS enabled")
-    assert not auth_test(juju, addresses, username=None, password=None)
+    assert not auth_test(juju, endpoints, username=None, password=None)

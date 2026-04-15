@@ -249,6 +249,27 @@ def get_cluster_addresses(juju: jubilant.Juju, app_name: str) -> list[str]:
     return [unit.public_address for unit in status.get_units(app_name).values()]
 
 
+def get_cluster_endpoints(juju: jubilant.Juju, app_name: str) -> list[str]:
+    """Get the addresses of all units in the Valkey application.
+
+    Args:
+        juju: The Juju client instance.
+        app_name: The name of the Valkey application.
+
+    Returns:
+        A list of addresses for all units in the Valkey application.
+    """
+    model_info = juju.show_model()
+
+    if model_info.type == "kubernetes":
+        return [
+            unit_name.replace("/", "-") + "." + app_name + "-endpoints"
+            for unit_name in juju.status().get_units(app_name)
+        ]
+
+    return get_cluster_addresses(juju, app_name)
+
+
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     for secret in juju.secrets():
         if label == secret.label:
@@ -261,16 +282,15 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
 def get_glide_config(
     juju: jubilant.Juju,
     app_name: str,
-    cluster_addresses: list[str] | None = None,
+    endpoints: list[str] | None = None,
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
     tls_enabled: bool = False,
 ) -> GlideClientConfiguration:
     """Construct a GlideClientConfiguration from Juju model information and secrets."""
-    cluster_addresses = cluster_addresses or get_cluster_addresses(juju, app_name)
+    endpoints = endpoints or get_cluster_endpoints(juju, app_name)
     addresses = [
-        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT)
-        for host in cluster_addresses
+        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT) for host in endpoints
     ]
 
     credentials = None
@@ -598,7 +618,7 @@ def set_key(
     glide_config = get_glide_config(
         juju=juju,
         app_name=APP_NAME,
-        cluster_addresses=endpoints,
+        endpoints=endpoints,
         username=username,
         password=password,
         tls_enabled=tls_enabled,
@@ -634,7 +654,7 @@ def get_key(
     glide_config = get_glide_config(
         juju=juju,
         app_name=APP_NAME,
-        cluster_addresses=endpoints,
+        endpoints=endpoints,
         username=username,
         password=password,
         tls_enabled=tls_enabled,
@@ -700,7 +720,7 @@ def ping_cluster(
     glide_config = get_glide_config(
         juju=juju,
         app_name=app_name,
-        cluster_addresses=endpoints,
+        endpoints=endpoints,
         username=username,
         password=password,
         tls_enabled=tls_enabled,
@@ -743,7 +763,7 @@ class WrongPassError(Exception):
 
 def auth_test(
     juju: jubilant.Juju,
-    cluster_addresses: list[str] | None = None,
+    endpoints: list[str] | None = None,
     username: str | None = None,
     password: str | None = None,
     tls_enabled: bool = False,
@@ -753,7 +773,7 @@ def auth_test(
 
     Args:
         juju: An instance of Jubilant's Juju class on which to run Juju commands
-        cluster_addresses: List of hostnames of the Valkey cluster nodes. If None, will be retrieved from Juju.
+        endpoints: List of endpoints of the Valkey cluster nodes. If None, will be retrieved from Juju.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
@@ -764,7 +784,7 @@ def auth_test(
     """
     glide_config = get_glide_config(
         juju=juju,
-        cluster_addresses=cluster_addresses,
+        endpoints=endpoints,
         app_name=APP_NAME,
         username=username,
         password=password,

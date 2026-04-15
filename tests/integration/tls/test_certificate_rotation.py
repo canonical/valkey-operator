@@ -20,7 +20,7 @@ from tests.integration.helpers import (
     auth_test,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_addresses,
+    get_cluster_endpoints,
     get_key,
     get_password,
     set_key,
@@ -86,10 +86,10 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -101,7 +101,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -121,7 +121,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     logger.info("Check access with previous certificate fails after expiration")
     assert not auth_test(
         juju=juju,
-        cluster_addresses=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -140,7 +140,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -152,7 +152,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -207,10 +207,10 @@ def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     assert old_certificate != new_certificate, "Certificate was not updated"
 
     logger.info("Check access with updated certificate")
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -222,7 +222,7 @@ def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -277,10 +277,10 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert old_certificate, "Failed to get current certificate"
 
     logger.info("Check access with current TLS certificate")
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -292,7 +292,7 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
@@ -311,7 +311,7 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     logger.info("Check access with previous certificate fails after expiration")
     assert not auth_test(
         juju=juju,
-        cluster_addresses=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -328,10 +328,10 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert old_certificate != new_certificate, "Certificate was not updated"
 
     logger.info("Check access with updated certificate")
-    addresses = get_cluster_addresses(juju, APP_NAME)
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
     result = set_key(
         juju=juju,
-        endpoints=addresses,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -343,7 +343,7 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     assert (
         get_key(
             juju=juju,
-            endpoints=addresses,
+            endpoints=endpoints,
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             tls_enabled=True,
