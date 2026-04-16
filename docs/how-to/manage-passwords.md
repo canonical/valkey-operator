@@ -9,7 +9,9 @@ For this guide, we will use Charmed {spellexception}`Valkey's` internal admin us
 by Charmed Valkey.
 
 We will go through setting a user-defined password for this admin user and configuring
-Valkey. 
+Valkey.
+
+To create an external client user, refer to [client connections](clients).
 
 ## Auto-generated credentials
 
