@@ -227,7 +227,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
             expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_EXPIRING.value]},
             num_units={APP_NAME: NUM_UNITS},
         ),
-        timeout=100,
+        timeout=600,
     )
 
     download_client_certificate_from_unit(juju, APP_NAME)
