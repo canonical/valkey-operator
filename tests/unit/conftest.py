@@ -28,6 +28,11 @@ def mock_bind_address(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_k8s_client(mocker):
+    mocker.patch("lightkube.core.client.GenericSyncClient")
+
+
+@pytest.fixture(autouse=True)
 def tenacity_wait(mocker):
     mocker.patch("tenacity.nap.time")
 

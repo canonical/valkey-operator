@@ -66,3 +66,7 @@ class RequestingLockTimedOutError(Exception):
 
 class ValkeyCertificatesNotReadyError(Exception):
     """Custom Exception if not all units have stored the TLS certificates."""
+
+
+class KubernetesClientError(Exception):
+    """Custom Exception if a connection to the Kubernetes Cluster API fails."""

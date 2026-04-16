@@ -20,6 +20,7 @@ from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
+from common.k8s_client import K8sClient
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
@@ -29,6 +30,8 @@ from literals import (
     SENTINEL_TLS_PORT,
     TLS_PORT,
     CharmUsers,
+    K8sService,
+    Substrate,
 )
 from statuses import CharmStatuses
 
@@ -45,6 +48,12 @@ class SentinelManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
         self.admin_user = CharmUsers.SENTINEL_CHARM_ADMIN.value
+
+        if self.state.substrate == Substrate.K8S:
+            self.k8s_client = K8sClient(
+                namespace=self.state.model.name,
+                app_name=self.state.model.app.name,
+            )
 
     @property
     def admin_password(self) -> str:
@@ -359,3 +368,33 @@ class SentinelManager(ManagerStatusProtocol):
         """Set the quorum for the sentinel cluster."""
         client = self._get_sentinel_client()
         client.set(self.state.endpoint, PRIMARY_NAME, "quorum", str(quorum))
+
+    def reconcile_k8s_services(self) -> None:
+        """Create or update the services and pod labels in Kubernetes."""
+        if self.state.substrate == Substrate.VM:
+            return
+
+        valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
+        sentinel_port = (
+            SENTINEL_TLS_PORT if self.state.unit_server.is_tls_enabled else SENTINEL_PORT
+        )
+
+        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
+        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
+        self.k8s_client.ensure_endpoint_service(
+            role=K8sService.SENTINELS.value, port=sentinel_port
+        )
+
+        primary_endpoint = self.get_primary_ip()
+        for unit in self.state.servers:
+            if not unit.is_active:
+                continue
+
+            pod_name = unit.unit_name.replace("/", "-")
+            self.k8s_client.update_pod_label(
+                pod_name=pod_name,
+                role=K8sService.PRIMARY.value
+                if unit.get_endpoint(Substrate.K8S) == primary_endpoint
+                else K8sService.REPLICAS.value,
+            )
+            self.k8s_client.update_pod_label(pod_name=pod_name, role=K8sService.SENTINELS.value)
