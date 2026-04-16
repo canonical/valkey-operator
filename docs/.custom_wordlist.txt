@@ -71,3 +71,4 @@ Makefile
 retrigger(ing)?
 Valkey
 failover
+mTLS
