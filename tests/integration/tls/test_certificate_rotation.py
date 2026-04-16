@@ -59,16 +59,20 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
 
     tls_config = {"certificate-validity": "5m", "ca-common-name": "valkey"}
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL, config=tls_config)
-    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=900,
+        timeout=600,
     )
 
 
 async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     """Test the TLS certificate expiration and renewal on a running cluster."""
-    _prepare_units_for_ca_expiration_test(juju)
+    logger.info("Enabling TLS")
+    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
 
     logger.info("Downloading TLS certificate from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
@@ -98,6 +102,7 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
         old_client_certificate = file.read()
     assert old_client_certificate, "Failed to get current client certificate"
 
+    _prepare_units_for_ca_expiration_test(juju)
     logger.info("Waiting for certificate to expire")
     sleep(CERTIFICATE_EXPIRY_TIME)
 
