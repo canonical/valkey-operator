@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from continuous_writes import KEY as CW_KEY
-from continuous_writes import DaemonConfig, _make_client as _cw_make_client
+from continuous_writes import DaemonConfig
+from continuous_writes import _make_client as _cw_make_client
 
 logger = logging.getLogger(__name__)
 
