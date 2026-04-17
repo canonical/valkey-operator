@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-CERTIFICATE_EXPIRY_TIME = 360
+CERTIFICATE_EXPIRY_TIME = 220
 CA_EXPIRY_TIME = 430
 
 
@@ -67,6 +67,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
 
 async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     """Test the TLS certificate expiration and renewal on a running cluster."""
+    _prepare_units_for_ca_expiration_test(juju)
+
     logger.info("Enabling TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
@@ -102,7 +104,6 @@ async def test_certificate_expiration(juju: jubilant.Juju) -> None:
         old_client_certificate = file.read()
     assert old_client_certificate, "Failed to get current client certificate"
 
-    _prepare_units_for_ca_expiration_test(juju)
     logger.info("Waiting for certificate to expire")
     sleep(CERTIFICATE_EXPIRY_TIME)
 
