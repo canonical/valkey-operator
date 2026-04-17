@@ -44,7 +44,7 @@ parts:
     source: .
     after:
       - poetry-deps
-    poetry-export-extra-args: ["--without-hashes"]
+    poetry-export-extra-args: [ "--without-hashes" ]
     build-packages:
       - libffi-dev # Needed to build Python dependencies with Rust from source
       - libssl-dev # Needed to build Python dependencies with Rust from source
@@ -123,7 +123,8 @@ actions:
     description: >
       Start a background daemon that continuously writes incrementing integers
       to a Valkey list using the relation-provided credentials. The daemon
-      survives between action calls and can be stopped with stop-continuous-writes.
+      survives between action calls and can be stopped with
+      stop-continuous-writes.
     params:
       sleep-interval:
         description: Seconds to sleep between writes (float, default 1.0)
@@ -146,7 +147,7 @@ actions:
       verifying the count has increased.
     params:
       wait:
-        description: Seconds to wait between the two state samples (default 5)
+        description: Seconds to wait between the two state samples (default 10)
         type: number
         default: 10
 
@@ -158,18 +159,20 @@ actions:
   stop-continuous-writes:
     description: >
       Stop the continuous-writes daemon and return the last written value and
-      total count of successful writes. Use this after a disruptive operation
-      to retrieve stats for consistency verification.
+      total count of successful writes. Use this after a disruptive operation to
+      retrieve stats for consistency verification.
     params:
       clear:
-        description: Delete continuous-writes data from Valkey after stopping (default false)
+        description: Delete continuous-writes data from Valkey after stopping (default
+          false)
         type: boolean
         default: false
 
   seed-data:
     description: >
-      Seed Valkey with random 1 KB values using the relation-provided credentials.
-      Keys are written in batches of 5000 using MSET and named "<key-prefix><index>".
+      Seed Valkey with random 1 KB values using the relation-provided
+      credentials. Keys are written in batches of 5000 using MSET and named
+      "<key-prefix><index>".
     params:
       target-gb:
         description: Target amount of data to seed in GB (default 1.0)
@@ -201,6 +204,7 @@ config:
       type: boolean
       default: false
     use-certificate-auth:
-      description: Flag to enable authentication via the common name of the client certificate
+      description: Flag to enable authentication via the common name of the client
+        certificate
       type: boolean
       default: false

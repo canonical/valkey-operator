@@ -24,7 +24,7 @@ from charmlibs.interfaces.tls_certificates import (
 from charms.data_platform_libs.v0.data_interfaces import DatabaseCreatedEvent, DatabaseRequires
 from client import ValkeyClient
 from continuous_writes import DaemonConfig, TlsConfig
-from continuous_writes import clear as cw_clear
+from continuous_writes import clear_key as cw_clear
 from cw_helpers import CWPath, cw_llen, wait_for_pid_exit
 from dpcharmlibs.interfaces import (
     DataContractV1,
@@ -142,9 +142,6 @@ class RequirerCharm(ops.CharmBase):
             self.on.assert_continuous_writes_increasing_action,
             self._on_assert_continuous_writes_increasing_action,
         )
-        framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
-        framework.observe(self.on.config_changed, self._on_config_changed)
-        framework.observe(self.on.get_credentials_action, self._on_get_credentials_action)
         framework.observe(self.valkey_interface.on.endpoints_changed, self._on_endpoints_changed)
 
     @property

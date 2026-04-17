@@ -194,6 +194,15 @@ async def _close_client(client: GlideClient | None) -> None:
             pass
 
 
+async def clear_key(config: DaemonConfig) -> None:
+    """Connect to Valkey and delete the continuous-writes list key."""
+    client = await _make_client(config)
+    try:
+        await clear(client)
+    finally:
+        await _close_client(client)
+
+
 async def _write_one(client: GlideClient, counter: int) -> tuple[int, int]:
     """Write one value, return (last_written, new_count)."""
     new_len = await client.lpush(KEY, [str(counter)])
