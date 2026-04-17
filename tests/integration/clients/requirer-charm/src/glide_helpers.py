@@ -68,24 +68,6 @@ _GLIDE_CLASSES: dict[str, type] = {cls.__name__: cls for cls in SCHEMA}
 _ENUM_CLASSES: dict[str, type[Enum]] = {"ReadFrom": ReadFrom}
 
 
-def serialize(obj: Any) -> Any:
-    """Recursively serialize a Glide object to a JSON-compatible structure."""
-    if obj is None:
-        return None
-    if isinstance(obj, bytes):
-        return {"__bytes__": base64.b64encode(obj).decode()}
-    if isinstance(obj, Enum):
-        return {"__enum__": type(obj).__name__, "value": obj.name}
-    if type(obj) in SCHEMA:
-        return {
-            "__class__": type(obj).__name__,
-            **{field: serialize(getattr(obj, field)) for field in SCHEMA[type(obj)]},
-        }
-    if isinstance(obj, list):
-        return [serialize(i) for i in obj]
-    return obj  # str, int, bool, None
-
-
 def deserialize(d: Any) -> Any:
     """Recursively deserialize a JSON-compatible structure back to Glide objects."""
     if d is None or not isinstance(d, (dict, list)):
@@ -102,11 +84,6 @@ def deserialize(d: Any) -> Any:
         fields = {k: deserialize(v) for k, v in d.items() if k != "__class__"}
         return cls(**fields)
     return d
-
-
-def serialize_glide_config(config: GlideClientConfiguration) -> str:
-    """Serialize a GlideClientConfiguration to a JSON string."""
-    return json.dumps(serialize(config))
 
 
 def deserialize_glide_config(payload: str) -> GlideClientConfiguration:
