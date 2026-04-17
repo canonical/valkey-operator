@@ -5,7 +5,6 @@
 """Manager for all sentinel related tasks."""
 
 import logging
-import socket
 
 import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -146,9 +145,7 @@ class SentinelManager(ManagerStatusProtocol):
 
         if self.state.substrate == Substrate.K8S:
             # get the DNS name of the K8s service
-            primary_address = socket.getfqdn(
-                f"{self.state.model.app.name}-{K8sService.PRIMARY.value}"
-            )
+            primary_address = f"{self.state.model.app.name}-{K8sService.PRIMARY.value}"
             return f"{primary_address}:{port}"
 
         primary_address = self.get_primary_ip()
@@ -160,9 +157,7 @@ class SentinelManager(ManagerStatusProtocol):
 
         if self.state.substrate == Substrate.K8S:
             # get the DNS name of the K8s service
-            replicas_address = socket.getfqdn(
-                f"{self.state.model.app.name}-{K8sService.REPLICAS.value}"
-            )
+            replicas_address = f"{self.state.model.app.name}-{K8sService.REPLICAS.value}"
             return f"{replicas_address}:{port}"
 
         client = self._get_sentinel_client()

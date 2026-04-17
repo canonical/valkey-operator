@@ -27,7 +27,13 @@ from validators import ValidationError, hostname
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, TLSCARotationState, TLSState
+from literals import (
+    TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    K8sService,
+    Substrate,
+    TLSCARotationState,
+    TLSState,
+)
 from statuses import CharmStatuses, TLSStatuses
 
 logger = logging.getLogger(__name__)
@@ -107,7 +113,7 @@ class TLSManager(ManagerStatusProtocol):
             extra_sans = [san.strip() for san in extra_sans_config.split(",")]
             sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
 
-        if self.state.substrate == "k8s":
+        if self.state.substrate == Substrate.K8S:
             return frozenset(sans_ip)
 
         sans_ip.add(self.state.bind_address)
@@ -140,6 +146,10 @@ class TLSManager(ManagerStatusProtocol):
 
         sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
         sans_dns.add(self.state.hostname)
+
+        if self.state.substrate == Substrate.K8S:
+            sans_dns.add(f"{self.state.model.app.name}-{K8sService.PRIMARY.value}")
+            sans_dns.add(f"{self.state.model.app.name}-{K8sService.REPLICAS.value}")
 
         return frozenset(sans_dns)
 

@@ -9,8 +9,8 @@ from lightkube.core.client import Client
 from lightkube.core.exceptions import ApiError
 from lightkube.models.core_v1 import ServicePort, ServiceSpec
 from lightkube.models.meta_v1 import ObjectMeta
-from lightkube.types import PatchType
 from lightkube.resources.core_v1 import Pod, Service
+from lightkube.types import PatchType
 
 from common.exceptions import KubernetesClientError
 
