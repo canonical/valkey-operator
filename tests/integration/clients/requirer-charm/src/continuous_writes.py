@@ -21,6 +21,9 @@ The config JSON must contain:
     ca_path       - path to CA cert PEM (required if tls_enabled)
     initial_count - int to start counter from (optional, default 0)
 
+On write failure the same counter value is retried until it succeeds before
+advancing, so no gaps are introduced in the sequence.
+
 State is written atomically to STATE_PATH after each successful write:
     {"last_written": N, "count": N}
 
@@ -245,15 +248,12 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                 last_written, count = await _write_one(client, counter)
                 _write_state_atomic(last_written, count)
                 logger.info("Wrote %d (list len=%d)", counter, count)
+                counter += 1
             except Exception as exc:
-                # Write failed — log and skip without updating last_written.
-                # counter still increments so a gap is introduced in the sequence,
-                # making failed writes detectable during consistency checks.
-                logger.warning("Write failed for counter=%d: %s", counter, exc)
+                # Write failed — retry the same counter value on the next iteration.
+                logger.warning("Write failed for counter=%d, will retry: %s", counter, exc)
                 await _close_client(client)
                 client = None
-
-            counter += 1
 
             try:
                 await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
