@@ -303,11 +303,11 @@ class RequirerCharm(ops.CharmBase):
         ):
             raise ValueError("TLS is enabled but certificates are not yet available.")
         return ValkeyClient(
-            username=user,
-            password=self.credentials.get(user),
+            username="" if self.config.get("use-certificate-auth") else user,
+            password="" if self.config.get("use-certificate-auth") else self.credentials.get(user),
             endpoints=self.primary_endpoint.split(","),
-            tls_cert=self.certificate.encode() if self.tls_enabled else None,
-            tls_key=self.private_key.encode() if self.tls_enabled else None,
+            tls_cert=self.certificate.encode() if self.use_mtls else None,
+            tls_key=self.private_key.encode() if self.use_mtls else None,
             tls_ca_cert=self.tls_ca_cert.encode() if self.tls_enabled else None,
         )
 

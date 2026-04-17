@@ -54,7 +54,7 @@ class ValkeyClient:
 
         client_config = GlideClientConfiguration(
             addresses,
-            use_tls=True if self.tls_cert else False,
+            use_tls=True if self.tls_ca_cert else False,
             credentials=ServerCredentials(username=self.user, password=self.password),
             request_timeout=1000,  # in milliseconds
             advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
