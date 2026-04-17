@@ -185,6 +185,23 @@ def _try_reload(old: DaemonConfig) -> DaemonConfig:
     return new
 
 
+async def _close_client(client: GlideClient | None) -> None:
+    """Close client if not None, swallowing errors."""
+    if client is not None:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+
+async def _write_one(client: GlideClient, counter: int) -> tuple[int, int]:
+    """Write one value, return (last_written, new_count)."""
+    new_len = await client.lpush(KEY, [str(counter)])
+    if not new_len:
+        raise RuntimeError("LPUSH returned 0/None")
+    return counter, new_len
+
+
 async def run(config: DaemonConfig, sleep_interval: float) -> None:
     """Run the main write loop until SIGTERM/SIGINT."""
     stop = asyncio.Event()
@@ -195,7 +212,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
     loop.add_signal_handler(signal.SIGINT, stop.set)
     loop.add_signal_handler(signal.SIGUSR1, reload.set)
 
-    client = await _make_client(config)
+    client: GlideClient | None = await _make_client(config)
     counter, count = await _initial_count(config, client)
     last_written = counter - 1
     logger.info(
@@ -207,15 +224,16 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
             if reload.is_set():
                 reload.clear()
                 config = _try_reload(config)
-                await client.close()
-                client = await _make_client(config)
+                await _close_client(client)
+                client = None
 
             try:
-                new_len = await client.lpush(KEY, [str(counter)])
-                if not new_len:
-                    raise RuntimeError("LPUSH returned 0/None")
-                last_written = counter
-                count = new_len
+                if client is None:
+                    logger.warning(
+                        "Client is none for counter=%d, attempting to reconnect...", counter
+                    )
+                    client = await _make_client(config)
+                last_written, count = await _write_one(client, counter)
                 _write_state_atomic(last_written, count)
                 logger.info("Wrote %d (list len=%d)", counter, count)
             except Exception as exc:
@@ -223,11 +241,8 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                 # counter still increments so a gap is introduced in the sequence,
                 # making failed writes detectable during consistency checks.
                 logger.warning("Write failed for counter=%d: %s", counter, exc)
-                try:
-                    await client.close()
-                except Exception:
-                    pass
-                client = await _make_client(config)
+                await _close_client(client)
+                client = None
 
             counter += 1
 
@@ -236,7 +251,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
             except asyncio.TimeoutError:
                 pass
     finally:
-        await client.close()
+        await _close_client(client)
 
     # Flush final state before exiting
     _write_state_atomic(last_written, count)
