@@ -71,6 +71,7 @@ def assert_continuous_writes_consistent(
     hostnames: list[str],
     username: str,
     password: str,
+    tls_enabled: bool = False,
 ) -> None:
     """Assert that the continuous writes are consistent."""
     last_written_value = int(Path(WRITES_LAST_WRITTEN_VAL_PATH).read_text())
@@ -82,7 +83,14 @@ def assert_continuous_writes_consistent(
 
     for endpoint in hostnames:
         current_values: list[int] = json.loads(
-            exec_valkey_cli(endpoint, username, password, f"LRANGE {KEY} 0 -1", json=True).stdout
+            exec_valkey_cli(
+                endpoint,
+                username,
+                password,
+                f"LRANGE {KEY} 0 -1",
+                json=True,
+                tls_enabled=tls_enabled,
+            ).stdout
         )
         if values is None:
             values = current_values

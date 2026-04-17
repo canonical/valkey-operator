@@ -75,9 +75,10 @@ class DataBagLock(Lockable):
     @property
     def next_unit_to_give_lock(self) -> str | None:
         """Get the next unit to give the start lock to."""
+        units_requesting_lock = self.units_requesting_lock
         if self.state.unit_server.model[self.unit_request_lock_atr_name]:
             return self.state.unit_server.unit_name
-        return self.units_requesting_lock[0] if self.units_requesting_lock else None
+        return units_requesting_lock[0] if units_requesting_lock else None
 
     @property
     def unit_with_lock(self) -> "ValkeyServer | None":
@@ -165,10 +166,11 @@ class StartLock(DataBagLock):
     @property
     def is_lock_free_to_give(self) -> bool:
         """Check if the unit with the start lock has completed its operation."""
+        if not self.state.cluster.model.start_member:
+            return True
         starting_unit = self.unit_with_lock
         return (
-            not self.state.cluster.model.start_member
-            or not starting_unit
+            not starting_unit
             or starting_unit.is_started
             or not starting_unit.model.request_start_lock
         )
@@ -183,12 +185,10 @@ class RestartLock(DataBagLock):
     @property
     def is_lock_free_to_give(self) -> bool:
         """Check if the unit with the restart lock has completed its operation."""
+        if not self.state.cluster.model.restart_member:
+            return True
         restarting_unit = self.unit_with_lock
-        return (
-            not self.state.cluster.model.restart_member
-            or not restarting_unit
-            or not restarting_unit.model.request_restart_lock
-        )
+        return not restarting_unit or not restarting_unit.model.request_restart_lock
 
 
 class ScaleDownLock(Lockable):
