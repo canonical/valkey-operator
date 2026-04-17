@@ -129,4 +129,3 @@ class K8sService(StrEnum):
 
     PRIMARY = "primary"
     REPLICAS = "replicas"
-    SENTINELS = "sentinels"

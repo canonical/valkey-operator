@@ -9,6 +9,7 @@ from lightkube.core.client import Client
 from lightkube.core.exceptions import ApiError
 from lightkube.models.core_v1 import ServicePort, ServiceSpec
 from lightkube.models.meta_v1 import ObjectMeta
+from lightkube.types import PatchType
 from lightkube.resources.core_v1 import Pod, Service
 
 from common.exceptions import KubernetesClientError
@@ -38,7 +39,7 @@ class K8sClient:
             service = self.client.get(res=Service, name=service_name, namespace=self.namespace)
             if service.spec.ports != [service_port]:
                 service.spec.ports = [service_port]
-                self.client.patch(Service, service_name, service)
+                self.client.patch(Service, service_name, service, patch_type=PatchType.MERGE)
                 logger.info("Updated Kubernetes service %s to port %s", service_name, port)
             return
         except ApiError as e:

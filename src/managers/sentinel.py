@@ -5,6 +5,7 @@
 """Manager for all sentinel related tasks."""
 
 import logging
+import socket
 
 import tenacity
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -141,16 +142,30 @@ class SentinelManager(ManagerStatusProtocol):
 
     def get_primary_endpoint(self) -> str:
         """Get the endpoint of the primary node, consisting of address and port."""
-        primary_address = self.get_primary_ip()
         port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
+        if self.state.substrate == Substrate.K8S:
+            # get the DNS name of the K8s service
+            primary_address = socket.getfqdn(
+                f"{self.state.model.app.name}-{K8sService.PRIMARY.value}"
+            )
+            return f"{primary_address}:{port}"
+
+        primary_address = self.get_primary_ip()
         return f"{primary_address}:{port}"
 
     def get_replica_endpoints(self) -> str:
         """Get the endpoints of all replica nodes, consisting of address and port."""
         port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
-        client = self._get_sentinel_client()
 
+        if self.state.substrate == Substrate.K8S:
+            # get the DNS name of the K8s service
+            replicas_address = socket.getfqdn(
+                f"{self.state.model.app.name}-{K8sService.REPLICAS.value}"
+            )
+            return f"{replicas_address}:{port}"
+
+        client = self._get_sentinel_client()
         replica_list = client.replicas_primary(hostname=self.state.endpoint)
         return ",".join(sorted([f"{replica['ip']}:{port}" for replica in replica_list]))
 
@@ -375,15 +390,9 @@ class SentinelManager(ManagerStatusProtocol):
             return
 
         valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
-        sentinel_port = (
-            SENTINEL_TLS_PORT if self.state.unit_server.is_tls_enabled else SENTINEL_PORT
-        )
 
         self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
         self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
-        self.k8s_client.ensure_endpoint_service(
-            role=K8sService.SENTINELS.value, port=sentinel_port
-        )
 
         primary_endpoint = self.get_primary_ip()
         for unit in self.state.servers:
@@ -397,4 +406,3 @@ class SentinelManager(ManagerStatusProtocol):
                 if unit.get_endpoint(Substrate.K8S) == primary_endpoint
                 else K8sService.REPLICAS.value,
             )
-            self.k8s_client.update_pod_label(pod_name=pod_name, role=K8sService.SENTINELS.value)
