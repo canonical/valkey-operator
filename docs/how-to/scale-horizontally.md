@@ -31,7 +31,7 @@ valkey/2                     active    idle   10.1.44.127
 valkey/3                     active    idle   10.1.44.68          
 ```
 
-### Remove units
+## Remove units
 
 Removing a unit from the application scales down the application. If you currently have
 four units, then only one is the primary and three are replicas. Removing a unit will reduce the
