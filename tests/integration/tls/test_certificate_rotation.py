@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-CERTIFICATE_EXPIRY_TIME = 320
+CERTIFICATE_EXPIRY_TIME = 220
 CA_EXPIRY_TIME = 430
 
 
@@ -57,7 +57,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         trust=True,
     )
 
-    tls_config = {"certificate-validity": "5m", "ca-common-name": "valkey"}
+    tls_config = {"certificate-validity": "6m", "ca-common-name": "valkey"}
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL, config=tls_config)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
