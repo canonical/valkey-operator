@@ -11,8 +11,7 @@ import time
 from pathlib import Path
 
 from continuous_writes import KEY as CW_KEY
-from continuous_writes import DaemonConfig
-from continuous_writes import glide_client as cw_client
+from continuous_writes import DaemonConfig, _make_client as _cw_make_client
 
 logger = logging.getLogger(__name__)
 
@@ -63,5 +62,8 @@ def wait_for_pid_exit(
 
 async def cw_llen(config: DaemonConfig) -> int:
     """Return the current length of the continuous-writes list in Valkey."""
-    async with cw_client(config) as client:
+    client = await _cw_make_client(config)
+    try:
         return await client.llen(CW_KEY)
+    finally:
+        await client.close()
