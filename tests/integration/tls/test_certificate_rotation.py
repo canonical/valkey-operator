@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-CERTIFICATE_EXPIRY_TIME = 220
+CERTIFICATE_EXPIRY_TIME = 360
 CA_EXPIRY_TIME = 430
 
 
