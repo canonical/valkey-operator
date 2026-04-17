@@ -33,7 +33,6 @@ import logging
 import os
 import signal
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from glide import (
@@ -130,28 +129,17 @@ async def _make_client(config: DaemonConfig) -> GlideClient:
     return await GlideClient.create(glide_config)
 
 
-@asynccontextmanager
-async def glide_client(config: DaemonConfig):
-    """Async context manager that creates and closes a GlideClient."""
-    client = await _make_client(config)
-    try:
-        yield client
-    finally:
-        await client.close()
-
-
-async def clear(config: DaemonConfig) -> None:
+async def clear(client: GlideClient) -> None:
     """Delete the continuous-writes list key from Valkey."""
-    async with glide_client(config) as client:
-        await client.delete([KEY])
-        logger.info("Cleared existing values for key '%s'.", KEY)
+    await client.delete([KEY])
+    logger.info("Cleared existing values for key '%s'.", KEY)
 
 
-async def _initial_count(config: DaemonConfig) -> tuple[int, int]:
+async def _initial_count(config: DaemonConfig, client: GlideClient) -> tuple[int, int]:
     """Return (counter, list_len) to start from, resuming from state file if present."""
     if config.clear_existing:
         try:
-            await clear(config)
+            await clear(client)
         except Exception as exc:
             logger.warning("Failed to clear existing values: %s", exc)
         return config.initial_count, 0
@@ -166,8 +154,7 @@ async def _initial_count(config: DaemonConfig) -> tuple[int, int]:
 
     count = 0
     try:
-        async with glide_client(config) as client:
-            count = await client.llen(KEY)
+        count = await client.llen(KEY)
     except Exception:
         pass
 
@@ -208,38 +195,48 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
     loop.add_signal_handler(signal.SIGINT, stop.set)
     loop.add_signal_handler(signal.SIGUSR1, reload.set)
 
-    counter, count = await _initial_count(config)
+    client = await _make_client(config)
+    counter, count = await _initial_count(config, client)
     last_written = counter - 1
     logger.info(
         "Starting continuous writes from counter=%d (existing list len=%d)", counter, count
     )
 
-    while not stop.is_set():
-        try:
-            async with glide_client(config) as client:
+    try:
+        while not stop.is_set():
+            if reload.is_set():
+                reload.clear()
+                config = _try_reload(config)
+                await client.close()
+                client = await _make_client(config)
+
+            try:
                 new_len = await client.lpush(KEY, [str(counter)])
-            if not new_len:
-                raise RuntimeError("LPUSH returned 0/None")
-            last_written = counter
-            count = new_len
-            _write_state_atomic(last_written, count)
-            logger.info("Wrote %d (list len=%d)", counter, count)
-        except Exception as exc:
-            # Write failed — log and skip without updating last_written.
-            # counter still increments so a gap is introduced in the sequence,
-            # making failed writes detectable during consistency checks.
-            logger.warning("Write failed for counter=%d: %s", counter, exc)
+                if not new_len:
+                    raise RuntimeError("LPUSH returned 0/None")
+                last_written = counter
+                count = new_len
+                _write_state_atomic(last_written, count)
+                logger.info("Wrote %d (list len=%d)", counter, count)
+            except Exception as exc:
+                # Write failed — log and skip without updating last_written.
+                # counter still increments so a gap is introduced in the sequence,
+                # making failed writes detectable during consistency checks.
+                logger.warning("Write failed for counter=%d: %s", counter, exc)
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                client = await _make_client(config)
 
-        counter += 1
+            counter += 1
 
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
-        except asyncio.TimeoutError:
-            pass
-
-        if reload.is_set():
-            reload.clear()
-            config = _try_reload(config)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        await client.close()
 
     # Flush final state before exiting
     _write_state_atomic(last_written, count)
