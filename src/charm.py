@@ -19,6 +19,7 @@ from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
+from managers.topology import TopologyManager
 from workload_k8s import ValkeyK8sWorkload
 from workload_vm import ValkeyVmWorkload
 
@@ -50,6 +51,7 @@ class ValkeyCharm(ops.CharmBase):
         self.sentinel_manager = SentinelManager(state=self.state, workload=self.workload)
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
         self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
+        self.topology_manager = TopologyManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
