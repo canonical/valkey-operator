@@ -51,6 +51,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.metric_service = "metric_exporter"
         self.cli = "valkey-cli"
         self.user = "_daemon_"
+        self.group = "root"
 
     @property
     @override

@@ -66,3 +66,7 @@ class RequestingLockTimedOutError(Exception):
 
 class ValkeyCertificatesNotReadyError(Exception):
     """Custom Exception if not all units have stored the TLS certificates."""
+
+
+class ValkeyReplicaNotUpToDateError(Exception):
+    """Custom Exception if a replica is not up to date with the primary."""

@@ -110,8 +110,33 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
         self.framework.observe(self.restart_workload, self._on_restart_workload)
         self.framework.observe(
+            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
+        )
+        self.framework.observe(
             self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
         )
+
+    def _on_storage_attached(self, _: ops.StorageAttachedEvent) -> None:
+        """Handle the data storage being attached, e.g. when adding a unit."""
+        if self.charm.state.substrate == Substrate.K8S:
+            logger.debug("No configuration required on storage attach for k8s.")
+            return
+
+        for path in [self.charm.workload.working_dir]:
+            try:
+                # fix the permissions of the directory if re-attaching existing storage
+                self.charm.workload.exec(["chmod", "-R", "750", path.as_posix()])
+                self.charm.workload.exec(
+                    [
+                        "chown",
+                        "-R",
+                        f"{self.charm.workload.user}:{self.charm.workload.group}",
+                        path.as_posix(),
+                    ]
+                )
+            except ValkeyWorkloadCommandError:
+                # gracefully continue if the path is not there yet
+                logger.warning("Could not adjust directory permissions")
 
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
@@ -523,7 +548,6 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
-        # TODO consider quorum when removing unit
 
         self.charm.status.set_running_status(
             ScaleDownStatuses.SCALING_DOWN.value,
@@ -552,7 +576,9 @@ class BaseEvents(ops.Object):
                 primary_ip,
             )
 
-        # stop valkey and sentinel processes
+        # shutdown valkey and save data to disk
+        self.charm.cluster_manager.shutdown(save=True)
+        # stop rest of the processes
         self.charm.workload.stop()
         active_sentinels = [
             ip

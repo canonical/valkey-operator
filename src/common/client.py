@@ -292,6 +292,20 @@ class ValkeyClient(CliClient):
             logger.error("Error loading TLS settings")
             raise ValkeyTLSLoadError("Could not load TLS settings")
 
+    def shutdown(self, hostname: str, save: bool = True) -> None:
+        """Shut down the Valkey server.
+
+        Args:
+            hostname (str): The hostname to connect to.
+            save (bool): Whether to save the data before shutting down.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        self.exec_cli_command(
+            ["shutdown", "save"] if save else ["shutdown"], hostname=hostname, json_output=False
+        )
+
 
 class SentinelClient(CliClient):
     """Handle sentinel-specific client connections."""

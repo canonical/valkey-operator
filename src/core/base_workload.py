@@ -56,6 +56,7 @@ class WorkloadBase(ABC):
     sentinel_service: str
     cli: str
     user: str
+    group: str
 
     @property
     @abstractmethod

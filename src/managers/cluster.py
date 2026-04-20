@@ -181,3 +181,8 @@ class ClusterManager(ManagerStatusProtocol):
             return ScaleDownStatuses.GOING_AWAY.value
 
         return None
+
+    def shutdown(self, save: bool = True) -> None:
+        """Shut down the Valkey server on this unit."""
+        client = self._get_valkey_client()
+        client.shutdown(hostname=self.state.endpoint, save=save)

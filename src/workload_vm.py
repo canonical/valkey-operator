@@ -63,6 +63,7 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_service = SNAP_SENTINEL_SERVICE
         self.cli = "charmed-valkey.cli"
         self.user = "snap_daemon"
+        self.group = "root"
 
     @property
     @override
