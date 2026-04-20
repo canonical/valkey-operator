@@ -1,11 +1,11 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-
 type: charm
 
 platforms:
   ubuntu@24.04:amd64:
+  ubuntu@24.04:arm64:
 
 parts:
   # "poetry-deps" part name is a magic constant
@@ -45,11 +45,11 @@ parts:
     source: .
     after:
       - poetry-deps
-    poetry-export-extra-args: ['--without-hashes']
+    poetry-export-extra-args: ["--without-hashes"]
     build-packages:
-      - libffi-dev  # Needed to build Python dependencies with Rust from source
-      - libssl-dev  # Needed to build Python dependencies with Rust from source
-      - pkg-config  # Needed to build Python dependencies with Rust from source
+      - libffi-dev # Needed to build Python dependencies with Rust from source
+      - libssl-dev # Needed to build Python dependencies with Rust from source
+      - pkg-config # Needed to build Python dependencies with Rust from source
       - libprotobuf-dev # Needed to build Valkey-glide
       - protobuf-compiler # Needed to build Valkey-glide
       - git
