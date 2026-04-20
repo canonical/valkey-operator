@@ -41,6 +41,7 @@ from pathlib import Path
 from glide import (
     AdvancedGlideClientConfiguration,
     BackoffStrategy,
+    ClosingError,
     GlideClient,
     GlideClientConfiguration,
     NodeAddress,
@@ -224,7 +225,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
     loop.add_signal_handler(signal.SIGINT, stop.set)
     loop.add_signal_handler(signal.SIGUSR1, reload.set)
 
-    client: GlideClient | None = await _make_client(config)
+    client: GlideClient = await _make_client(config)
     counter, count = await _initial_count(config, client)
     last_written = counter - 1
     logger.info(
@@ -233,27 +234,25 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
 
     try:
         while not stop.is_set():
-            if reload.is_set():
-                reload.clear()
-                config = _try_reload(config)
-                await _close_client(client)
-                client = None
-
             try:
-                if client is None:
-                    logger.warning(
-                        "Client is none for counter=%d, attempting to reconnect...", counter
-                    )
+                if reload.is_set():
+                    reload.clear()
+                    config = _try_reload(config)
+                    await _close_client(client)
                     client = await _make_client(config)
                 last_written, count = await _write_one(client, counter)
                 _write_state_atomic(last_written, count)
                 logger.info("Wrote %d (list len=%d)", counter, count)
                 counter += 1
+            except ClosingError as exc:
+                logger.warning(
+                    "ClosingError for counter=%d, will retry: %s",
+                    counter,
+                    exc,
+                )
+                client = await _make_client(config)
             except Exception as exc:
-                # Write failed — retry the same counter value on the next iteration.
                 logger.warning("Write failed for counter=%d, will retry: %s", counter, exc)
-                await _close_client(client)
-                client = None
 
             try:
                 await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
