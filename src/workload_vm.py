@@ -92,8 +92,8 @@ class ValkeyVmWorkload(WorkloadBase):
             revision = str(SNAP_REVISION)
 
         try:
-            # as long as 26.04 is not stable, we need to install the core26 snap from edge
-            snap.add("core26", channel="edge")
+            # as long as 26.04 is not stable, we need to install the core26 snap from beta
+            snap.add("core26", channel="beta")
 
             self.valkey.ensure(snap.SnapState.Present, revision=revision)
             self.valkey.hold()
