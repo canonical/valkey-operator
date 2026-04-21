@@ -253,6 +253,14 @@ class BaseEvents(ops.Object):
             self.charm.unit.open_port("tcp", CLIENT_PORT)
         self.charm.unit.open_port("tcp", TLS_PORT)
 
+        if not self.charm.unit.is_leader():
+            return
+
+        try:
+            self.charm.topology_manager.start_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to start topology observer: %s", e)
+
     def _on_peer_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
         try:
@@ -267,6 +275,15 @@ class BaseEvents(ops.Object):
         for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
             lock.process()
 
+        if not self.charm.state.unit_server.is_active:
+            return
+
+        # need to pick up scaling operations, TLS switchover, CA rotation and so on
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
+
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
         try:
@@ -275,10 +292,27 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
+        if not self.charm.state.unit_server.is_active:
+            return
+
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
+
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
+            return
+
+        if not self.charm.unit.is_leader():
+            return
+
+        try:
+            self.charm.topology_manager.start_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to start topology observer: %s", e)
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
@@ -551,6 +585,9 @@ class BaseEvents(ops.Object):
                 "Failover completed, new primary ip %s",
                 primary_ip,
             )
+
+        if self.charm.unit.is_leader():
+            self.charm.topology_manager.stop_observer()
 
         # stop valkey and sentinel processes
         self.charm.workload.stop()

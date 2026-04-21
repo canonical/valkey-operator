@@ -84,7 +84,7 @@ class PeerUnitModel(PeerModel):
     is_valkey_healthy: bool = Field(default=True)
     is_sentinel_healthy: bool = Field(default=True)
     client_user_epoch: float = Field(default=0)
-    topology_observer_pid: str = Field(default="")
+    topology_observer_pid: int = Field(default=0)
 
 
 class RelationState:

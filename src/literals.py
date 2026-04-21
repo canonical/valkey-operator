@@ -26,6 +26,10 @@ SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
 SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 
+# todo: these paths require root access, should be moved to dedicated user directories
+TOPOLOGY_OBSERVER_LOG_FILE = "/var/log/topology_observer.log"
+TOPOLOGY_OBSERVER_TLS_CA_FILE = "/etc/ssl/certs/Valkey_CA.pem"
+
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
@@ -64,7 +68,7 @@ class CharmUsers(StrEnum):
 
 
 CHARM_USERS_ROLE_MAP = {
-    CharmUsers.VALKEY_ADMIN: "~* +@all",
+    CharmUsers.VALKEY_ADMIN: "~* &* +@all",
     CharmUsers.VALKEY_SENTINEL: "+subscribe +publish +failover +script|kill +ping +info +multi +slaveof +config +client +exec &__sentinel__:hello",
     CharmUsers.VALKEY_REPLICA: "+psync +replconf +ping",
     CharmUsers.VALKEY_MONITORING: "-@all +@connection +memory -readonly +strlen +config|get +xinfo +pfcount -quit +zcard +type +xlen -readwrite -command +client -wait +scard +llen +hlen +get +eval +slowlog +cluster|info +cluster|slots +cluster|nodes -hello -echo +info +latency +scan -reset -auth -asking",
