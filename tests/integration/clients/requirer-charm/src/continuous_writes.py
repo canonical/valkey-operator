@@ -238,6 +238,8 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                     reload.clear()
                     config = _try_reload(config)
                     await _close_client(client)
+                    client = None
+                if client is None:
                     client = await _make_client(config)
                 last_written, count = await _write_one(client, counter)
                 _write_state_atomic(last_written, count)
@@ -251,7 +253,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                     await _close_client(client)
                 except Exception:
                     pass
-                client = await _make_client(config)
+                client = None
 
             try:
                 await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
