@@ -5,9 +5,10 @@
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
 import logging
+import platform
 import subprocess
 import time
-from typing import List, override
+from typing import override
 
 from charmlibs import pathops, snap
 from tenacity import (
@@ -32,7 +33,7 @@ from literals import (
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
     SNAP_NAME,
-    SNAP_REVISION,
+    SNAP_REVISIONS,
     SNAP_SENTINEL_ACL_FILE,
     SNAP_SENTINEL_CONFIG_FILE,
     SNAP_SENTINEL_SERVICE,
@@ -89,7 +90,7 @@ class ValkeyVmWorkload(WorkloadBase):
             True if successfully installed, False if errors occur and `retry_and_raise` is False.
         """
         if not revision:
-            revision = str(SNAP_REVISION)
+            revision = str(SNAP_REVISIONS[platform.machine()])
 
         try:
             # as long as 26.04 is not stable, we need to install the core26 snap from beta
@@ -130,7 +131,7 @@ class ValkeyVmWorkload(WorkloadBase):
             ) from e
 
     @override
-    def exec(self, command: List[str]) -> tuple[str, str | None]:
+    def exec(self, command: list[str]) -> tuple[str, str | None]:
         try:
             output = subprocess.run(
                 command,

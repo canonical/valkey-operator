@@ -5,6 +5,7 @@ type: charm
 
 platforms:
   ubuntu@24.04:amd64:
+  ubuntu@24.04:arm64:
 
 parts:
   # "poetry-deps" part name is a magic constant
@@ -44,7 +45,7 @@ parts:
     source: .
     after:
       - poetry-deps
-    poetry-export-extra-args: [ "--without-hashes" ]
+    poetry-export-extra-args: ["--without-hashes"]
     build-packages:
       - libffi-dev # Needed to build Python dependencies with Rust from source
       - libssl-dev # Needed to build Python dependencies with Rust from source
