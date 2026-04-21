@@ -253,6 +253,14 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                 client = await _make_client(config)
             except Exception as exc:
                 logger.warning("Write failed for counter=%d, will retry: %s", counter, exc)
+                # Glide raises a RequestError which can include multiple causes;
+                # look for the read-only error which indicates a failover happened
+                if "ReadOnly: You can't write against a read only replica." in str(exc):
+                    logger.warning(
+                        "Detected read-only error (probably a failover happened), reconnecting to refresh topology..."
+                    )
+                    await _close_client(client)
+                    client = await _make_client(config)
 
             try:
                 await asyncio.wait_for(stop.wait(), timeout=sleep_interval)
