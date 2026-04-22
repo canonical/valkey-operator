@@ -441,8 +441,11 @@ class BaseEvents(ops.Object):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
                 self.charm.config_manager.set_acl_file()
+                self.charm.config_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
+                    # todo: request rolling restart
+                    self.charm.sentinel_manager.restart_service()
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -504,8 +507,11 @@ class BaseEvents(ops.Object):
             logger.info("Password(s) for internal users have changed")
             try:
                 self.charm.config_manager.set_acl_file(passwords=new_passwords)
+                self.charm.config_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
+                    # todo: request rolling restart
+                    self.charm.sentinel_manager.restart_service()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
