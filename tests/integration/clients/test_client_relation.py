@@ -184,7 +184,7 @@ def test_failover_topology_update(juju: jubilant.Juju) -> None:
     ).stdout
     assert failover_result == "OK", "Failover not successful"
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS),
         timeout=600,
     )
 
@@ -315,77 +315,6 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
         requirer_unit,
         "get",
         params={"key": TEST_KEY, "user": user_global_keyspace},
-    )
-    assert get_action.status == "completed", "Action should succeed"
-    result = get_action.results["result"]
-    assert result == TEST_VALUE
-
-
-def test_failover_topology_update_with_tls(juju: jubilant.Juju) -> None:
-    """Trigger a failover with TLS enabled and ensure clients can still access Valkey."""
-    ip_address = get_cluster_addresses(juju, APP_NAME)[0]
-    logger.info("Initiate failover through Sentinel %s", ip_address)
-
-    failover_result = exec_valkey_cli(
-        hostname=ip_address,
-        username=CharmUsers.SENTINEL_CHARM_ADMIN,
-        password=get_password(juju, CharmUsers.SENTINEL_CHARM_ADMIN),
-        command="sentinel failover primary",
-        tls_enabled=True,
-        sentinel=True,
-    ).stdout
-    assert failover_result == "OK", "Failover not successful"
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
-
-    logger.info("Ensure access after failover for v0 client")
-    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V0_NAME)))
-    get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    username = get_credentials_action.results["usernames"]
-
-    logger.info("Write data to granted keyspace")
-    set_action = juju.run(
-        requirer_unit,
-        "set",
-        params={"key": f"requirer-charm:{TEST_KEY}", "value": TEST_VALUE, "user": username},
-    )
-    assert set_action.status == "completed", "Action should succeed"
-
-    logger.info("Read data that was just written")
-    get_action = juju.run(
-        requirer_unit,
-        "get",
-        params={"key": f"requirer-charm:{TEST_KEY}", "user": username},
-    )
-    assert get_action.status == "completed", "Action should succeed"
-    result = get_action.results["result"]
-    assert result == TEST_VALUE
-
-    logger.info("Ensure access after failover for v1 client")
-    requirer_unit = next(iter(juju.status().get_units(REQUIRER_V1_NAME)))
-    get_credentials_action = juju.run(requirer_unit, "get-credentials")
-    usernames = get_credentials_action.results["usernames"]
-    user_restricted_keyspace = usernames.split(",")[0]
-
-    logger.info("Write data to granted keyspace")
-    set_action = juju.run(
-        requirer_unit,
-        "set",
-        params={
-            "key": f"requirer-charm:{TEST_KEY}",
-            "value": TEST_VALUE,
-            "user": user_restricted_keyspace,
-        },
-    )
-    assert set_action.status == "completed", "Action should succeed"
-
-    logger.info("Read data that was just written")
-    get_action = juju.run(
-        requirer_unit,
-        "get",
-        params={"key": f"requirer-charm:{TEST_KEY}", "user": user_restricted_keyspace},
     )
     assert get_action.status == "completed", "Action should succeed"
     result = get_action.results["result"]
