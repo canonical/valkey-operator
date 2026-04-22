@@ -3,6 +3,7 @@
 
 """Topology observer class for checking changes in Primary/Replica topology."""
 
+import logging
 import signal
 import subprocess
 import sys
@@ -10,10 +11,16 @@ import time
 
 from valkey.sentinel import MasterNotFoundError, Sentinel
 
-from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_LOG_FILE, TOPOLOGY_OBSERVER_TLS_CA_FILE
+from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_TLS_CA_FILE
 
 # use global variable for gracefully handling stop signals
 continue_running = True
+
+logging.basicConfig(
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    level=logging.DEBUG,
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 def dispatch(unit_name: str, charm_dir: str) -> None:
@@ -39,8 +46,7 @@ def main() -> None:
     # handle the stop signal for a graceful stop of the subscription client
     signal.signal(signal.SIGTERM, handle_stop_signal)
 
-    with open(TOPOLOGY_OBSERVER_LOG_FILE, "a") as log_file:
-        log_file.write(f"Starting new observer for hosts {hosts} with tls={tls}\n")
+    logging.info("Starting new observer for hosts %s with tls=%s", hosts, tls)
 
     host_list = hosts.split(",")
     addresses = [
@@ -73,22 +79,19 @@ def main() -> None:
         try:
             primary_name = sentinel.discover_master(PRIMARY_NAME)[0]
         except MasterNotFoundError as e:
-            with open(TOPOLOGY_OBSERVER_LOG_FILE, "a") as log_file:
-                log_file.write(f"Failed to discover primary: {e}\n")
+            logging.error("Failed to discover primary: %s", e)
             continue
 
         if previous_primary == "" or primary_name == previous_primary:
             continue
 
-        with open(TOPOLOGY_OBSERVER_LOG_FILE, "a") as log_file:
-            log_file.write(
-                f"Primary change detected: previously {previous_primary}, now {primary_name}\n"
-            )
+        logging.info(
+            "Primary change detected: previously %s, now %s", previous_primary, primary_name
+        )
         dispatch(unit_name, charm_dir)
 
     else:
-        with open(TOPOLOGY_OBSERVER_LOG_FILE, "a") as log_file:
-            log_file.write("Gracefully stopping observer\n")
+        logging.info("Gracefully stopping observer")
 
 
 if __name__ == "__main__":
