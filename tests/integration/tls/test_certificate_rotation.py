@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-CERTIFICATE_EXPIRY_TIME = 320
-CA_EXPIRY_TIME = 500
+CERTIFICATE_EXPIRY_TIME = 360
+CA_EXPIRY_TIME = 430
 
 
 def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
@@ -57,9 +57,8 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         trust=True,
     )
 
-    tls_config = {"certificate-validity": "5m", "ca-common-name": "valkey"}
+    tls_config = {"certificate-validity": "6m", "ca-common-name": "valkey"}
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL, config=tls_config)
-    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -69,6 +68,13 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
 async def test_certificate_expiration(juju: jubilant.Juju) -> None:
     """Test the TLS certificate expiration and renewal on a running cluster."""
     _prepare_units_for_ca_expiration_test(juju)
+
+    logger.info("Enabling TLS")
+    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
 
     logger.info("Downloading TLS certificate from deployed app.")
     download_client_certificate_from_unit(juju, APP_NAME)
@@ -214,23 +220,9 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     The CA certificate should be rotated and the cluster should still be accessible.
     The rotation is triggered by the expiration of the CA cert on TLS provider side.
     """
-    logger.info("Disabling client TLS")
-    juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
-    )
-
     logger.info("Adjust CA and certificate validity on TLS provider")
-    tls_config = {"certificate-validity": "4m", "root-ca-validity": "10m"}
+    tls_config = {"certificate-validity": "6m", "root-ca-validity": "12m"}
     juju.config(app=TLS_NAME, values=tls_config)
-    juju.wait(
-        lambda status: are_agents_idle(status, TLS_NAME, idle_period=30),
-        timeout=600,
-    )
-
-    logger.info("Enabling client TLS again")
-    juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
@@ -241,7 +233,7 @@ async def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
             expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_EXPIRING.value]},
             num_units={APP_NAME: NUM_UNITS},
         ),
-        timeout=100,
+        timeout=600,
     )
 
     download_client_certificate_from_unit(juju, APP_NAME)

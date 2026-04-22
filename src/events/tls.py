@@ -264,6 +264,7 @@ class TLSEvents(ops.Object):
                 )
                 self.charm.sentinel_manager.restart_service()
             except (
+                ValkeyCannotGetPrimaryIPError,
                 ValkeyWorkloadCommandError,
                 ValkeyServicesFailedToStartError,
                 ValkeyTLSLoadError,
@@ -287,6 +288,7 @@ class TLSEvents(ops.Object):
             )
             self.charm.sentinel_manager.restart_service()
         except (
+            ValkeyCannotGetPrimaryIPError,
             ValkeyWorkloadCommandError,
             ValkeyServicesFailedToStartError,
             ValkeyTLSLoadError,
