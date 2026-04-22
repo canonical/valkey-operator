@@ -331,6 +331,12 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
+        if self.charm.state.unit_server.is_active:
+            try:
+                self.charm.topology_manager.start_observer()
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                logger.error("Failed to start topology observer: %s", e)
+
         if self.charm.state.cluster.internal_users_credentials:
             logger.debug("Internal user credentials already set")
             return
