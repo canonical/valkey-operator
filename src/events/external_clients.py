@@ -387,7 +387,6 @@ class ExternalClientsEvents(ops.Object):
 
         logger.info("Received topology-changed event")
         try:
-            self.charm.sentinel_manager.reconcile_k8s_services()
             self.charm.sentinel_manager.set_pod_labels()
         except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
             logger.error("Error updating Kubernetes services: %s", e)

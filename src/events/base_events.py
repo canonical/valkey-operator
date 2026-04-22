@@ -292,7 +292,7 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
-        if not self.charm.state.unit_server.is_active:
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
             return
 
         try:

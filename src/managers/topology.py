@@ -71,10 +71,11 @@ class TopologyManager:
         port = SENTINEL_TLS_PORT if self.state.unit_server.is_tls_enabled else SENTINEL_PORT
         hosts = ",".join(sorted([f"{server}:{port}" for server in started_servers]))
 
-        # Store current TLS CA cert on operator container
-        tls_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
-        path = Path(TOPOLOGY_OBSERVER_TLS_CA_FILE)
-        path.write_text(tls_ca_cert)
+        if self.state.unit_server.is_tls_enabled:
+            # Store current TLS CA cert on operator container
+            tls_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
+            path = Path(TOPOLOGY_OBSERVER_TLS_CA_FILE)
+            path.write_text(tls_ca_cert)
 
         logging.info("Starting topology observer")
         pid = subprocess.Popen(  # noqa: S603
