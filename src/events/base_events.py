@@ -404,6 +404,12 @@ class BaseEvents(ops.Object):
                 event.defer()
                 return
 
+            # propagate updated credentials to topology observer
+            try:
+                self.charm.topology_manager.restart_observer()
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                logger.error("Failed to restart topology observer: %s", e)
+
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
         if not (admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)):
@@ -421,7 +427,14 @@ class BaseEvents(ops.Object):
                 ):
                     event.defer()
                     return
-            return
+
+                # propagate updated credentials to topology observer
+                try:
+                    self.charm.topology_manager.restart_observer()
+                except (ValkeyWorkloadCommandError, ValueError) as e:
+                    logger.error("Failed to restart topology observer: %s", e)
+                finally:
+                    return
 
         # from here, code is only relevant for non-leader units
         if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from valkey.sentinel import Sentinel, MasterNotFoundError
+from valkey.sentinel import MasterNotFoundError, Sentinel
 
 from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_LOG_FILE, TOPOLOGY_OBSERVER_TLS_CA_FILE
 
@@ -44,9 +44,7 @@ def main() -> None:
 
     host_list = hosts.split(",")
     addresses = [
-        (hostname, int(port))
-        for host in host_list
-        for hostname, port in [host.split(":")]
+        (hostname, int(port)) for host in host_list for hostname, port in [host.split(":")]
     ]
     tls_enabled = True if tls == "True" else False
     sentinel_kwargs = {

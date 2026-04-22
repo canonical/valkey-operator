@@ -42,10 +42,14 @@ class TopologyChangedEvent(ops.EventBase):
     """A custom event for topology changes."""
 
 
-class ExternalClientsEvents(ops.Object):
-    """Handle all events for external client relations."""
+class TopologyChangedCharmEvents(ops.CharmEvents):
+    """A CharmEvent extension to observe topology changes."""
 
     topology_changed = ops.EventSource(TopologyChangedEvent)
+
+
+class ExternalClientsEvents(ops.Object):
+    """Handle all events for external client relations."""
 
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="client_events")
@@ -85,7 +89,7 @@ class ExternalClientsEvents(ops.Object):
         self.framework.observe(
             self.certificate_transfer.on.certificates_removed, self._on_ca_removed
         )
-        self.framework.observe(self.topology_changed, self._on_topology_changed)
+        self.framework.observe(self.charm.on.topology_changed, self._on_topology_changed)
 
     def _on_bulk_resources_requested(
         self, event: BulkResourcesRequestedEvent[RequirerCommonModel] | ResourceRequestedEvent
