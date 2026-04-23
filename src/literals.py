@@ -122,3 +122,10 @@ class TLSCARotationState(StrEnum):
     NEW_CA_DETECTED = "new-ca-detected"
     NEW_CA_ADDED = "new-ca-added"
     CA_UPDATED = "ca-updated"
+
+
+class K8sService(StrEnum):
+    """Services managed by the charm in Kubernetes."""
+
+    PRIMARY = "primary"
+    REPLICAS = "replicas"

@@ -23,13 +23,19 @@ from dpcharmlibs.interfaces import (
 )
 
 from common.exceptions import (
+    KubernetesClientError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyServicesFailedToStartError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import CERTIFICATE_TRANSFER_RELATION, EXTERNAL_CLIENTS_RELATION, PEER_RELATION
+from literals import (
+    CERTIFICATE_TRANSFER_RELATION,
+    EXTERNAL_CLIENTS_RELATION,
+    PEER_RELATION,
+    Substrate,
+)
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -178,15 +184,26 @@ class ExternalClientsEvents(ops.Object):
         self.charm.state.cluster.update({"client_user_epoch": time.time()})
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Handle peer relation changes in regard to external client relations."""
-        if (
-            not self.charm.state.unit_server.is_started
-            or not self.charm.state.external_client_relations
-        ):
+        """Handle peer relation changes in regard to external client relations.
+
+        This handler catches all changes from scaling operations, TLS switchover, TLS CA rotation,
+        IP changes, etc.
+        """
+        if not self.charm.state.unit_server.is_started:
+            return
+
+        if self.charm.unit.is_leader() and self.charm.state.substrate == Substrate.K8S:
+            try:
+                self.charm.sentinel_manager.reconcile_k8s_services()
+            except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
+                logger.error("Error updating Kubernetes services: %s", e)
+                event.defer()
+                return
+
+        if not self.charm.state.external_client_relations:
             return
 
         if self.charm.unit.is_leader():
-            # this catches all changes from scaling operations, TLS switchover, IP changes, etc.
             try:
                 self._update_client_relations()
             except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:

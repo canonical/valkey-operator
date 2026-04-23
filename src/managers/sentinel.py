@@ -20,6 +20,7 @@ from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
+from common.k8s_client import K8sClient
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
@@ -29,6 +30,8 @@ from literals import (
     SENTINEL_TLS_PORT,
     TLS_PORT,
     CharmUsers,
+    K8sService,
+    Substrate,
 )
 from statuses import CharmStatuses
 
@@ -45,6 +48,13 @@ class SentinelManager(ManagerStatusProtocol):
         self.state = state
         self.workload = workload
         self.admin_user = CharmUsers.SENTINEL_CHARM_ADMIN.value
+
+        self.k8s_client: K8sClient | None = None
+        if self.state.substrate == Substrate.K8S:
+            self.k8s_client = K8sClient(
+                namespace=self.state.model.name,
+                app_name=self.state.model.app.name,
+            )
 
     @property
     def admin_password(self) -> str:
@@ -132,16 +142,26 @@ class SentinelManager(ManagerStatusProtocol):
 
     def get_primary_endpoint(self) -> str:
         """Get the endpoint of the primary node, consisting of address and port."""
-        primary_address = self.get_primary_ip()
         port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
+        if self.state.substrate == Substrate.K8S:
+            # get the DNS name of the K8s service
+            primary_address = f"{self.state.model.app.name}-{K8sService.PRIMARY.value}"
+            return f"{primary_address}:{port}"
+
+        primary_address = self.get_primary_ip()
         return f"{primary_address}:{port}"
 
     def get_replica_endpoints(self) -> str:
         """Get the endpoints of all replica nodes, consisting of address and port."""
         port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
-        client = self._get_sentinel_client()
 
+        if self.state.substrate == Substrate.K8S:
+            # get the DNS name of the K8s service
+            replicas_address = f"{self.state.model.app.name}-{K8sService.REPLICAS.value}"
+            return f"{replicas_address}:{port}"
+
+        client = self._get_sentinel_client()
         replica_list = client.replicas_primary(hostname=self.state.endpoint)
         return ",".join(sorted([f"{replica['ip']}:{port}" for replica in replica_list]))
 
@@ -359,3 +379,23 @@ class SentinelManager(ManagerStatusProtocol):
         """Set the quorum for the sentinel cluster."""
         client = self._get_sentinel_client()
         client.set(self.state.endpoint, PRIMARY_NAME, "quorum", str(quorum))
+
+    def reconcile_k8s_services(self) -> None:
+        """Create or update the services and pod labels in Kubernetes."""
+        valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
+
+        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
+        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
+
+        primary_endpoint = self.get_primary_ip()
+        for unit in self.state.servers:
+            if not unit.is_active:
+                continue
+
+            pod_name = unit.unit_name.replace("/", "-")
+            self.k8s_client.update_pod_label(
+                pod_name=pod_name,
+                role=K8sService.PRIMARY.value
+                if unit.get_endpoint(Substrate.K8S) == primary_endpoint
+                else K8sService.REPLICAS.value,
+            )

@@ -93,8 +93,8 @@ def test_add_new_client_user(cloud_spec):
         assert response["resource"] == key_prefix
         assert response["request-id"] == request_id
         assert response["salt"] == salt
-        assert response["endpoints"] == f"{primary_endpoint}:{CLIENT_PORT}"
-        assert response["read-only-endpoints"] == f"{replica_endpoint}:{CLIENT_PORT}"
+        assert response["endpoints"] == f"valkey-primary:{CLIENT_PORT}"
+        assert response["read-only-endpoints"] == f"valkey-replicas:{CLIENT_PORT}"
         assert response["sentinel-endpoints"] == f"{primary_endpoint}:{SENTINEL_PORT}"
         assert response["version"] == valkey_version
         assert response["mode"] == "sentinel"
@@ -161,8 +161,8 @@ def test_add_new_client_user_v0(cloud_spec):
         secret_tls = state_out.get_secret(id=secret_tls_id)
 
         assert response["database"] == key_prefix
-        assert response["endpoints"] == f"{primary_endpoint}:{CLIENT_PORT}"
-        assert response["read-only-endpoints"] == f"{replica_endpoint}:{CLIENT_PORT}"
+        assert response["endpoints"] == f"valkey-primary:{CLIENT_PORT}"
+        assert response["read-only-endpoints"] == f"valkey-replicas:{CLIENT_PORT}"
         assert response["sentinel_endpoints"] == f"{primary_endpoint}:{SENTINEL_PORT}"
         assert response["version"] == valkey_version
         assert response["mode"] == "sentinel"
