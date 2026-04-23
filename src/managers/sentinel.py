@@ -49,6 +49,7 @@ class SentinelManager(ManagerStatusProtocol):
         self.workload = workload
         self.admin_user = CharmUsers.SENTINEL_CHARM_ADMIN.value
 
+        self.k8s_client: K8sClient | None = None
         if self.state.substrate == Substrate.K8S:
             self.k8s_client = K8sClient(
                 namespace=self.state.model.name,
@@ -381,9 +382,6 @@ class SentinelManager(ManagerStatusProtocol):
 
     def reconcile_k8s_services(self) -> None:
         """Create or update the services in Kubernetes."""
-        if self.state.substrate == Substrate.VM:
-            return
-
         valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
         self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
@@ -391,9 +389,6 @@ class SentinelManager(ManagerStatusProtocol):
 
     def set_pod_labels(self) -> None:
         """Set labels for primary and replica pods in Kubernetes."""
-        if self.state.substrate == Substrate.VM:
-            return
-
         primary_endpoint = self.get_primary_ip()
         for unit in self.state.servers:
             if not unit.is_active:

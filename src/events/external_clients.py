@@ -30,7 +30,12 @@ from common.exceptions import (
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
-from literals import CERTIFICATE_TRANSFER_RELATION, EXTERNAL_CLIENTS_RELATION, PEER_RELATION
+from literals import (
+    CERTIFICATE_TRANSFER_RELATION,
+    EXTERNAL_CLIENTS_RELATION,
+    PEER_RELATION,
+    Substrate,
+)
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -198,7 +203,7 @@ class ExternalClientsEvents(ops.Object):
         if not self.charm.state.unit_server.is_started:
             return
 
-        if self.charm.unit.is_leader():
+        if self.charm.unit.is_leader() and self.charm.state.substrate == Substrate.K8S:
             try:
                 self.charm.sentinel_manager.reconcile_k8s_services()
                 self.charm.sentinel_manager.set_pod_labels()
