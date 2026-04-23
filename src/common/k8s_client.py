@@ -47,11 +47,14 @@ class K8sClient:
             if e.status.code != 404:
                 raise KubernetesClientError from e
 
-        pod0 = self.client.get(
-            res=Pod,
-            name=self.app_name + "-0",
-            namespace=self.namespace,
-        )
+        try:
+            pod0 = self.client.get(
+                res=Pod,
+                name=self.app_name + "-0",
+                namespace=self.namespace,
+            )
+        except ApiError as e:
+            raise KubernetesClientError from e
 
         service = Service(
             apiVersion="v1",
