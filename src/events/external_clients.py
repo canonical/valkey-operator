@@ -97,7 +97,9 @@ class ExternalClientsEvents(ops.Object):
         self.framework.observe(self.charm.on.topology_changed, self._on_topology_changed)
 
     def _on_bulk_resources_requested(
-        self, event: BulkResourcesRequestedEvent[RequirerCommonModel] | ResourceRequestedEvent
+        self,
+        event: BulkResourcesRequestedEvent[RequirerCommonModel]
+        | ResourceRequestedEvent[RequirerCommonModel],
     ) -> None:
         """Handle bulk resources requested event."""
         if not self.charm.unit.is_leader():
@@ -391,12 +393,13 @@ class ExternalClientsEvents(ops.Object):
             return
 
         logger.info("Received topology-changed event")
-        try:
-            self.charm.sentinel_manager.set_pod_labels()
-        except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
-            logger.error("Error updating Kubernetes services: %s", e)
-            event.defer()
-            return
+        if self.charm.state.substrate == Substrate.K8S:
+            try:
+                self.charm.sentinel_manager.set_pod_labels()
+            except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
+                logger.error("Error updating Kubernetes services: %s", e)
+                event.defer()
+                return
 
         if not self.charm.state.external_client_relations:
             return

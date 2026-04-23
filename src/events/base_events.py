@@ -436,8 +436,8 @@ class BaseEvents(ops.Object):
                     self.charm.topology_manager.restart_observer()
                 except (ValkeyWorkloadCommandError, ValueError) as e:
                     logger.error("Failed to restart topology observer: %s", e)
-                finally:
-                    return
+
+            return
 
         # from here, code is only relevant for non-leader units
         if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):

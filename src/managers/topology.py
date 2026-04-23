@@ -110,9 +110,10 @@ class TopologyManager:
         try:
             os.kill(int(observer_pid), signal.SIGTERM)
             logger.info("Topology observer stopped")
-            self.state.unit_server.update({"topology_observer_pid": ""})
         except OSError:
             pass
+        finally:
+            self.state.unit_server.update({"topology_observer_pid": ""})
 
     def restart_observer(self) -> None:
         """Stop and start the topology observer to pickup host changes."""
