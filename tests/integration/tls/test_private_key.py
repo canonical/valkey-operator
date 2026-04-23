@@ -10,6 +10,7 @@ from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CERT_FILE,
     TLS_CHANNEL,
@@ -18,7 +19,7 @@ from tests.integration.helpers import (
     are_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_addresses,
+    get_cluster_endpoints,
     get_key,
     get_password,
     set_key,
@@ -31,7 +32,9 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_build_and_deploy(
+    charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str
+) -> None:
     """Deploy the charm under test and a TLS provider."""
     juju.deploy(
         charm,
@@ -39,10 +42,19 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=NUM_UNITS,
         trust=True,
     )
-
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(
+            status,
+            APP_NAME,
+            GLIDE_RUNNER_NAME,
+            idle_period=30,
+            unit_count={
+                APP_NAME: NUM_UNITS,
+                GLIDE_RUNNER_NAME: 1,
+            },
+        ),
         timeout=600,
     )
 
@@ -69,7 +81,7 @@ def test_invalid_private_key(juju: jubilant.Juju) -> None:
     )
 
 
-async def test_valid_private_key(juju: jubilant.Juju) -> None:
+def test_valid_private_key(juju: jubilant.Juju) -> None:
     logger.info("Updating user secret with valid private key now")
     private_key = PrivateKey.generate().raw
 
@@ -97,9 +109,10 @@ async def test_valid_private_key(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    addresses = get_cluster_addresses(juju, APP_NAME)
-    result = await set_key(
-        hostnames=addresses,
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
+    result = set_key(
+        juju=juju,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -108,13 +121,17 @@ async def test_valid_private_key(juju: jubilant.Juju) -> None:
     )
     assert result == "OK", "Failed to write data with TLS enabled"
 
-    assert await get_key(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+    assert (
+        get_key(
+            juju=juju,
+            endpoints=endpoints,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=True,
+            key=TEST_KEY,
+        )
+        == TEST_VALUE
+    ), "Failed to read data with TLS enabled"
 
     logger.info("Store current certificate before expiration")
     with open(TLS_KEY_FILE, "r") as key_file:
@@ -123,7 +140,7 @@ async def test_valid_private_key(juju: jubilant.Juju) -> None:
     assert private_key_on_unit == private_key, "Expected user-provided private key to be used"
 
 
-async def test_private_key_updated(juju: jubilant.Juju) -> None:
+def test_private_key_updated(juju: jubilant.Juju) -> None:
     logger.info("Getting current private key and certificate")
     with open(TLS_KEY_FILE, "r") as key_file:
         current_private_key = key_file.read()
@@ -147,9 +164,10 @@ async def test_private_key_updated(juju: jubilant.Juju) -> None:
     download_client_certificate_from_unit(juju, APP_NAME)
 
     logger.info("Check access with TLS enabled")
-    addresses = get_cluster_addresses(juju, APP_NAME)
-    result = await set_key(
-        hostnames=addresses,
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
+    result = set_key(
+        juju=juju,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=True,
@@ -158,13 +176,17 @@ async def test_private_key_updated(juju: jubilant.Juju) -> None:
     )
     assert result == "OK", "Failed to write data with TLS enabled"
 
-    assert await get_key(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-        key=TEST_KEY,
-    ) == bytes(TEST_VALUE, "utf-8"), "Failed to read data with TLS enabled"
+    assert (
+        get_key(
+            juju=juju,
+            endpoints=endpoints,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            tls_enabled=True,
+            key=TEST_KEY,
+        )
+        == TEST_VALUE
+    ), "Failed to read data with TLS enabled"
 
     logger.info("Getting and comparing updated private key and certificate")
     with open(TLS_KEY_FILE, "r") as key_file:

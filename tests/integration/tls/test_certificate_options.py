@@ -13,6 +13,7 @@ from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CERT_FILE,
     TLS_CHANNEL,
@@ -21,7 +22,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
     does_status_match,
     download_client_certificate_from_unit,
-    get_cluster_addresses,
+    get_cluster_endpoints,
     get_password,
     set_key,
 )
@@ -34,7 +35,9 @@ TEST_VALUE = "test_value"
 VAULT_NAME = "vault"
 
 
-def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_build_and_deploy(
+    charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm
+) -> None:
     """Deploy the charm under test and a TLS provider."""
     logger.info("Installing vault cli client")
     subprocess.run(
@@ -47,6 +50,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         num_units=NUM_UNITS,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
     juju.deploy(
         "vault-k8s" if substrate == Substrate.K8S else "vault",
@@ -60,7 +64,13 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(
+            status,
+            APP_NAME,
+            GLIDE_RUNNER_NAME,
+            idle_period=30,
+            unit_count={APP_NAME: NUM_UNITS, GLIDE_RUNNER_NAME: 1},
+        ),
         timeout=600,
     )
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
@@ -240,7 +250,7 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.wait(lambda status: are_apps_active_and_agents_idle(status, VAULT_NAME))
 
 
-async def test_certificate_denied(juju: jubilant.Juju) -> None:
+def test_certificate_denied(juju: jubilant.Juju) -> None:
     """Process denied certificate request."""
     logger.info("Integrate %s with %s for Intermediate CA", VAULT_NAME, TLS_NAME)
     juju.integrate(f"{VAULT_NAME}:tls-certificates-pki", TLS_NAME)
@@ -259,9 +269,10 @@ async def test_certificate_denied(juju: jubilant.Juju) -> None:
     )
 
     logger.info("Ensure access without TLS is still possible")
-    addresses = get_cluster_addresses(juju, APP_NAME)
-    result = await set_key(
-        hostnames=addresses,
+    endpoints = get_cluster_endpoints(juju, APP_NAME)
+    result = set_key(
+        juju=juju,
+        endpoints=endpoints,
         username=CharmUsers.VALKEY_ADMIN.value,
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         tls_enabled=False,

@@ -128,7 +128,11 @@ class ClusterManager(ManagerStatusProtocol):
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
-        status_list: list[StatusObject] = []
+        status_list: list[StatusObject] = self.state.statuses.get(
+            scope=scope,
+            component=self.name,
+            running_status_only=True,
+        ).root
 
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:

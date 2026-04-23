@@ -1,11 +1,11 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-
 type: charm
 
 platforms:
   ubuntu@24.04:amd64:
+  ubuntu@24.04:arm64:
 
 parts:
   # "poetry-deps" part name is a magic constant
@@ -45,11 +45,11 @@ parts:
     source: .
     after:
       - poetry-deps
-    poetry-export-extra-args: ['--without-hashes']
+    poetry-export-extra-args: ["--without-hashes"]
     build-packages:
-      - libffi-dev  # Needed to build Python dependencies with Rust from source
-      - libssl-dev  # Needed to build Python dependencies with Rust from source
-      - pkg-config  # Needed to build Python dependencies with Rust from source
+      - libffi-dev # Needed to build Python dependencies with Rust from source
+      - libssl-dev # Needed to build Python dependencies with Rust from source
+      - pkg-config # Needed to build Python dependencies with Rust from source
       - libprotobuf-dev # Needed to build Valkey-glide
       - protobuf-compiler # Needed to build Valkey-glide
       - git
@@ -103,8 +103,86 @@ actions:
         description: The username to use
         type: string
 
+  execute:
+    description: Execute an arbitrary Valkey command through the Glide client
+    params:
+      command:
+        description: The Valkey command to execute (e.g. "PING", "SET key value", "GET key")
+        type: string
+      config:
+        description: >
+          Serialized GlideClientConfiguration JSON produced by
+          glide_helpers.serialize_glide_config(). The charm connects using this
+          configuration directly, independent of any relation or glide-config
+          option.
+        type: string
+
   get-credentials:
     description: Action for fetching all available credentials from relations.
+
+  start-continuous-writes:
+    description: >
+      Start a background daemon that continuously writes incrementing integers
+      to a Valkey list using the relation-provided credentials. The daemon
+      survives between action calls and can be stopped with
+      stop-continuous-writes.
+    params:
+      sleep-interval:
+        description: Seconds to sleep between writes (float, default 1.0)
+        type: number
+        default: 1.0
+      clear-existing:
+        description: Delete any existing list values before starting (default true)
+        type: boolean
+        default: true
+
+  get-continuous-writes-state:
+    description: >
+      Return the last written value and total count from the continuous-writes
+      state file without stopping the daemon.
+
+  assert-continuous-writes-increasing:
+    description: >
+      Assert that the continuous-writes daemon is actively writing by sampling
+      the state file twice with a configurable wait between samples and
+      verifying the count has increased.
+    params:
+      wait:
+        description: Seconds to wait between the two state samples (default 10)
+        type: number
+        default: 10
+
+  clear-continuous-writes:
+    description: >
+      Delete the continuous-writes key from Valkey. Can be run while the daemon
+      is stopped to reset data between test runs.
+
+  stop-continuous-writes:
+    description: >
+      Stop the continuous-writes daemon and return the last written value and
+      total count of successful writes. Use this after a disruptive operation to
+      retrieve stats for consistency verification.
+    params:
+      clear:
+        description: Delete continuous-writes data from Valkey after stopping (default
+          false)
+        type: boolean
+        default: false
+
+  seed-data:
+    description: >
+      Seed Valkey with random 1 KB values using the relation-provided
+      credentials. Keys are written in batches of 5000 using MSET and named
+      "<key-prefix><index>".
+    params:
+      target-gb:
+        description: Target amount of data to seed in GB (default 1.0)
+        type: number
+        default: 1.0
+      key-prefix:
+        description: Prefix for generated keys (default "seed:key:")
+        type: string
+        default: "seed:key:"
 
 config:
   options:
@@ -112,11 +190,22 @@ config:
       description: Version of data interfaces to use
       type: int
       default: 1
+    glide-config:
+      description: >
+        JSON string with Glide connection options. When set, the charm uses
+        config-based connection instead of the Valkey relation. Expected keys:
+        endpoints (comma-separated "host:port" string), username (string),
+        password (string), tls_enabled (bool), cacert (base64-encoded PEM CA
+        certificate string), cert (base64-encoded PEM client certificate
+        string), key (base64-encoded PEM client private key string).
+      type: string
+      default: ""
     use-mtls:
       description: Flag to enable use of mutual TLS
       type: boolean
       default: false
     use-certificate-auth:
-      description: Flag to enable authentication via the common name of the client certificate
+      description: Flag to enable authentication via the common name of the client
+        certificate
       type: boolean
       default: false
