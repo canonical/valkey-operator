@@ -10,6 +10,9 @@ from tenacity import Retrying, stop_after_attempt, wait_fixed
 from literals import Substrate
 from tests.integration.cw_helpers import (
     assert_continuous_writes_increasing,
+    configure_cw_runner,
+    start_continuous_writes,
+    stop_continuous_writes,
 )
 from tests.integration.ha.helpers.helpers import (
     cut_network_from_unit,
@@ -24,16 +27,15 @@ from tests.integration.ha.helpers.helpers import (
 )
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
-    CharmUsers,
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
     get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
-    get_password,
     get_primary_ip,
 )
 
@@ -44,7 +46,11 @@ NUM_UNITS = 3
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 def test_build_and_deploy(
-    tls_enabled: bool, charm: str, juju: jubilant.Juju, substrate: Substrate
+    tls_enabled: bool,
+    charm: str,
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    glide_runner_charm: str,
 ) -> None:
     """Build the charm-under-test and deploy it with three units."""
     juju.deploy(
@@ -53,13 +59,16 @@ def test_build_and_deploy(
         num_units=NUM_UNITS,
         trust=True,
     )
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
 
     if tls_enabled:
         juju.deploy(TLS_NAME, channel=TLS_CHANNEL)
         juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
 
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
         timeout=600,
     )
 
@@ -70,14 +79,13 @@ def test_build_and_deploy(
 
 @pytest.mark.parametrize("tls_enabled", [False, True], ids=["tls_off", "tls_on"])
 @pytest.mark.parametrize("ip_change", [True, False], ids=["ip_change", "no_ip_change"])
-async def test_network_cut_primary(  # noqa: C901
+def test_network_cut_primary(  # noqa: C901
     tls_enabled: bool,
     ip_change: bool,
     juju: jubilant.Juju,
     substrate: Substrate,
     chaos_mesh,
-    c_writes,
-    c_writes_async_clean,
+    glide_runner,
 ) -> None:
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if ip_change and substrate == Substrate.K8S:
@@ -86,9 +94,8 @@ async def test_network_cut_primary(  # noqa: C901
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
 
-    c_writes.tls_enabled = tls_enabled
-    await c_writes.async_clear()
-    c_writes.start()
+    configure_cw_runner(juju, valkey_app=APP_NAME, tls_enabled=tls_enabled, substrate=substrate)
+    start_continuous_writes(juju, clear=True)
 
     # Get the current primary unit
     primary_ip = get_primary_ip(juju, APP_NAME, tls_enabled=tls_enabled)
@@ -169,12 +176,7 @@ async def test_network_cut_primary(  # noqa: C901
     # retry in case cluster hasn't stabilized yet after primary cut and new primary election
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = await get_number_connected_replicas(
-                addresses=addresses,
-                username=CharmUsers.VALKEY_ADMIN.value,
-                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-                tls_enabled=tls_enabled,
-            )
+            number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
             assert number_of_replicas == NUM_UNITS - 2, (
                 f"Expected {NUM_UNITS - 2} connected replicas, got {number_of_replicas}."
             )
@@ -195,12 +197,7 @@ async def test_network_cut_primary(  # noqa: C901
             f"The old primary endpoint should be marked as down in sentinels list of hostname {address} after network cut."
         )
 
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
 
     # restore network to the original primary unit
     logger.info("Restoring network to original primary unit at %s", primary_hostname)
@@ -215,7 +212,9 @@ async def test_network_cut_primary(  # noqa: C901
         ip_change=ip_change,
         unit_count=NUM_UNITS,
     )
-    c_writes.update()
+    configure_cw_runner(
+        juju, valkey_app=APP_NAME, tls_enabled=tls_enabled, substrate=substrate
+    )  # update hostnames after network restore
 
     logger.info(
         "Verifying that all units can reach the original primary unit at %s...",
@@ -257,12 +256,7 @@ async def test_network_cut_primary(  # noqa: C901
     # sometimes it takes some time for the old primary to be marked as replica and for sentinels to update their status, so we add a retry here
     for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
         with attempt:
-            number_of_replicas = await get_number_connected_replicas(
-                addresses=addresses,
-                username=CharmUsers.VALKEY_ADMIN.value,
-                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-                tls_enabled=tls_enabled,
-            )
+            number_of_replicas = get_number_connected_replicas(juju, tls_enabled=tls_enabled)
             assert number_of_replicas == NUM_UNITS - 1, (
                 f"Expected {NUM_UNITS - 1} connected replicas after network restoration, got {number_of_replicas}."
             )
@@ -288,9 +282,5 @@ async def test_network_cut_primary(  # noqa: C901
                 f"The old primary endpoint should be present in sentinels list of hostname {address} after network cut and no IP change."
             )
 
-    await assert_continuous_writes_increasing(
-        hostnames=addresses,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=tls_enabled,
-    )
+    assert_continuous_writes_increasing(juju)
+    stop_continuous_writes(juju)

@@ -8,35 +8,33 @@ import jubilant
 import pytest
 
 from literals import Substrate
-from tests.integration.continuous_writes import ContinuousWrites
-from tests.integration.helpers import APP_NAME
+from tests.integration.helpers import GLIDE_RUNNER_NAME, are_apps_active_and_agents_idle
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="function")
-def c_writes(juju: jubilant.Juju):
-    """Create instance of the ContinuousWrites."""
-    app = APP_NAME
-    logger.info("Creating ContinuousWrites instance for app with name %s", app)
-    return ContinuousWrites(juju, app)
+@pytest.fixture
+def glide_runner_charm(arch: str) -> str:
+    """Path to the charm file to use for testing."""
+    # Return str instead of pathlib.Path since python-libjuju's model.deploy(), juju deploy, and
+    # juju bundle files expect local charms to begin with `./` or `/` to distinguish them from
+    # Charmhub charms.
+    return f"./tests/integration/clients/requirer-charm/requirer-charm_ubuntu@24.04-{arch}.charm"
 
 
 @pytest.fixture(scope="function")
-def c_writes_runner(juju: jubilant.Juju, c_writes: ContinuousWrites):
-    """Start continuous write operations and clears writes at the end of the test."""
-    c_writes.start()
-    yield
-    logger.info("Clearing continuous writes after test completion")
-    logger.info(c_writes.clear())
-
-
-@pytest.fixture(scope="function")
-async def c_writes_async_clean(c_writes: ContinuousWrites):
-    """Clear continuous write operations at the end of the test."""
-    yield
-    logger.info("Clearing continuous writes after test completion")
-    logger.info(await c_writes.async_clear())
+def glide_runner(juju: jubilant.Juju, glide_runner_charm: str) -> None:
+    """Deploy continuous writes runner charm if not already deployed."""
+    if GLIDE_RUNNER_NAME not in juju.status().apps:
+        juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, GLIDE_RUNNER_NAME, idle_period=30
+            ),
+            timeout=600,
+            delay=5,
+            successes=3,
+        )
 
 
 @pytest.fixture(scope="session")

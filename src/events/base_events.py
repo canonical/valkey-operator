@@ -33,7 +33,7 @@ from literals import (
     Substrate,
     TLSState,
 )
-from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
+from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -197,11 +197,8 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        self.charm.status.set_running_status(
-            StartStatuses.SERVICE_STARTING.value,
-            scope="unit",
-            statuses_state=self.charm.state.statuses,
-            component_name=self.charm.cluster_manager.name,
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.STARTING_WAITING_VALKEY.value}
         )
         self.unit_fully_started.emit(
             is_primary=primary_endpoint

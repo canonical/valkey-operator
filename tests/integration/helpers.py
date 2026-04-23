@@ -4,11 +4,9 @@
 
 import json
 import logging
-import os
 import re
 import subprocess
-import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Literal, NamedTuple
@@ -19,9 +17,7 @@ from data_platform_helpers.advanced_statuses.models import StatusObject
 from dateutil.parser import parse
 from glide import (
     AdvancedGlideClientConfiguration,
-    GlideClient,
     GlideClientConfiguration,
-    InfoSection,
     NodeAddress,
     ServerCredentials,
     TlsAdvancedConfiguration,
@@ -39,17 +35,18 @@ from literals import (
     CharmUsers,
     Substrate,
 )
+from tests.integration.glide_helpers import serialize_glide_config
 
 logger = logging.getLogger(__name__)
 
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
+GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
-SEED_KEY_PREFIX = "seed:key:"
 TLS_NAME = "self-signed-certificates"
 TLS_CHANNEL = "1/edge"
 TLS_CERT_FILE = "client.pem"
@@ -248,6 +245,27 @@ def get_cluster_addresses(juju: jubilant.Juju, app_name: str) -> list[str]:
     return [unit.public_address for unit in status.get_units(app_name).values()]
 
 
+def get_cluster_endpoints(juju: jubilant.Juju, app_name: str) -> list[str]:
+    """Get the addresses of all units in the Valkey application.
+
+    Args:
+        juju: The Juju client instance.
+        app_name: The name of the Valkey application.
+
+    Returns:
+        A list of addresses for all units in the Valkey application.
+    """
+    model_info = juju.show_model()
+
+    if model_info.type == "kubernetes":
+        return [
+            unit_name.replace("/", "-") + "." + app_name + "-endpoints"
+            for unit_name in juju.status().get_units(app_name)
+        ]
+
+    return get_cluster_addresses(juju, app_name)
+
+
 def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     for secret in juju.secrets():
         if label == secret.label:
@@ -257,32 +275,25 @@ def get_secret_by_label(juju: jubilant.Juju, label: str) -> dict[str, str]:
     raise SecretNotFoundError(f"Secret with label {label} not found")
 
 
-@asynccontextmanager
-async def create_valkey_client(
-    hostnames: list[str],
+def get_glide_config(
+    juju: jubilant.Juju,
+    app_name: str,
+    endpoints: list[str] | None = None,
     username: str | None = CharmUsers.VALKEY_ADMIN.value,
     password: str | None = None,
     tls_enabled: bool = False,
-):
-    """Create and return a Valkey client connected to the cluster.
-
-    Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        username: The username for authentication.
-        password: The password for the internal user.
-        tls_enabled: Whether TLS certificates are needed.
-
-    Returns:
-        A Valkey client instance connected to the cluster.
-    """
+) -> GlideClientConfiguration:
+    """Construct a GlideClientConfiguration from Juju model information and secrets."""
+    endpoints = endpoints or get_cluster_endpoints(juju, app_name)
     addresses = [
-        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT) for host in hostnames
+        NodeAddress(host=host, port=TLS_PORT if tls_enabled else CLIENT_PORT) for host in endpoints
     ]
 
     credentials = None
     if username or password:
         credentials = ServerCredentials(username=username, password=password)
 
+    tls_cert = tls_key = tls_ca_cert = None
     if tls_enabled:
         # Read locally stored certificate files
         with open("client.pem", "rb") as f:
@@ -296,10 +307,6 @@ async def create_valkey_client(
         client_cert_pem=tls_cert if tls_enabled else None,
         client_key_pem=tls_key if tls_enabled else None,
         root_pem_cacerts=tls_ca_cert if tls_enabled else None,
-        # We only set FQDN in the certs the IP is not in the cert
-        # so we need to skip hostname verification
-        # we cannot use the hostname because the runner cannot resolve it
-        use_insecure_tls=True if tls_enabled else None,
     )
 
     client_config = GlideClientConfiguration(
@@ -308,12 +315,7 @@ async def create_valkey_client(
         use_tls=True if tls_enabled else False,
         advanced_config=AdvancedGlideClientConfiguration(tls_config=tls_config),
     )
-
-    client = await GlideClient.create(client_config)
-    try:
-        yield client
-    finally:
-        await client.close()
+    return client_config
 
 
 def set_password(
@@ -418,62 +420,6 @@ def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN
     return secret.get(f"{user.value}-password", "")
 
 
-async def seed_valkey(juju: jubilant.Juju, target_gb: float = 1.0) -> None:
-    # Connect to Valkey
-    addresses = get_cluster_addresses(juju, APP_NAME)
-
-    # Configuration
-    value_size_bytes = 1024  # 1KB per value
-    batch_size = 5000  # Commands per pipeline
-    total_bytes_target = target_gb * 1024 * 1024 * 1024
-    total_keys = total_bytes_target // value_size_bytes
-
-    logger.info(
-        "Targeting ~%sGB (%s keys of %s bytes each)",
-        target_gb,
-        total_keys,
-        value_size_bytes,
-    )
-
-    start_time = time.time()
-    keys_added = 0
-
-    # Generate a fixed random block to reuse (saves CPU cycles on generation)
-    random_data = os.urandom(value_size_bytes).hex()[:value_size_bytes]
-    async with create_valkey_client(addresses, password=get_password(juju)) as client:
-        try:
-            while keys_added < total_keys:
-                data = {
-                    f"{SEED_KEY_PREFIX}{key_idx}": random_data
-                    for key_idx in range(keys_added, keys_added + batch_size)
-                }
-
-                if await client.mset(data) != "OK":
-                    raise RuntimeError("Failed to set data in Valkey cluster")
-
-                keys_added += batch_size
-
-                # Progress reporting
-                elapsed = time.time() - start_time
-                percent = (keys_added / total_keys) * 100
-                logger.info(
-                    "Progress: %.1f%% | Keys: %s | Elapsed: %.1f s",
-                    percent,
-                    keys_added,
-                    elapsed,
-                )
-
-        except Exception as e:
-            logger.error("Error: %s", e)
-        finally:
-            total_time = time.time() - start_time
-            logger.info(
-                "Seeding complete! Added %s keys in %.2f seconds.",
-                keys_added,
-                total_time,
-            )
-
-
 valkey_cli_result = NamedTuple(
     "ValkeyCliResult", [("stdout", str), ("stderr", str), ("returncode", int)]
 )
@@ -530,32 +476,47 @@ def get_quorum(juju: jubilant.Juju, unit_name: str) -> int:
     return int(json.loads(result.stdout)["quorum"])
 
 
-async def set_key(
-    hostnames: list[str],
+def set_key(
+    juju: jubilant.Juju,
+    endpoints: list[str],
     username: str,
     password: str,
     key: str,
     value: str,
     tls_enabled: bool = False,
-) -> bytes | None:
+) -> str:
     """Write a key-value pair to the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
-        key: The key to write.
-        value: The value to write.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        endpoints: List of endpoints of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
+        key: The key to set.
+        value: The value to set.
         tls_enabled: Whether TLS certificates are needed.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.set(key, value)
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        endpoints=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": f"SET {key} {value}", "config": serialize_glide_config(glide_config)},
+    )
+    if task.status != "completed":
+        raise RuntimeError(f"Command execution failed: {task.results}")
+    return json.loads(task.results.get("result", "null"))
 
 
-async def get_key(
-    hostnames: list[str],
+def get_key(
+    juju: jubilant.Juju,
+    endpoints: list[str],
     username: str,
     password: str,
     key: str,
@@ -564,16 +525,29 @@ async def get_key(
     """Read a value from the Valkey cluster by key.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        endpoints: List of endpoints of the Valkey cluster nodes.
         key: The key to read.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.get(key)
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        endpoints=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": f"GET {key}", "config": serialize_glide_config(glide_config)},
+    )
+    if task.status != "completed":
+        raise RuntimeError(f"Command execution failed: {task.results}")
+    return json.loads(task.results.get("result", "null"))
 
 
 def ping(
@@ -603,8 +577,10 @@ def ping(
         return False
 
 
-async def ping_cluster(
-    hostnames: list[str],
+def ping_cluster(
+    juju: jubilant.Juju,
+    app_name: str,
+    endpoints: list[str],
     username: str,
     password: str,
     tls_enabled: bool = False,
@@ -612,7 +588,9 @@ async def ping_cluster(
     """Ping all nodes in the Valkey cluster.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        app_name: The name of the Valkey application
+        endpoints: List of endpoints of the Valkey cluster nodes.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
@@ -620,37 +598,51 @@ async def ping_cluster(
     Returns:
         True if all nodes respond to a ping, False otherwise.
     """
-    async with create_valkey_client(
-        hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-    ) as client:
-        return await client.ping() == "PONG".encode()
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=app_name,
+        endpoints=endpoints,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        f"{GLIDE_RUNNER_NAME}/leader",
+        "execute",
+        params={"command": "ping", "config": serialize_glide_config(glide_config)},
+    )
+    return task.status == "completed" and json.loads(task.results.get("result", "")) == "PONG"
 
 
-async def get_number_connected_replicas(
-    addresses: list[str],
-    username: str,
-    password: str,
+def get_number_connected_replicas(
+    juju: jubilant.Juju,
+    glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader",
     tls_enabled: bool = False,
 ) -> int:
     """Get the number of connected replicas in the Valkey cluster.
 
     Args:
-        addresses: List of addresses of the Valkey cluster nodes.
-        username: The username for authentication.
-        password: The password for authentication.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        glide_runner_unit: The unit name of the glide-runner to execute the command on
         tls_enabled: Whether TLS certificates are needed.
 
     Returns:
         The number of connected replicas.
     """
-    async with create_valkey_client(
-        hostnames=addresses,
-        username=username,
-        password=password,
+    glide_config = get_glide_config(
+        juju=juju,
+        app_name=APP_NAME,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
         tls_enabled=tls_enabled,
-    ) as client:
-        info = (await client.info([InfoSection.REPLICATION])).decode()
-    search_result = re.search(r"connected_slaves:([\d+])", info)
+    )
+    task_result = juju.run(
+        glide_runner_unit,
+        "execute",
+        {"command": "info replication", "config": serialize_glide_config(glide_config)},
+    )
+    assert task_result.status == "completed", f"Command execution failed: {task_result.results}"
+    search_result = re.search(r"connected_slaves:([\d+])", task_result.results.get("result", ""))
     if not search_result:
         raise ValueError("Could not parse number of connected replicas from info output")
     return int(search_result.group(1))
@@ -664,33 +656,46 @@ class WrongPassError(Exception):
     """Raised when authentication fails due to incorrect credentials."""
 
 
-async def auth_test(
-    hostnames: list[str], username: str | None, password: str | None, tls_enabled: bool = False
+def auth_test(
+    juju: jubilant.Juju,
+    endpoints: list[str] | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    tls_enabled: bool = False,
+    glide_runner_unit: str = f"{GLIDE_RUNNER_NAME}/leader",
 ) -> bool:
     """Test authentication to the Valkey cluster by attempting to ping it.
 
     Args:
-        hostnames: List of hostnames of the Valkey cluster nodes.
+        juju: An instance of Jubilant's Juju class on which to run Juju commands
+        endpoints: List of endpoints of the Valkey cluster nodes. If None, will be retrieved from Juju.
         username: The username for authentication.
         password: The password for authentication.
         tls_enabled: Whether TLS certificates are needed.
+        glide_runner_unit: The unit name of the glide-runner to execute the command on
 
     Returns:
         True if authentication is successful and the cluster responds to a ping, False otherwise.
     """
-    try:
-        async with create_valkey_client(
-            hostnames=hostnames, username=username, password=password, tls_enabled=tls_enabled
-        ) as client:
-            return await client.ping() == "PONG".encode()
-    except Exception as e:
-        error_message = str(e)
-        if "NOAUTH" in error_message:
-            raise NoAuthError("Authentication failed: NOAUTH error") from e
-        elif "WRONGPASS" in error_message:
-            raise WrongPassError("Authentication failed: WRONGPASS error") from e
-        else:
-            raise e
+    glide_config = get_glide_config(
+        juju=juju,
+        endpoints=endpoints,
+        app_name=APP_NAME,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+    )
+    task = juju.run(
+        glide_runner_unit,
+        "execute",
+        params={"command": "ping", "config": serialize_glide_config(glide_config)},
+    )
+    result = json.loads(task.results.get("result", ""))
+    if "NOAUTH" in result:
+        raise NoAuthError("Authentication failed: NOAUTH error")
+    elif "WRONGPASS" in result:
+        raise WrongPassError("Authentication failed: WRONGPASS error")
+    return task.status == "completed" and result == "PONG"
 
 
 def remove_number_units(

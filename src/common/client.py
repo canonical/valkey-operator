@@ -372,9 +372,11 @@ class SentinelClient(CliClient):
             == "OK"
         )
 
+    # wait for 3m+10 for the failover to finish
+    # sentinel waits 3m before timing out a failover
     @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_fixed(2),
+        stop=stop_after_attempt(19),
+        wait=wait_fixed(10),
         retry=retry_if_result(lambda in_progress: in_progress),
         retry_error_callback=lambda _: True,
     )
