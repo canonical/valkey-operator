@@ -195,6 +195,14 @@ class TLSEvents(ops.Object):
             finally:
                 return
 
+        if self.charm.state.unit_server.is_started:
+            try:
+                primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            except ValkeyCannotGetPrimaryIPError as e:
+                logger.error("No Primary available: %s", e)
+                event.defer()
+                return
+
         try:
             self._enable_client_tls()
         except (
@@ -216,7 +224,9 @@ class TLSEvents(ops.Object):
 
         if self.charm.state.unit_server.is_started:
             logger.info("Restarting Sentinel")
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.restart_workload.emit(
+                restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+            )
         self._trigger_relation_change_if_required()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
@@ -273,23 +283,21 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             self.charm.unit.open_port("tcp", CLIENT_PORT)
-            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
-            logger.info("Restarting Sentinel")
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
             self._trigger_relation_change_if_required()
 
         try:
             self.charm.tls_manager.create_and_store_self_signed_certificate()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError) as e:
             logger.error("Failed to setup peer-TLS: %s", e)
             event.defer()
             return
 
         logger.info("Restarting Sentinel")
-        self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        self.charm.restart_workload.emit(
+            restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+        )
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle TLS related parts of update_status event."""
@@ -359,7 +367,6 @@ class TLSEvents(ops.Object):
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
-        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
 
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""
@@ -381,7 +388,6 @@ class TLSEvents(ops.Object):
                 logger.info("Reload TLS certificates after all units have added the new CA")
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
                 self._trigger_relation_change_if_required()
 

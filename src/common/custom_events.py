@@ -10,23 +10,30 @@ class RestartWorkloadEvent(ops.EventBase):
     """Event for restarting the workload when certain events happen, e.g. IP change."""
 
     def __init__(
-        self, handle: ops.Handle, restart_valkey: bool = True, restart_sentinel: bool = True
+        self,
+        handle: ops.Handle,
+        restart_valkey: bool = True,
+        restart_sentinel: bool = True,
+        primary_endpoint: str = "",
     ):
         super().__init__(handle)
         self.restart_valkey = restart_valkey
         self.restart_sentinel = restart_sentinel
+        self.primary_endpoint = primary_endpoint
 
     def snapshot(self) -> dict[str, str]:
         """Save the state of the event."""
         return {
             "restart_valkey": str(self.restart_valkey),
             "restart_sentinel": str(self.restart_sentinel),
+            "primary_endpoint": str(self.primary_endpoint),
         }
 
     def restore(self, snapshot: dict[str, str]) -> None:
         """Restore the state of the event."""
         self.restart_valkey = snapshot.get("restart_valkey", "True") == "True"
         self.restart_sentinel = snapshot.get("restart_sentinel", "True") == "True"
+        self.primary_endpoint = snapshot.get("primary_endpoint", "")
 
 
 class UnitFullyStartedEvent(ops.EventBase):

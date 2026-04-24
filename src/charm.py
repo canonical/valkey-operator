@@ -94,6 +94,12 @@ class ValkeyCharm(ops.CharmBase):
             if event.restart_valkey:
                 self.workload.restart(self.workload.valkey_service)
             if event.restart_sentinel:
+                # if primary endpoint is given, write sentinel config
+                # this is necessary as Sentinel may rewrite its config file since the last write
+                if event.primary_endpoint != "":
+                    self.config_manager.set_sentinel_config_properties(
+                        primary_endpoint=event.primary_endpoint
+                    )
                 self.sentinel_manager.restart_service()
         except ValkeyServicesFailedToStartError as e:
             logger.error(e)
