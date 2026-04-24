@@ -9,9 +9,10 @@ import logging
 import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
+from common.custom_events import TopologyChangedCharmEvents
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from events.external_clients import ExternalClientsEvents, TopologyChangedCharmEvents
+from events.external_clients import ExternalClientsEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
