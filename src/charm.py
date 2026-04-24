@@ -9,7 +9,9 @@ import logging
 import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
-from common.custom_events import TopologyChangedCharmEvents
+from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
+from common.exceptions import ValkeyServicesFailedToStartError
+from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 class ValkeyCharm(ops.CharmBase):
     """Charmed Operator for Valkey."""
 
+    restart_workload = ops.EventSource(RestartWorkloadEvent)
     on = TopologyChangedCharmEvents()
 
     def __init__(self, *args) -> None:
@@ -70,6 +73,49 @@ class ValkeyCharm(ops.CharmBase):
         self.base_events = BaseEvents(self)
         self.tls_events = TLSEvents(self)
         self.client_events = ExternalClientsEvents(self)
+
+        self.framework.observe(self.restart_workload, self._on_restart_workload)
+
+    def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
+        """Handle the restart_workload event."""
+        logger.info(
+            "Restarting workload Event. Restart Valkey: %s, Restart Sentinel: %s",
+            event.restart_valkey,
+            event.restart_sentinel,
+        )
+        restart_lock = RestartLock(self.state)
+        restart_lock.request_lock()
+        if not restart_lock.is_held_by_this_unit:
+            logger.info("Waiting for lock to restart workload")
+            event.defer()
+            return
+
+        try:
+            if event.restart_valkey:
+                self.workload.restart(self.workload.valkey_service)
+            if event.restart_sentinel:
+                self.sentinel_manager.restart_service()
+        except ValkeyServicesFailedToStartError as e:
+            logger.error(e)
+            restart_lock.release_lock()
+            event.defer()
+            return
+
+        if event.restart_valkey and not self.cluster_manager.is_healthy(check_replica_sync=False):
+            self.state.unit_server.update({"is_valkey_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+        self.state.unit_server.update({"is_valkey_healthy": True})
+
+        if event.restart_sentinel and not self.sentinel_manager.is_healthy():
+            self.state.unit_server.update({"is_sentinel_healthy": False})
+            restart_lock.release_lock()
+            event.defer()
+            return
+
+        self.state.unit_server.update({"is_sentinel_healthy": True})
+        restart_lock.release_lock()
 
 
 if __name__ == "__main__":

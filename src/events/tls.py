@@ -15,10 +15,10 @@ from charmlibs.interfaces.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 
+from common.custom_events import RefreshTLSCertificatesEvent
 from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyCertificatesNotReadyError,
-    ValkeyServicesFailedToStartError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
@@ -35,10 +35,6 @@ if TYPE_CHECKING:
     from charm import ValkeyCharm
 
 logger = logging.getLogger(__name__)
-
-
-class RefreshTLSCertificatesEvent(ops.EventBase):
-    """Event for refreshing peer TLS certificates."""
 
 
 class TLSEvents(ops.Object):
@@ -114,7 +110,7 @@ class TLSEvents(ops.Object):
                 self._orchestrate_ca_rotation()
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
-            except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
+            except ValkeyTLSLoadError:
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
             finally:
@@ -141,7 +137,7 @@ class TLSEvents(ops.Object):
         except ValkeyCertificatesNotReadyError:
             logger.debug("Not all units ready")
             return
-        except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError, ValkeyWorkloadCommandError):
+        except (ValkeyTLSLoadError, ValkeyWorkloadCommandError):
             logger.error("Failed to reload TLS certificates")
             event.defer()
             return
@@ -190,10 +186,10 @@ class TLSEvents(ops.Object):
 
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.sentinel_manager.restart_service()
+                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
-            except (ValkeyServicesFailedToStartError, ValkeyTLSLoadError):
+            except ValkeyTLSLoadError:
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
             finally:
@@ -201,13 +197,9 @@ class TLSEvents(ops.Object):
 
         try:
             self._enable_client_tls()
-            self.charm.tls_manager.set_tls_state(TLSState.TLS)
-            self.charm.unit.close_port("tcp", CLIENT_PORT)
-            self._trigger_relation_change_if_required()
         except (
             ValkeyCannotGetPrimaryIPError,
             ValkeyWorkloadCommandError,
-            ValkeyServicesFailedToStartError,
             ValkeyTLSLoadError,
             ValueError,
         ):
@@ -218,6 +210,14 @@ class TLSEvents(ops.Object):
             logger.warning("Not all units have stored the client certificate")
             event.defer()
             return
+
+        self.charm.tls_manager.set_tls_state(TLSState.TLS)
+        self.charm.unit.close_port("tcp", CLIENT_PORT)
+
+        if self.charm.state.unit_server.is_started:
+            logger.info("Restarting Sentinel")
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        self._trigger_relation_change_if_required()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
         """Handle the `certificate-denied` event from TLS provider."""
@@ -251,25 +251,21 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError as e:
+            logger.error("No Primary available: %s", e)
+            event.defer()
+            return
+
         if self.charm.state.unit_server.is_tls_enabled:
             logger.info("Disabling client TLS")
             self.charm.tls_manager.set_tls_state(TLSState.TO_NO_TLS)
             try:
-                primary_ip = self.charm.sentinel_manager.get_primary_ip()
                 self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.config_manager.set_sentinel_config_properties(
-                    primary_endpoint=primary_ip
-                )
-                self.charm.sentinel_manager.restart_service()
-            except (
-                ValkeyCannotGetPrimaryIPError,
-                ValkeyWorkloadCommandError,
-                ValkeyServicesFailedToStartError,
-                ValkeyTLSLoadError,
-                ValueError,
-            ):
+            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
                 logger.error("Failed to disable client TLS")
                 event.defer()
                 return
@@ -277,26 +273,23 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             self.charm.unit.open_port("tcp", CLIENT_PORT)
+            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
+            logger.info("Restarting Sentinel")
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
             self._trigger_relation_change_if_required()
 
         try:
             self.charm.tls_manager.create_and_store_self_signed_certificate()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.config_manager.set_sentinel_config_properties(
-                self.charm.sentinel_manager.get_primary_ip()
-            )
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyCannotGetPrimaryIPError,
-            ValkeyWorkloadCommandError,
-            ValkeyServicesFailedToStartError,
-            ValkeyTLSLoadError,
-            ValueError,
-        ) as e:
+            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
+        except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError) as e:
             logger.error("Failed to setup peer-TLS: %s", e)
             event.defer()
             return
+
+        logger.info("Restarting Sentinel")
+        self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle TLS related parts of update_status event."""
@@ -364,10 +357,9 @@ class TLSEvents(ops.Object):
         logger.info("Enabling client TLS in Valkey")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
         tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
-        self.charm.sentinel_manager.restart_service()
+        self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
 
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""
@@ -389,7 +381,7 @@ class TLSEvents(ops.Object):
                 logger.info("Reload TLS certificates after all units have added the new CA")
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.sentinel_manager.restart_service()
+                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
                 self._trigger_relation_change_if_required()
 
@@ -408,7 +400,7 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.sentinel_manager.restart_service()
+                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)
 
     def _trigger_relation_change_if_required(self) -> None:
