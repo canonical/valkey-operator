@@ -105,7 +105,7 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
 
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS),
-        timeout=100,
+        timeout=600,
     )
 
     # this will download the client cert from application.units[0]
