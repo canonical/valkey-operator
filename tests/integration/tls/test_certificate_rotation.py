@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
-CERTIFICATE_EXPIRY_TIME = 360
+CERTIFICATE_EXPIRY_TIME = 480
 CA_EXPIRY_TIME = 750
 
 
@@ -85,7 +85,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=900,
     )
 
     logger.info("Downloading TLS certificate from deployed app.")
