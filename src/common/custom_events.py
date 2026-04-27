@@ -7,7 +7,17 @@ import ops
 
 
 class RestartWorkloadEvent(ops.EventBase):
-    """Event for restarting the workload when certain events happen, e.g. IP change."""
+    """Event for restarting the workload when certain events happen, e.g. IP change.
+
+    Args:
+        restart_valkey(bool): Whether to restart the Valkey service
+        restart_sentinel(bool): Whether to restart the Sentinel service
+        primary_endpoint(str): The address of the Primary Valkey server; if set, updates Sentinel's
+                            config immediately before restarting Sentinel. This is required to
+                            avoid race conditions between updating the Sentinel config through
+                            the charm code earlier (in the event handler emitting this event)
+                            and the config-rewrite that Sentinel does on its own.
+    """
 
     def __init__(
         self,

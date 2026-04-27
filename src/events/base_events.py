@@ -611,7 +611,8 @@ class BaseEvents(ops.Object):
             not self.charm.state.unit_server.is_active
             or self.charm.state.unit_server.is_being_removed
             or self.model.app.planned_units() == 0
-            # to avoid race conditions between setting sentinel config here and in TLS switchover
+            # to avoid failures if a Sentinel has not been restarted yet
+            # does not rely on TLS state because databag might be outdated in deferred events
             or self.charm.state.client_tls_relation
             and not self.charm.state.unit_server.is_tls_enabled
             or self.charm.state.unit_server.is_tls_enabled

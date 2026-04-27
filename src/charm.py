@@ -10,7 +10,7 @@ import ops
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
-from common.exceptions import ValkeyServicesFailedToStartError
+from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCommandError
 from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
@@ -101,7 +101,10 @@ class ValkeyCharm(ops.CharmBase):
                         primary_endpoint=event.primary_endpoint
                     )
                 self.sentinel_manager.restart_service()
-        except ValkeyServicesFailedToStartError as e:
+        except (
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error(e)
             restart_lock.release_lock()
             event.defer()
