@@ -32,7 +32,7 @@ NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 CERTIFICATE_EXPIRY_TIME = 360
-CA_EXPIRY_TIME = 430
+CA_EXPIRY_TIME = 750
 
 
 def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
@@ -60,7 +60,7 @@ def test_build_and_deploy(
     )
     juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
 
-    tls_config = {"certificate-validity": "6m", "ca-common-name": "valkey"}
+    tls_config = {"certificate-validity": "8m", "ca-common-name": "valkey"}
     juju.deploy(TLS_NAME, channel=TLS_CHANNEL, config=tls_config)
     juju.wait(
         lambda status: are_agents_idle(
@@ -85,7 +85,7 @@ def test_certificate_expiration(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=900,
+        timeout=600,
     )
 
     logger.info("Downloading TLS certificate from deployed app.")
@@ -245,7 +245,7 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     The rotation is triggered by the expiration of the CA cert on TLS provider side.
     """
     logger.info("Adjust CA and certificate validity on TLS provider")
-    tls_config = {"certificate-validity": "6m", "root-ca-validity": "12m"}
+    tls_config = {"certificate-validity": "10m", "root-ca-validity": "20m"}
     juju.config(app=TLS_NAME, values=tls_config)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
