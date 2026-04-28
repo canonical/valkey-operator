@@ -44,6 +44,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class TopologyChangedEvent(ops.EventBase):
+    """A custom event for topology changes."""
+
+
+class TopologyChangedCharmEvents(ops.CharmEvents):
+    """A CharmEvent extension to observe topology changes."""
+
+    topology_changed = ops.EventSource(TopologyChangedEvent)
+
+
 class ExternalClientsEvents(ops.Object):
     """Handle all events for external client relations."""
 

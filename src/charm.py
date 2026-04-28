@@ -14,7 +14,7 @@ from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCo
 from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from events.external_clients import ExternalClientsEvents
+from events.external_clients import ExternalClientsEvents, TopologyChangedCharmEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
