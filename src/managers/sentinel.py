@@ -381,12 +381,14 @@ class SentinelManager(ManagerStatusProtocol):
         client.set(self.state.endpoint, PRIMARY_NAME, "quorum", str(quorum))
 
     def reconcile_k8s_services(self) -> None:
-        """Create or update the services and pod labels in Kubernetes."""
+        """Create or update the services in Kubernetes."""
         valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
         self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
         self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
 
+    def set_pod_labels(self) -> None:
+        """Set labels for primary and replica pods in Kubernetes."""
         primary_endpoint = self.get_primary_ip()
         for unit in self.state.servers:
             if not unit.is_active:

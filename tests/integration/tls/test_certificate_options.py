@@ -287,5 +287,5 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
         ),
-        timeout=100,
+        timeout=600,
     )

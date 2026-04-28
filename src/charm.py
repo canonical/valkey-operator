@@ -11,7 +11,7 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
-from events.external_clients import ExternalClientsEvents
+from events.external_clients import ExternalClientsEvents, TopologyChangedCharmEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
@@ -19,6 +19,7 @@ from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
+from managers.topology import TopologyManager
 from workload_k8s import ValkeyK8sWorkload
 from workload_vm import ValkeyVmWorkload
 
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 class ValkeyCharm(ops.CharmBase):
     """Charmed Operator for Valkey."""
+
+    on = TopologyChangedCharmEvents()
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
@@ -50,6 +53,7 @@ class ValkeyCharm(ops.CharmBase):
         self.sentinel_manager = SentinelManager(state=self.state, workload=self.workload)
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
         self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
+        self.topology_manager = TopologyManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
         self.status = StatusHandler(

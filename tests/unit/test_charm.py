@@ -498,13 +498,17 @@ def test_config_changed_leader_unit(cloud_spec):
     )
     with (
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
         mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -620,15 +624,19 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
         mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
+        restart_sentinel.assert_called_once()
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spec):
@@ -658,6 +666,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
         patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch(
             "common.client.ValkeyClient.exec_cli_command",
             side_effect=ValkeyWorkloadCommandError("Failed to execute command"),
@@ -668,6 +677,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         state_out = manager.run()
         mock_update_password.assert_not_called()
         mock_set_acl_file.assert_called_once()
+        set_sentinel_acl_file.assert_called_once()
         mock_exec_command.assert_called_once_with(
             ["acl", "load"], hostname="valkey-0.valkey-endpoints"
         )

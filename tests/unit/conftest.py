@@ -33,6 +33,11 @@ def mock_k8s_client(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_start_topology_observer(mocker):
+    mocker.patch("managers.topology.TopologyManager.start_observer")
+
+
+@pytest.fixture(autouse=True)
 def tenacity_wait(mocker):
     mocker.patch("tenacity.nap.time")
 

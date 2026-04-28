@@ -26,6 +26,10 @@ SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
 SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 
+# todo: these paths require root access, should be moved to dedicated user directories
+TOPOLOGY_OBSERVER_LOG_FILE = "/var/log/topology_observer.log"
+TOPOLOGY_OBSERVER_TLS_CA_FILE = "/etc/ssl/certs/valkey_ca.pem"
+
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"

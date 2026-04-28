@@ -1612,6 +1612,22 @@ files = [
 crypto-eth-addresses = ["eth-hash[pycryptodome] (>=0.7.0)"]
 
 [[package]]
+name = "valkey"
+version = "6.1.1"
+description = "Python client for Valkey forked from redis-py"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "valkey-6.1.1-py3-none-any.whl", hash = "sha256:e2691541c6e1503b53c714ad9a35551ac9b7c0bbac93865f063dbc859a46de92"},
+    {file = "valkey-6.1.1.tar.gz", hash = "sha256:5880792990c6c2b5eb604a5ed5f98f300880b6dd92d123819b66ed54bb259731"},
+]
+
+[package.extras]
+libvalkey = ["libvalkey (>=4.0.1)"]
+ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==23.2.1)", "requests (>=2.31.0)"]
+
+[[package]]
 name = "valkey-glide"
 version = "0.0.0"
 description = "Valkey GLIDE Async client. Supports Valkey and Redis OSS."
@@ -1673,4 +1689,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "54a93e43d0c1bbb152b9f6f3ac3fdc4d75bd5916d2a77624e9b8ced5f7222495"
+content-hash = "b8ff2b895655a7499b09645e24a9c5a883911dc1d4eaee66cb2d275d93522954"

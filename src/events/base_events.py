@@ -250,6 +250,14 @@ class BaseEvents(ops.Object):
             self.charm.unit.open_port("tcp", CLIENT_PORT)
         self.charm.unit.open_port("tcp", TLS_PORT)
 
+        if not self.charm.unit.is_leader():
+            return
+
+        try:
+            self.charm.topology_manager.start_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to start topology observer: %s", e)
+
     def _on_peer_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
         try:
@@ -264,6 +272,15 @@ class BaseEvents(ops.Object):
         for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
             lock.process()
 
+        if not self.charm.state.unit_server.is_active:
+            return
+
+        # need to pick up scaling operations, TLS switchover, CA rotation and so on
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
+
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
         try:
@@ -272,10 +289,27 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
+            return
+
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
+
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
+            return
+
+        if not self.charm.unit.is_leader():
+            return
+
+        try:
+            self.charm.topology_manager.start_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to start topology observer: %s", e)
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
@@ -293,6 +327,12 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        if self.charm.state.unit_server.is_active:
+            try:
+                self.charm.topology_manager.start_observer()
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                logger.error("Failed to start topology observer: %s", e)
 
         if self.charm.state.cluster.internal_users_credentials:
             logger.debug("Internal user credentials already set")
@@ -367,6 +407,12 @@ class BaseEvents(ops.Object):
                 event.defer()
                 return
 
+            # propagate updated credentials to topology observer
+            try:
+                self.charm.topology_manager.restart_observer()
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                logger.error("Failed to restart topology observer: %s", e)
+
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
         if not (admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG)):
@@ -384,6 +430,13 @@ class BaseEvents(ops.Object):
                 ):
                     event.defer()
                     return
+
+                # propagate updated credentials to topology observer
+                try:
+                    self.charm.topology_manager.restart_observer()
+                except (ValkeyWorkloadCommandError, ValueError) as e:
+                    logger.error("Failed to restart topology observer: %s", e)
+
             return
 
         # from here, code is only relevant for non-leader units
@@ -391,8 +444,11 @@ class BaseEvents(ops.Object):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
                 self.charm.config_manager.set_acl_file()
+                self.charm.config_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
+                    # todo: request rolling restart
+                    self.charm.sentinel_manager.restart_service()
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -454,8 +510,11 @@ class BaseEvents(ops.Object):
             logger.info("Password(s) for internal users have changed")
             try:
                 self.charm.config_manager.set_acl_file(passwords=new_passwords)
+                self.charm.config_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
+                    # todo: request rolling restart
+                    self.charm.sentinel_manager.restart_service()
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -548,6 +607,9 @@ class BaseEvents(ops.Object):
                 "Failover completed, new primary ip %s",
                 primary_ip,
             )
+
+        if self.charm.unit.is_leader():
+            self.charm.topology_manager.stop_observer()
 
         # stop valkey and sentinel processes
         self.charm.workload.stop()

@@ -43,6 +43,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class TopologyChangedEvent(ops.EventBase):
+    """A custom event for topology changes."""
+
+
+class TopologyChangedCharmEvents(ops.CharmEvents):
+    """A CharmEvent extension to observe topology changes."""
+
+    topology_changed = ops.EventSource(TopologyChangedEvent)
+
+
 class ExternalClientsEvents(ops.Object):
     """Handle all events for external client relations."""
 
@@ -84,9 +94,12 @@ class ExternalClientsEvents(ops.Object):
         self.framework.observe(
             self.certificate_transfer.on.certificates_removed, self._on_ca_removed
         )
+        self.framework.observe(self.charm.on.topology_changed, self._on_topology_changed)
 
     def _on_bulk_resources_requested(
-        self, event: BulkResourcesRequestedEvent[RequirerCommonModel] | ResourceRequestedEvent
+        self,
+        event: BulkResourcesRequestedEvent[RequirerCommonModel]
+        | ResourceRequestedEvent[RequirerCommonModel],
     ) -> None:
         """Handle bulk resources requested event."""
         if not self.charm.unit.is_leader():
@@ -195,6 +208,7 @@ class ExternalClientsEvents(ops.Object):
         if self.charm.unit.is_leader() and self.charm.state.substrate == Substrate.K8S:
             try:
                 self.charm.sentinel_manager.reconcile_k8s_services()
+                self.charm.sentinel_manager.set_pod_labels()
             except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
                 logger.error("Error updating Kubernetes services: %s", e)
                 event.defer()
@@ -370,5 +384,29 @@ class ExternalClientsEvents(ops.Object):
             ValkeyWorkloadCommandError,
         ) as e:
             logger.error("Error removing CA certificates for external clients: %s", e)
+            event.defer()
+            return
+
+    def _on_topology_changed(self, event: TopologyChangedEvent) -> None:
+        """Handle custom events for topology changes."""
+        if not self.charm.unit.is_leader():
+            return
+
+        logger.info("Received topology-changed event")
+        if self.charm.state.substrate == Substrate.K8S:
+            try:
+                self.charm.sentinel_manager.set_pod_labels()
+            except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
+                logger.error("Error updating Kubernetes services: %s", e)
+                event.defer()
+                return
+
+        if not self.charm.state.external_client_relations:
+            return
+
+        try:
+            self._update_client_relations()
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Error updating client relations: %s", e)
             event.defer()
             return

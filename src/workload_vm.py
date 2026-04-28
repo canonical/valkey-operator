@@ -93,8 +93,8 @@ class ValkeyVmWorkload(WorkloadBase):
             revision = str(SNAP_REVISIONS[platform.machine()])
 
         try:
-            # TODO revesit this logic after snapd update is released
-            # refresh snapd to use candidate to bypass risv check issue.
+            # TODO revisit this logic after snapd update is released
+            # refresh snapd to use candidate to bypass risc check issue.
             snap.add("snapd", channel="candidate")
             # as long as 26.04 is not stable, we need to install the core26 snap from beta
             snap.add("core26", channel="beta")
