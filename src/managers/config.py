@@ -77,6 +77,10 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
         config_properties["dir"] = self.workload.working_dir.as_posix()
 
+        # avoid potentially inconsistent save overwriting the save triggered by the charm on shutdown
+        config_properties["shutdown-on-sigint"] = "nosave"
+        config_properties["shutdown-on-sigterm"] = "nosave"
+
         config_properties["bind"] = self.state.endpoint
 
         # replica related config

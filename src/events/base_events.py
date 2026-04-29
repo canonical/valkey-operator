@@ -611,6 +611,9 @@ class BaseEvents(ops.Object):
         if self.charm.unit.is_leader():
             self.charm.topology_manager.stop_observer()
 
+        logger.info("Save dataset to disk")
+        self.charm.cluster_manager.save_database_blocking()
+
         # stop valkey and sentinel processes
         self.charm.workload.stop()
         active_sentinels = [

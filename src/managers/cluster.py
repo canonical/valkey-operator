@@ -126,6 +126,11 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.reload_tls(tls_config, hostname=self.state.endpoint)
 
+    def save_database_blocking(self) -> None:
+        """Run a synchronous save on the dataset and return when done, otherwise raise."""
+        client = self._get_valkey_client()
+        client.save(hostname=self.state.endpoint)
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(

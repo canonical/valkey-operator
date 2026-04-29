@@ -91,6 +91,7 @@ def test_non_primary(cloud_spec):
         ),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.reset") as mock_reset,
+        patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
             side_effect=[
@@ -106,6 +107,7 @@ def test_non_primary(cloud_spec):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
         mock_stop.assert_called_once()
         assert mock_reset.call_count == 2
+        save_dataset.assert_called_once()
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
 
 
@@ -137,6 +139,7 @@ def test_primary(cloud_spec):
             "common.client.SentinelClient.is_failover_in_progress", return_value=False
         ) as mock_failover_in_progress,
         patch("common.client.SentinelClient.reset") as mock_reset,
+        patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
             side_effect=[
@@ -158,6 +161,7 @@ def test_primary(cloud_spec):
         mock_failover_in_progress.assert_called_once()
         mock_stop.assert_called_once()
         assert mock_reset.call_count == 2
+        save_dataset.assert_called_once()
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
 
 
@@ -192,11 +196,13 @@ def test_last_leader_unit_going_down(cloud_spec):
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
+        patch("common.client.ValkeyClient.save") as save_dataset,
         patch("core.models.ValkeyCluster.update") as cluster_update,
         patch("ops.model.Application.planned_units", return_value=0),
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
         mock_stop.assert_called_once()
+        save_dataset.assert_called_once()
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
         cluster_update.assert_called_once_with(
             {"internal_ca_certificate": None, "internal_ca_private_key": None}
