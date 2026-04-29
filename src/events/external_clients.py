@@ -191,6 +191,7 @@ class ExternalClientsEvents(ops.Object):
         if not self.charm.state.unit_server.is_started:
             return
 
+        # return early during TLS switchover to avoid unnecessary operation during rolling restart for sentinel
         if self.charm.state.unit_server.model.tls_client_state in (
             TLSState.TO_TLS,
             TLSState.TO_NO_TLS,

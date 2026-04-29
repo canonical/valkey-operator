@@ -32,7 +32,7 @@ NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 CERTIFICATE_EXPIRY_TIME = 600
-CA_EXPIRY_TIME = 600
+CA_EXPIRY_TIME = 720
 
 
 def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
@@ -247,6 +247,10 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     logger.info("Adjust CA and certificate validity on TLS provider")
     tls_config = {"certificate-validity": "10m", "root-ca-validity": "20m"}
     juju.config(app=TLS_NAME, values=tls_config)
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=900,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,

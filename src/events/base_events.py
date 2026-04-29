@@ -230,6 +230,7 @@ class BaseEvents(ops.Object):
         if not self.charm.state.unit_server.is_active:
             return
 
+        # return early during TLS switchover to avoid unnecessary operation during rolling restart for sentinel
         if self.charm.state.unit_server.model.tls_client_state in (
             TLSState.TO_TLS,
             TLSState.TO_NO_TLS,
@@ -613,10 +614,14 @@ class BaseEvents(ops.Object):
             or self.model.app.planned_units() == 0
             # to avoid failures if a Sentinel has not been restarted yet
             # does not rely on TLS state because databag might be outdated in deferred events
-            or self.charm.state.client_tls_relation
-            and not self.charm.state.unit_server.is_tls_enabled
-            or self.charm.state.unit_server.is_tls_enabled
-            and not self.charm.state.client_tls_relation
+            or (
+                self.charm.state.client_tls_relation
+                and not self.charm.state.unit_server.is_tls_enabled
+            )
+            or (
+                self.charm.state.unit_server.is_tls_enabled
+                and not self.charm.state.client_tls_relation
+            )
         ):
             return
 
