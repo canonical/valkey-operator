@@ -253,6 +253,7 @@ def test_attach_storage_after_removing_application(
 
     logger.info("Stopping continuous writes")
     cw_stats = stop_continuous_writes(juju)
+    addresses = get_cluster_addresses(juju, APP_NAME)
     assert_continuous_writes_consistent(
         endpoints=addresses,
         username=CharmUsers.VALKEY_ADMIN.value,
