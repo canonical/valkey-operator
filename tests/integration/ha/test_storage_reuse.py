@@ -5,7 +5,6 @@ import logging
 from time import sleep
 
 import jubilant
-import pytest
 
 from literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
