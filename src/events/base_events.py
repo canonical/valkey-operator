@@ -95,6 +95,9 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
+        self.framework.observe(
+            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
+        )
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
@@ -111,6 +114,16 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.restart_workload, self._on_restart_workload)
         self.framework.observe(
             self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
+        )
+
+    def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
+        """Handle storage attachment."""
+        if self.charm.state.substrate == Substrate.K8S:
+            return
+
+        # fix the permissions of the directory if re-attaching existing storage
+        self.charm.workload.exec(
+            ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
         )
 
     def _on_install(self, event: ops.InstallEvent) -> None:
