@@ -789,3 +789,17 @@ def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = Fals
             sentinel=True,
         ).stdout
     )
+
+
+def get_storage_id(juju: jubilant.Juju, unit_name: str, storage_name: str) -> str | None:
+    """Retrieve the storage id associated with a unit."""
+    storage_data = juju.cli("storage")
+    for line in storage_data.splitlines():
+        # skip the header and irrelevant lines
+        if not line or "Storage" in line or "detached" in line:
+            continue
+
+        if line.split()[0] == unit_name and line.split()[1].startswith(storage_name):
+            return line.split()[1]
+
+    raise RuntimeError(f"Storage {storage_name} not found for unit {unit_name}")
