@@ -628,7 +628,9 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()

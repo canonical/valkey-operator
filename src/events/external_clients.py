@@ -22,11 +22,11 @@ from dpcharmlibs.interfaces import (
     ValkeyResponseModel,
 )
 
+from common.custom_events import TopologyChangedEvent
 from common.exceptions import (
     KubernetesClientError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
-    ValkeyServicesFailedToStartError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
@@ -35,22 +35,13 @@ from literals import (
     EXTERNAL_CLIENTS_RELATION,
     PEER_RELATION,
     Substrate,
+    TLSState,
 )
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
 
 logger = logging.getLogger(__name__)
-
-
-class TopologyChangedEvent(ops.EventBase):
-    """A custom event for topology changes."""
-
-
-class TopologyChangedCharmEvents(ops.CharmEvents):
-    """A CharmEvent extension to observe topology changes."""
-
-    topology_changed = ops.EventSource(TopologyChangedEvent)
 
 
 class ExternalClientsEvents(ops.Object):
@@ -182,13 +173,8 @@ class ExternalClientsEvents(ops.Object):
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.config_manager.set_sentinel_acl_file()
-            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyACLLoadError,
-            ValkeyServicesFailedToStartError,
-            ValkeyWorkloadCommandError,
-        ) as e:
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return
@@ -203,6 +189,13 @@ class ExternalClientsEvents(ops.Object):
         IP changes, etc.
         """
         if not self.charm.state.unit_server.is_started:
+            return
+
+        # return early during TLS switchover to avoid unnecessary operation during rolling restart for sentinel
+        if self.charm.state.unit_server.model.tls_client_state in (
+            TLSState.TO_TLS,
+            TLSState.TO_NO_TLS,
+        ):
             return
 
         if self.charm.unit.is_leader() and self.charm.state.substrate == Substrate.K8S:
@@ -239,13 +232,8 @@ class ExternalClientsEvents(ops.Object):
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.config_manager.set_sentinel_acl_file()
-            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyACLLoadError,
-            ValkeyServicesFailedToStartError,
-            ValkeyWorkloadCommandError,
-        ) as e:
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return
@@ -271,13 +259,8 @@ class ExternalClientsEvents(ops.Object):
             self.charm.config_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.config_manager.set_sentinel_acl_file()
-            # todo: request rolling restart once https://github.com/canonical/valkey-operator/pull/23 is merged
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyACLLoadError,
-            ValkeyServicesFailedToStartError,
-            ValkeyWorkloadCommandError,
-        ) as e:
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return
@@ -351,12 +334,8 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyServicesFailedToStartError,
-            ValkeyTLSLoadError,
-            ValkeyWorkloadCommandError,
-        ) as e:
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error storing CA certificates for external clients: %s", e)
             event.defer()
             return
@@ -377,12 +356,8 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.sentinel_manager.restart_service()
-        except (
-            ValkeyServicesFailedToStartError,
-            ValkeyTLSLoadError,
-            ValkeyWorkloadCommandError,
-        ) as e:
+            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+        except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error removing CA certificates for external clients: %s", e)
             event.defer()
             return
