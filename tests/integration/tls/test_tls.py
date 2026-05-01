@@ -53,7 +53,7 @@ def test_build_and_deploy(
                 GLIDE_RUNNER_NAME: 1,
             },
         ),
-        timeout=600,
+        timeout=900,
     )
 
 

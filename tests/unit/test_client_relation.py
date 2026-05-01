@@ -68,7 +68,6 @@ def test_add_new_client_user(cloud_spec):
             "common.client.SentinelClient.replicas_primary",
             return_value=[{"ip": replica_endpoint}],
         ),
-        # patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_ca"),
         patch(
             "common.client.ValkeyClient.info_server",
             return_value={"valkey_version": valkey_version},
@@ -76,7 +75,9 @@ def test_add_new_client_user(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
@@ -146,7 +147,9 @@ def test_add_new_client_user_v0(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
@@ -222,7 +225,9 @@ def test_client_user_already_exists(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_not_called()
@@ -367,7 +372,9 @@ def test_add_new_client_user_non_leader(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(
             ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
@@ -429,7 +436,9 @@ def test_client_user_not_created_yet(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
         set_acl_file.assert_not_called()
@@ -485,7 +494,9 @@ def test_remove_client_user(cloud_spec):
         patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
@@ -552,7 +563,9 @@ def test_relation_broken_non_leader(cloud_spec):
         ) as remove_user,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         remove_user.assert_not_called()
@@ -616,7 +629,9 @@ def test_certificate_transfer_new_ca(cloud_spec):
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_called_once()
@@ -652,7 +667,9 @@ def test_certificate_transfer_no_ca_available(cloud_spec):
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_not_called()
@@ -686,7 +703,9 @@ def test_certificate_transfer_ca_removed(cloud_spec):
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_broken(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_not_called()

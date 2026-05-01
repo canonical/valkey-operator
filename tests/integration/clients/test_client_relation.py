@@ -327,7 +327,7 @@ def test_certificate_transfer(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:certificate-transfer", REQUIRER_TLS_PROVIDER)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=200,
+        timeout=600,
     )
 
     logger.info("Switch Requirer charms to other TLS provider")

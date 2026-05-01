@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import ops
 
+from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
     RequestingLockTimedOutError,
     ValkeyACLLoadError,
@@ -41,55 +42,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RestartWorkloadEvent(ops.EventBase):
-    """Event for restarting the workload when certain events happen, e.g. IP change."""
-
-    def __init__(
-        self, handle: ops.Handle, restart_valkey: bool = True, restart_sentinel: bool = True
-    ):
-        super().__init__(handle)
-        self.restart_valkey = restart_valkey
-        self.restart_sentinel = restart_sentinel
-
-    def snapshot(self) -> dict[str, str]:
-        """Save the state of the event."""
-        return {
-            "restart_valkey": str(self.restart_valkey),
-            "restart_sentinel": str(self.restart_sentinel),
-        }
-
-    def restore(self, snapshot: dict[str, str]) -> None:
-        """Restore the state of the event."""
-        self.restart_valkey = snapshot.get("restart_valkey", "True") == "True"
-        self.restart_sentinel = snapshot.get("restart_sentinel", "True") == "True"
-
-
-class UnitFullyStarted(ops.EventBase):
-    """Event that signals that the unit's has fully started.
-
-    This event will be deferred until:
-        The Sentinel service is running and was discovered by other units.
-        The Valkey service is running and the current node is in sync with the primary (if a replica).
-    """
-
-    def __init__(self, handle: ops.Handle, is_primary: bool = False):
-        super().__init__(handle)
-        self.is_primary = is_primary
-
-    def snapshot(self) -> dict[str, str]:
-        """Save the state of the event."""
-        return {"is_primary": str(self.is_primary)}
-
-    def restore(self, snapshot: dict[str, str]) -> None:
-        """Restore the state of the event."""
-        self.is_primary = snapshot.get("is_primary", "False") == "True"
-
-
 class BaseEvents(ops.Object):
     """Handle all base events."""
 
-    unit_fully_started = ops.EventSource(UnitFullyStarted)
-    restart_workload = ops.EventSource(RestartWorkloadEvent)
+    unit_fully_started = ops.EventSource(UnitFullyStartedEvent)
 
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="base_events")
@@ -111,7 +67,6 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
-        self.framework.observe(self.restart_workload, self._on_restart_workload)
         self.framework.observe(
             self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
         )
@@ -219,7 +174,7 @@ class BaseEvents(ops.Object):
         )
 
     # TODO check how to trigger if deferred without update status event
-    def _on_unit_fully_started(self, event: UnitFullyStarted) -> None:
+    def _on_unit_fully_started(self, event: UnitFullyStartedEvent) -> None:
         """Handle the unit-fully-started event."""
         if not self.charm.cluster_manager.is_healthy(
             is_primary=event.is_primary, check_replica_sync=False
@@ -286,6 +241,13 @@ class BaseEvents(ops.Object):
             lock.process()
 
         if not self.charm.state.unit_server.is_active:
+            return
+
+        # return early during TLS switchover to avoid unnecessary operation during rolling restart for sentinel
+        if self.charm.state.unit_server.model.tls_client_state in (
+            TLSState.TO_TLS,
+            TLSState.TO_NO_TLS,
+        ):
             return
 
         # need to pick up scaling operations, TLS switchover, CA rotation and so on
@@ -403,7 +365,7 @@ class BaseEvents(ops.Object):
                     "private_ip": self.charm.state.bind_address,
                 }
             )
-            self.charm.base_events.restart_workload.emit()
+            self.charm.restart_workload.emit()
 
         if not self.charm.unit.is_leader():
             return
@@ -460,8 +422,7 @@ class BaseEvents(ops.Object):
                 self.charm.config_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    # todo: request rolling restart
-                    self.charm.sentinel_manager.restart_service()
+                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 # update the local unit admin password to match the leader
                 self.charm.config_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -526,8 +487,7 @@ class BaseEvents(ops.Object):
                 self.charm.config_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    # todo: request rolling restart
-                    self.charm.sentinel_manager.restart_service()
+                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -661,49 +621,6 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY.value})
 
-    def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
-        """Handle the restart_workload event."""
-        logger.info(
-            "Restarting workload Event. Restart Valkey: %s, Restart Sentinel: %s",
-            event.restart_valkey,
-            event.restart_sentinel,
-        )
-        restart_lock = RestartLock(self.charm.state)
-        restart_lock.request_lock()
-        if not restart_lock.is_held_by_this_unit:
-            logger.info("Waiting for lock to restart workload")
-            event.defer()
-            return
-
-        try:
-            if event.restart_valkey:
-                self.charm.workload.restart(self.charm.workload.valkey_service)
-            if event.restart_sentinel:
-                self.charm.sentinel_manager.restart_service()
-        except ValkeyServicesFailedToStartError as e:
-            logger.error(e)
-            restart_lock.release_lock()
-            event.defer()
-            return
-
-        if event.restart_valkey and not self.charm.cluster_manager.is_healthy(
-            check_replica_sync=False
-        ):
-            self.charm.state.unit_server.update({"is_valkey_healthy": False})
-            restart_lock.release_lock()
-            event.defer()
-            return
-        self.charm.state.unit_server.update({"is_valkey_healthy": True})
-
-        if event.restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
-            restart_lock.release_lock()
-            event.defer()
-            return
-
-        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
-        restart_lock.release_lock()
-
     def _reconfigure_quorum_if_necessary(self) -> None:
         """Reconfigure the sentinel quorum if it does not match the current cluster size."""
         # if the unit / all units are being removed, we do not need to reconfigure the quorum
@@ -711,6 +628,16 @@ class BaseEvents(ops.Object):
             not self.charm.state.unit_server.is_active
             or self.charm.state.unit_server.is_being_removed
             or self.model.app.planned_units() == 0
+            # to avoid failures if a Sentinel has not been restarted yet
+            # does not rely on TLS state because databag might be outdated in deferred events
+            or (
+                self.charm.state.client_tls_relation
+                and not self.charm.state.unit_server.is_tls_enabled
+            )
+            or (
+                self.charm.state.unit_server.is_tls_enabled
+                and not self.charm.state.client_tls_relation
+            )
         ):
             return
 
