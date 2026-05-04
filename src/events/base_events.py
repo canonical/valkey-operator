@@ -569,10 +569,13 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        if (
-            primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-            and len(active_sentinels) > 1
-        ):
+        unit_is_primary = (
+            True
+            if primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            else False
+        )
+
+        if unit_is_primary and len(active_sentinels) > 1:
             logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
             self.charm.sentinel_manager.failover()
             primary_ip = self.charm.sentinel_manager.get_primary_ip()
@@ -583,6 +586,10 @@ class BaseEvents(ops.Object):
 
         if self.charm.unit.is_leader():
             self.charm.topology_manager.stop_observer()
+
+        if not unit_is_primary:
+            logger.info("Waiting for replica to be fully-synced before saving the dataset")
+            self.charm.cluster_manager.wait_for_replica_fully_synced(primary_ip)
 
         logger.info("Save dataset to disk")
         self.charm.cluster_manager.save_database_blocking()

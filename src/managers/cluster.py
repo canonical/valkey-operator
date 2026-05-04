@@ -5,6 +5,7 @@
 """Manager for all cluster related tasks."""
 
 import logging
+from time import sleep
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
@@ -83,6 +84,42 @@ class ClusterManager(ManagerStatusProtocol):
         except IndexError as e:
             logger.warning("Unexpected role information format: %s. Error: %s", role_info, e)
             return False
+
+    def get_replication_offset(self, primary_endpoint: str | None = None) -> int:
+        """Query the current replication offset from Valkey.
+
+        Args:
+            primary_endpoint: If given, return the primary replication offset from this primary,
+                            otherwise get the replica's replication offset from the current unit.
+        """
+        client = self._get_valkey_client()
+
+        if primary_endpoint:
+            role_info = client.role(hostname=primary_endpoint)
+            try:
+                return int(role_info[1])
+            except (IndexError, TypeError, ValueError) as e:
+                logger.error("Failed to query replication offset from primary: %s", e)
+                raise ValkeyWorkloadCommandError
+
+        role_info = client.role(hostname=self.state.endpoint)
+        try:
+            return int(role_info[4])
+        except (IndexError, TypeError, ValueError) as e:
+            logger.error("Failed to query replication offset from replica: %s", e)
+            raise ValkeyWorkloadCommandError
+
+    def wait_for_replica_fully_synced(self, primary_endpoint: str):
+        """Compare the unit's replication offset with the primary's offset and block until synced."""
+        try:
+            primary_replication_offset = self.get_replication_offset(primary_endpoint)
+            while self.get_replication_offset() < primary_replication_offset:
+                logger.info("Replica not fully synced yet")
+                sleep(5)
+            logger.info("Replica is fully synced now")
+        except ValkeyWorkloadCommandError:
+            logger.error("Could not query replication offset")
+            return
 
     @retry(
         wait=wait_fixed(5),
