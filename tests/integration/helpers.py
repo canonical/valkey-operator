@@ -791,6 +791,26 @@ def get_sentinels(juju: jubilant.Juju, primary_ip: str, tls_enabled: bool = Fals
     )
 
 
+def get_full_sync_stat(
+    juju: jubilant.Juju, endpoint: str, tls_enabled: bool = False
+) -> int | None:
+    """Query an endpoint for the `sync_full` stat."""
+    result = exec_valkey_cli(
+        endpoint,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        tls_enabled=tls_enabled,
+        command="info stats",
+    )
+
+    stats = result.stdout.split("\n")
+    for stat in stats:
+        if "sync_full" in stat:
+            return int(stat.split(":")[1])
+
+    raise ValueError("Stats for full syncs not found")
+
+
 def get_storage_id(juju: jubilant.Juju, unit_name: str, storage_name: str) -> str | None:
     """Retrieve the storage id associated with a unit."""
     storage_data = juju.cli("storage")

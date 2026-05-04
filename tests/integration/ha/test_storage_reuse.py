@@ -21,7 +21,9 @@ from tests.integration.helpers import (
     are_agents_idle,
     are_apps_active_and_agents_idle,
     get_cluster_addresses,
+    get_full_sync_stat,
     get_password,
+    get_primary_ip,
     get_storage_id,
 )
 
@@ -101,6 +103,10 @@ def test_attach_storage_after_scale_down(juju: jubilant.Juju, substrate: Substra
         )
     )
 
+    # get the number of full synchronizations before adding a unit
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    pre_scaling_full_syncs = get_full_sync_stat(juju, endpoint=primary_ip)
+
     logger.info("Deploy new unit with the previous storage")
     juju.add_unit(
         APP_NAME,
@@ -112,7 +118,10 @@ def test_attach_storage_after_scale_down(juju: jubilant.Juju, substrate: Substra
         )
     )
 
-    # update hostnames after scale down
+    logger.info("Ensure data was updated through partial sync")
+    post_scaling_full_syncs = get_full_sync_stat(juju, endpoint=primary_ip)
+    assert pre_scaling_full_syncs == post_scaling_full_syncs, "Full sync not expected"
+
     configure_cw_runner(juju, valkey_app=APP_NAME, substrate=substrate)
 
     addresses = get_cluster_addresses(juju, APP_NAME)
@@ -238,6 +247,10 @@ def test_attach_storage_after_removing_application(
     configure_cw_runner(juju, valkey_app=APP_NAME, substrate=substrate)
     start_continuous_writes(juju, clear=False)
 
+    # get the number of full synchronizations before adding a unit
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    pre_scaling_full_syncs = get_full_sync_stat(juju, endpoint=primary_ip)
+
     logger.info("Scale application with previous storage")
     for storage_id in storage_ids:
         juju.add_unit(APP_NAME, attach_storage=storage_id)
@@ -247,6 +260,10 @@ def test_attach_storage_after_removing_application(
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=60
         )
     )
+
+    logger.info("Ensure data was updated through partial sync")
+    post_scaling_full_syncs = get_full_sync_stat(juju, endpoint=primary_ip)
+    assert pre_scaling_full_syncs == post_scaling_full_syncs, "Full sync not expected"
 
     configure_cw_runner(juju, valkey_app=APP_NAME, substrate=substrate)
     assert_continuous_writes_increasing(juju, wait=10)
