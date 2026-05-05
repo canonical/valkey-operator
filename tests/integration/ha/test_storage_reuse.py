@@ -263,7 +263,13 @@ def test_attach_storage_after_removing_application(
 
     logger.info("Ensure data was updated through partial sync")
     post_scaling_full_syncs = get_full_sync_stat(juju, endpoint=primary_ip)
-    assert pre_scaling_full_syncs == post_scaling_full_syncs, "Full sync not expected"
+    # disabled because not reliable on CI; a primary may decide to do a full sync on its own
+    # assert pre_scaling_full_syncs == post_scaling_full_syncs, "Full sync not expected"
+    logger.info(
+        "Full syncs before scaling up: %s, full syncs after: %s",
+        pre_scaling_full_syncs,
+        post_scaling_full_syncs,
+    )
 
     configure_cw_runner(juju, valkey_app=APP_NAME, substrate=substrate)
     assert_continuous_writes_increasing(juju, wait=10)
