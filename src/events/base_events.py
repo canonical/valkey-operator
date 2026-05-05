@@ -51,6 +51,9 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
+        self.framework.observe(
+            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
+        )
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
@@ -66,6 +69,16 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
         self.framework.observe(
             self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
+        )
+
+    def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
+        """Handle storage attachment."""
+        if self.charm.state.substrate == Substrate.K8S:
+            return
+
+        # fix the permissions of the directory if re-attaching existing storage
+        self.charm.workload.exec(
+            ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
         )
 
     def _on_install(self, event: ops.InstallEvent) -> None:
@@ -556,10 +569,13 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        if (
-            primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-            and len(active_sentinels) > 1
-        ):
+        unit_is_primary = (
+            True
+            if primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            else False
+        )
+
+        if unit_is_primary and len(active_sentinels) > 1:
             logger.debug("Triggering sentinel failover on primary IP %s", primary_ip)
             self.charm.sentinel_manager.failover()
             primary_ip = self.charm.sentinel_manager.get_primary_ip()
@@ -570,6 +586,13 @@ class BaseEvents(ops.Object):
 
         if self.charm.unit.is_leader():
             self.charm.topology_manager.stop_observer()
+
+        if not unit_is_primary:
+            logger.info("Waiting for replica to be fully-synced before saving the dataset")
+            self.charm.cluster_manager.wait_for_replica_fully_synced(primary_ip)
+
+        logger.info("Save dataset to disk")
+        self.charm.cluster_manager.save_database_blocking()
 
         # stop valkey and sentinel processes
         self.charm.workload.stop()

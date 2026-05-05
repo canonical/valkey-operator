@@ -292,6 +292,10 @@ class ValkeyClient(CliClient):
             logger.error("Error loading TLS settings")
             raise ValkeyTLSLoadError("Could not load TLS settings")
 
+    def save(self, hostname: str) -> None:
+        """Run a synchronous (blocking) save for the dataset."""
+        self.exec_cli_command(["save"], hostname=hostname, json_output=False)
+
 
 class SentinelClient(CliClient):
     """Handle sentinel-specific client connections."""
