@@ -5,6 +5,7 @@
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
 import logging
+import signal
 from typing import override
 
 import ops
@@ -17,7 +18,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from core.base_workload import TLSPaths, WorkloadBase
+from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ACL_FILE,
     CHARM,
@@ -27,6 +28,35 @@ from literals import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _K8sProcessHandle:
+    """ProcessHandle implementation backed by Pebble exec."""
+
+    def __init__(self, process: ops.pebble.ExecProcess):
+        self._process = process
+        self.stdout = process.stdout
+
+    def wait(self) -> tuple[int, str]:
+        try:
+            _, stderr = self._process.wait_output()
+            stderr_text = (
+                stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else (stderr or "")
+            )
+            return 0, stderr_text
+        except ops.pebble.ExecError as e:
+            stderr_text = (
+                e.stderr.decode("utf-8", "replace")
+                if isinstance(e.stderr, bytes)
+                else (e.stderr or "")
+            )
+            return e.exit_code, stderr_text
+
+    def kill(self) -> None:
+        try:
+            self._process.send_signal(signal.SIGKILL)
+        except ops.pebble.Error as e:
+            logger.warning("Failed to send SIGKILL to Pebble exec: %s", e)
 
 
 class ValkeyK8sWorkload(WorkloadBase):
@@ -142,6 +172,12 @@ class ValkeyK8sWorkload(WorkloadBase):
         except ops.pebble.ExecError as e:
             logger.error("Command failed with: %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def exec_stream(self, command: list[str]) -> ProcessHandle:
+        return _K8sProcessHandle(
+            self.container.exec(command=command, encoding=None, timeout=None)
+        )
 
     @override
     def stop(self) -> None:

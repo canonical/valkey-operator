@@ -42,3 +42,50 @@ def test_vm_exec_stream_kill_terminates():
     handle.kill()
     rc, _ = handle.wait()
     assert rc != 0
+
+
+def test_k8s_exec_stream_delegates_to_container_exec(mocker):
+    from src.workload_k8s import ValkeyK8sWorkload
+
+    container = mocker.MagicMock()
+    fake_process = mocker.MagicMock()
+    fake_process.stdout = b""
+    container.exec.return_value = fake_process
+
+    workload = ValkeyK8sWorkload(container=container)
+    handle = workload.exec_stream(["valkey-cli", "--rdb", "-"])
+
+    container.exec.assert_called_once_with(
+        command=["valkey-cli", "--rdb", "-"],
+        encoding=None,
+        timeout=None,
+    )
+    assert handle.stdout is fake_process.stdout
+
+
+def test_k8s_exec_stream_wait_returns_rc_and_stderr(mocker):
+    from ops.pebble import ExecError
+
+    from src.workload_k8s import ValkeyK8sWorkload
+
+    container = mocker.MagicMock()
+    fake_process = mocker.MagicMock()
+    # wait_output() on a successful binary process returns (stdout_bytes, stderr_bytes)
+    fake_process.wait_output.return_value = (b"", b"oops")
+    container.exec.return_value = fake_process
+
+    workload = ValkeyK8sWorkload(container=container)
+    handle = workload.exec_stream(["true"])
+    rc, stderr = handle.wait()
+
+    assert rc == 0
+    assert stderr == "oops"
+
+    # Failing exec
+    fake_process.wait_output.side_effect = ExecError(
+        command=["false"], exit_code=2, stdout=b"", stderr=b"boom"
+    )
+    handle = workload.exec_stream(["false"])
+    rc, stderr = handle.wait()
+    assert rc == 2
+    assert stderr == "boom"
