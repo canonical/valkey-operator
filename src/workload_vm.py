@@ -7,6 +7,7 @@
 import logging
 import platform
 import subprocess
+import threading
 import time
 from typing import override
 
@@ -26,7 +27,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from core.base_workload import TLSPaths, WorkloadBase
+from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
@@ -41,6 +42,36 @@ from literals import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _VmProcessHandle:
+    """ProcessHandle implementation backed by subprocess.Popen."""
+
+    def __init__(self, proc: subprocess.Popen):
+        self._proc = proc
+        assert proc.stdout is not None  # set via stdout=subprocess.PIPE
+        self.stdout = proc.stdout
+        self._stderr_buf: list[bytes] = []
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        if self._proc.stderr is None:
+            return
+        for chunk in iter(lambda: self._proc.stderr.read(4096), b""):
+            self._stderr_buf.append(chunk)
+
+    def wait(self) -> tuple[int, str]:
+        rc = self._proc.wait()
+        self._stderr_thread.join(timeout=5)
+        return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
+
+    def kill(self) -> None:
+        self._proc.kill()
+        try:
+            self._proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logger.warning("Process did not exit within 10s of SIGKILL")
 
 
 class ValkeyVmWorkload(WorkloadBase):
@@ -150,6 +181,17 @@ class ValkeyVmWorkload(WorkloadBase):
         except subprocess.TimeoutExpired as e:
             logger.error("Command timed out: %s", str(e.stderr))
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def exec_stream(self, command: list[str]) -> ProcessHandle:
+        return _VmProcessHandle(
+            subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        )
 
     @override
     @retry(
