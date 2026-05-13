@@ -6,10 +6,26 @@
 
 import logging
 from abc import ABC, abstractmethod
+from typing import IO, Protocol, runtime_checkable
 
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
+
+
+@runtime_checkable
+class ProcessHandle(Protocol):
+    """Streaming subprocess handle returned by ``WorkloadBase.exec_stream``."""
+
+    stdout: IO[bytes]
+
+    def wait(self) -> tuple[int, str]:
+        """Wait for completion. Returns ``(returncode, stderr_text)``."""
+        ...
+
+    def kill(self) -> None:
+        """Terminate the underlying process forcefully."""
+        ...
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +97,17 @@ class WorkloadBase(ABC):
     def restart(self, service: str) -> None:
         """Restart a workload service."""
         pass
+
+    def exec_stream(self, command: list[str]) -> ProcessHandle:
+        """Spawn a command whose stdout streams to the caller as raw bytes.
+
+        Unlike :meth:`exec`, this does not buffer stdout and has no timeout.
+        Stderr is captured and returned by ``ProcessHandle.wait()``.
+        Used for long-running streaming uploads such as ``valkey-cli --rdb -``.
+
+        Subclasses must override this method.
+        """
+        raise NotImplementedError("Subclass must implement exec_stream")
 
     @abstractmethod
     def exec(self, command: list[str]) -> tuple[str, str | None]:
