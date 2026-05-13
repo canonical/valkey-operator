@@ -175,9 +175,7 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def exec_stream(self, command: list[str]) -> ProcessHandle:
-        return _K8sProcessHandle(
-            self.container.exec(command=command, encoding=None, timeout=None)
-        )
+        return _K8sProcessHandle(self.container.exec(command=command, encoding=None, timeout=None))
 
     @override
     def stop(self) -> None:

@@ -24,9 +24,7 @@ def test_vm_exec_stream_streams_stdout_and_collects_stderr():
     from src.workload_vm import ValkeyVmWorkload
 
     workload = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
-    handle = workload.exec_stream(
-        ["sh", "-c", "printf 'hello-stream'; printf 'oops' 1>&2"]
-    )
+    handle = workload.exec_stream(["sh", "-c", "printf 'hello-stream'; printf 'oops' 1>&2"])
     body = handle.stdout.read()
     rc, stderr = handle.wait()
     assert body == b"hello-stream"
@@ -61,6 +59,40 @@ def test_k8s_exec_stream_delegates_to_container_exec(mocker):
         timeout=None,
     )
     assert handle.stdout is fake_process.stdout
+
+
+def test_build_command_prefix_no_tls(mocker):
+    from src.common.client import CliClient
+
+    workload = mocker.MagicMock()
+    workload.cli = "valkey-cli"
+    client = CliClient(username="op", password="pw", tls=False, workload=workload)
+    client.port = 6379
+    prefix = client.build_command_prefix(json_output=True)
+    assert prefix[0] == "valkey-cli"
+    assert "--user" in prefix and "op" in prefix
+    assert "--pass" in prefix and "pw" in prefix
+    assert "--json" in prefix
+    assert "--tls" not in prefix
+
+
+def test_build_command_prefix_with_tls(mocker):
+    from src.common.client import CliClient
+
+    workload = mocker.MagicMock()
+    workload.cli = "valkey-cli"
+    workload.tls_paths.client_cert.as_posix.return_value = "/c"
+    workload.tls_paths.client_key.as_posix.return_value = "/k"
+    workload.tls_paths.ca_certs_dir.as_posix.return_value = "/ca"
+    client = CliClient(username="op", password="pw", tls=True, workload=workload)
+    client.port = 6380
+    prefix = client.build_command_prefix(json_output=False, hostname="h")
+    assert "--tls" in prefix
+    assert "--cert" in prefix and "/c" in prefix
+    assert "--key" in prefix and "/k" in prefix
+    assert "--cacertdir" in prefix and "/ca" in prefix
+    assert "-h" in prefix and "h" in prefix
+    assert "--json" not in prefix
 
 
 def test_k8s_exec_stream_wait_returns_rc_and_stderr(mocker):

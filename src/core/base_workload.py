@@ -27,6 +27,7 @@ class ProcessHandle(Protocol):
         """Terminate the underlying process forcefully."""
         ...
 
+
 logger = logging.getLogger(__name__)
 
 
