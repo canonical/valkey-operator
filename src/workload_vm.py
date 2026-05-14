@@ -205,9 +205,7 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def exec_stream(
-        self, command: list[str], env: dict[str, str] | None = None
-    ) -> ProcessHandle:
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
         return _VmProcessHandle(
             subprocess.Popen(
                 command,

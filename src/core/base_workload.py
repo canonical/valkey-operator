@@ -124,9 +124,7 @@ class WorkloadBase(ABC):
         """Restart a workload service."""
         pass
 
-    def exec_stream(
-        self, command: list[str], env: dict[str, str] | None = None
-    ) -> ProcessHandle:
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
         """Spawn a command whose stdout streams to the caller as raw bytes.
 
         Unlike :meth:`exec`, this does not buffer stdout and has no timeout.

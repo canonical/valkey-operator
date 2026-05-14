@@ -95,9 +95,7 @@ class CliClient:
         cli_command = (
             self.build_command_prefix(json_output=json_output, hostname=hostname) + command
         )
-        output, error = self.workload.exec(
-            cli_command, env={"REDISCLI_AUTH": self.password}
-        )
+        output, error = self.workload.exec(cli_command, env={"REDISCLI_AUTH": self.password})
         output = output.strip()
         if error:
             logger.error(

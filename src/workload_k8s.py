@@ -206,13 +206,9 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def exec_stream(
-        self, command: list[str], env: dict[str, str] | None = None
-    ) -> ProcessHandle:
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
         return _K8sProcessHandle(
-            self.container.exec(
-                command=command, encoding=None, timeout=None, environment=env
-            )
+            self.container.exec(command=command, encoding=None, timeout=None, environment=env)
         )
 
     @override

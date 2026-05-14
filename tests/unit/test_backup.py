@@ -144,8 +144,7 @@ def test_build_command_prefix_with_tls(mocker):
 
 
 def test_k8s_exec_stream_wait_streams_without_buffering_stdout(mocker):
-    """wait() must call process.wait(), never wait_output() (which buffers
-    the whole RDB into the charm container's memory)."""
+    """wait() must call process.wait(), never the RDB-buffering wait_output()."""
     import io
 
     from ops.pebble import ExecError
