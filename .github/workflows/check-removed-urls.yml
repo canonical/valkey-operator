@@ -2,7 +2,7 @@ name: Check for removed URLs
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "*/edge"]
 
 jobs:
   build-docs:

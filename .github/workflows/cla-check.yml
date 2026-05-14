@@ -3,7 +3,7 @@ name: Canonical Contributor Licence Agreement check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "*/edge"]
 
 jobs:
   cla-check:
