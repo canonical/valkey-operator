@@ -4,6 +4,7 @@
 
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
+import collections
 import logging
 import os
 import platform
@@ -60,7 +61,9 @@ class _VmProcessHandle:
         if proc.stdout is None:  # asserts compile away under -O
             raise RuntimeError("subprocess.Popen must be created with stdout=PIPE")
         self.stdout = proc.stdout
-        self._stderr_buf: list[bytes] = []
+        # Bounded: a chatty child must not grow this without limit over a
+        # long-running stream. Only the tail is kept, matching the K8s handle.
+        self._stderr_buf: collections.deque[bytes] = collections.deque(maxlen=64)
         self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
         self._stderr_thread.start()
 
