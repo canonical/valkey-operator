@@ -33,13 +33,16 @@ logger = logging.getLogger(__name__)
 
 
 class _K8sProcessHandle:
-    """ProcessHandle implementation backed by Pebble exec.
+    """ProcessHandle backed by Pebble exec (K8s substrate).
 
     stdout is streamed to the caller unbuffered. stderr is drained on a
-    daemon thread into a bounded buffer so a chatty child cannot fill the
-    pipe and block. wait() returns the exit code WITHOUT calling
-    wait_output() -- the latter would buffer the entire stdout (the whole
-    RDB) into the charm container's memory.
+    daemon thread into a bounded buffer (last 64 chunks) so a chatty child
+    cannot fill the pipe and block -- ``wait()`` therefore returns only the
+    tail of stderr. ``wait()`` returns the exit code WITHOUT calling
+    ``wait_output()``: the latter would buffer the entire stdout (the whole
+    RDB) into the charm container's memory. When Pebble itself fails to run
+    the change, ``wait()`` returns -1 as the returncode sentinel.
+    ``kill()`` sends SIGKILL but does not block waiting for the exit.
     """
 
     def __init__(self, process: ops.pebble.ExecProcess):

@@ -15,16 +15,41 @@ from common.exceptions import ValkeyWorkloadCommandError
 
 @runtime_checkable
 class ProcessHandle(Protocol):
-    """Streaming subprocess handle returned by ``WorkloadBase.exec_stream``."""
+    """Streaming subprocess handle returned by ``WorkloadBase.exec_stream``.
+
+    Wraps a long-running child process whose stdout is streamed to the
+    caller rather than buffered in memory -- ``exec_stream`` is used for
+    transfers (e.g. ``valkey-cli --rdb -``) that can exceed the charm
+    container's heap.
+
+    Two substrate implementations exist: ``_VmProcessHandle`` over
+    ``subprocess.Popen`` and ``_K8sProcessHandle`` over Pebble exec. They
+    honour the same contract; substrate-specific behaviour the caller can
+    rely on is documented per-method below.
+
+    ``stdout`` is the raw stdout pipe -- read it incrementally; it is never
+    fully buffered.
+    """
 
     stdout: IO[bytes]
 
     def wait(self) -> tuple[int, str]:
-        """Wait for completion. Returns ``(returncode, stderr_text)``."""
+        """Block until the process exits; return ``(returncode, stderr_text)``.
+
+        ``returncode`` is the child's exit status, or a negative sentinel
+        when the substrate could not determine it (e.g. a Pebble change
+        error on K8s). ``stderr_text`` is decoded best-effort and may be
+        truncated to a bounded tail -- it is for diagnostics, not parsing.
+        """
         ...
 
     def kill(self) -> None:
-        """Terminate the underlying process forcefully."""
+        """Best-effort forced termination of the process.
+
+        Safe to call after the process has already exited. Errors are
+        logged, not raised, so callers can invoke it unconditionally on
+        cleanup paths.
+        """
         ...
 
 

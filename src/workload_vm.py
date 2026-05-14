@@ -46,7 +46,14 @@ logger = logging.getLogger(__name__)
 
 
 class _VmProcessHandle:
-    """ProcessHandle implementation backed by subprocess.Popen."""
+    """ProcessHandle backed by ``subprocess.Popen`` (VM substrate).
+
+    stdout is the Popen pipe, streamed to the caller unbuffered. stderr is
+    drained on a daemon thread so a chatty child cannot fill the pipe and
+    deadlock the upload. ``wait()`` returns the real process exit code and
+    reaps the child; ``kill()`` sends SIGKILL and waits briefly so the
+    process does not linger as a zombie.
+    """
 
     def __init__(self, proc: subprocess.Popen):
         self._proc = proc
