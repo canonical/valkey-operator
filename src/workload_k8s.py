@@ -4,8 +4,10 @@
 
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
+import collections
 import logging
 import signal
+import threading
 from typing import override
 
 import ops
@@ -31,26 +33,42 @@ logger = logging.getLogger(__name__)
 
 
 class _K8sProcessHandle:
-    """ProcessHandle implementation backed by Pebble exec."""
+    """ProcessHandle implementation backed by Pebble exec.
+
+    stdout is streamed to the caller unbuffered. stderr is drained on a
+    daemon thread into a bounded buffer so a chatty child cannot fill the
+    pipe and block. wait() returns the exit code WITHOUT calling
+    wait_output() -- the latter would buffer the entire stdout (the whole
+    RDB) into the charm container's memory.
+    """
 
     def __init__(self, process: ops.pebble.ExecProcess):
         self._process = process
         self.stdout = process.stdout
+        self._stderr_buf: collections.deque[bytes] = collections.deque(maxlen=64)
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        if self._process.stderr is None:
+            return
+        try:
+            for chunk in iter(lambda: self._process.stderr.read(4096), b""):
+                self._stderr_buf.append(chunk)
+        except Exception:
+            logger.exception("stderr drain thread failed")
 
     def wait(self) -> tuple[int, str]:
         try:
-            _, stderr = self._process.wait_output()
-            stderr_text = (
-                stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else (stderr or "")
-            )
-            return 0, stderr_text
+            self._process.wait()
+            rc = 0
         except ops.pebble.ExecError as e:
-            stderr_text = (
-                e.stderr.decode("utf-8", "replace")
-                if isinstance(e.stderr, bytes)
-                else (e.stderr or "")
-            )
-            return e.exit_code, stderr_text
+            rc = e.exit_code
+        except ops.pebble.ChangeError as e:
+            logger.error("Pebble exec did not complete: %s", e)
+            rc = -1
+        self._stderr_thread.join(timeout=5)
+        return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
     def kill(self) -> None:
         try:

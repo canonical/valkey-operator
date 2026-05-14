@@ -43,11 +43,14 @@ def test_vm_exec_stream_kill_terminates():
 
 
 def test_k8s_exec_stream_delegates_to_container_exec(mocker):
+    import io
+
     from src.workload_k8s import ValkeyK8sWorkload
 
     container = mocker.MagicMock()
     fake_process = mocker.MagicMock()
-    fake_process.stdout = b""
+    fake_process.stdout = io.BytesIO(b"")
+    fake_process.stderr = io.BytesIO(b"")
     container.exec.return_value = fake_process
 
     workload = ValkeyK8sWorkload(container=container)
@@ -95,15 +98,20 @@ def test_build_command_prefix_with_tls(mocker):
     assert "--json" not in prefix
 
 
-def test_k8s_exec_stream_wait_returns_rc_and_stderr(mocker):
+def test_k8s_exec_stream_wait_streams_without_buffering_stdout(mocker):
+    """wait() must call process.wait(), never wait_output() (which buffers
+    the whole RDB into the charm container's memory)."""
+    import io
+
     from ops.pebble import ExecError
 
     from src.workload_k8s import ValkeyK8sWorkload
 
     container = mocker.MagicMock()
     fake_process = mocker.MagicMock()
-    # wait_output() on a successful binary process returns (stdout_bytes, stderr_bytes)
-    fake_process.wait_output.return_value = (b"", b"oops")
+    fake_process.stdout = io.BytesIO(b"")
+    fake_process.stderr = io.BytesIO(b"oops")
+    fake_process.wait.return_value = None
     container.exec.return_value = fake_process
 
     workload = ValkeyK8sWorkload(container=container)
@@ -112,11 +120,17 @@ def test_k8s_exec_stream_wait_returns_rc_and_stderr(mocker):
 
     assert rc == 0
     assert stderr == "oops"
+    fake_process.wait.assert_called_once()
+    fake_process.wait_output.assert_not_called()
 
-    # Failing exec
-    fake_process.wait_output.side_effect = ExecError(
-        command=["false"], exit_code=2, stdout=b"", stderr=b"boom"
+    # Failing exec: process.wait() raises ExecError carrying the exit code.
+    fake_process2 = mocker.MagicMock()
+    fake_process2.stdout = io.BytesIO(b"")
+    fake_process2.stderr = io.BytesIO(b"boom")
+    fake_process2.wait.side_effect = ExecError(
+        command=["false"], exit_code=2, stdout=b"", stderr=b""
     )
+    container.exec.return_value = fake_process2
     handle = workload.exec_stream(["false"])
     rc, stderr = handle.wait()
     assert rc == 2
