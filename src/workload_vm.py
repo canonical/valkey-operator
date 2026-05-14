@@ -50,7 +50,8 @@ class _VmProcessHandle:
 
     def __init__(self, proc: subprocess.Popen):
         self._proc = proc
-        assert proc.stdout is not None  # set via stdout=subprocess.PIPE
+        if proc.stdout is None:  # asserts compile away under -O
+            raise RuntimeError("subprocess.Popen must be created with stdout=PIPE")
         self.stdout = proc.stdout
         self._stderr_buf: list[bytes] = []
         self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
