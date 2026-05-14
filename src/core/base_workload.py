@@ -99,20 +99,31 @@ class WorkloadBase(ABC):
         """Restart a workload service."""
         pass
 
-    def exec_stream(self, command: list[str]) -> ProcessHandle:
+    def exec_stream(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> ProcessHandle:
         """Spawn a command whose stdout streams to the caller as raw bytes.
 
         Unlike :meth:`exec`, this does not buffer stdout and has no timeout.
         Stderr is captured and returned by ``ProcessHandle.wait()``.
         Used for long-running streaming uploads such as ``valkey-cli --rdb -``.
 
+        ``env`` entries are added to the process environment; use it for
+        secrets (e.g. ``REDISCLI_AUTH``) that must not appear on argv.
+
         Subclasses must override this method.
         """
         raise NotImplementedError("Subclass must implement exec_stream")
 
     @abstractmethod
-    def exec(self, command: list[str]) -> tuple[str, str | None]:
-        """Run a command on the workload substrate."""
+    def exec(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
+        """Run a command on the workload substrate.
+
+        ``env`` entries are added to the process environment; use it for
+        secrets that must not appear on the command line.
+        """
         pass
 
     @abstractmethod

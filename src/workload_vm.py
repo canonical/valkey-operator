@@ -5,6 +5,7 @@
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
 import logging
+import os
 import platform
 import subprocess
 import threading
@@ -165,7 +166,9 @@ class ValkeyVmWorkload(WorkloadBase):
             ) from e
 
     @override
-    def exec(self, command: list[str]) -> tuple[str, str | None]:
+    def exec(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
         try:
             output = subprocess.run(
                 command,
@@ -173,6 +176,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 text=True,
                 capture_output=True,
                 timeout=10,
+                env={**os.environ, **env} if env else None,
             )
             return output.stdout, output.stderr
         except subprocess.CalledProcessError as e:
@@ -183,13 +187,16 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def exec_stream(self, command: list[str]) -> ProcessHandle:
+    def exec_stream(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> ProcessHandle:
         return _VmProcessHandle(
             subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
+                env={**os.environ, **env} if env else None,
             )
         )
 

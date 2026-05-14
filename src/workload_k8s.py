@@ -178,10 +178,13 @@ class ValkeyK8sWorkload(WorkloadBase):
         return True
 
     @override
-    def exec(self, command: list[str]) -> tuple[str, str | None]:
+    def exec(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
         try:
             process = self.container.exec(
                 command=command,
+                environment=env,
             )
             return process.wait_output()
         except ops.pebble.APIError as e:
@@ -192,8 +195,14 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def exec_stream(self, command: list[str]) -> ProcessHandle:
-        return _K8sProcessHandle(self.container.exec(command=command, encoding=None, timeout=None))
+    def exec_stream(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> ProcessHandle:
+        return _K8sProcessHandle(
+            self.container.exec(
+                command=command, encoding=None, timeout=None, environment=env
+            )
+        )
 
     @override
     def stop(self) -> None:

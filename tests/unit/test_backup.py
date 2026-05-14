@@ -60,6 +60,7 @@ def test_k8s_exec_stream_delegates_to_container_exec(mocker):
         command=["valkey-cli", "--rdb", "-"],
         encoding=None,
         timeout=None,
+        environment=None,
     )
     assert handle.stdout is fake_process.stdout
 
@@ -74,9 +75,26 @@ def test_build_command_prefix_no_tls(mocker):
     prefix = client.build_command_prefix(json_output=True)
     assert prefix[0] == "valkey-cli"
     assert "--user" in prefix and "op" in prefix
-    assert "--pass" in prefix and "pw" in prefix
     assert "--json" in prefix
     assert "--tls" not in prefix
+    # The password must never reach argv; it goes via REDISCLI_AUTH.
+    assert "--pass" not in prefix
+    assert "pw" not in prefix
+
+
+def test_exec_cli_command_passes_password_via_env(mocker):
+    from src.common.client import CliClient
+
+    workload = mocker.MagicMock()
+    workload.cli = "valkey-cli"
+    workload.exec.return_value = ("OK", None)
+    client = CliClient(username="op", password="sekret", tls=False, workload=workload)
+    client.exec_cli_command(["ping"], hostname="h", json_output=False)
+
+    _args, kwargs = workload.exec.call_args
+    assert kwargs["env"] == {"REDISCLI_AUTH": "sekret"}
+    sent_argv = workload.exec.call_args[0][0]
+    assert "--pass" not in sent_argv and "sekret" not in sent_argv
 
 
 def test_build_command_prefix_with_tls(mocker):

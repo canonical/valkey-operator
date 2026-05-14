@@ -36,6 +36,12 @@ class CliClient:
     def build_command_prefix(self, json_output: bool, hostname: str | None = None) -> list[str]:
         """Construct the argv prefix for a valkey-cli invocation.
 
+        The password is intentionally NOT placed on the command line --
+        ``--pass`` is visible via /proc/<pid>/cmdline to any same-UID (or,
+        on K8s, same-pod) process. Callers must supply it through the
+        ``REDISCLI_AUTH`` environment variable instead (see
+        :meth:`exec_cli_command`).
+
         Args:
             json_output: If True, appends ``--json``.
             hostname: Optional host; when provided, inserts ``-h <hostname>``.
@@ -49,8 +55,6 @@ class CliClient:
                 str(self.port),
                 "--user",
                 self.username,
-                "--pass",
-                self.password,
             ]
         )
         if json_output:
@@ -91,7 +95,9 @@ class CliClient:
         cli_command = (
             self.build_command_prefix(json_output=json_output, hostname=hostname) + command
         )
-        output, error = self.workload.exec(cli_command)
+        output, error = self.workload.exec(
+            cli_command, env={"REDISCLI_AUTH": self.password}
+        )
         output = output.strip()
         if error:
             logger.error(
