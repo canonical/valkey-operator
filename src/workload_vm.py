@@ -60,12 +60,19 @@ class _VmProcessHandle:
     def _drain_stderr(self) -> None:
         if self._proc.stderr is None:
             return
-        for chunk in iter(lambda: self._proc.stderr.read(4096), b""):
-            self._stderr_buf.append(chunk)
+        try:
+            for chunk in iter(lambda: self._proc.stderr.read(4096), b""):
+                self._stderr_buf.append(chunk)
+        except Exception:
+            logger.exception("stderr drain thread failed")
 
     def wait(self) -> tuple[int, str]:
         rc = self._proc.wait()
-        self._stderr_thread.join(timeout=5)
+        # The process has exited; closing stderr unblocks the drain thread's
+        # blocking read() so the join() below cannot hang.
+        if self._proc.stderr is not None:
+            self._proc.stderr.close()
+        self._stderr_thread.join()
         return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
     def kill(self) -> None:
