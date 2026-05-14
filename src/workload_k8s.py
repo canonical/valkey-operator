@@ -76,8 +76,16 @@ class _K8sProcessHandle:
     def kill(self) -> None:
         try:
             self._process.send_signal(signal.SIGKILL)
+        except ops.pebble.ConnectionError as e:
+            # Pebble itself is unreachable -- the exec may still be running
+            # and we have lost the ability to stop it. A real problem.
+            logger.error("Cannot reach Pebble to SIGKILL the exec: %s", e)
         except ops.pebble.Error as e:
-            logger.warning("Failed to send SIGKILL to Pebble exec: %s", e)
+            # Most often the exec has already finished, so there is nothing
+            # to signal. kill() is called on cleanup paths after the process
+            # may have exited on its own, so this is expected -- DEBUG, not
+            # WARNING, to avoid alarming noise on the happy path.
+            logger.debug("SIGKILL to Pebble exec was a no-op (likely already exited): %s", e)
 
 
 class ValkeyK8sWorkload(WorkloadBase):

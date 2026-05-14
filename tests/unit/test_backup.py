@@ -65,6 +65,33 @@ def test_k8s_exec_stream_delegates_to_container_exec(mocker):
     assert handle.stdout is fake_process.stdout
 
 
+def test_k8s_process_handle_kill_distinguishes_pebble_errors(mocker, caplog):
+    """kill() logs an unreachable Pebble at ERROR but a no-op signal at DEBUG."""
+    import logging
+
+    import ops
+
+    from src.workload_k8s import _K8sProcessHandle
+
+    process = mocker.MagicMock()
+    process.stderr = None  # no stderr drain work
+    handle = _K8sProcessHandle(process)
+
+    # Pebble unreachable: the exec may still be running and unstoppable.
+    process.send_signal.side_effect = ops.pebble.ConnectionError("no socket")
+    with caplog.at_level(logging.DEBUG):
+        handle.kill()
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+
+    caplog.clear()
+    # Any other pebble error: most likely the exec already exited -- benign.
+    process.send_signal.side_effect = ops.pebble.Error("cannot send signal")
+    with caplog.at_level(logging.DEBUG):
+        handle.kill()
+    assert caplog.records
+    assert all(r.levelno == logging.DEBUG for r in caplog.records)
+
+
 def test_build_command_prefix_no_tls(mocker):
     from src.common.client import CliClient
 
