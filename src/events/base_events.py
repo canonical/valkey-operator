@@ -27,6 +27,8 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
     TLS_PORT,
     CharmUsers,
     ScaleDownState,
@@ -216,7 +218,9 @@ class BaseEvents(ops.Object):
 
         if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
             self.charm.unit.open_port("tcp", CLIENT_PORT)
+            self.charm.unit.open_port("tcp", SENTINEL_PORT)
         self.charm.unit.open_port("tcp", TLS_PORT)
+        self.charm.unit.open_port("tcp", SENTINEL_TLS_PORT)
 
         if not self.charm.unit.is_leader():
             return

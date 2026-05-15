@@ -11,7 +11,7 @@ description: |
   Valkey is a flexible distributed key-value database that is optimized 
   for caching and other realtime workloads. This charmed operator deploys 
   and operates Valkey in Kubernetes and VM environments.
-docs: https://canonical-charmed-valkey.readthedocs-hosted.com/en/latest/
+docs: https://canonical-charmed-valkey.readthedocs-hosted.com/latest/
 source: https://github.com/canonical/charmed-valkey-operator
 issues: https://github.com/canonical/charmed-valkey-operator/issues
 website:

@@ -26,6 +26,7 @@ from literals import (
     CLIENT_PORT,
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
+    SENTINEL_PORT,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
     TLSState,
@@ -283,6 +284,7 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             self.charm.unit.open_port("tcp", CLIENT_PORT)
+            self.charm.unit.open_port("tcp", SENTINEL_PORT)
             self._trigger_relation_change_if_required()
 
         try:
