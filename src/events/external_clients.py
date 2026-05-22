@@ -318,16 +318,13 @@ class ExternalClientsEvents(ops.Object):
         relation = self.charm.model.get_relation(
             relation_name=CERTIFICATE_TRANSFER_RELATION, relation_id=event.relation.id
         )
-        if relation is None:
-            return
-        relation.data[self.model.app]["version"] = "1"
+        relation.data[self.model.app]["version"] = "1"  # pyright: ignore[reportOptionalMemberAccess]
 
     def _on_ca_available(self, event: CertificatesAvailableEvent) -> None:
         """Handle the CA certificates available event."""
         if not (
             ca_certs := self.certificate_transfer.get_all_certificates(
-                # `relation_id` is always an int; the library's snapshot typing widens it.
-                relation_id=cast(int, event.relation_id)
+                relation_id=event.relation_id  # pyright: ignore[reportArgumentType]
             )
         ):
             logger.error("Could not retrieve CA certificates for relation %s", event.relation_id)

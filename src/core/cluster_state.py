@@ -121,10 +121,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def bind_address(self) -> str:
         """The network binding address from the peer relation."""
-        if not (peer_relation := self.peer_relation):
-            raise ValueError
-
-        if not (binding := self.model.get_binding(peer_relation)):
+        if not (
+            binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
+        ):
             raise ValueError
 
         if not (address := binding.network.bind_address):
@@ -135,10 +134,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def ingress_address(self) -> str | None:
         """The network ingress address from the peer relation."""
-        if not (peer_relation := self.peer_relation):
-            raise ValueError
-
-        if not (binding := self.model.get_binding(peer_relation)):
+        if not (
+            binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
+        ):
             raise ValueError
 
         if not (address := binding.network.ingress_address):

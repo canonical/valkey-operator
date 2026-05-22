@@ -37,8 +37,8 @@ class K8sClient:
 
         try:
             service = self.client.get(res=Service, name=service_name, namespace=self.namespace)
-            if service.spec and service.spec.ports != [service_port]:
-                service.spec.ports = [service_port]
+            if service.spec.ports != [service_port]:  # pyright: ignore[reportOptionalMemberAccess]
+                service.spec.ports = [service_port]  # pyright: ignore[reportOptionalMemberAccess]
                 self.client.patch(Service, service_name, service, patch_type=PatchType.MERGE)
                 logger.info("Updated Kubernetes service %s to port %s", service_name, port)
             return
