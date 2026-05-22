@@ -9,7 +9,7 @@ from ops import testing
 
 from charm import ValkeyCharm
 from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
-from literals import CONTAINER, PEER_RELATION
+from literals import CONTAINER, PEER_RELATION, ScaleDownState
 from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
 
@@ -62,6 +62,179 @@ def test_other_unit_has_lock(cloud_spec):
         with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
             ctx.run(ctx.on.storage_detaching(data_storage), state_in)
         assert "RequestingLockTimedOutError" in str(exc_info.value)
+
+
+def test_full_app_removal_does_not_wedge_when_lock_unavailable(cloud_spec):
+    """On full-app removal a unit that can't get the scale-down lock goes away, not error.
+
+    Removing the whole application fires storage-detaching on every unit at once; the
+    losers of the lock race must not raise (which would wedge them in error state with a
+    lost agent and block the application from ever being removed).
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
+            return_value="10.0.1.1",
+        ),
+        patch("common.locks.ScaleDownLock.request_lock", return_value=False),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("core.models.ValkeyCluster.update"),
+        patch("ops.model.Application.planned_units", return_value=0),
+    ):
+        # Must complete without raising RequestingLockTimedOutError.
+        state_out = ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    mock_stop.assert_not_called()
+    out_relation = state_out.get_relations(PEER_RELATION)[0]
+    assert out_relation.local_unit_data["scale-down-state"] == ScaleDownState.GOING_AWAY.value
+
+
+def test_storage_detaching_goes_away_if_primary_lost_acquiring_lock(cloud_spec):
+    """On full-app removal, a primary loss while acquiring the lock goes away, not error.
+
+    request_lock re-reads the primary IP from sentinels; during full-app removal that can
+    raise ValkeyCannotGetPrimaryIPError, which must be tolerated (go away) rather than
+    wedging the unit in error. (Partial scale-down re-raises instead; see
+    test_partial_scale_down_does_not_go_away_if_primary_lost.)
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
+            return_value="10.0.1.1",
+        ),
+        patch(
+            "common.locks.ScaleDownLock.request_lock",
+            side_effect=ValkeyCannotGetPrimaryIPError("primary gone"),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("core.models.ValkeyCluster.update"),
+        patch("ops.model.Application.planned_units", return_value=0),
+    ):
+        # Must complete without raising.
+        state_out = ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    mock_stop.assert_not_called()
+    out_relation = state_out.get_relations(PEER_RELATION)[0]
+    assert out_relation.local_unit_data["scale-down-state"] == ScaleDownState.GOING_AWAY.value
+
+
+def test_partial_scale_down_does_not_go_away_if_primary_lost(cloud_spec):
+    """A primary loss during a PARTIAL scale-down must raise, not silently go away.
+
+    Only full-app removal (planned_units() == 0) may go away without the lock. During a
+    single-unit scale-down the unit must surface the error so juju retries the hook, rather
+    than tearing itself down without coordinating failover and the data save.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
+            return_value="10.0.1.1",
+        ),
+        patch(
+            "common.locks.ScaleDownLock.request_lock",
+            side_effect=ValkeyCannotGetPrimaryIPError("primary gone"),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("core.models.ValkeyCluster.update"),
+        patch("ops.model.Application.planned_units", return_value=2),
+    ):
+        with pytest.raises(testing.errors.UncaughtCharmError):
+            ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    mock_stop.assert_not_called()
+
+
+def test_full_app_removal_goes_away_if_sentinel_query_fails(cloud_spec):
+    """On full-app removal a sentinel/workload error while acquiring the lock must not wedge.
+
+    request_lock can raise ValkeyWorkloadCommandError (e.g. the sentinel query in
+    get_active_sentinel_ips fails during teardown), not just ValkeyCannotGetPrimaryIPError.
+    On full-app removal that must be tolerated by going away rather than parking the unit in
+    error and blocking the application's removal.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
+            return_value="10.0.1.1",
+        ),
+        patch(
+            "common.locks.ScaleDownLock.request_lock",
+            side_effect=ValkeyWorkloadCommandError("sentinel query failed"),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+        patch("core.models.ValkeyCluster.update"),
+        patch("ops.model.Application.planned_units", return_value=0),
+    ):
+        # Must complete without raising.
+        state_out = ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    mock_stop.assert_not_called()
+    out_relation = state_out.get_relations(PEER_RELATION)[0]
+    assert out_relation.local_unit_data["scale-down-state"] == ScaleDownState.GOING_AWAY.value
 
 
 def test_non_primary(cloud_spec):

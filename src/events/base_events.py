@@ -27,6 +27,7 @@ from literals import (
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     PEER_RELATION,
+    SCALE_DOWN_LOCK_TIMEOUT,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
@@ -528,7 +529,7 @@ class BaseEvents(ops.Object):
             component=self.charm.cluster_manager.name,
         )
 
-    def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
+    def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:  # noqa: C901
         """Handle removal of the data storage mount, e.g. when removing a unit."""
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
@@ -547,8 +548,44 @@ class BaseEvents(ops.Object):
             self._set_state_for_going_away()
             return
 
-        # blocks until the lock is acquired
-        if not scale_down_lock.request_lock(primary_ip=primary_ip):
+        # waits (in-process) up to the timeout for the lock
+        try:
+            lock_acquired = scale_down_lock.request_lock(
+                timeout=SCALE_DOWN_LOCK_TIMEOUT, primary_ip=primary_ip
+            )
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            # The primary/sentinels became unreachable while we were acquiring the lock.
+            if self.charm.app.planned_units() == 0:
+                # Expected during full-app removal (every unit detaches at once and the
+                # peers that would coordinate are going away too). There is nothing left
+                # to coordinate with, so go away rather than wedge the unit in error.
+                logger.warning(
+                    "%s: primary/sentinels unreachable while acquiring the scale-down lock "
+                    "during full-app removal; going away. (%s)",
+                    self.charm.state.unit_server.unit_name,
+                    e,
+                )
+                self._set_state_for_going_away()
+                return
+            # Partial scale-down: surface the error so juju retries the hook once the
+            # cluster settles, instead of tearing the unit down without coordinating
+            # failover and the data save.
+            logger.error(e)
+            raise
+
+        if not lock_acquired:
+            # On full-app removal every unit detaches at once and the peers that
+            # would hand off the lock are themselves going away, so it may never
+            # free. Don't wedge this unit in error: its agent gets torn down
+            # before juju can retry the hook, which would leave the whole
+            # application stuck mid-removal. Just go away.
+            if self.charm.app.planned_units() == 0:
+                logger.info(
+                    "%s: whole application is being removed; going away without the scale-down lock.",
+                    self.charm.state.unit_server.unit_name,
+                )
+                self._set_state_for_going_away()
+                return
             raise RequestingLockTimedOutError("Failed to acquire scale down lock within timeout")
 
         self.charm.state.statuses.delete(
