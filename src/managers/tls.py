@@ -46,7 +46,9 @@ class TLSManager(ManagerStatusProtocol):
     state: ClusterState
 
     def __init__(self, state: ClusterState, workload: WorkloadBase):
-        self.state = state
+        # `ClusterState` satisfies `StatusesStateProtocol`; pyright flags this only
+        # because the protocol declares `state` as a mutable (invariant) attribute.
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
     def set_tls_state(self, state: TLSState) -> None:
@@ -71,17 +73,21 @@ class TLSManager(ManagerStatusProtocol):
         logger.debug(f"Setting TLS CA rotation state to {state}")
         self.state.unit_server.update({"tls_ca_rotation": state.value})
 
-    def write_certificate(self, certificate: ProviderCertificate, private_key: PrivateKey) -> None:
+    def write_certificate(
+        self, certificate: ProviderCertificate, private_key: PrivateKey | None
+    ) -> None:
         """Store the certificate on the unit.
 
         Args:
             certificate (ProviderCertificate): The certificate.
-            private_key (PrivateKey): The private key.
+            private_key (PrivateKey | None): The private key. When ``None`` (e.g. the key
+                is unchanged), the existing key file on disk is kept as-is.
         """
         self.workload.tls_dir.mkdir(exist_ok=True)
         self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
 
-        self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
+        if private_key is not None:
+            self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
         self.workload.write_file(certificate.certificate.raw, self.workload.tls_paths.client_cert)
         self.workload.write_file(certificate.ca.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
@@ -110,7 +116,7 @@ class TLSManager(ManagerStatusProtocol):
         if self.extra_sans_config_is_valid() and (
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
-            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
             sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
 
         if self.state.substrate == Substrate.K8S:
@@ -137,7 +143,7 @@ class TLSManager(ManagerStatusProtocol):
         if self.extra_sans_config_is_valid() and (
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
-            extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+            extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
             sans_dns = {
                 san.replace("{unit}", str(self.state.unit_server.unit_id))
                 for san in extra_sans
@@ -198,7 +204,7 @@ class TLSManager(ManagerStatusProtocol):
     def get_client_tls_private_key(self) -> PrivateKey | None:
         """Get the private key provided by users, if available."""
         if secret_id := self.state.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
-            if private_key := self.read_and_validate_private_key(secret_id):
+            if private_key := self.read_and_validate_private_key(str(secret_id)):
                 return private_key
 
             # in case the configured secret is invalid
@@ -244,10 +250,15 @@ class TLSManager(ManagerStatusProtocol):
             private_key=private_key,
         )
 
+        ca_cert = self.state.cluster.internal_ca_certificate
+        ca_private_key = self.state.cluster.internal_ca_private_key
+        if ca_cert is None or ca_private_key is None:
+            raise ValkeyWorkloadCommandError("Internal CA certificate or private key is missing")
+
         cert = Certificate.generate(
             csr=certificate_signing_request,
-            ca=self.state.cluster.internal_ca_certificate,
-            ca_private_key=self.state.cluster.internal_ca_private_key,
+            ca=ca_cert,
+            ca_private_key=ca_private_key,
             validity=timedelta(days=10950),
             is_ca=False,
         )
@@ -260,6 +271,8 @@ class TLSManager(ManagerStatusProtocol):
         private_key = self._generate_private_key()
         certificate = self._generate_self_signed_certificate(private_key)
         ca_cert = self.state.cluster.internal_ca_certificate
+        if ca_cert is None:
+            raise ValkeyWorkloadCommandError("Internal CA certificate is missing")
 
         self.workload.tls_dir.mkdir(exist_ok=True)
         self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
@@ -324,6 +337,8 @@ class TLSManager(ManagerStatusProtocol):
             ca_cert = certificate.ca
         else:
             ca_cert = self.state.cluster.internal_ca_certificate
+        if ca_cert is None:
+            raise ValkeyWorkloadCommandError("Internal CA certificate is missing")
         current_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
 
         if ca_cert.raw == current_ca_cert:
@@ -345,7 +360,7 @@ class TLSManager(ManagerStatusProtocol):
         if not (extra_sans_config := self.state.config.get("certificate-extra-sans")):
             return True
 
-        extra_sans = [san.strip() for san in extra_sans_config.split(",")]
+        extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
 
         for san in extra_sans:
             if not self._is_ip_address(san) and not self._is_hostname(
@@ -368,12 +383,15 @@ class TLSManager(ManagerStatusProtocol):
         """Validate a given str and return True if it is a hostname, False if not."""
         try:
             # Hostname string may only be hyphens and alpha-numerals.
-            return hostname(
-                input_value,
-                skip_ipv4_addr=True,
-                skip_ipv6_addr=True,
-                may_have_port=False,
-                maybe_simple=True,
+            # `validators.hostname` returns `True` or a falsy `ValidationError`.
+            return bool(
+                hostname(
+                    input_value,
+                    skip_ipv4_addr=True,
+                    skip_ipv6_addr=True,
+                    may_have_port=False,
+                    maybe_simple=True,
+                )
             )
         except ValidationError:
             return False

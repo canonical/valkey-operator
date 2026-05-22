@@ -37,6 +37,7 @@ from literals import (
     TLSState,
 )
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses
+from workload_vm import ValkeyVmWorkload
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -89,10 +90,14 @@ class BaseEvents(ops.Object):
             logger.debug("No installation required.")
             return
 
-        try:
-            self.charm.workload.install()
-        except RuntimeError:
-            raise RuntimeError("Failed to install the Valkey snap")
+        # install() is snap-specific and only exists on the VM workload; on K8s we
+        # already returned above.
+        workload = self.charm.workload
+        if isinstance(workload, ValkeyVmWorkload):
+            try:
+                workload.install()
+            except RuntimeError:
+                raise RuntimeError("Failed to install the Valkey snap")
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle the on start event."""

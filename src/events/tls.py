@@ -196,6 +196,7 @@ class TLSEvents(ops.Object):
             finally:
                 return
 
+        primary_ip = ""
         if self.charm.state.unit_server.is_started:
             try:
                 primary_ip = self.charm.sentinel_manager.get_primary_ip()
@@ -323,7 +324,9 @@ class TLSEvents(ops.Object):
         if secret_id != event.secret.id:
             return
 
-        if not (private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id)):
+        if not (
+            private_key := self.charm.tls_manager.read_and_validate_private_key(str(secret_id))
+        ):
             logger.error("Invalid private key provided, cannot update TLS certificates.")
             return
 
@@ -340,7 +343,7 @@ class TLSEvents(ops.Object):
             return
 
         if secret_id := self.charm.config.get(TLS_CLIENT_PRIVATE_KEY_CONFIG):
-            if private_key := self.charm.tls_manager.read_and_validate_private_key(secret_id):
+            if private_key := self.charm.tls_manager.read_and_validate_private_key(str(secret_id)):
                 if self.charm.unit.is_leader():
                     self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
                 # refresh event will be ignored by the tls lib if the csr is unchanged

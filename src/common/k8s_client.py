@@ -37,7 +37,7 @@ class K8sClient:
 
         try:
             service = self.client.get(res=Service, name=service_name, namespace=self.namespace)
-            if service.spec.ports != [service_port]:
+            if service.spec and service.spec.ports != [service_port]:
                 service.spec.ports = [service_port]
                 self.client.patch(Service, service_name, service, patch_type=PatchType.MERGE)
                 logger.info("Updated Kubernetes service %s to port %s", service_name, port)
@@ -55,6 +55,9 @@ class K8sClient:
             )
         except ApiError as e:
             raise KubernetesClientError from e
+
+        if pod0.metadata is None:
+            raise KubernetesClientError(f"Pod {self.app_name}-0 has no metadata")
 
         service = Service(
             apiVersion="v1",
@@ -89,6 +92,9 @@ class K8sClient:
             pod = self.client.get(Pod, pod_name, namespace=self.namespace)
         except ApiError as e:
             raise KubernetesClientError from e
+
+        if pod.metadata is None:
+            raise KubernetesClientError(f"Pod {pod_name} has no metadata")
 
         if not pod.metadata.labels:
             pod.metadata.labels = {}

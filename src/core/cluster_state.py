@@ -7,7 +7,8 @@
 import logging
 
 import ops
-from data_platform_helpers.advanced_statuses.protocol import StatusesState, StatusesStateProtocol
+from data_platform_helpers.advanced_statuses.components import StatusesState
+from data_platform_helpers.advanced_statuses.protocol import StatusesStateProtocol
 from dpcharmlibs.interfaces import (
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
@@ -120,7 +121,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def bind_address(self) -> str:
         """The network binding address from the peer relation."""
-        if not (binding := self.model.get_binding(self.peer_relation)):
+        if not (peer_relation := self.peer_relation):
+            raise ValueError
+
+        if not (binding := self.model.get_binding(peer_relation)):
             raise ValueError
 
         if not (address := binding.network.bind_address):
@@ -131,7 +135,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     @property
     def ingress_address(self) -> str | None:
         """The network ingress address from the peer relation."""
-        if not (binding := self.model.get_binding(self.peer_relation)):
+        if not (peer_relation := self.peer_relation):
+            raise ValueError
+
+        if not (binding := self.model.get_binding(peer_relation)):
             raise ValueError
 
         if not (address := binding.network.ingress_address):

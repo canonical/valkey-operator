@@ -24,7 +24,9 @@ class ExternalClientsManager(ManagerStatusProtocol):
     state: ClusterState
 
     def __init__(self, state: ClusterState, workload: WorkloadBase):
-        self.state = state
+        # `ClusterState` satisfies `StatusesStateProtocol`; pyright flags this only
+        # because the protocol declares `state` as a mutable (invariant) attribute.
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
     @staticmethod

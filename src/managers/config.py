@@ -43,7 +43,9 @@ class ConfigManager(ManagerStatusProtocol):
     state: ClusterState
 
     def __init__(self, state: ClusterState, workload: WorkloadBase):
-        self.state = state
+        # `ClusterState` satisfies `StatusesStateProtocol`; pyright flags this only
+        # because the protocol declares `state` as a mutable (invariant) attribute.
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
     def get_config_properties(self, primary_endpoint: str) -> dict[str, str]:
@@ -311,8 +313,13 @@ class ConfigManager(ManagerStatusProtocol):
 
         sentinel_config = self.get_sentinel_config_properties(primary_endpoint=primary_endpoint)
 
+        # the "sentinel" entry is always the nested dict of sentinel directives
+        sentinel_section = sentinel_config["sentinel"]
+        if not isinstance(sentinel_section, dict):
+            sentinel_section = {}
+
         sentinel_config_string = "\n".join(
-            f"sentinel {key} {value}" for key, value in sentinel_config["sentinel"].items()
+            f"sentinel {key} {value}" for key, value in sentinel_section.items()
         )
         other_config_string = "\n".join(
             f"{key} {value}" for key, value in sentinel_config.items() if key != "sentinel"
