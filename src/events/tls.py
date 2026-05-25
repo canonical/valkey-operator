@@ -170,7 +170,7 @@ class TLSEvents(ops.Object):
         try:
             if rotate_ca := self.charm.tls_manager.start_ca_rotation_if_required(cert):
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
-            self.charm.tls_manager.write_certificate(cert, private_key)
+            self.charm.tls_manager.write_certificate(cert, private_key)  # pyright: ignore[reportArgumentType]
             self.charm.tls_manager.set_cert_state(is_ready=True)
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to store certificate: %s", e)

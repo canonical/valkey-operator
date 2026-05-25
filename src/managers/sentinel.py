@@ -15,7 +15,6 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 from common.client import SentinelClient
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
-    KubernetesClientError,
     SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyCannotGetPrimaryIPError,
@@ -385,26 +384,20 @@ class SentinelManager(ManagerStatusProtocol):
 
     def reconcile_k8s_services(self) -> None:
         """Create or update the services in Kubernetes."""
-        if self.k8s_client is None:
-            raise KubernetesClientError("K8s client is only available on the Kubernetes substrate")
-
         valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
-        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
-        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
+        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)  # pyright: ignore[reportOptionalMemberAccess]
+        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)  # pyright: ignore[reportOptionalMemberAccess]
 
     def set_pod_labels(self) -> None:
         """Set labels for primary and replica pods in Kubernetes."""
-        if self.k8s_client is None:
-            raise KubernetesClientError("K8s client is only available on the Kubernetes substrate")
-
         primary_endpoint = self.get_primary_ip()
         for unit in self.state.servers:
             if not unit.is_active:
                 continue
 
             pod_name = unit.unit_name.replace("/", "-")
-            self.k8s_client.update_pod_label(
+            self.k8s_client.update_pod_label(  # pyright: ignore[reportOptionalMemberAccess]
                 pod_name=pod_name,
                 role=K8sService.PRIMARY.value
                 if unit.get_endpoint(Substrate.K8S) == primary_endpoint

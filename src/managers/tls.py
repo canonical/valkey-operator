@@ -73,21 +73,17 @@ class TLSManager(ManagerStatusProtocol):
         logger.debug(f"Setting TLS CA rotation state to {state}")
         self.state.unit_server.update({"tls_ca_rotation": state.value})
 
-    def write_certificate(
-        self, certificate: ProviderCertificate, private_key: PrivateKey | None
-    ) -> None:
+    def write_certificate(self, certificate: ProviderCertificate, private_key: PrivateKey) -> None:
         """Store the certificate on the unit.
 
         Args:
             certificate (ProviderCertificate): The certificate.
-            private_key (PrivateKey | None): The private key. When ``None`` (e.g. the key
-                is unchanged), the existing key file on disk is kept as-is.
+            private_key (PrivateKey): The private key.
         """
         self.workload.tls_dir.mkdir(exist_ok=True)
         self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
 
-        if private_key is not None:
-            self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
+        self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
         self.workload.write_file(certificate.certificate.raw, self.workload.tls_paths.client_cert)
         self.workload.write_file(certificate.ca.raw, self.workload.tls_paths.client_ca)
         self.rehash_ca_certificates()
@@ -116,7 +112,7 @@ class TLSManager(ManagerStatusProtocol):
         if self.extra_sans_config_is_valid() and (
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
-            extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]  # pyright: ignore[reportAttributeAccessIssue]
             sans_ip = {san for san in extra_sans if self._is_ip_address(san)}
 
         if self.state.substrate == Substrate.K8S:
@@ -143,7 +139,7 @@ class TLSManager(ManagerStatusProtocol):
         if self.extra_sans_config_is_valid() and (
             extra_sans_config := self.state.config.get("certificate-extra-sans")
         ):
-            extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
+            extra_sans = [san.strip() for san in extra_sans_config.split(",")]  # pyright: ignore[reportAttributeAccessIssue]
             sans_dns = {
                 san.replace("{unit}", str(self.state.unit_server.unit_id))
                 for san in extra_sans
@@ -360,7 +356,7 @@ class TLSManager(ManagerStatusProtocol):
         if not (extra_sans_config := self.state.config.get("certificate-extra-sans")):
             return True
 
-        extra_sans = [san.strip() for san in str(extra_sans_config).split(",")]
+        extra_sans = [san.strip() for san in extra_sans_config.split(",")]  # pyright: ignore[reportAttributeAccessIssue]
 
         for san in extra_sans:
             if not self._is_ip_address(san) and not self._is_hostname(
