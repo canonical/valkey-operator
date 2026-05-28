@@ -1,8 +1,6 @@
 summary: test_private_key.py
 environment:
   TEST_MODULE: test_private_key.py
-systems:
-  - self-hosted-linux-amd64-noble-medium
 execute: |
   tox run -e integration -- "tests/integration/tls/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
 artifacts:
