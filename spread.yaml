@@ -154,7 +154,6 @@ prepare: |
   fi
 
   pipx install tox poetry
-  pipx install git+https://github.com/skourta/jhack.git@tail-no-tty
   rustup default 1.90.0
 prepare-each: |
   cd "$SPREAD_PATH"
