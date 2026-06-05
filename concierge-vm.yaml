@@ -5,9 +5,9 @@ providers:
   lxd:
     enable: true
     bootstrap: true
-host:
-  snaps:
-    jhack:
-      channel: latest/edge
-      connections:
-        - jhack:dot-local-share-juju snapd
+# host:
+#   snaps:
+#     jhack:
+#       channel: latest/edge
+#       connections:
+#         - jhack:dot-local-share-juju snapd
