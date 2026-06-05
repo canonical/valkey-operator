@@ -169,8 +169,6 @@ jobs:
         timeout-minutes: 3
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         run: script -q -c 'sudo jhack tail --printer raw --replay --no-watch' /dev/null | tee ~/logs/jhack-tail.txt || true
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
       - name: Upload logs
         timeout-minutes: 5
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
