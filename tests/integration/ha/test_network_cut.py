@@ -144,8 +144,11 @@ def test_network_cut_primary(  # noqa: C901
     logger.info("Verifying new primary election...")
 
     new_primary_ip = None
-    # failover should happen after 30s
-    for attempt in Retrying(stop=stop_after_attempt(4), wait=wait_fixed(10), reraise=True):
+    # Sentinel only marks the old primary down after `down-after-milliseconds` (30s,
+    # see src/managers/config.py) and then needs time to reach quorum and promote a
+    # replica, so a new primary cannot appear before ~30s. Wait well past that (but
+    # under the 180s `failover-timeout`) to absorb CI scheduling jitter.
+    for attempt in Retrying(stop=stop_after_attempt(15), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
                 # we exclude the old primary ip because on k8s the unit is reachable by ip

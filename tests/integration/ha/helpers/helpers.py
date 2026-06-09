@@ -92,21 +92,28 @@ def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: s
             temp_file.write(str.encode(chaos_network_loss))
             temp_file.flush()
 
-        # Apply the generated manifest, chaosmesh would then make the pod inaccessible
+        # Apply the generated manifest, chaosmesh would then make the pod inaccessible.
+        # The chaos-mesh admission webhook (mnetworkchaos.kb.io) can take a while to
+        # start serving after the controller-manager is installed; until it does the
+        # apply fails with a transient "connection refused" calling the webhook. Retry
+        # for a bounded window so the webhook has time to come up.
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
-        try:
-            command_result = subprocess.check_output(
-                " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
-                shell=True,
-                env=env,
-                stderr=subprocess.STDOUT,
-            )
-        except subprocess.CalledProcessError as err:
-            logger.error(
-                f"Failed to apply network isolation: [{err.returncode}] {err.stderr=}, {err.stdout=}"
-            )
-            raise
+        command_result = None
+        for attempt in Retrying(stop=stop_after_delay(120), wait=wait_fixed(5), reraise=True):
+            with attempt:
+                try:
+                    command_result = subprocess.check_output(
+                        " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
+                        shell=True,
+                        env=env,
+                        stderr=subprocess.STDOUT,
+                    )
+                except subprocess.CalledProcessError as err:
+                    logger.error(
+                        f"Failed to apply network isolation: [{err.returncode}] {err.stderr=}, {err.stdout=}"
+                    )
+                    raise
         logger.info("Result of isolating unit from cluster is '%s'", command_result)
 
 
