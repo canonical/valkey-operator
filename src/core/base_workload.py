@@ -132,7 +132,7 @@ class WorkloadBase(ABC):
         Used for long-running streaming uploads such as ``valkey-cli --rdb -``.
 
         ``env`` entries are added to the process environment; use it for
-        secrets (e.g. ``REDISCLI_AUTH``) that must not appear on argv.
+        secrets (e.g. ``VALKEYCLI_AUTH``) that must not appear on argv.
 
         Subclasses must override this method.
         """

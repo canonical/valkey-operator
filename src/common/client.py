@@ -39,7 +39,7 @@ class CliClient:
         The password is intentionally NOT placed on the command line --
         ``--pass`` is visible via /proc/<pid>/cmdline to any same-UID (or,
         on K8s, same-pod) process. Callers must supply it through the
-        ``REDISCLI_AUTH`` environment variable instead (see
+        ``VALKEYCLI_AUTH`` environment variable instead (see
         :meth:`exec_cli_command`).
 
         Args:
@@ -95,7 +95,7 @@ class CliClient:
         cli_command = (
             self.build_command_prefix(json_output=json_output, hostname=hostname) + command
         )
-        output, error = self.workload.exec(cli_command, env={"REDISCLI_AUTH": self.password})
+        output, error = self.workload.exec(cli_command, env={"VALKEYCLI_AUTH": self.password})
         output = output.strip()
         if error:
             logger.error(

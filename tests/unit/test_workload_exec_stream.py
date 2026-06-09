@@ -4,12 +4,20 @@
 
 """Unit tests for the workload streaming exec primitive."""
 
+import inspect
+import io
+import logging
+
+import ops
+from ops.pebble import ExecError
+
+from src.common.client import CliClient
+from src.core.base_workload import ProcessHandle, WorkloadBase
+from src.workload_k8s import ValkeyK8sWorkload, _K8sProcessHandle
+from src.workload_vm import ValkeyVmWorkload
+
 
 def test_workload_base_declares_exec_stream():
-    import inspect
-
-    from src.core.base_workload import ProcessHandle, WorkloadBase
-
     assert hasattr(WorkloadBase, "exec_stream")
     annotations = (
         ProcessHandle.__annotations__ if hasattr(ProcessHandle, "__annotations__") else {}
@@ -21,8 +29,6 @@ def test_workload_base_declares_exec_stream():
 
 
 def test_vm_exec_stream_streams_stdout_and_collects_stderr():
-    from src.workload_vm import ValkeyVmWorkload
-
     workload = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
     handle = workload.exec_stream(["sh", "-c", "printf 'hello-stream'; printf 'oops' 1>&2"])
     body = handle.stdout.read()
@@ -33,8 +39,6 @@ def test_vm_exec_stream_streams_stdout_and_collects_stderr():
 
 
 def test_vm_exec_stream_kill_terminates():
-    from src.workload_vm import ValkeyVmWorkload
-
     workload = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
     handle = workload.exec_stream(["sh", "-c", "sleep 30"])
     handle.kill()
@@ -43,10 +47,6 @@ def test_vm_exec_stream_kill_terminates():
 
 
 def test_k8s_exec_stream_delegates_to_container_exec(mocker):
-    import io
-
-    from src.workload_k8s import ValkeyK8sWorkload
-
     container = mocker.MagicMock()
     fake_process = mocker.MagicMock()
     fake_process.stdout = io.BytesIO(b"")
@@ -67,12 +67,6 @@ def test_k8s_exec_stream_delegates_to_container_exec(mocker):
 
 def test_k8s_process_handle_kill_distinguishes_pebble_errors(mocker, caplog):
     """kill() logs an unreachable Pebble at ERROR but a no-op signal at DEBUG."""
-    import logging
-
-    import ops
-
-    from src.workload_k8s import _K8sProcessHandle
-
     process = mocker.MagicMock()
     process.stderr = None  # no stderr drain work
     handle = _K8sProcessHandle(process)
@@ -93,8 +87,6 @@ def test_k8s_process_handle_kill_distinguishes_pebble_errors(mocker, caplog):
 
 
 def test_build_command_prefix_no_tls(mocker):
-    from src.common.client import CliClient
-
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     client = CliClient(username="op", password="pw", tls=False, workload=workload)
@@ -104,14 +96,12 @@ def test_build_command_prefix_no_tls(mocker):
     assert "--user" in prefix and "op" in prefix
     assert "--json" in prefix
     assert "--tls" not in prefix
-    # The password must never reach argv; it goes via REDISCLI_AUTH.
+    # The password must never reach argv; it goes via VALKEYCLI_AUTH.
     assert "--pass" not in prefix
     assert "pw" not in prefix
 
 
 def test_exec_cli_command_passes_password_via_env(mocker):
-    from src.common.client import CliClient
-
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     workload.exec.return_value = ("OK", None)
@@ -119,14 +109,12 @@ def test_exec_cli_command_passes_password_via_env(mocker):
     client.exec_cli_command(["ping"], hostname="h", json_output=False)
 
     _args, kwargs = workload.exec.call_args
-    assert kwargs["env"] == {"REDISCLI_AUTH": "sekret"}
+    assert kwargs["env"] == {"VALKEYCLI_AUTH": "sekret"}
     sent_argv = workload.exec.call_args[0][0]
     assert "--pass" not in sent_argv and "sekret" not in sent_argv
 
 
 def test_build_command_prefix_with_tls(mocker):
-    from src.common.client import CliClient
-
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     workload.tls_paths.client_cert.as_posix.return_value = "/c"
@@ -145,12 +133,6 @@ def test_build_command_prefix_with_tls(mocker):
 
 def test_k8s_exec_stream_wait_streams_without_buffering_stdout(mocker):
     """wait() must call process.wait(), never the RDB-buffering wait_output()."""
-    import io
-
-    from ops.pebble import ExecError
-
-    from src.workload_k8s import ValkeyK8sWorkload
-
     container = mocker.MagicMock()
     fake_process = mocker.MagicMock()
     fake_process.stdout = io.BytesIO(b"")
