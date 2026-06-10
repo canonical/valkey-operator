@@ -53,6 +53,12 @@ class _K8sProcessHandle:
         self._stderr_thread.start()
 
     def _drain_stderr(self) -> None:
+        """Drain the child's stderr into the bounded tail buffer until EOF.
+
+        Runs on a daemon thread so a chatty child cannot fill the stderr
+        pipe and block the caller draining stdout. Read failures are logged
+        and terminate the thread rather than propagating to the caller.
+        """
         if self._process.stderr is None:
             return
         try:

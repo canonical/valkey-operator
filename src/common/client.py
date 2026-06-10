@@ -47,7 +47,7 @@ class CliClient:
             hostname: Optional host; when provided, inserts ``-h <hostname>``.
         """
         cmd: list[str] = [self.workload.cli, "--no-auth-warning"]
-        if hostname is not None:
+        if hostname:
             cmd.extend(["-h", hostname])
         cmd.extend(
             [

@@ -68,6 +68,12 @@ class _VmProcessHandle:
         self._stderr_thread.start()
 
     def _drain_stderr(self) -> None:
+        """Drain the child's stderr into the bounded tail buffer until EOF.
+
+        Runs on a daemon thread so a chatty child cannot fill the stderr
+        pipe and block the caller draining stdout. Read failures are logged
+        and terminate the thread rather than propagating to the caller.
+        """
         if self._proc.stderr is None:
             return
         try:
@@ -194,7 +200,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 text=True,
                 capture_output=True,
                 timeout=10,
-                env={**os.environ, **env} if env else None,
+                env={**os.environ, **env} if env else os.environ,
             )
             return output.stdout, output.stderr
         except subprocess.CalledProcessError as e:
