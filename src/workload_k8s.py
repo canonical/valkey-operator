@@ -8,7 +8,7 @@ import collections
 import logging
 import signal
 import threading
-from typing import override
+from typing import IO, override
 
 import ops
 from charmlibs import pathops
@@ -47,7 +47,9 @@ class _K8sProcessHandle:
 
     def __init__(self, process: ops.pebble.ExecProcess):
         self._process = process
-        self.stdout = process.stdout
+        if process.stdout is None:
+            raise RuntimeError("Pebble exec must be created with stdout available")
+        self.stdout: IO[bytes] = process.stdout
         self._stderr_buf: collections.deque[bytes] = collections.deque(maxlen=64)
         self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
         self._stderr_thread.start()
@@ -59,10 +61,11 @@ class _K8sProcessHandle:
         pipe and block the caller draining stdout. Read failures are logged
         and terminate the thread rather than propagating to the caller.
         """
-        if self._process.stderr is None:
+        stderr = self._process.stderr
+        if stderr is None:
             return
         try:
-            for chunk in iter(lambda: self._process.stderr.read(4096), b""):
+            for chunk in iter(lambda: stderr.read(4096), b""):
                 self._stderr_buf.append(chunk)
         except Exception:
             logger.exception("stderr drain thread failed")

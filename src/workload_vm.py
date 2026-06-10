@@ -74,10 +74,11 @@ class _VmProcessHandle:
         pipe and block the caller draining stdout. Read failures are logged
         and terminate the thread rather than propagating to the caller.
         """
-        if self._proc.stderr is None:
+        stderr = self._proc.stderr
+        if stderr is None:
             return
         try:
-            for chunk in iter(lambda: self._proc.stderr.read(4096), b""):
+            for chunk in iter(lambda: stderr.read(4096), b""):
                 self._stderr_buf.append(chunk)
         except Exception:
             logger.exception("stderr drain thread failed")
