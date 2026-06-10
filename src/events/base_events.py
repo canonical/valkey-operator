@@ -90,7 +90,7 @@ class BaseEvents(ops.Object):
             return
 
         try:
-            self.charm.workload.install()
+            self.charm.workload.install()  # pyright: ignore[reportAttributeAccessIssue]
         except RuntimeError:
             raise RuntimeError("Failed to install the Valkey snap")
 

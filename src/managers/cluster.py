@@ -33,7 +33,9 @@ class ClusterManager(ManagerStatusProtocol):
     state: ClusterState
 
     def __init__(self, state: ClusterState, workload: WorkloadBase):
-        self.state = state
+        # `ClusterState` satisfies `StatusesStateProtocol`; pyright flags this only
+        # because the protocol declares `state` as a mutable (invariant) attribute.
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
         self.admin_user = CharmUsers.VALKEY_ADMIN.value
 
@@ -156,7 +158,7 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         server_info = client.info_server(hostname=self.state.endpoint)
 
-        return server_info.get("valkey_version")
+        return server_info["valkey_version"]
 
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""

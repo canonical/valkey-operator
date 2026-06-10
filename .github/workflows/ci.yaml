@@ -45,6 +45,25 @@ jobs:
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v4
 
+  static:
+    name: Static type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install tox & poetry
+        run: |
+          pipx install tox
+          pipx install poetry
+      # to build Valkey-glide during tests (matches unit-test job)
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install libprotobuf-dev protobuf-compiler
+      - name: Run pyright
+        run: tox run -e static
+
   lib-check:
     name: Check libraries
     runs-on: ubuntu-latest

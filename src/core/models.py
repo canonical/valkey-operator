@@ -105,7 +105,8 @@ class RelationState:
 
     def update(self, items: dict[str, Any]) -> None:
         """Write to relation data."""
-        if not self.relation:
+        # `self.model` is only built when `self.relation` exists, so both are checked together.
+        if not self.relation or self.model is None:
             logger.warning(
                 "Fields %s were attempted to be written on the relation before it exists.",
                 list(items.keys()),

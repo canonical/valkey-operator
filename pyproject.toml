@@ -48,6 +48,12 @@ coverage = { extras = ["toml"], version = "*" }
 parameterized = "*"
 ops-scenario = "*"
 
+[tool.poetry.group.static]
+optional = true
+
+[tool.poetry.group.static.dependencies]
+pyright = "*"
+
 [tool.poetry.group.integration.dependencies]
 pytest = "*"
 pytest-asyncio = "*"

@@ -33,7 +33,9 @@ class ValkeyCharm(ops.CharmBase):
     """Charmed Operator for Valkey."""
 
     restart_workload = ops.EventSource(RestartWorkloadEvent)
-    on = TopologyChangedCharmEvents()
+    # Overriding `on` with a custom CharmEvents subclass is the intended ops API;
+    # pyright flags it only because `CharmBase.on` is declared as a property.
+    on = TopologyChangedCharmEvents()  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
 
     def __init__(self, *args) -> None:
         super().__init__(*args)

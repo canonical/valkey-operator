@@ -6,7 +6,7 @@
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import ops
 from charmlibs.interfaces.certificate_transfer import (
@@ -141,7 +141,12 @@ class ExternalClientsEvents(ops.Object):
             response = next(
                 (
                     res
-                    for res in self.valkey_provides.responses(event.relation, ValkeyResponseModel)
+                    # `responses()` is typed to return the base model, but builds the
+                    # concrete `ValkeyResponseModel` from the model argument above.
+                    for res in cast(
+                        list[ValkeyResponseModel],
+                        self.valkey_provides.responses(event.relation, ValkeyResponseModel),
+                    )
                     if res.request_id == request.request_id
                 ),
                 None,
@@ -293,6 +298,9 @@ class ExternalClientsEvents(ops.Object):
                     logger.warning("Skipping relation %s, no matching response.", relation.id)
                     continue
 
+                # `responses()` builds concrete `ValkeyResponseModel` instances from the
+                # model argument, though it is typed to return the base model.
+                current_response = cast(ValkeyResponseModel, current_response)
                 current_response.endpoints = primary_endpoints
                 current_response.read_only_endpoints = replica_endpoints
                 current_response.sentinel_endpoints = sentinel_endpoints
@@ -310,13 +318,13 @@ class ExternalClientsEvents(ops.Object):
         relation = self.charm.model.get_relation(
             relation_name=CERTIFICATE_TRANSFER_RELATION, relation_id=event.relation.id
         )
-        relation.data[self.model.app]["version"] = "1"
+        relation.data[self.model.app]["version"] = "1"  # pyright: ignore[reportOptionalMemberAccess]
 
     def _on_ca_available(self, event: CertificatesAvailableEvent) -> None:
         """Handle the CA certificates available event."""
         if not (
             ca_certs := self.certificate_transfer.get_all_certificates(
-                relation_id=event.relation_id
+                relation_id=event.relation_id  # pyright: ignore[reportArgumentType]
             )
         ):
             logger.error("Could not retrieve CA certificates for relation %s", event.relation_id)

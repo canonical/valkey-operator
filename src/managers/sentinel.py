@@ -45,7 +45,9 @@ class SentinelManager(ManagerStatusProtocol):
     state: ClusterState
 
     def __init__(self, state: ClusterState, workload: WorkloadBase):
-        self.state = state
+        # `ClusterState` satisfies `StatusesStateProtocol`; pyright flags this only
+        # because the protocol declares `state` as a mutable (invariant) attribute.
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
         self.admin_user = CharmUsers.SENTINEL_CHARM_ADMIN.value
 
@@ -384,8 +386,8 @@ class SentinelManager(ManagerStatusProtocol):
         """Create or update the services in Kubernetes."""
         valkey_port = TLS_PORT if self.state.unit_server.is_tls_enabled else CLIENT_PORT
 
-        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)
-        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)
+        self.k8s_client.ensure_endpoint_service(role=K8sService.PRIMARY.value, port=valkey_port)  # pyright: ignore[reportOptionalMemberAccess]
+        self.k8s_client.ensure_endpoint_service(role=K8sService.REPLICAS.value, port=valkey_port)  # pyright: ignore[reportOptionalMemberAccess]
 
     def set_pod_labels(self) -> None:
         """Set labels for primary and replica pods in Kubernetes."""
@@ -395,7 +397,7 @@ class SentinelManager(ManagerStatusProtocol):
                 continue
 
             pod_name = unit.unit_name.replace("/", "-")
-            self.k8s_client.update_pod_label(
+            self.k8s_client.update_pod_label(  # pyright: ignore[reportOptionalMemberAccess]
                 pod_name=pod_name,
                 role=K8sService.PRIMARY.value
                 if unit.get_endpoint(Substrate.K8S) == primary_endpoint
