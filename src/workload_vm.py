@@ -218,7 +218,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
-                env={**os.environ, **env} if env else None,
+                env={**os.environ, **env} if env else os.environ,
             )
         )
 
