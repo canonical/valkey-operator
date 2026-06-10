@@ -103,6 +103,7 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.create_and_store_self_signed_certificate()
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to create certificate for peer-TLS, startup will fail: %s", e)
+            event.defer()
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle TLS related changes to the peer relation."""
@@ -190,7 +191,7 @@ class TLSEvents(ops.Object):
                 self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
-            except ValkeyTLSLoadError:
+            except (ValkeyTLSLoadError, ValkeyWorkloadCommandError):
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
             finally:
