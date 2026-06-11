@@ -33,6 +33,46 @@ class CliClient:
         self.tls = tls
         self.workload = workload
 
+    def build_command_prefix(self, json_output: bool, hostname: str | None = None) -> list[str]:
+        """Construct the argv prefix for a valkey-cli invocation.
+
+        The password is intentionally NOT placed on the command line --
+        ``--pass`` is visible via /proc/<pid>/cmdline to any same-UID (or,
+        on K8s, same-pod) process. Callers must supply it through the
+        ``VALKEYCLI_AUTH`` environment variable instead (see
+        :meth:`exec_cli_command`).
+
+        Args:
+            json_output: If True, appends ``--json``.
+            hostname: Optional host; when provided, inserts ``-h <hostname>``.
+        """
+        cmd: list[str] = [self.workload.cli, "--no-auth-warning"]
+        if hostname:
+            cmd.extend(["-h", hostname])
+        cmd.extend(
+            [
+                "-p",
+                str(self.port),
+                "--user",
+                self.username,
+            ]
+        )
+        if json_output:
+            cmd.append("--json")
+        if self.tls:
+            cmd.extend(
+                [
+                    "--tls",
+                    "--cert",
+                    self.workload.tls_paths.client_cert.as_posix(),
+                    "--key",
+                    self.workload.tls_paths.client_key.as_posix(),
+                    "--cacertdir",
+                    self.workload.tls_paths.ca_certs_dir.as_posix(),
+                ]
+            )
+        return cmd
+
     def exec_cli_command(
         self,
         command: list[str],
@@ -52,31 +92,10 @@ class CliClient:
         Raises:
             ValkeyWorkloadCommandError: If the CLI command fails to execute.
         """
-        port = self.port
-        cli_command: list[str] = [
-            self.workload.cli,
-            "--no-auth-warning",
-            "-h",
-            hostname,
-            "-p",
-            str(port),
-            "--user",
-            self.username,
-            "--pass",
-            self.password,
-        ] + (["--json"] if json_output else [])
-
-        if self.tls:
-            cli_command.append("--tls")
-            cli_command.append("--cert")
-            cli_command.append(self.workload.tls_paths.client_cert.as_posix())
-            cli_command.append("--key")
-            cli_command.append(self.workload.tls_paths.client_key.as_posix())
-            cli_command.append("--cacertdir")
-            cli_command.append(self.workload.tls_paths.ca_certs_dir.as_posix())
-
-        cli_command = cli_command + command
-        output, error = self.workload.exec(cli_command)
+        cli_command = (
+            self.build_command_prefix(json_output=json_output, hostname=hostname) + command
+        )
+        output, error = self.workload.exec(cli_command, env={"VALKEYCLI_AUTH": self.password})
         output = output.strip()
         if error:
             logger.error(

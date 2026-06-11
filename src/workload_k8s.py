@@ -4,8 +4,11 @@
 
 """Implementation of WorkloadBase for running Valkey on K8s."""
 
+import collections
 import logging
-from typing import override
+import signal
+import threading
+from typing import IO, override
 
 import ops
 from charmlibs import pathops
@@ -17,7 +20,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from core.base_workload import TLSPaths, WorkloadBase
+from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ACL_FILE,
     CHARM,
@@ -27,6 +30,71 @@ from literals import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _K8sProcessHandle:
+    """ProcessHandle backed by Pebble exec (K8s substrate).
+
+    stdout is streamed to the caller unbuffered. stderr is drained on a
+    daemon thread into a bounded buffer (last 64 chunks) so a chatty child
+    cannot fill the pipe and block -- ``wait()`` therefore returns only the
+    tail of stderr. ``wait()`` returns the exit code WITHOUT calling
+    ``wait_output()``: the latter would buffer the entire stdout (the whole
+    RDB) into the charm container's memory. When Pebble itself fails to run
+    the change, ``wait()`` returns -1 as the returncode sentinel.
+    ``kill()`` sends SIGKILL but does not block waiting for the exit.
+    """
+
+    def __init__(self, process: ops.pebble.ExecProcess):
+        self._process = process
+        if process.stdout is None:
+            raise RuntimeError("Pebble exec must be created with stdout available")
+        self.stdout: IO[bytes] = process.stdout
+        self._stderr_buf: collections.deque[bytes] = collections.deque(maxlen=64)
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        """Drain the child's stderr into the bounded tail buffer until EOF.
+
+        Runs on a daemon thread so a chatty child cannot fill the stderr
+        pipe and block the caller draining stdout. Read failures are logged
+        and terminate the thread rather than propagating to the caller.
+        """
+        stderr = self._process.stderr
+        if stderr is None:
+            return
+        try:
+            for chunk in iter(lambda: stderr.read(4096), b""):
+                self._stderr_buf.append(chunk)
+        except Exception:
+            logger.exception("stderr drain thread failed")
+
+    def wait(self) -> tuple[int, str]:
+        try:
+            self._process.wait()
+            rc = 0
+        except ops.pebble.ExecError as e:
+            rc = e.exit_code
+        except ops.pebble.ChangeError as e:
+            logger.error("Pebble exec did not complete: %s", e)
+            rc = -1
+        self._stderr_thread.join(timeout=5)
+        return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
+
+    def kill(self) -> None:
+        try:
+            self._process.send_signal(signal.SIGKILL)
+        except ops.pebble.ConnectionError as e:
+            # Pebble itself is unreachable -- the exec may still be running
+            # and we have lost the ability to stop it. A real problem.
+            logger.error("Cannot reach Pebble to SIGKILL the exec: %s", e)
+        except ops.pebble.Error as e:
+            # Most often the exec has already finished, so there is nothing
+            # to signal. kill() is called on cleanup paths after the process
+            # may have exited on its own, so this is expected -- DEBUG, not
+            # WARNING, to avoid alarming noise on the happy path.
+            logger.debug("SIGKILL to Pebble exec was a no-op (likely already exited): %s", e)
 
 
 class ValkeyK8sWorkload(WorkloadBase):
@@ -130,10 +198,13 @@ class ValkeyK8sWorkload(WorkloadBase):
         return True
 
     @override
-    def exec(self, command: list[str]) -> tuple[str, str | None]:
+    def exec(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
         try:
             process = self.container.exec(
                 command=command,
+                environment=env,
             )
             return process.wait_output()
         except ops.pebble.APIError as e:
@@ -142,6 +213,12 @@ class ValkeyK8sWorkload(WorkloadBase):
         except ops.pebble.ExecError as e:
             logger.error("Command failed with: %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
+        return _K8sProcessHandle(
+            self.container.exec(command=command, encoding=None, timeout=None, environment=env)
+        )
 
     @override
     def stop(self) -> None:

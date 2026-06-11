@@ -4,9 +4,12 @@
 
 """Implementation of WorkloadBase for running Valkey on VMs."""
 
+import collections
 import logging
+import os
 import platform
 import subprocess
+import threading
 import time
 from typing import override
 
@@ -26,7 +29,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from core.base_workload import TLSPaths, WorkloadBase
+from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
@@ -41,6 +44,60 @@ from literals import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _VmProcessHandle:
+    """ProcessHandle backed by ``subprocess.Popen`` (VM substrate).
+
+    stdout is the Popen pipe, streamed to the caller unbuffered. stderr is
+    drained on a daemon thread so a chatty child cannot fill the pipe and
+    deadlock the upload. ``wait()`` returns the real process exit code and
+    reaps the child; ``kill()`` sends SIGKILL and waits briefly so the
+    process does not linger as a zombie.
+    """
+
+    def __init__(self, proc: subprocess.Popen):
+        self._proc = proc
+        if proc.stdout is None:  # asserts compile away under -O
+            raise RuntimeError("subprocess.Popen must be created with stdout=PIPE")
+        self.stdout = proc.stdout
+        # Bounded: a chatty child must not grow this without limit over a
+        # long-running stream. Only the tail is kept, matching the K8s handle.
+        self._stderr_buf: collections.deque[bytes] = collections.deque(maxlen=64)
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        """Drain the child's stderr into the bounded tail buffer until EOF.
+
+        Runs on a daemon thread so a chatty child cannot fill the stderr
+        pipe and block the caller draining stdout. Read failures are logged
+        and terminate the thread rather than propagating to the caller.
+        """
+        stderr = self._proc.stderr
+        if stderr is None:
+            return
+        try:
+            for chunk in iter(lambda: stderr.read(4096), b""):
+                self._stderr_buf.append(chunk)
+        except Exception:
+            logger.exception("stderr drain thread failed")
+
+    def wait(self) -> tuple[int, str]:
+        rc = self._proc.wait()
+        # The process has exited; closing stderr unblocks the drain thread's
+        # blocking read() so the join() below cannot hang.
+        if self._proc.stderr is not None:
+            self._proc.stderr.close()
+        self._stderr_thread.join()
+        return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
+
+    def kill(self) -> None:
+        self._proc.kill()
+        try:
+            self._proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logger.warning("Process did not exit within 10s of SIGKILL")
 
 
 class ValkeyVmWorkload(WorkloadBase):
@@ -134,7 +191,9 @@ class ValkeyVmWorkload(WorkloadBase):
             ) from e
 
     @override
-    def exec(self, command: list[str]) -> tuple[str, str | None]:
+    def exec(
+        self, command: list[str], env: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
         try:
             output = subprocess.run(
                 command,
@@ -142,6 +201,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 text=True,
                 capture_output=True,
                 timeout=10,
+                env={**os.environ, **env} if env else os.environ,
             )
             return output.stdout, output.stderr
         except subprocess.CalledProcessError as e:
@@ -150,6 +210,18 @@ class ValkeyVmWorkload(WorkloadBase):
         except subprocess.TimeoutExpired as e:
             logger.error("Command timed out: %s", str(e.stderr))
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
+        return _VmProcessHandle(
+            subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+                env={**os.environ, **env} if env else os.environ,
+            )
+        )
 
     @override
     @retry(
