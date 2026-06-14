@@ -318,7 +318,7 @@ class ConfigManager(ManagerStatusProtocol):
             f"{self.state.cluster.internal_users_credentials.get(CharmUsers.SENTINEL_ADMIN.value, '')}"
         )
         sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} 30000"
-        sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 180000"
+        sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 60000"
         sentinel_configs["parallel-syncs"] = f"{PRIMARY_NAME} 1"
         if self.state.substrate == Substrate.K8S:
             sentinel_configs["resolve-hostnames"] = "yes"
