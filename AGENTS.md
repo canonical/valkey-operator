@@ -25,6 +25,28 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
   `workload_vm.py` and `workload_k8s.py`.
 - NEVER log, print, or put secret values (passwords, CA/TLS private keys) into exception messages
   or statuses — log identifiers/labels only.
+- NEVER `git push` or merge/land a PR — the user does all pushing and merging; commit locally only
+  when asked.
+- NEVER comment on, review, or approve GitHub PRs/issues — surface findings in the conversation.
+
+## Correctness invariants (every change MUST hold these)
+
+- **Backward-compatible upgrades / migrations.** New-revision code MUST keep working against
+  old-revision state (peer databags, Juju secrets, on-disk config/ACL, Pebble layer) and against
+  old-revision peers mid-upgrade. On any schema/layout change, ship migration logic and tolerate
+  missing keys (default in the pydantic model). `9/edge` rolls unit-by-unit, so old and new always
+  coexist — no flag day.
+- **Idempotency.** Handlers and manager ops MUST be safe to re-run and converge to the same state
+  (Juju redelivers events; `StartState`/`restart_workload` re-enter). Check-then-act before
+  mutating; never assume a step ran exactly once.
+- **Eventual consistency / self-healing.** Don't depend on a specific event firing. If a unit
+  misses one (peer churn, leader change, restart, observer death, deferred hook), the next
+  reconcile — `update-status`, a `*-relation-changed`, or the deferring `StartState`/restart
+  machine — MUST converge it. Reconcile from current state, not from the delta; defer (don't crash)
+  when prerequisites aren't ready.
+- **Integration coverage.** Every feature / user-facing change ships an integration test under
+  `tests/integration/` (requirer-charm/glide-runner for HA) — passing unit tests alone aren't
+  sign-off.
 
 ## Before you call a change done (YOU MUST)
 
