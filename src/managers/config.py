@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 WORKING_DIR = Path(__file__).absolute().parent
 
+_REPL_BACKLOG_MIN_RAM_BYTES = 1 * 1024**3  # 1 GiB; strict greater-than
+_REPL_BACKLOG_SIZE = "256mb"
+
 
 class ConfigManager(ManagerStatusProtocol):
     """Manage cluster members, authorization and other server related tasks."""
@@ -50,6 +53,9 @@ class ConfigManager(ManagerStatusProtocol):
 
     def get_config_properties(self, primary_endpoint: str) -> dict[str, str]:
         """Assemble the config properties.
+
+        Args:
+            primary_endpoint: Endpoint of the current primary unit.
 
         Returns:
             Dictionary of properties to be written to the config file.
@@ -80,6 +86,20 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["dir"] = self.workload.working_dir.as_posix()
 
         config_properties["bind"] = self.state.endpoint
+
+        # DA261 backup-safety overrides
+        config_properties["repl-diskless-load"] = "on-empty-db"
+        config_properties["save"] = "900 1 300 100 60 10000"
+        config_properties["maxmemory-policy"] = "noeviction"
+        config_properties["min-replicas-max-lag"] = "10"
+        # Only require an in-sync replica on clusters that can tolerate losing one
+        # (>= 3 units). On 1- and 2-unit deployments this stays 0 so the primary
+        # is not write-frozen when its sole replica is unavailable (e.g. during a
+        # rolling restart).
+        planned_units = self.state.charm.app.planned_units()
+        config_properties["min-replicas-to-write"] = "1" if planned_units >= 3 else "0"
+        if self.workload.total_memory_bytes() > _REPL_BACKLOG_MIN_RAM_BYTES:
+            config_properties["repl-backlog-size"] = _REPL_BACKLOG_SIZE
 
         # replica related config
         replica_config = self._generate_replica_config(primary_endpoint=primary_endpoint)
@@ -297,7 +317,6 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_configs["sentinel-pass"] = (
             f"{self.state.cluster.internal_users_credentials.get(CharmUsers.SENTINEL_ADMIN.value, '')}"
         )
-        # TODO consider making these configs adjustable via charm config
         sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} 30000"
         sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 180000"
         sentinel_configs["parallel-syncs"] = f"{PRIMARY_NAME} 1"
