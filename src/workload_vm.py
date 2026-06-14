@@ -277,3 +277,52 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyServicesCouldNotBeStoppedError(
                 "Valkey services are still alive after stop."
             )
+
+    @override
+    def total_memory_bytes(self) -> int:
+        """Per-unit memory budget for this machine.
+
+        Returns the cgroup v2 memory limit when one is set — an LXD
+        ``limits.memory`` constraint maps to ``memory.max`` (or ``memory.high``
+        in soft-enforce mode) — otherwise falls back to ``/proc/meminfo``
+        MemTotal. lxcfs virtualizes MemTotal to the container limit inside an
+        LXD system container, and it reflects the guest's RAM in an LXD VM,
+        MAAS, or cloud VM. Returns 0 if nothing is readable. Cgroup v1 is not
+        supported (Ubuntu noble is cgroup v2 only).
+        """
+        for cgroup_file in ("sys/fs/cgroup/memory.max", "sys/fs/cgroup/memory.high"):
+            limit = self._read_cgroup_limit(cgroup_file)
+            if limit is not None:
+                return limit
+        return self._read_meminfo_total()
+
+    def _read_cgroup_limit(self, relative_path: str) -> int | None:
+        """Read a cgroup v2 memory limit file under root_dir.
+
+        Returns the byte value, or None when the file is absent/unreadable or
+        set to the literal "max" (no limit at this level).
+        """
+        try:
+            raw = (self.root_dir / relative_path).read_text().strip()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return None
+        if raw == "max":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def _read_meminfo_total(self) -> int:
+        """Read /proc/meminfo MemTotal (KiB) and return it in bytes, else 0."""
+        try:
+            content = (self.root_dir / "proc/meminfo").read_text()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return 0
+        for line in content.splitlines():
+            if line.startswith("MemTotal:"):
+                try:
+                    return int(line.split()[1]) * 1024
+                except (IndexError, ValueError):
+                    return 0
+        return 0

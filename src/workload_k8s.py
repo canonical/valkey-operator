@@ -234,3 +234,37 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"
             ) from e
+
+    @override
+    def total_memory_bytes(self) -> int:
+        """Pod's cgroup v2 memory limit read from inside the Valkey container.
+
+        Falls back to /proc/meminfo MemTotal when the cgroup limit is unset
+        ("max"). Returns 0 if neither is readable. Cgroup v1 is not supported
+        (Ubuntu noble — the only supported substrate — is cgroup v2 only).
+        """
+        cgroup_max = self.root_dir / "sys/fs/cgroup/memory.max"
+        try:
+            raw = cgroup_max.read_text().strip()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return self._read_meminfo_total()
+        if raw == "max":
+            return self._read_meminfo_total()
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
+
+    def _read_meminfo_total(self) -> int:
+        """Read /proc/meminfo MemTotal from inside the Valkey container."""
+        try:
+            content = (self.root_dir / "proc/meminfo").read_text()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return 0
+        for line in content.splitlines():
+            if line.startswith("MemTotal:"):
+                try:
+                    return int(line.split()[1]) * 1024
+                except (IndexError, ValueError):
+                    return 0
+        return 0

@@ -158,6 +158,16 @@ class WorkloadBase(ABC):
         """
         pass
 
+    @abstractmethod
+    def total_memory_bytes(self) -> int:
+        """Total memory budget visible to the Valkey workload.
+
+        On VM substrate this is the host's physical RAM. On K8s substrate this
+        is the pod's cgroup v2 memory limit (or node MemTotal when unlimited).
+        Returns 0 if undetectable; callers must treat 0 as "below any threshold".
+        """
+        pass
+
     def write_file(
         self,
         content: str,
