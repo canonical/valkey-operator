@@ -15,3 +15,6 @@ host:
       channel: latest/edge
       connections:
         - jhack:dot-local-share-juju snapd
+    # S3-compatible backend for the backup integration tests.
+    microceph:
+      channel: squid/stable
