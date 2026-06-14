@@ -152,3 +152,22 @@ class ExternalClientsStatuses(Enum):
     USER_ACL_OUT_OF_DATE = StatusObject(
         status="maintenance", message="Client relation: Unit has not updated ACLs for client users"
     )
+
+
+class BackupStatuses(Enum):
+    """Collection of backup-related statuses."""
+
+    BACKUP_IN_PROGRESS = StatusObject(
+        status="maintenance",
+        message="Creating database backup...",
+        running="async",
+    )
+    BACKUP_S3_PARAMETERS_MISSING = StatusObject(
+        status="blocked",
+        message="Missing or invalid S3 credentials",
+    )
+    BACKUP_FAILED = StatusObject(
+        status="blocked",
+        message="Last backup attempt failed - check juju debug-log",
+        running="async",
+    )

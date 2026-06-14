@@ -530,6 +530,12 @@ class BaseEvents(ops.Object):
 
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
         """Handle removal of the data storage mount, e.g. when removing a unit."""
+        if self.charm.state.unit_server.is_backup_in_progress:
+            logger.warning(
+                "Backup in progress on this unit; refusing to scale down until it finishes."
+            )
+            return
+
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
 

@@ -13,10 +13,12 @@ from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvent
 from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCommandError
 from common.locks import RestartLock
 from core.cluster_state import ClusterState
+from events.backup import BackupEvents
 from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
+from managers.backup import BackupManager
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
@@ -60,6 +62,7 @@ class ValkeyCharm(ops.CharmBase):
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
         self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
         self.topology_manager = TopologyManager(state=self.state, workload=self.workload)
+        self.backup_manager = BackupManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
@@ -69,12 +72,14 @@ class ValkeyCharm(ops.CharmBase):
             self.sentinel_manager,
             self.tls_manager,
             self.client_manager,
+            self.backup_manager,
         )
 
         # --- EVENT HANDLERS ---
         self.base_events = BaseEvents(self)
         self.tls_events = TLSEvents(self)
         self.client_events = ExternalClientsEvents(self)
+        self.backup_events = BackupEvents(self)
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 
@@ -85,6 +90,10 @@ class ValkeyCharm(ops.CharmBase):
             event.restart_valkey,
             event.restart_sentinel,
         )
+        if self.state.unit_server.is_backup_in_progress:
+            logger.info("Backup in progress on this unit; deferring restart_workload")
+            event.defer()
+            return
         restart_lock = RestartLock(self.state)
         restart_lock.request_lock()
         if not restart_lock.is_held_by_this_unit:

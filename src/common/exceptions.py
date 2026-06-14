@@ -70,3 +70,7 @@ class ValkeyCertificatesNotReadyError(Exception):
 
 class KubernetesClientError(Exception):
     """Custom Exception if a connection to the Kubernetes Cluster API fails."""
+
+
+class ValkeyBackupError(Exception):
+    """Raised when a backup operation fails."""

@@ -65,6 +65,7 @@ class PeerAppModel(PeerModel):
     tls_client_private_key: ExtraSecretStr = Field(default=None)
     external_client_users: ClientUsersSecret = Field(default="")
     client_user_epoch: float = Field(default=0)
+    s3_credentials: ExtraSecretStr = Field(default=None)
 
 
 class PeerUnitModel(PeerModel):
@@ -85,6 +86,7 @@ class PeerUnitModel(PeerModel):
     is_sentinel_healthy: bool = Field(default=True)
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
+    backup_id: str = Field(default="")
 
 
 class RelationState:
@@ -170,6 +172,11 @@ class ValkeyServer(RelationState):
         return self.is_started and not self.is_being_removed
 
     @property
+    def is_backup_in_progress(self) -> bool:
+        """Check if a backup is currently being uploaded by this unit."""
+        return bool(self.model.backup_id) if self.model else False
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -223,6 +230,24 @@ class ValkeyCluster(RelationState):
         super().__init__(relation, data_interface, component)
         self.app = component
         self.data_interface = data_interface
+
+    @property
+    def s3_credentials(self) -> dict[str, object] | None:
+        """Return the S3 connection envelope, or None if not set.
+
+        The leader writes a JSON-serialised dict to ``s3_credentials``; this
+        property parses it back into a dict for consumption by BackupManager.
+        """
+        if not self.model:
+            return None
+        raw = self.model.s3_credentials
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as e:
+            logger.warning("Failed to parse s3_credentials JSON: %s", e)
+            return None
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:

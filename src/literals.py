@@ -35,6 +35,9 @@ STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
+S3_RELATION_NAME = "s3-credentials"
+BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380

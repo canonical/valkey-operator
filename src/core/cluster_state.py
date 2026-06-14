@@ -20,6 +20,7 @@ from literals import (
     CLIENT_TLS_RELATION_NAME,
     EXTERNAL_CLIENTS_RELATION,
     PEER_RELATION,
+    S3_RELATION_NAME,
     STATUS_PEERS_RELATION,
     Substrate,
 )
@@ -48,6 +49,11 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def peer_relation(self) -> ops.model.Relation | None:
         """Get the Valkey peer relation."""
         return self.model.get_relation(PEER_RELATION)
+
+    @property
+    def s3_relation(self) -> ops.model.Relation | None:
+        """Get the S3 credentials relation, if any."""
+        return self.model.get_relation(S3_RELATION_NAME)
 
     @property
     def peer_units_data_interfaces(
