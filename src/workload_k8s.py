@@ -79,6 +79,9 @@ class _K8sProcessHandle:
         except ops.pebble.ChangeError as e:
             logger.error("Pebble exec did not complete: %s", e)
             rc = -1
+        except ops.pebble.ConnectionError as e:
+            logger.error("Pebble unreachable waiting for exec: %s", e)
+            rc = -1
         self._stderr_thread.join(timeout=5)
         return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
@@ -165,7 +168,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         try:
             self.container.add_layer(CHARM, self.pebble_layer, combine=True)
             self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
-        except ops.pebble.ChangeError as e:
+        except (ops.pebble.ChangeError, ops.pebble.ConnectionError, ops.pebble.APIError) as e:
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
         if not self.alive():
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
@@ -174,9 +177,9 @@ class ValkeyK8sWorkload(WorkloadBase):
     def restart(self, service: str) -> None:
         try:
             self.container.restart(service)
-        except ops.pebble.ChangeError as e:
+        except (ops.pebble.ChangeError, ops.pebble.ConnectionError, ops.pebble.APIError) as e:
             raise ValkeyServicesFailedToStartError(
-                "Failed to start service %s: %s", service, e
+                f"Failed to start service {service}: {e}"
             ) from e
 
     @override
@@ -187,14 +190,18 @@ class ValkeyK8sWorkload(WorkloadBase):
         retry_error_callback=lambda _: False,
     )
     def alive(self) -> bool:
-        for service_name in [
-            self.valkey_service,
-            self.sentinel_service,
-            self.metric_service,
-        ]:
-            service = self.container.get_service(service_name)
-            if not service.is_running():
-                return False
+        try:
+            for service_name in [
+                self.valkey_service,
+                self.sentinel_service,
+                self.metric_service,
+            ]:
+                service = self.container.get_service(service_name)
+                if not service.is_running():
+                    return False
+        except (ops.pebble.ConnectionError, ops.ModelError) as e:
+            logger.warning("Cannot check service health: %s", e)
+            return False
         return True
 
     @override
@@ -213,12 +220,18 @@ class ValkeyK8sWorkload(WorkloadBase):
         except ops.pebble.ExecError as e:
             logger.error("Command failed with: %s, %s", e.exit_code, e.stdout)
             raise ValkeyWorkloadCommandError(e)
+        except (ops.pebble.ChangeError, ops.pebble.ConnectionError) as e:
+            logger.error("Command failed: %s", e)
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
-        return _K8sProcessHandle(
-            self.container.exec(command=command, encoding=None, timeout=None, environment=env)
-        )
+        try:
+            return _K8sProcessHandle(
+                self.container.exec(command=command, encoding=None, timeout=None, environment=env)
+            )
+        except ops.pebble.ConnectionError as e:
+            raise ValkeyWorkloadCommandError(e) from e
 
     @override
     def stop(self) -> None:

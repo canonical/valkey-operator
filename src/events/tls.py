@@ -115,6 +115,9 @@ class TLSEvents(ops.Object):
             except ValkeyTLSLoadError:
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
+            except ValkeyWorkloadCommandError:
+                logger.error("Workload error during CA rotation")
+                event.defer()
             finally:
                 return
 
@@ -406,8 +409,8 @@ class TLSEvents(ops.Object):
                     raise ValkeyCertificatesNotReadyError
 
                 logger.info("Remove old CA after all units have updated the TLS certificate")
-                self.charm.workload.tls_paths.client_ca.with_name("old_client_ca.pem").unlink(
-                    missing_ok=True
+                self.charm.workload.remove_file(
+                    self.charm.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
                 )
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()

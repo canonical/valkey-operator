@@ -17,6 +17,7 @@ from common.exceptions import (
     ValkeyConfigSetError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
+    ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
@@ -599,7 +600,10 @@ class BaseEvents(ops.Object):
         self.charm.cluster_manager.save_database_blocking()
 
         # stop valkey and sentinel processes
-        self.charm.workload.stop()
+        try:
+            self.charm.workload.stop()
+        except ValkeyServicesCouldNotBeStoppedError as e:
+            logger.error("Could not stop Valkey services cleanly: %s", e)
         active_sentinels = [
             ip
             for ip in active_sentinels
