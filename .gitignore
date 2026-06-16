@@ -9,3 +9,7 @@ __pycache__
 coverage.xml
 .coverage
 .zed
+*.md~
+.full-review/
+.claude/
+docs/superpowers/
