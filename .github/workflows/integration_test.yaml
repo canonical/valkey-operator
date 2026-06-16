@@ -168,7 +168,7 @@ jobs:
       - name: jhack tail
         timeout-minutes: 3
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
-        run: sudo jhack tail --printer raw --replay --no-watch | tee ~/logs/jhack-tail.txt
+        run: script -q -c 'sudo jhack tail --printer raw --replay --no-watch' /dev/null | tee ~/logs/jhack-tail.txt || true
       - name: Upload logs
         timeout-minutes: 5
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
