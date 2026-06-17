@@ -263,6 +263,11 @@ class ValkeyVmWorkload(WorkloadBase):
         return True
 
     @override
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        reraise=True,
+    )
     def stop(self) -> None:
         try:
             self.valkey.stop(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])

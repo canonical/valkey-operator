@@ -63,22 +63,27 @@ class TLSEvents(ops.Object):
 
         # --- EVENTS TO OBSERVE ---
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created, self._on_tls_relation_created
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created,
+            self._on_tls_relation_created,
         )
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken, self._on_tls_relation_broken
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken,
+            self._on_tls_relation_broken,
         )
         self.framework.observe(
-            self.client_certificate.on.certificate_available, self._on_certificate_available
+            self.client_certificate.on.certificate_available,
+            self._on_certificate_available,
         )
         self.framework.observe(
             self.client_certificate.on.certificate_denied, self._on_certificate_denied
         )
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
+            self.charm.on[PEER_RELATION].relation_created,
+            self._on_peer_relation_created,
         )
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+            self.charm.on[PEER_RELATION].relation_changed,
+            self._on_peer_relation_changed,
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
@@ -115,8 +120,8 @@ class TLSEvents(ops.Object):
             except ValkeyTLSLoadError:
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
-            except ValkeyWorkloadCommandError:
-                logger.error("Workload error during CA rotation")
+            except ValkeyWorkloadCommandError as e:
+                logger.error("Workload error during CA rotation: %s", e)
                 event.defer()
             finally:
                 return
@@ -151,7 +156,9 @@ class TLSEvents(ops.Object):
         """Handle the `relation-created` event."""
         self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
-    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:  # noqa: C901
+    def _on_certificate_available(  # noqa: C901
+        self, event: CertificateAvailableEvent
+    ) -> None:
         """Handle the `certificate-available` event from TLS provider."""
         cert = event.certificate
         client_certificates, client_private_key = (

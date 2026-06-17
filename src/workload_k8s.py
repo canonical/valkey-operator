@@ -98,9 +98,7 @@ class _K8sProcessHandle:
             # to signal. kill() is called on cleanup paths after the process
             # may have exited on its own, so this is expected -- DEBUG, not
             # WARNING, to avoid alarming noise on the happy path.
-            logger.debug(
-                "SIGKILL to Pebble exec was a no-op (likely already exited): %s", e
-            )
+            logger.debug("SIGKILL to Pebble exec was a no-op (likely already exited): %s", e)
 
 
 class ValkeyK8sWorkload(WorkloadBase):
@@ -170,17 +168,13 @@ class ValkeyK8sWorkload(WorkloadBase):
     def start(self) -> None:
         try:
             self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-            self.container.restart(
-                self.valkey_service, self.sentinel_service, self.metric_service
-            )
+            self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
         except (
             pebble.ChangeError,
             pebble.ConnectionError,
             pebble.APIError,
         ) as e:
-            raise ValkeyServicesFailedToStartError(
-                f"Failed to start Valkey services: {e}"
-            ) from e
+            raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
         if not self.alive():
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
@@ -240,24 +234,23 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def exec_stream(
-        self, command: list[str], env: dict[str, str] | None = None
-    ) -> ProcessHandle:
+    def exec_stream(self, command: list[str], env: dict[str, str] | None = None) -> ProcessHandle:
         try:
             return _K8sProcessHandle(
-                self.container.exec(
-                    command=command, encoding=None, timeout=None, environment=env
-                )
+                self.container.exec(command=command, encoding=None, timeout=None, environment=env)
             )
-        except pebble.ConnectionError as e:
+        except (pebble.ConnectionError, pebble.APIError, pebble.ExecError) as e:
             raise ValkeyWorkloadCommandError(e) from e
 
     @override
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        reraise=True,
+    )
     def stop(self) -> None:
         try:
-            self.container.stop(
-                self.valkey_service, self.sentinel_service, self.metric_service
-            )
+            self.container.stop(self.valkey_service, self.sentinel_service, self.metric_service)
         except (
             pebble.ChangeError,
             pebble.TimeoutError,
