@@ -92,12 +92,12 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["save"] = "900 1 300 100 60 10000"
         config_properties["maxmemory-policy"] = "noeviction"
         config_properties["min-replicas-max-lag"] = "10"
-        # Only require an in-sync replica on clusters that can tolerate losing one
-        # (>= 3 units). On 1- and 2-unit deployments this stays 0 so the primary
-        # is not write-frozen when its sole replica is unavailable (e.g. during a
-        # rolling restart).
-        planned_units = self.state.charm.app.planned_units()
-        config_properties["min-replicas-to-write"] = "1" if planned_units >= 3 else "0"
+        # min-replicas-to-write gates writes on having an in-sync replica. It
+        # ships as 0 (writes always allowed); ClusterManager.reconcile_min_replicas_to_write
+        # raises it to 1 at runtime only on >= 3-unit clusters, leaving 1- and
+        # 2-unit deployments at 0 so the primary is not write-frozen when its sole
+        # replica is unavailable (e.g. during a rolling restart).
+        config_properties["min-replicas-to-write"] = "0"
         if self.workload.total_memory_bytes() > _REPL_BACKLOG_MIN_RAM_BYTES:
             config_properties["repl-backlog-size"] = _REPL_BACKLOG_SIZE
 

@@ -59,6 +59,25 @@ class ClusterManager(ManagerStatusProtocol):
         if not client.acl_load(hostname=self.state.endpoint):
             raise ValkeyACLLoadError("Could not load ACL file into Valkey cluster.")
 
+    def reconcile_min_replicas_to_write(self) -> None:
+        """Set min-replicas-to-write at runtime to match the current topology.
+
+        Enabled (1) only on clusters that can tolerate losing a replica
+        (>= 3 planned units); disabled (0) on 1- and 2-unit deployments so the
+        primary is not write-frozen when its sole replica is unavailable (e.g.
+        during a rolling restart or scale-down). The rendered config ships 0,
+        so the enabled (1) value must be reasserted after every (re)start
+        because CONFIG SET does not persist.
+        """
+        value = "1" if self.state.charm.app.planned_units() >= 3 else "0"
+        client = self._get_valkey_client()
+        if not client.config_set(
+            hostname=self.state.endpoint,
+            parameter="min-replicas-to-write",
+            value=value,
+        ):
+            raise ValkeyConfigSetError("Could not set min-replicas-to-write on Valkey server.")
+
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()

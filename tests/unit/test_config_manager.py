@@ -25,7 +25,6 @@ def _make_config_manager(planned_units: int = 3) -> ConfigManager:
     # No TLS for these tests — tls_client_state must not be in the TLS-enabled set.
     state.unit_server.tls_client_state = None
     state.unit_server.model.client_cert_ready = False
-    # min-replicas-to-write is derived from the operator's target unit count.
     state.charm.app.planned_units.return_value = planned_units
 
     workload = MagicMock()
@@ -53,21 +52,19 @@ def test_static_overrides_land_in_rendered_dict():
     assert props["repl-backlog-size"] == "256mb"
 
 
-@pytest.mark.parametrize(
-    "planned_units,expected",
-    [(0, "0"), (1, "0"), (2, "0"), (3, "1"), (5, "1")],
-)
-def test_min_replicas_to_write_requires_three_units(planned_units, expected):
-    """min-replicas-to-write is only enabled on clusters that can lose a replica.
+@pytest.mark.parametrize("planned_units", [0, 1, 2, 3, 5])
+def test_min_replicas_to_write_is_static_zero_in_file(planned_units):
+    """min-replicas-to-write always ships as '0' in valkey.conf.
 
-    It is '1' for HA topologies (>= 3 units) and '0' otherwise, so 1- and
-    2-unit deployments are not write-frozen when their sole replica is
-    unavailable (e.g. during a rolling restart).
+    Requiring an in-sync replica is enabled only at runtime, and only on >= 3
+    unit clusters, via ClusterManager.reconcile_min_replicas_to_write. The
+    rendered file value is a constant '0' so a fresh 1- or 2-unit primary is
+    never write-frozen at startup.
     """
     cm = _make_config_manager(planned_units=planned_units)
     props = cm.get_config_properties(primary_endpoint="10.0.0.5")
 
-    assert props["min-replicas-to-write"] == expected
+    assert props["min-replicas-to-write"] == "0"
 
 
 @pytest.mark.parametrize(

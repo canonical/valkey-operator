@@ -216,6 +216,11 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
         StartLock(self.charm.state).release_lock()
 
+        # the rendered config ships min-replicas-to-write=1; reassert the
+        # topology-correct runtime value now the server is up, as CONFIG SET
+        # does not persist across a restart
+        self._reconcile_min_replicas_to_write()
+
         if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
@@ -237,6 +242,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # reassert min-replicas-to-write to match the (possibly changed) topology
+        if self.charm.state.unit_server.is_started:
+            self._reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader():
             return
@@ -267,6 +276,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # a unit departed (scale down): relax min-replicas-to-write if we dropped below 3
+        if self.charm.state.unit_server.is_started:
+            self._reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
             return
@@ -631,6 +644,21 @@ class BaseEvents(ops.Object):
             )
 
         self.charm.state.unit_server.update({"scale_down_state": ScaleDownState.GOING_AWAY.value})
+
+    def _reconcile_min_replicas_to_write(self) -> None:
+        """Reassert min-replicas-to-write at runtime to match the current topology.
+
+        The rendered config ships 0; this raises it to 1 on >= 3-unit
+        deployments (and leaves 1- and 2-unit clusters at 0) so a small
+        cluster's primary is not write-frozen when its only replica is
+        unavailable. Runs on every unit because CONFIG SET is local and does
+        not survive a restart.
+        """
+        try:
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
+        except (ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+            # not critical to defer; reasserted on the next event or restart
+            logger.error("Failed to reconcile min-replicas-to-write: %s", e)
 
     def _reconfigure_quorum_if_necessary(self) -> None:
         """Reconfigure the sentinel quorum if it does not match the current cluster size."""
