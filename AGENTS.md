@@ -50,7 +50,8 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
 
 ## Before you call a change done (YOU MUST)
 
-1. `tox run -e lint` and `tox run -e unit` — both MUST pass; show the output, don't assert success.
+1. `tox run -e lint`, `tox run -e unit`, and `tox run -e static` — all MUST pass; show the output,
+   don't assert success.
 2. Do NOT run `charmcraft pack` to verify code changes — it is a 10–30 min Rust build; lint + unit
    are the verification gate. Pack only when a `.charm` artifact is explicitly needed.
 3. Do NOT run `tox run -e integration` speculatively — it sudo-installs packages and downloads
@@ -65,6 +66,7 @@ All linting/testing goes through `tox` + `poetry` (Python `^3.12`; dependency gr
 tox run -e lint          # ruff check + ruff format --check + codespell + shellcheck
 tox run -e format        # auto-fix style; also runs `poetry lock` (needs network, mutates poetry.lock)
 tox run -e unit          # pytest + ops Scenario with coverage. Fast, fully mocked — no Juju needed.
+tox run -e static        # pyright type checks over src/. Fast — no Juju needed.
 
 # Single unit test: use -k, NOT a path (the unit env appends tests/unit AFTER {posargs},
 # so a path posarg would still run the whole dir).
@@ -85,9 +87,10 @@ juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 \
   --resource valkey-image=<upstream-source from metadata.yaml> --trust
 ```
 
-- `pyright` is configured (`[tool.pyright]` over `src/**` and `lib/**`) but not wired into a tox
-  env; run it directly if needed. Ruff rules (line length 99, pydocstyle, mccabe ≤10) live in
-  `pyproject.toml`. On lint failures, run `tox run -e format` first instead of hand-fixing style.
+- `pyright` runs via `tox run -e static` (`[tool.pyright]` in `pyproject.toml` scopes it to
+  `src/**` and `lib/**`; the env type-checks `src/`). Ruff rules (line length 99, pydocstyle,
+  mccabe ≤10) also live in `pyproject.toml`. On lint failures, run `tox run -e format` first
+  instead of hand-fixing style.
 - Spread (`spread.yaml`, `tests/spread/`) is how CI runs the integration suite at scale; you rarely
   run it locally — run `tox -e integration` against your own model instead. Integration/spread
   specifics live in `tests/AGENTS.md`.
