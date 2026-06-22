@@ -26,7 +26,7 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
 - NEVER log, print, or put secret values (passwords, CA/TLS private keys) into exception messages
   or statuses — log identifiers/labels only.
 - NEVER `git push` or merge/land a PR — the user does all pushing and merging; commit locally only
-  when asked.
+  when asked, NEVER add Claude-Session url.
 - NEVER comment on, review, or approve GitHub PRs/issues — surface findings in the conversation.
 
 ## Correctness invariants (every change MUST hold these)

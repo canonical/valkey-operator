@@ -8,6 +8,7 @@ on:
       - 9/edge
     paths-ignore:
       - 'docs/**'
+      - '**/*.md'
 
 jobs:
   ci-tests:
