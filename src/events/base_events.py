@@ -78,14 +78,17 @@ class BaseEvents(ops.Object):
         if self.charm.state.substrate == Substrate.K8S:
             # some K8s clouds create a lost+found folder (owned by root) when attaching a volume
             # we need to ensure the path is accessible for the charm
-            self.charm.workload.exec(
-                [
-                    "chown",
-                    "-R",
-                    f"{self.charm.workload.user}:{self.charm.workload.user}",
-                    self.charm.workload.working_dir.as_posix(),
-                ]
-            )
+            try:
+                self.charm.workload.exec(
+                    [
+                        "chown",
+                        "-R",
+                        f"{self.charm.workload.user}:{self.charm.workload.user}",
+                        self.charm.workload.working_dir.as_posix(),
+                    ]
+                )
+            except ValkeyWorkloadCommandError as e:
+                logger.error("Error when ensuring storage ownership: %s", e)
 
         # fix the permissions of the directory if re-attaching existing storage
         self.charm.workload.exec(
