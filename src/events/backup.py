@@ -20,6 +20,7 @@ from charms.data_platform_libs.v0.s3 import (
 
 from common.exceptions import ValkeyBackupError
 from literals import S3_RELATION_NAME
+from statuses import BackupStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -62,35 +63,18 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
 
-    # ── guard ────────────────────────────────────────────────────────────
-
-    def _blocking_reason(self) -> str | None:
-        """Return why backup actions cannot run, or None if they can.
-
-        Covers the preconditions shared by create-backup and list-backups.
-        create-backup additionally rejects a backup already in progress on
-        this unit; list-backups is read-only and does not.
-        """
-        if not self.charm.state.s3_relation:
-            return "No S3 relation. Integrate with s3-integrator first."
-        if not self.charm.state.cluster.s3_credentials:
-            return "S3 credentials unavailable. Check s3-integrator config."
-        if not self.charm.workload.alive():
-            return "Valkey is not running on this unit."
-        return None
-
     # ── event handlers ──────────────────────────────────────────────────
 
     def _on_s3_credentials_changed(
         self, event: CredentialsChangedEvent | ops.LeaderElectedEvent
     ) -> None:
         """Handle initial and updated S3 integrator credentials."""
-        s3 = self.s3_requirer.get_s3_connection_info()
-        if not s3:
+        if not (s3_info := self.s3_requirer.get_s3_connection_info()):
             return
+        logger.info("S3 credentials changed; refreshing backup configuration")
 
         # CA chain must be on disk for every unit so any unit can use TLS to S3.
-        self.charm.backup_manager.store_tls_ca_chain(s3)
+        self.charm.backup_manager.store_tls_ca_chain(s3_info)
 
         if not self.charm.unit.is_leader():
             return
@@ -98,37 +82,37 @@ class BackupEvents(ops.Object):
             event.defer()
             return
 
-        for k, v in list(s3.items()):
+        for k, v in list(s3_info.items()):
             if isinstance(v, str):
-                s3[k] = v.strip()
-        s3["endpoint"] = s3.get("endpoint", "").rstrip("/")
-        s3["path"] = s3.get("path", "").strip("/")
-        s3["bucket"] = s3.get("bucket", "").strip("/")
+                s3_info[k] = v.strip()
+        s3_info["endpoint"] = s3_info.get("endpoint", "").rstrip("/")
+        s3_info["path"] = s3_info.get("path", "").strip("/")
+        s3_info["bucket"] = s3_info.get("bucket", "").strip("/")
 
         # Validate AFTER normalisation: path="/" or bucket="/" collapse to ""
         # here, and an empty path makes list_backups enumerate the whole
         # bucket (cross-tenant leak in a shared bucket).
-        required = ["bucket", "endpoint", "path", "access-key", "secret-key"]
-        missing = [p for p in required if not s3.get(p)]
-        if missing:
+        required_params = ["bucket", "endpoint", "path", "access-key", "secret-key"]
+        if missing_params := [p for p in required_params if not s3_info.get(p)]:
             logger.warning(
-                "S3 integrator parameters missing or empty after normalisation: %s", missing
+                "S3 integrator parameters missing or empty after normalisation: %s",
+                missing_params,
             )
             return
 
         # leader_elected re-fires this handler; skip the create_bucket round
         # trip (a synchronous S3 call) when the normalised envelope is
         # unchanged. A real credentials rotation still falls through.
-        if self.charm.state.cluster.s3_credentials == s3:
+        if self.charm.state.cluster.s3_credentials == s3_info:
             return
 
         try:
-            self.charm.backup_manager.create_bucket(s3)
+            self.charm.backup_manager.create_bucket(s3_info)
         except ValkeyBackupError as e:
             logger.error("Bucket setup failed: %s", e)
             return
 
-        self.charm.state.cluster.update({"s3_credentials": json.dumps(s3)})
+        self.charm.state.cluster.update({"s3_credentials": json.dumps(s3_info)})
 
     def _on_s3_credentials_gone(self, event: CredentialsGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
@@ -136,28 +120,36 @@ class BackupEvents(ops.Object):
             logger.warning("Backup in progress; deferring credentials_gone")
             event.defer()
             return
+
         self.charm.backup_manager.remove_tls_ca_chain()
+
         if self.charm.unit.is_leader():
             self.charm.state.cluster.update({"s3_credentials": ""})
 
     def _on_create_backup_action(self, event: ops.ActionEvent) -> None:
         """Run a streaming RDB backup of this unit's Valkey instance to S3."""
-        reason = self._blocking_reason()
-        if reason is None and self.charm.state.unit_server.is_backup_in_progress:
-            reason = "A backup is already in progress on this unit."
-        if reason:
+        if reason := self._blocking_reason():
             event.set_results({"error": reason})
             event.fail(reason)
             return
         # Audit the invocation itself, not just the manager-level transfer
-        # (P1-24): ties a specific Juju action run to the resulting backup
-        # for forensics on a leaked or unexpected RDB.
+        # (P1-24): ties a specific Juju action run to the resulting backup,
+        # for forensics if an RDB later turns up somewhere unexpected.
         logger.info(
             "audit: create-backup action invoked action_id=%s unit=%s",
             event.id,
             self.charm.unit.name,
         )
         event.log("Streaming backup to S3 ...")
+        # Surface the long-running backup in `juju status` while the action
+        # blocks; is_action forces it past lower-priority statuses.
+        self.charm.status.set_running_status(
+            BackupStatuses.BACKUP_IN_PROGRESS.value,
+            scope="unit",
+            is_action=True,
+            component_name=self.charm.backup_manager.name,
+            statuses_state=self.charm.state.statuses,
+        )
         try:
             backup_id = self.charm.backup_manager.create_backup()
         except ValkeyBackupError as e:
@@ -165,11 +157,21 @@ class BackupEvents(ops.Object):
             event.set_results({"error": _safe_error(e)})
             event.fail("Backup failed. Check juju debug-log for details.")
             return
+        finally:
+            self.charm.state.statuses.delete(
+                BackupStatuses.BACKUP_IN_PROGRESS.value,
+                scope="unit",
+                component=self.charm.backup_manager.name,
+            )
         event.set_results({"backup-id": backup_id})
 
     def _on_list_backups_action(self, event: ops.ActionEvent) -> None:
         """List backups currently in S3, newest first."""
-        if reason := self._blocking_reason():
+        if (output_format := event.params.get("output", "table").lower()) not in {"json", "table"}:
+            event.fail("Failed: invalid output format, must be either 'json' or 'table'.")
+            return
+        # Read-only: a backup running on this unit must not block listing.
+        if reason := self._blocking_reason(check_running_operations=False):
             event.set_results({"error": reason})
             event.fail(reason)
             return
@@ -185,4 +187,29 @@ class BackupEvents(ops.Object):
             event.set_results({"error": _safe_error(e)})
             event.fail("List backups failed. Check juju debug-log for details.")
             return
-        event.set_results({"backups": self.charm.backup_manager.format_backup_list(ids)})
+        if output_format == "json":
+            backups = json.dumps([{"backup-id": bid, "backup-status": "finished"} for bid in ids])
+        else:
+            backups = self.charm.backup_manager.format_backup_list(ids)
+        event.set_results({"backups": backups})
+
+    # ── guard ────────────────────────────────────────────────────────────
+
+    def _blocking_reason(self, check_running_operations: bool = True) -> str | None:
+        """Return why a backup action cannot run, or None if it can.
+
+        Covers the preconditions shared by create-backup and list-backups.
+        With ``check_running_operations`` (the default), it also rejects a
+        backup already running on this unit; list-backups passes ``False``
+        because it is read-only and safe to run concurrently. The same flag
+        will let a future restore action share this guard.
+        """
+        if not self.charm.state.s3_relation:
+            return "No S3 relation. Integrate with s3-integrator first."
+        if not self.charm.state.cluster.s3_credentials:
+            return "S3 credentials unavailable. Check s3-integrator config."
+        if not self.charm.workload.alive():
+            return "Valkey is not running on this unit."
+        if check_running_operations and self.charm.state.unit_server.is_backup_in_progress:
+            return "A backup is already in progress on this unit."
+        return None

@@ -13,6 +13,7 @@ from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
     RequestingLockTimedOutError,
     ValkeyACLLoadError,
+    ValkeyBackupInProgressError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyConfigSetError,
     ValkeyConfigurationError,
@@ -531,10 +532,12 @@ class BaseEvents(ops.Object):
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
         """Handle removal of the data storage mount, e.g. when removing a unit."""
         if self.charm.state.unit_server.is_backup_in_progress:
-            logger.warning(
+            # A plain return would let teardown proceed and lose the in-flight
+            # RDB. Raise so the hook errors and Juju retries storage-detaching
+            # until the backup finishes and clears the lock.
+            raise ValkeyBackupInProgressError(
                 "Backup in progress on this unit; refusing to scale down until it finishes."
             )
-            return
 
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)

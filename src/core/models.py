@@ -232,22 +232,17 @@ class ValkeyCluster(RelationState):
         self.data_interface = data_interface
 
     @property
-    def s3_credentials(self) -> dict[str, object] | None:
-        """Return the S3 connection envelope, or None if not set.
+    def s3_credentials(self) -> dict[str, Any]:
+        """Return the S3 connection envelope, or an empty dict if not set.
 
         The leader writes a JSON-serialised dict to ``s3_credentials``; this
-        property parses it back into a dict for consumption by BackupManager.
+        parses it back for BackupManager. Values are mostly strings, but
+        ``tls-ca-chain`` is a ``list[str]``, hence ``Any``. Callers gate on
+        truthiness (``if s3_credentials``), so an empty dict reads as unset.
         """
         if not self.model:
-            return None
-        raw = self.model.s3_credentials
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except (TypeError, json.JSONDecodeError) as e:
-            logger.warning("Failed to parse s3_credentials JSON: %s", e)
-            return None
+            return {}
+        return json.loads(self.model.s3_credentials or "{}")
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:

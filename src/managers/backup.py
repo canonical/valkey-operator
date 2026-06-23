@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import pathlib
 import re
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, Any, cast
@@ -22,7 +21,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
 from common.exceptions import ValkeyBackupError
-from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
+from literals import BACKUP_ID_FORMAT, CharmUsers
 from statuses import BackupStatuses, CharmStatuses
 
 if TYPE_CHECKING:
@@ -81,24 +80,13 @@ class BackupManager(ManagerStatusProtocol):
         self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
-    @property
-    def _ca_chain_path(self) -> pathlib.Path:
-        """Charm-process-local path for the S3 endpoint CA bundle.
-
-        boto3 runs in the charm process, not the workload container; on K8s
-        the two do not share a filesystem, so the CA cannot live in the
-        workload's TLS dir. Keeping it out of that dir also prevents the S3
-        endpoint CA from being trusted as a Valkey client CA.
-        """
-        return pathlib.Path(self.state.charm.charm_dir) / BACKUP_CA_FILENAME
-
     # ── boto3 client construction ────────────────────────────────────────
 
     def _get_bucket_resource(self, s3_parameters: dict[str, object]):
         """Build a boto3 Bucket resource configured per the s3-integrator envelope."""
         verify: bool | str = True
         if s3_parameters.get("tls-ca-chain"):
-            verify = str(self._ca_chain_path)
+            verify = str(self.workload.backup_ca_path)
 
         # Scope the credentials to a Session so they are not free-floating
         # kwargs that show up in repr(args) of any boto3 traceback.
@@ -166,11 +154,11 @@ class BackupManager(ManagerStatusProtocol):
             logger.warning("tls-ca-chain is malformed (not a list of strings); ignoring")
             return
         raw = "\n".join(chain)
-        self._ca_chain_path.write_text(raw)
+        self.workload.backup_ca_path.write_text(raw)
 
     def remove_tls_ca_chain(self) -> None:
         """Delete the charm-local S3 endpoint CA bundle, if present."""
-        self._ca_chain_path.unlink(missing_ok=True)
+        self.workload.backup_ca_path.unlink(missing_ok=True)
 
     # ── list ────────────────────────────────────────────────────────────
 
@@ -181,8 +169,6 @@ class BackupManager(ManagerStatusProtocol):
         backup-id format so unrelated objects under the prefix are excluded.
         """
         s3_parameters = self.state.cluster.s3_credentials
-        if s3_parameters is None:
-            raise ValkeyBackupError("S3 credentials are not configured")
         path = s3_parameters["path"]
         bucket = self._get_bucket_resource(s3_parameters)
         try:
@@ -215,13 +201,11 @@ class BackupManager(ManagerStatusProtocol):
         and cleans up the S3 object on failure.
         """
         s3_parameters = self.state.cluster.s3_credentials
-        if s3_parameters is None:
-            raise ValkeyBackupError("S3 credentials are not configured")
-        backup_id = datetime.now(timezone.utc).strftime(BACKUP_ID_FORMAT)
-        key = f"{s3_parameters['path']}/{backup_id}"
         started = datetime.now(timezone.utc)
-        # Structured audit trail: who/what/where for forensics on a leaked or
-        # corrupt backup. Endpoint is logged; credentials never are.
+        backup_id = started.strftime(BACKUP_ID_FORMAT)
+        key = f"{s3_parameters['path']}/{backup_id}"
+        # Structured audit trail: who/what/where for forensics on a backup
+        # that lands somewhere unexpected. Endpoint is logged; creds never.
         logger.info(
             "backup.started backup_id=%s unit=%s bucket=%s endpoint=%s",
             backup_id,
@@ -240,38 +224,37 @@ class BackupManager(ManagerStatusProtocol):
         reader = _CountingReader(proc.stdout)
 
         try:
-            try:
-                # No outer retry: proc.stdout is a non-rewindable pipe, so a
-                # retry would upload only the bytes left after the first
-                # attempt. boto3 retries individual multipart parts itself.
-                bucket.upload_fileobj(
-                    # _CountingReader duck-types the read()-only interface
-                    # upload_fileobj actually uses; the stub wants a full IO.
-                    cast("IO[bytes]", reader),
-                    key,
-                    Config=TransferConfig(multipart_chunksize=8 * 1024 * 1024),
-                )
-            except ClientError as e:
-                proc.kill()
-                self._delete_object_best_effort(bucket, key)
-                raise ValkeyBackupError(e) from e
-
+            # Do not retry the whole upload: reader is backed by proc.stdout
+            # and cannot be rewound. boto3 retries individual parts itself.
+            bucket.upload_fileobj(
+                cast("IO[bytes]", reader),
+                key,
+                Config=TransferConfig(multipart_chunksize=8 * 1024 * 1024),
+            )
             rc, stderr = proc.wait()
             if rc != 0:
-                self._delete_object_best_effort(bucket, key)
                 raise ValkeyBackupError(f"valkey-cli --rdb exited {rc}: {stderr}")
-
             # valkey-cli can exit 0 having written nothing (or an error blob)
             # to stdout. Refuse to record an object that is not a real RDB.
             if reader.bytes_read == 0 or not reader.head.startswith(_RDB_MAGIC):
-                self._delete_object_best_effort(bucket, key)
                 raise ValkeyBackupError(
                     f"Uploaded object is not a valid RDB stream "
                     f"({reader.bytes_read} bytes); refusing to record this backup"
                 )
         except ValkeyBackupError:
+            # A complete-but-invalid object (bad exit code / bad RDB magic) is
+            # in the bucket; delete it. (A mid-stream ClientError is handled
+            # below, where boto3 has already aborted the multipart upload.)
+            self._delete_object_best_effort(bucket, key)
             logger.warning("backup.failed backup_id=%s", backup_id)
             raise
+        except ClientError as e:
+            # upload_fileobj failed mid-stream; boto3 aborts the multipart
+            # upload itself, so there is no object to delete -- just stop the
+            # producer so valkey-cli does not linger.
+            proc.kill()
+            logger.warning("backup.failed backup_id=%s", backup_id)
+            raise ValkeyBackupError(e) from e
         else:
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             logger.info(
@@ -281,15 +264,7 @@ class BackupManager(ManagerStatusProtocol):
                 elapsed,
             )
         finally:
-            # Never let a databag write failure here mask the real error
-            # (or, on success, crash the action). A leaked lock is recovered
-            # via the troubleshooting runbook / the lock TTL.
-            try:
-                self.state.unit_server.update({"backup_id": ""})
-            except Exception:
-                logger.exception(
-                    "Failed to clear backup_id lock for %s; databag may be stale", backup_id
-                )
+            self.state.unit_server.update({"backup_id": ""})
 
         return backup_id
 
@@ -308,9 +283,14 @@ class BackupManager(ManagerStatusProtocol):
 
     @staticmethod
     def _delete_object_best_effort(bucket: "Bucket", key: str) -> None:
+        """Delete an S3 object, swallowing any error.
+
+        Used on backup-failure cleanup paths where a delete that itself
+        fails must not mask the original error; broadest catch on purpose.
+        """
         try:
             bucket.Object(key).delete()
-        except ClientError as e:
+        except Exception as e:
             logger.warning("Failed to delete partial S3 object %s: %s", key, e)
 
     # ── advanced statuses ───────────────────────────────────────────────

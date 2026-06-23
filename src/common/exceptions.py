@@ -74,3 +74,11 @@ class KubernetesClientError(Exception):
 
 class ValkeyBackupError(Exception):
     """Raised when a backup operation fails."""
+
+
+class ValkeyBackupInProgressError(Exception):
+    """Raised to block unit teardown while a backup is still streaming.
+
+    Raising from ``storage-detaching`` errors the hook so Juju retries it
+    until the backup finishes; a plain ``return`` would not hold teardown.
+    """

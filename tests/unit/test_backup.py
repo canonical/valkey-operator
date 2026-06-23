@@ -21,6 +21,23 @@ def test_peer_app_model_has_s3_credentials_field():
     assert fields["s3_credentials"].default is None
 
 
+def test_cluster_s3_credentials_parses_json_and_defaults_empty(mocker):
+    """The envelope parses back to a dict; unset reads as {} (never None)."""
+    from src.core.models import ValkeyCluster
+
+    cluster = ValkeyCluster.__new__(ValkeyCluster)
+
+    cluster.model = mocker.MagicMock()
+    cluster.model.s3_credentials = '{"bucket": "b", "tls-ca-chain": ["c1", "c2"]}'
+    assert cluster.s3_credentials == {"bucket": "b", "tls-ca-chain": ["c1", "c2"]}
+
+    cluster.model.s3_credentials = None
+    assert cluster.s3_credentials == {}
+
+    cluster.model = None
+    assert cluster.s3_credentials == {}
+
+
 def test_peer_unit_model_has_backup_id_field():
     from src.core.models import PeerUnitModel
 
@@ -69,19 +86,22 @@ def test_cluster_state_exposes_s3_relation(cloud_spec):
         assert manager.charm.state.s3_relation.name == S3_RELATION_NAME
 
 
-def test_backup_ca_path_is_charm_local_not_workload_tls_dir(mocker, tmp_path):
-    """S3 CA lives on the charm filesystem, not the workload TLS dir."""
-    from src.core.base_workload import TLSPaths
-    from src.literals import BACKUP_CA_FILENAME
-    from src.managers.backup import BackupManager
+def test_backup_ca_path_is_charm_local_not_workload_tls_dir(monkeypatch, tmp_path):
+    """The S3 CA path is owned by the workload but lives on the charm fs.
 
-    # backup_ca must no longer be a workload TLS path.
+    boto3 runs in the charm process, so the bundle must sit under the charm
+    dir (JUJU_CHARM_DIR), never in the workload-container ``tls_paths``.
+    """
+    from src.core.base_workload import TLSPaths, WorkloadBase
+    from src.literals import BACKUP_CA_FILENAME
+
+    # backup_ca must not be a workload (container) TLS path.
     assert not hasattr(TLSPaths, "backup_ca")
 
-    state = mocker.MagicMock()
-    state.charm.charm_dir = tmp_path
-    mgr = BackupManager(state=state, workload=mocker.MagicMock())
-    assert mgr._ca_chain_path == tmp_path / BACKUP_CA_FILENAME
+    monkeypatch.setenv("JUJU_CHARM_DIR", str(tmp_path))
+    # The property only reads JUJU_CHARM_DIR; evaluate it without a concrete
+    # (snap/container-backed) workload instance.
+    assert WorkloadBase.backup_ca_path.fget(None) == tmp_path / BACKUP_CA_FILENAME
 
 
 def test_backup_manager_bucket_resource_built_with_checksum_workaround(mocker, tmp_path):
@@ -133,8 +153,8 @@ def test_backup_manager_bucket_resource_uses_ca_chain_when_provided(mocker, tmp_
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.charm.charm_dir = tmp_path
     workload = mocker.MagicMock()
+    workload.backup_ca_path = tmp_path / BACKUP_CA_FILENAME
     mocker.patch("boto3.Session")
 
     mgr = BackupManager(state=state, workload=workload)
@@ -156,8 +176,9 @@ def test_backup_manager_store_tls_ca_chain_writes_charm_local_file(mocker, tmp_p
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.charm.charm_dir = tmp_path
-    mgr = BackupManager(state=state, workload=mocker.MagicMock())
+    workload = mocker.MagicMock()
+    workload.backup_ca_path = tmp_path / BACKUP_CA_FILENAME
+    mgr = BackupManager(state=state, workload=workload)
 
     mgr.store_tls_ca_chain({"tls-ca-chain": ["-----CERT1-----", "-----CERT2-----"]})
     assert (tmp_path / BACKUP_CA_FILENAME).read_text() == "-----CERT1-----\n-----CERT2-----"
@@ -489,6 +510,7 @@ def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True):
     charm.state.s3_relation = mocker.MagicMock() if relation else None
     charm.state.cluster.s3_credentials = {"bucket": "b"} if credentials else None
     charm.workload.alive.return_value = alive
+    charm.state.unit_server.is_backup_in_progress = False
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     return evt
@@ -510,12 +532,13 @@ def test_blocking_reason_none_when_all_ok(mocker):
     assert _blocking_evt(mocker)._blocking_reason() is None
 
 
-def test_blocking_reason_ignores_backup_in_progress(mocker):
-    # _blocking_reason itself is read-only-safe; the in-progress check is
-    # applied only by _on_create_backup_action.
+def test_blocking_reason_in_progress_check_is_toggleable(mocker):
+    # The default checks for a running backup (create-backup); list-backups
+    # passes check_running_operations=False because it is read-only.
     evt = _blocking_evt(mocker)
     evt.charm.state.unit_server.is_backup_in_progress = True
-    assert evt._blocking_reason() is None
+    assert "already in progress" in evt._blocking_reason()
+    assert evt._blocking_reason(check_running_operations=False) is None
 
 
 def test_on_s3_credentials_changed_stores_ca_on_all_units(mocker):
@@ -786,11 +809,55 @@ def test_on_list_backups_action_returns_table(mocker):
     mocker.patch.object(evt, "_blocking_reason", return_value=None)
 
     event = mocker.MagicMock()
+    event.params = {"output": "table"}
     evt._on_list_backups_action(event)
     event.set_results.assert_called_with({"backups": "table"})
 
 
+def test_on_list_backups_action_returns_json(mocker):
+    import json
+
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.backup_manager.list_backups.return_value = [
+        "2026-05-14T10:00:00Z",
+        "2026-05-13T10:00:00Z",
+    ]
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    mocker.patch.object(evt, "_blocking_reason", return_value=None)
+
+    event = mocker.MagicMock()
+    event.params = {"output": "json"}
+    evt._on_list_backups_action(event)
+    _, kwargs_or_args = event.set_results.call_args
+    payload = event.set_results.call_args.args[0]["backups"]
+    assert json.loads(payload) == [
+        {"backup-id": "2026-05-14T10:00:00Z", "backup-status": "finished"},
+        {"backup-id": "2026-05-13T10:00:00Z", "backup-status": "finished"},
+    ]
+    # The text formatter is not used for JSON output.
+    charm.backup_manager.format_backup_list.assert_not_called()
+
+
+def test_on_list_backups_action_rejects_invalid_format(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+
+    event = mocker.MagicMock()
+    event.params = {"output": "yaml"}
+    evt._on_list_backups_action(event)
+    event.fail.assert_called_once()
+    assert "invalid output format" in event.fail.call_args[0][0]
+    charm.backup_manager.list_backups.assert_not_called()
+
+
 def test_storage_detaching_refuses_during_backup(cloud_spec):
+    import pytest
     from ops import testing
 
     from src.charm import ValkeyCharm
@@ -816,10 +883,11 @@ def test_storage_detaching_refuses_during_backup(cloud_spec):
         containers={testing.Container(name="valkey", can_connect=True)},
     )
 
-    # Should not raise; the handler logs and returns early.
-    state_out = ctx.run(ctx.on.storage_detaching(storage), state_in)
-    relation = state_out.get_relation(1)
-    assert relation.local_unit_data.get("backup_id") == "2026-05-13T10:00:00Z"
+    # Must raise so the hook errors and Juju retries teardown until the
+    # backup finishes -- a plain return would let scale-down proceed.
+    with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
+        ctx.run(ctx.on.storage_detaching(storage), state_in)
+    assert "ValkeyBackupInProgressError" in str(exc_info.value)
 
 
 def test_charm_constructs_backup_manager_and_events(cloud_spec):
@@ -861,6 +929,7 @@ def test_on_list_backups_action_runs_while_a_backup_is_in_progress(mocker):
     evt.charm = charm
 
     event = mocker.MagicMock()
+    event.params = {}  # default output format (table)
     evt._on_list_backups_action(event)
     event.fail.assert_not_called()
     charm.backup_manager.list_backups.assert_called_once()
@@ -904,14 +973,16 @@ def test_on_s3_credentials_changed_defers_without_peer_relation(mocker):
 
 
 def test_on_create_backup_action_rejected_when_backup_already_running(mocker):
-    """The in-progress check lives in the create handler, not _blocking_reason."""
+    """The in-progress check lives in _blocking_reason (default-on for create)."""
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
+    charm.state.s3_relation = mocker.MagicMock()
+    charm.state.cluster.s3_credentials = {"bucket": "b"}
+    charm.workload.alive.return_value = True
     charm.state.unit_server.is_backup_in_progress = True
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
-    mocker.patch.object(evt, "_blocking_reason", return_value=None)
 
     event = mocker.MagicMock()
     evt._on_create_backup_action(event)
@@ -934,7 +1005,12 @@ def test_get_statuses_credentials_missing(mocker):
     assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value in statuses
 
 
-def test_create_backup_deletes_object_and_kills_on_upload_failure(mocker):
+def test_create_backup_kills_producer_on_upload_failure(mocker):
+    """A mid-stream upload failure stops valkey-cli; boto3 aborts the MPU itself.
+
+    No explicit object delete is issued -- a failed multipart/PutObject leaves
+    no object to delete, and boto3's managed transfer aborts the upload.
+    """
     import pytest
     from botocore.exceptions import ClientError
 
@@ -959,4 +1035,6 @@ def test_create_backup_deletes_object_and_kills_on_upload_failure(mocker):
         BackupManager(state=state, workload=workload).create_backup()
 
     proc.kill.assert_called_once()
-    fake_bucket.Object.return_value.delete.assert_called_once()
+    fake_bucket.Object.assert_not_called()
+    # The lock is still released on the way out.
+    assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
