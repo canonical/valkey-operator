@@ -93,9 +93,14 @@ class BaseEvents(ops.Object):
                 return
 
         # fix the permissions of the directory if re-attaching existing storage
-        self.charm.workload.exec(
-            ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
-        )
+        try:
+            self.charm.workload.exec(
+                ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
+            )
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Error when setting storage permissions: %s", e)
+            event.defer()
+            return
 
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
