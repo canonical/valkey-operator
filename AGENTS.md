@@ -15,6 +15,9 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
 ## Hard rules (NEVER)
 
 - NEVER read/write `relation.data` directly — go through `ClusterState` and the pydantic models.
+- NEVER use ops `StoredState` — all charm state lives in peer-relation databags (typed via the
+  pydantic models) and Juju secrets, the single source of truth; `StoredState` is per-unit and
+  bypasses that model. Don't reach for it as an escape hatch.
 - NEVER call `workload.exec()` with raw CLI strings from managers — add a method to
   `ValkeyClient`/`SentinelClient` in `common/client.py` (the only place CLI commands are built).
 - NEVER restart services inline — emit `self.charm.restart_workload.emit(...)`; the handler in
@@ -22,7 +25,9 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
 - NEVER hand-edit `lib/charms/*` — CI's `lib-check` fails the PR unless content matches the
   published Charmhub lib; update only via `charmcraft fetch-lib`.
 - A new `WorkloadBase` operation MUST be an `@abstractmethod` implemented in BOTH
-  `workload_vm.py` and `workload_k8s.py`.
+  `workload_vm.py` and `workload_k8s.py`. Decorate every method that overrides a base-class or
+  `Protocol` method with `@override` (from `typing`), as the workloads and `common/locks.py`
+  already do.
 - NEVER log, print, or put secret values (passwords, CA/TLS private keys) into exception messages
   or statuses — log identifiers/labels only.
 - NEVER `git push` or merge/land a PR — the user does all pushing and merging; commit locally only
@@ -44,17 +49,25 @@ The substrate (VM vs K8s) is detected at runtime in `charm.py` via `self.model.g
   reconcile — `update-status`, a `*-relation-changed`, or the deferring `StartState`/restart
   machine — MUST converge it. Reconcile from current state, not from the delta; defer (don't crash)
   when prerequisites aren't ready.
+- **Reasoned guardrails, not reflexive defense.** Validate and defend at boundaries — hook entry,
+  relation/secret reads, `workload.exec` — then trust those invariants inward; don't re-check the
+  same precondition at every leaf "just in case". Reason about the charm as one predictable system
+  from hook to leaf, not a pile of local defensive patches. (This shapes the idempotency and
+  eventual-consistency rules above — reconcile and defer at the boundary, don't scatter guards.)
 - **Integration coverage.** Every feature / user-facing change ships an integration test under
   `tests/integration/` (requirer-charm/glide-runner for HA) — passing unit tests alone aren't
   sign-off.
 
 ## Before you call a change done (YOU MUST)
 
-1. `tox run -e lint`, `tox run -e unit`, and `tox run -e static` — all MUST pass; show the output,
+1. **Write the test first (TDD).** For any feature or bugfix, add the failing unit test
+   (`ops.testing` Scenario) and watch it fail *before* writing implementation, then make it pass —
+   don't write implementation code first.
+2. `tox run -e lint`, `tox run -e unit`, and `tox run -e static` — all MUST pass; show the output,
    don't assert success.
-2. Do NOT run `charmcraft pack` to verify code changes — it is a 10–30 min Rust build; lint + unit
+3. Do NOT run `charmcraft pack` to verify code changes — it is a 10–30 min Rust build; lint + unit
    are the verification gate. Pack only when a `.charm` artifact is explicitly needed.
-3. Do NOT run `tox run -e integration` speculatively — it sudo-installs packages and downloads
+4. Do NOT run `tox run -e integration` speculatively — it sudo-installs packages and downloads
    binaries *before* checking anything. Run it only with a bootstrapped controller
    (`juju controllers` works) and built charm + requirer-charm artifacts present.
 
