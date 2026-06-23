@@ -89,6 +89,8 @@ class BaseEvents(ops.Object):
                 )
             except ValkeyWorkloadCommandError as e:
                 logger.error("Error when ensuring storage ownership: %s", e)
+                event.defer()
+                return
 
         # fix the permissions of the directory if re-attaching existing storage
         self.charm.workload.exec(
