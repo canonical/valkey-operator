@@ -12,15 +12,19 @@ from common.exceptions import ValkeyConfigSetError
 from managers.cluster import ClusterManager
 
 
-def _make_cluster_manager(planned_units: int, config_set_ok: bool = True):
+def _make_cluster_manager(active_units: int, inactive_units: int = 1, config_set_ok: bool = True):
     """Build a ClusterManager with a mocked Valkey client.
 
+    `active_units` servers report is_active=True; `inactive_units` report
+    False so the active count, not the total, is what drives the decision.
     Returns the manager and the mock client so callers can assert on the
     config_set call.
     """
     state = MagicMock()
     state.endpoint = "10.0.0.5"
-    state.charm.app.planned_units.return_value = planned_units
+    active = [MagicMock(is_active=True) for _ in range(active_units)]
+    inactive = [MagicMock(is_active=False) for _ in range(inactive_units)]
+    state.servers = active + inactive
 
     cm = ClusterManager(state=state, workload=MagicMock())
     client = MagicMock()
@@ -30,12 +34,12 @@ def _make_cluster_manager(planned_units: int, config_set_ok: bool = True):
 
 
 @pytest.mark.parametrize(
-    "planned_units,expected",
+    "active_units,expected",
     [(0, "0"), (1, "0"), (2, "0"), (3, "1"), (5, "1")],
 )
-def test_reconcile_sets_value_per_topology(planned_units, expected):
-    """min-replicas-to-write is '1' only when the cluster can lose a replica (>= 3 units)."""
-    cm, client = _make_cluster_manager(planned_units)
+def test_reconcile_sets_value_per_topology(active_units, expected):
+    """min-replicas-to-write is '1' only when >= 3 units are currently active."""
+    cm, client = _make_cluster_manager(active_units)
 
     cm.reconcile_min_replicas_to_write()
 
@@ -48,7 +52,7 @@ def test_reconcile_sets_value_per_topology(planned_units, expected):
 
 def test_reconcile_raises_when_config_set_fails():
     """A failed CONFIG SET surfaces as ValkeyConfigSetError, like other setters."""
-    cm, _ = _make_cluster_manager(planned_units=3, config_set_ok=False)
+    cm, _ = _make_cluster_manager(active_units=3, config_set_ok=False)
 
     with pytest.raises(ValkeyConfigSetError):
         cm.reconcile_min_replicas_to_write()

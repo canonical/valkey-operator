@@ -648,10 +648,10 @@ class BaseEvents(ops.Object):
     def _reconcile_min_replicas_to_write(self) -> None:
         """Reassert min-replicas-to-write at runtime to match the current topology.
 
-        The rendered config ships 0; this raises it to 1 on >= 3-unit
-        deployments (and leaves 1- and 2-unit clusters at 0) so a small
-        cluster's primary is not write-frozen when its only replica is
-        unavailable. Runs on every unit because CONFIG SET is local and does
+        The rendered config ships 0; this raises it to 1 only when >= 3 units
+        are currently active (and leaves smaller or partially-rolled-out
+        clusters at 0) so a primary is not write-frozen when its only replica
+        is unavailable. Runs on every unit because CONFIG SET is local and does
         not survive a restart.
         """
         try:

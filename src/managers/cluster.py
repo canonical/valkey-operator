@@ -62,14 +62,17 @@ class ClusterManager(ManagerStatusProtocol):
     def reconcile_min_replicas_to_write(self) -> None:
         """Set min-replicas-to-write at runtime to match the current topology.
 
-        Enabled (1) only on clusters that can tolerate losing a replica
-        (>= 3 planned units); disabled (0) on 1- and 2-unit deployments so the
-        primary is not write-frozen when its sole replica is unavailable (e.g.
-        during a rolling restart or scale-down). The rendered config ships 0,
-        so the enabled (1) value must be reasserted after every (re)start
-        because CONFIG SET does not persist.
+        Enabled (1) only on clusters that can currently tolerate losing a
+        replica (>= 3 active units); disabled (0) otherwise so the primary is
+        not write-frozen when a replica is unavailable (e.g. during a rolling
+        restart, a scale-down, or a scale-up that is still rolling out).
+        Counting active units rather than planned units avoids freezing writes
+        when the planned count has already grown but the new units are not up
+        yet. The rendered config ships 0, so the enabled (1) value must be
+        reasserted after every (re)start because CONFIG SET does not persist.
         """
-        value = "1" if self.state.charm.app.planned_units() >= 3 else "0"
+        active_units = len([server for server in self.state.servers if server.is_active])
+        value = "1" if active_units >= 3 else "0"
         client = self._get_valkey_client()
         if not client.config_set(
             hostname=self.state.endpoint,
