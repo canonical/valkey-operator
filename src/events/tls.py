@@ -63,22 +63,27 @@ class TLSEvents(ops.Object):
 
         # --- EVENTS TO OBSERVE ---
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created, self._on_tls_relation_created
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_created,
+            self._on_tls_relation_created,
         )
         self.framework.observe(
-            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken, self._on_tls_relation_broken
+            self.charm.on[CLIENT_TLS_RELATION_NAME].relation_broken,
+            self._on_tls_relation_broken,
         )
         self.framework.observe(
-            self.client_certificate.on.certificate_available, self._on_certificate_available
+            self.client_certificate.on.certificate_available,
+            self._on_certificate_available,
         )
         self.framework.observe(
             self.client_certificate.on.certificate_denied, self._on_certificate_denied
         )
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_created, self._on_peer_relation_created
+            self.charm.on[PEER_RELATION].relation_created,
+            self._on_peer_relation_created,
         )
         self.framework.observe(
-            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+            self.charm.on[PEER_RELATION].relation_changed,
+            self._on_peer_relation_changed,
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
@@ -115,6 +120,9 @@ class TLSEvents(ops.Object):
             except ValkeyTLSLoadError:
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
+            except ValkeyWorkloadCommandError as e:
+                logger.error("Workload error during CA rotation: %s", e)
+                event.defer()
             finally:
                 return
 
@@ -148,7 +156,9 @@ class TLSEvents(ops.Object):
         """Handle the `relation-created` event."""
         self.charm.tls_manager.set_tls_state(TLSState.TO_TLS)
 
-    def _on_certificate_available(self, event: CertificateAvailableEvent) -> None:  # noqa: C901
+    def _on_certificate_available(  # noqa: C901
+        self, event: CertificateAvailableEvent
+    ) -> None:
         """Handle the `certificate-available` event from TLS provider."""
         cert = event.certificate
         client_certificates, client_private_key = (
@@ -406,8 +416,8 @@ class TLSEvents(ops.Object):
                     raise ValkeyCertificatesNotReadyError
 
                 logger.info("Remove old CA after all units have updated the TLS certificate")
-                self.charm.workload.tls_paths.client_ca.with_name("old_client_ca.pem").unlink(
-                    missing_ok=True
+                self.charm.workload.remove_file(
+                    self.charm.workload.tls_paths.client_ca.with_name("old_client_ca.pem")
                 )
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()

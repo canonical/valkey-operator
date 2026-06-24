@@ -80,8 +80,8 @@ class TLSManager(ManagerStatusProtocol):
             certificate (ProviderCertificate): The certificate.
             private_key (PrivateKey): The private key.
         """
-        self.workload.tls_dir.mkdir(exist_ok=True)
-        self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
+        self.workload.make_dir(self.workload.tls_dir, exist_ok=True)
+        self.workload.make_dir(self.workload.tls_paths.ca_certs_dir, exist_ok=True)
 
         self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
         self.workload.write_file(certificate.certificate.raw, self.workload.tls_paths.client_cert)
@@ -270,8 +270,8 @@ class TLSManager(ManagerStatusProtocol):
         if ca_cert is None:
             raise ValkeyWorkloadCommandError("Internal CA certificate is missing")
 
-        self.workload.tls_dir.mkdir(exist_ok=True)
-        self.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
+        self.workload.make_dir(self.workload.tls_dir, exist_ok=True)
+        self.workload.make_dir(self.workload.tls_paths.ca_certs_dir, exist_ok=True)
 
         self.workload.write_file(private_key.raw, self.workload.tls_paths.client_key)
         self.workload.write_file(certificate.raw, self.workload.tls_paths.client_cert)

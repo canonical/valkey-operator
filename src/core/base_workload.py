@@ -226,6 +226,29 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def make_dir(self, path: pathops.PathProtocol, exist_ok: bool = False) -> None:
+        """Create a directory at the given path, translating filesystem/Pebble errors to ValkeyWorkloadCommandError."""
+        try:
+            path.mkdir(exist_ok=exist_ok)
+        except (
+            FileExistsError,
+            FileNotFoundError,
+            NotADirectoryError,
+            PermissionError,
+            pathops.PebbleConnectionError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    def path_exists(self, path: pathops.PathProtocol) -> bool:
+        """Return True if the path exists, translating Pebble/permission errors to ValkeyWorkloadCommandError."""
+        try:
+            return path.exists()
+        except (
+            PermissionError,
+            pathops.PebbleConnectionError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
     def read_file(self, path: pathops.PathProtocol) -> str:
         """Read a text file and return the string contents.
 
