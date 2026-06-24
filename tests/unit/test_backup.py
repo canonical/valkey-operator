@@ -86,22 +86,26 @@ def test_cluster_state_exposes_s3_relation(cloud_spec):
         assert manager.charm.state.s3_relation.name == S3_RELATION_NAME
 
 
-def test_backup_ca_path_is_charm_local_not_workload_tls_dir(monkeypatch, tmp_path):
-    """The S3 CA path is owned by the workload but lives on the charm fs.
+def test_backup_ca_path_is_charm_local_not_workload_tls_dir(mocker, tmp_path):
+    """The S3 CA path is charm-process-local, never a workload TLS path.
 
     boto3 runs in the charm process, so the bundle must sit under the charm
-    dir (JUJU_CHARM_DIR), never in the workload-container ``tls_paths``.
+    dir (``charm.charm_dir``), never in the workload-container ``tls_paths``
+    and never on the workload object at all.
     """
     from src.core.base_workload import TLSPaths, WorkloadBase
     from src.literals import BACKUP_CA_FILENAME
+    from src.managers.backup import BackupManager
 
-    # backup_ca must not be a workload (container) TLS path.
+    # backup CA must be neither a workload (container) TLS path nor any
+    # attribute of the workload -- it belongs to the charm-process side.
     assert not hasattr(TLSPaths, "backup_ca")
+    assert not hasattr(WorkloadBase, "backup_ca_path")
 
-    monkeypatch.setenv("JUJU_CHARM_DIR", str(tmp_path))
-    # The property only reads JUJU_CHARM_DIR; evaluate it without a concrete
-    # (snap/container-backed) workload instance.
-    assert WorkloadBase.backup_ca_path.fget(None) == tmp_path / BACKUP_CA_FILENAME
+    state = mocker.MagicMock()
+    state.charm.charm_dir = tmp_path
+    mgr = BackupManager(state=state, workload=mocker.MagicMock())
+    assert mgr._backup_ca_path == tmp_path / BACKUP_CA_FILENAME
 
 
 def test_backup_manager_bucket_resource_built_with_checksum_workaround(mocker, tmp_path):
@@ -153,8 +157,8 @@ def test_backup_manager_bucket_resource_uses_ca_chain_when_provided(mocker, tmp_
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
+    state.charm.charm_dir = tmp_path
     workload = mocker.MagicMock()
-    workload.backup_ca_path = tmp_path / BACKUP_CA_FILENAME
     mocker.patch("boto3.Session")
 
     mgr = BackupManager(state=state, workload=workload)
@@ -176,8 +180,8 @@ def test_backup_manager_store_tls_ca_chain_writes_charm_local_file(mocker, tmp_p
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
+    state.charm.charm_dir = tmp_path
     workload = mocker.MagicMock()
-    workload.backup_ca_path = tmp_path / BACKUP_CA_FILENAME
     mgr = BackupManager(state=state, workload=workload)
 
     mgr.store_tls_ca_chain({"tls-ca-chain": ["-----CERT1-----", "-----CERT2-----"]})

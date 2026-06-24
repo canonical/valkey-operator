@@ -5,15 +5,12 @@
 """Base objects for workload operations across different substrates."""
 
 import logging
-import os
-import pathlib
 from abc import ABC, abstractmethod
 from typing import IO, Protocol, runtime_checkable
 
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import BACKUP_CA_FILENAME
 
 
 @runtime_checkable
@@ -101,19 +98,6 @@ class WorkloadBase(ABC):
     sentinel_service: str
     cli: str
     user: str
-
-    @property
-    def backup_ca_path(self) -> pathlib.Path:
-        """Path to the S3 endpoint CA bundle used by the backup client.
-
-        Deliberately a charm-process-local path, NOT a ``tls_paths`` entry:
-        boto3 runs in the charm process, not the workload container, so on
-        K8s the two do not share a filesystem and the bundle could not live
-        in the workload's (container) TLS dir. Keeping it out of that dir
-        also stops the S3 endpoint CA being trusted as a Valkey client CA.
-        ``JUJU_CHARM_DIR`` is the charm dir Juju exports for every hook.
-        """
-        return pathlib.Path(os.environ["JUJU_CHARM_DIR"]) / BACKUP_CA_FILENAME
 
     @property
     @abstractmethod

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 import re
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, Any, cast
@@ -21,7 +22,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
 from common.exceptions import ValkeyBackupError
-from literals import BACKUP_ID_FORMAT, CharmUsers
+from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
 from statuses import BackupStatuses, CharmStatuses
 
 if TYPE_CHECKING:
@@ -80,13 +81,25 @@ class BackupManager(ManagerStatusProtocol):
         self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
+    @property
+    def _backup_ca_path(self) -> pathlib.Path:
+        """Charm-local path to the S3 endpoint CA bundle used by boto3.
+
+        Deliberately charm-process-local, NOT a workload ``tls_paths`` entry:
+        boto3 runs in the charm process, not the workload container, so on
+        K8s the two do not share a filesystem and the bundle could not live
+        in the workload's (container) TLS dir. Keeping it out of that dir
+        also stops the S3 endpoint CA being trusted as a Valkey client CA.
+        """
+        return self.state.charm.charm_dir / BACKUP_CA_FILENAME
+
     # ── boto3 client construction ────────────────────────────────────────
 
     def _get_bucket_resource(self, s3_parameters: dict[str, object]):
         """Build a boto3 Bucket resource configured per the s3-integrator envelope."""
         verify: bool | str = True
         if s3_parameters.get("tls-ca-chain"):
-            verify = str(self.workload.backup_ca_path)
+            verify = str(self._backup_ca_path)
 
         # Scope the credentials to a Session so they are not free-floating
         # kwargs that show up in repr(args) of any boto3 traceback.
@@ -154,11 +167,11 @@ class BackupManager(ManagerStatusProtocol):
             logger.warning("tls-ca-chain is malformed (not a list of strings); ignoring")
             return
         raw = "\n".join(chain)
-        self.workload.backup_ca_path.write_text(raw)
+        self._backup_ca_path.write_text(raw)
 
     def remove_tls_ca_chain(self) -> None:
         """Delete the charm-local S3 endpoint CA bundle, if present."""
-        self.workload.backup_ca_path.unlink(missing_ok=True)
+        self._backup_ca_path.unlink(missing_ok=True)
 
     # ── list ────────────────────────────────────────────────────────────
 
