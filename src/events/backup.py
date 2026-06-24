@@ -82,6 +82,14 @@ class BackupEvents(ops.Object):
             event.defer()
             return
 
+        # Normalise the integrator-supplied envelope before it is persisted
+        # and used to build S3 keys. First trim stray whitespace from every
+        # value (a copy-pasted access key with a trailing newline is common),
+        # then strip the separators that would otherwise corrupt key paths:
+        #   - endpoint: a trailing "/" would double up in the request URL.
+        #   - path/bucket: leading/trailing "/" would yield keys like
+        #     "//<id>"; stripping also collapses path="/" or bucket="/" to ""
+        #     so the validation below can reject them (see comment there).
         for k, v in list(s3_info.items()):
             if isinstance(v, str):
                 s3_info[k] = v.strip()

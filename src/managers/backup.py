@@ -134,6 +134,10 @@ class BackupManager(ManagerStatusProtocol):
         bucket = self._get_bucket_resource(s3_parameters)
         region = s3_parameters.get("region")
         try:
+            # us-east-1 is AWS S3's default region and is the one value that
+            # must NOT be sent as a LocationConstraint: CreateBucket rejects
+            # "us-east-1" with InvalidLocationConstraint. Any other region
+            # (and only then) is passed explicitly. See aws-sdk-js#3647.
             if region and region != "us-east-1":
                 bucket.create(CreateBucketConfiguration={"LocationConstraint": region})
             else:
