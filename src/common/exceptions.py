@@ -76,7 +76,7 @@ class ValkeyBackupError(Exception):
     """Raised when a backup operation fails."""
 
 
-class ValkeyBackupInProgressError(Exception):
+class ValkeyBackupInProgressError(ValkeyBackupError):
     """Raised to block unit teardown while a backup is still streaming.
 
     Raising from ``storage-detaching`` errors the hook so Juju retries it
