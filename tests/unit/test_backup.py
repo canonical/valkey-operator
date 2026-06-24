@@ -184,8 +184,12 @@ def test_backup_manager_store_tls_ca_chain_writes_charm_local_file(mocker, tmp_p
     workload = mocker.MagicMock()
     mgr = BackupManager(state=state, workload=workload)
 
-    mgr.store_tls_ca_chain({"tls-ca-chain": ["-----CERT1-----", "-----CERT2-----"]})
-    assert (tmp_path / BACKUP_CA_FILENAME).read_text() == "-----CERT1-----\n-----CERT2-----"
+    certs = [
+        "-----BEGIN CERTIFICATE-----\nMIICert1\n-----END CERTIFICATE-----",
+        "-----BEGIN CERTIFICATE-----\nMIICert2\n-----END CERTIFICATE-----",
+    ]
+    mgr.store_tls_ca_chain({"tls-ca-chain": certs})
+    assert (tmp_path / BACKUP_CA_FILENAME).read_text() == "\n".join(certs)
 
     mgr.remove_tls_ca_chain()
     assert not (tmp_path / BACKUP_CA_FILENAME).exists()
@@ -211,6 +215,19 @@ def test_backup_manager_store_tls_ca_chain_rejects_non_list(mocker, tmp_path):
     mgr = BackupManager(state=state, workload=mocker.MagicMock())
     # A bare string must not be char-joined into a corrupt bundle.
     mgr.store_tls_ca_chain({"tls-ca-chain": "-----BEGIN CERTIFICATE-----"})
+    assert not (tmp_path / BACKUP_CA_FILENAME).exists()
+
+
+def test_backup_manager_store_tls_ca_chain_rejects_non_pem_items(mocker, tmp_path):
+    from src.literals import BACKUP_CA_FILENAME
+    from src.managers.backup import BackupManager
+
+    state = mocker.MagicMock()
+    state.charm.charm_dir = tmp_path
+    mgr = BackupManager(state=state, workload=mocker.MagicMock())
+    # A list whose items lack a PEM armour header is malformed; the whole
+    # chain is rejected rather than written as an unloadable CA bundle.
+    mgr.store_tls_ca_chain({"tls-ca-chain": ["not-a-cert", "also-not-a-cert"]})
     assert not (tmp_path / BACKUP_CA_FILENAME).exists()
 
 

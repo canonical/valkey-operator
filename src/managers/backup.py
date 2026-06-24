@@ -43,6 +43,11 @@ _RDB_MAGIC = (b"REDIS", b"VALKEY")
 # future PITR/AOF objects) must not appear in list-backups output.
 _BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
+# A CA-chain entry must look like PEM: an item that lacks the armour header
+# (e.g. base64 with no "-----BEGIN ... -----", or a stray non-cert string)
+# would produce a CA bundle boto3 cannot load. Same shape as managers/tls.py.
+_PEM_HEADER_RE = re.compile(r"-+BEGIN [A-Z ]+-+")
+
 
 class _CountingReader:
     """Wrap a binary stream, counting bytes read and capturing the head.
@@ -162,9 +167,12 @@ class BackupManager(ManagerStatusProtocol):
             return
         # A misconfigured integrator may send a bare string; "\n".join would
         # then iterate characters and write a corrupt CA bundle. Require a
-        # list of PEM strings.
-        if not isinstance(chain, list) or not all(isinstance(c, str) for c in chain):
-            logger.warning("tls-ca-chain is malformed (not a list of strings); ignoring")
+        # list of PEM certificates -- each item must carry a PEM armour
+        # header, mirroring the TLS manager's key check.
+        if not isinstance(chain, list) or not all(
+            isinstance(c, str) and _PEM_HEADER_RE.search(c) for c in chain
+        ):
+            logger.warning("tls-ca-chain is malformed (not a list of PEM certificates); ignoring")
             return
         raw = "\n".join(chain)
         self._backup_ca_path.write_text(raw)
