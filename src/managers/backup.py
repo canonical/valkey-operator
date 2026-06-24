@@ -100,11 +100,11 @@ class BackupManager(ManagerStatusProtocol):
 
     # ── boto3 client construction ────────────────────────────────────────
 
-    def _get_bucket_resource(self, s3_parameters: dict[str, object]):
+    def _get_bucket_resource(self, s3_parameters: dict[str, object]) -> "Bucket":
         """Build a boto3 Bucket resource configured per the s3-integrator envelope."""
         verify: bool | str = True
         if s3_parameters.get("tls-ca-chain"):
-            verify = str(self._backup_ca_path)
+            verify = self._backup_ca_path.as_posix()
 
         # Scope the credentials to a Session so they are not free-floating
         # kwargs that show up in repr(args) of any boto3 traceback.
