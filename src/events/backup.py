@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import ops
 from botocore.exceptions import ClientError
-from charms.data_platform_libs.v0.s3 import (
-    CredentialsChangedEvent,
-    CredentialsGoneEvent,
+from object_storage import (
     S3Requirer,
+    StorageConnectionInfoChangedEvent,
+    StorageConnectionInfoGoneEvent,
 )
 
 from common.exceptions import ValkeyBackupError
@@ -55,9 +55,11 @@ class BackupEvents(ops.Object):
         self.s3_requirer = S3Requirer(self.charm, S3_RELATION_NAME)
 
         self.framework.observe(
-            self.s3_requirer.on.credentials_changed, self._on_s3_credentials_changed
+            self.s3_requirer.on.storage_connection_info_changed, self._on_s3_credentials_changed
         )
-        self.framework.observe(self.s3_requirer.on.credentials_gone, self._on_s3_credentials_gone)
+        self.framework.observe(
+            self.s3_requirer.on.storage_connection_info_gone, self._on_s3_credentials_gone
+        )
         # Recover credentials when leadership moves.
         self.framework.observe(self.charm.on.leader_elected, self._on_s3_credentials_changed)
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
@@ -66,11 +68,15 @@ class BackupEvents(ops.Object):
     # ── event handlers ──────────────────────────────────────────────────
 
     def _on_s3_credentials_changed(
-        self, event: CredentialsChangedEvent | ops.LeaderElectedEvent
+        self, event: StorageConnectionInfoChangedEvent | ops.LeaderElectedEvent
     ) -> None:
         """Handle initial and updated S3 integrator credentials."""
-        if not (s3_info := self.s3_requirer.get_s3_connection_info()):
+        if not (raw := self.s3_requirer.get_storage_connection_info()):
             return
+        # ``get_storage_connection_info`` returns the ``S3Info`` TypedDict; copy
+        # into a plain dict so the normalisation below can rewrite arbitrary
+        # keys and the BackupManager methods (``dict[str, Any]``) accept it.
+        s3_info: dict[str, Any] = dict(raw)
         logger.info("S3 credentials changed; refreshing backup configuration")
 
         # CA chain must be on disk for every unit so any unit can use TLS to S3.
@@ -122,7 +128,7 @@ class BackupEvents(ops.Object):
 
         self.charm.state.cluster.update({"s3_credentials": json.dumps(s3_info)})
 
-    def _on_s3_credentials_gone(self, event: CredentialsGoneEvent) -> None:
+    def _on_s3_credentials_gone(self, event: StorageConnectionInfoGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
         if self.charm.state.unit_server.is_backup_in_progress:
             logger.warning("Backup in progress; deferring credentials_gone")

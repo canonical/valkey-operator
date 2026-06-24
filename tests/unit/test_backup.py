@@ -573,7 +573,7 @@ def test_on_s3_credentials_changed_stores_ca_on_all_units(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = {
+    evt.s3_requirer.get_storage_connection_info.return_value = {
         "bucket": "b",
         "endpoint": "https://e/",
         "path": "/p/",
@@ -599,7 +599,7 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = {
+    evt.s3_requirer.get_storage_connection_info.return_value = {
         "bucket": " b ",
         "endpoint": "https://e/",
         "path": "/p/",
@@ -664,7 +664,7 @@ def test_on_s3_credentials_changed_rejects_path_that_strips_to_empty(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = {
+    evt.s3_requirer.get_storage_connection_info.return_value = {
         "bucket": "b",
         "endpoint": "https://e",
         "path": "/",
@@ -696,7 +696,7 @@ def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = dict(envelope)
+    evt.s3_requirer.get_storage_connection_info.return_value = dict(envelope)
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.backup_manager.create_bucket.assert_not_called()
@@ -713,7 +713,7 @@ def test_on_s3_credentials_changed_missing_params_skips_databag(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = {"bucket": "b"}
+    evt.s3_requirer.get_storage_connection_info.return_value = {"bucket": "b"}
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.state.cluster.update.assert_not_called()
@@ -980,7 +980,7 @@ def test_on_s3_credentials_changed_defers_without_peer_relation(mocker):
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     evt.s3_requirer = mocker.MagicMock()
-    evt.s3_requirer.get_s3_connection_info.return_value = {
+    evt.s3_requirer.get_storage_connection_info.return_value = {
         "bucket": "b",
         "endpoint": "e",
         "path": "p",

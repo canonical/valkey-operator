@@ -1029,6 +1029,21 @@ signals = ["blinker (>=1.4.0)"]
 signedtoken = ["cryptography (>=3.0.0)", "pyjwt (>=2.0.0,<3)"]
 
 [[package]]
+name = "object-storage-charmlib"
+version = "1.0.0"
+description = "Common charm lib for providers and requirers of object storage relation interfaces"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "object_storage_charmlib-1.0.0-py3-none-any.whl", hash = "sha256:17e95686ddeac3dd83dc6f9276d75f967fdd84b5658e3660d6ef1fe72b3ad56e"},
+    {file = "object_storage_charmlib-1.0.0.tar.gz", hash = "sha256:7bb853f9d1d14273e8bc603964e8582b93ea635aff0619612f7c8b6bce6da900"},
+]
+
+[package.dependencies]
+ops = ">=2.0.0"
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.41.0"
 description = "OpenTelemetry Python API"
@@ -1804,4 +1819,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "bc87ba3e122580cf03ad7cb134fc5447ab72213c59a7dd9e909194ac905dd309"
+content-hash = "09befd5e40b1e2a45930e06e7093ba4560241fcb05658830fcd5fce26e063d82"
