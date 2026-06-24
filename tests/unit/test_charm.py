@@ -71,7 +71,7 @@ def test_start_primary(cloud_spec):
             SERVICE_METRIC_EXPORTER: {
                 "override": "replace",
                 "summary": "Valkey metric exporter",
-                "command": "bin/redis_exporter",
+                "command": "bin/prometheus-redis-exporter",
                 "user": CHARM_USER,
                 "group": CHARM_USER,
                 "startup": "enabled",

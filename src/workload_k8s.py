@@ -155,7 +155,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 self.metric_service: {
                     "override": "replace",
                     "summary": "Valkey metric exporter",
-                    "command": "bin/redis_exporter",
+                    "command": "bin/prometheus-redis-exporter",
                     "user": self.user,
                     "group": self.user,
                     "startup": "enabled",
