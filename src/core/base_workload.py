@@ -82,6 +82,12 @@ class TLSPaths:
         """Path to the directory for CA certs."""
         return self.tls_root / "ca_certs"
 
+    @property
+    def ldap_ca(self) -> pathops.LocalPath | pathops.ContainerPath:
+        """Path to the LDAP CA cert."""
+        # intentionally not stored in `ca_certs` to avoid LDAP CA being trusted for clients
+        return self.tls_root / "ldap_ca.pem"
+
 
 class WorkloadBase(ABC):
     """Base interface for common workload operations."""

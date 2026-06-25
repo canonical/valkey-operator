@@ -51,6 +51,9 @@ requires:
   certificate-transfer:
     interface: certificate_transfer
     optional: true
+  ldap-ca-cert:
+    interface: certificate_transfer
+    optional: true
 
 storage:
   data:

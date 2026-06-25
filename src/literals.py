@@ -34,6 +34,7 @@ PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
+LDAP_CA_CERT_RELATION = "ldap-ca-cert"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
 
 CLIENT_PORT = 6379

@@ -15,6 +15,7 @@ from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
+from events.ldap import LDAPEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.cluster import ClusterManager
@@ -75,6 +76,7 @@ class ValkeyCharm(ops.CharmBase):
         self.base_events = BaseEvents(self)
         self.tls_events = TLSEvents(self)
         self.client_events = ExternalClientsEvents(self)
+        self.ldap_events = LDAPEvents(self)
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 
