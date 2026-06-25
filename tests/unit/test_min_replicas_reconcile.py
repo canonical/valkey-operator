@@ -4,11 +4,12 @@
 
 """Wiring tests: scale events reassert min-replicas-to-write at runtime."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from ops import testing
 
 from src.charm import ValkeyCharm
+from src.common.custom_events import RestartWorkloadEvent
 from src.literals import PEER_RELATION, StartState
 
 CONTAINER = "valkey"
@@ -63,3 +64,39 @@ def test_peer_relation_departed_reconciles_min_replicas(cloud_spec):
     ):
         ctx.run(ctx.on.relation_departed(relation, remote_unit=2), state_in)
         mock_reconcile.assert_called_once()
+
+
+def test_restart_workload_reconciles_min_replicas(cloud_spec):
+    """A Valkey workload restart reasserts the runtime value.
+
+    The file ships min-replicas-to-write=1, but CONFIG SET does not survive a
+    restart, so _on_restart_workload must reconcile once Valkey is healthy
+    again or a small cluster would be write-frozen.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    _, state_in = _started_3_unit_state(cloud_spec)
+
+    event = MagicMock(spec=RestartWorkloadEvent)
+    event.restart_valkey = True
+    event.restart_sentinel = False
+    event.primary_endpoint = ""
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm = manager.charm
+        charm.workload.restart = MagicMock()
+        with (
+            patch("common.locks.RestartLock.request_lock"),
+            patch("common.locks.RestartLock.release_lock"),
+            patch(
+                "common.locks.RestartLock.is_held_by_this_unit",
+                new_callable=PropertyMock,
+                return_value=True,
+            ),
+            patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.topology.TopologyManager.start_observer"),
+            patch(
+                "managers.cluster.ClusterManager.reconcile_min_replicas_to_write"
+            ) as mock_reconcile,
+        ):
+            charm._on_restart_workload(event)
+            mock_reconcile.assert_called_once()

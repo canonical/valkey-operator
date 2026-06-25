@@ -119,6 +119,14 @@ class ValkeyCharm(ops.CharmBase):
             return
         self.state.unit_server.update({"is_valkey_healthy": True})
 
+        if event.restart_valkey:
+            # CONFIG SET min-replicas-to-write does not survive the restart we
+            # just performed; the rendered file ships 1, so reassert the
+            # topology-correct runtime value (0 on < 3 active units) now that
+            # Valkey is back up and healthy, or a small cluster would be
+            # write-frozen until the next peer-relation event.
+            self.cluster_manager.reconcile_min_replicas_to_write()
+
         if event.restart_sentinel and not self.sentinel_manager.is_healthy():
             self.state.unit_server.update({"is_sentinel_healthy": False})
             restart_lock.release_lock()

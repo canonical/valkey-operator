@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from common.exceptions import ValkeyConfigSetError
 from managers.cluster import ClusterManager
 
 
@@ -50,9 +49,15 @@ def test_reconcile_sets_value_per_topology(active_units, expected):
     )
 
 
-def test_reconcile_raises_when_config_set_fails():
-    """A failed CONFIG SET surfaces as ValkeyConfigSetError, like other setters."""
-    cm, _ = _make_cluster_manager(active_units=3, config_set_ok=False)
+def test_reconcile_swallows_config_set_failure(caplog):
+    """A failed CONFIG SET is logged and swallowed, not raised.
 
-    with pytest.raises(ValkeyConfigSetError):
-        cm.reconcile_min_replicas_to_write()
+    The value is non-critical and gets reasserted on the next event or restart,
+    so a transient failure must not propagate out of the manager.
+    """
+    cm, client = _make_cluster_manager(active_units=3, config_set_ok=False)
+
+    cm.reconcile_min_replicas_to_write()
+
+    client.config_set.assert_called_once()
+    assert "Failed to reconcile min-replicas-to-write" in caplog.text

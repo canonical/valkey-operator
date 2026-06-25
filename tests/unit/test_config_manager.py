@@ -53,18 +53,19 @@ def test_static_overrides_land_in_rendered_dict():
 
 
 @pytest.mark.parametrize("planned_units", [0, 1, 2, 3, 5])
-def test_min_replicas_to_write_is_static_zero_in_file(planned_units):
-    """min-replicas-to-write always ships as '0' in valkey.conf.
+def test_min_replicas_to_write_is_static_one_in_file(planned_units):
+    """min-replicas-to-write always ships as '1' in valkey.conf.
 
-    Requiring an in-sync replica is enabled only at runtime, and only on >= 3
-    unit clusters, via ClusterManager.reconcile_min_replicas_to_write. The
-    rendered file value is a constant '0' so a fresh 1- or 2-unit primary is
-    never write-frozen at startup.
+    The file carries the backup-safe default ('1'); relaxing it to '0' on
+    smaller or partially-rolled-out clusters happens only at runtime via
+    ClusterManager.reconcile_min_replicas_to_write (reasserted after every
+    (re)start, since CONFIG SET does not persist). The rendered file value is
+    a constant '1' regardless of topology.
     """
     cm = _make_config_manager(planned_units=planned_units)
     props = cm.get_config_properties(primary_endpoint="10.0.0.5")
 
-    assert props["min-replicas-to-write"] == "0"
+    assert props["min-replicas-to-write"] == "1"
 
 
 @pytest.mark.parametrize(

@@ -68,18 +68,25 @@ class ClusterManager(ManagerStatusProtocol):
         restart, a scale-down, or a scale-up that is still rolling out).
         Counting active units rather than planned units avoids freezing writes
         when the planned count has already grown but the new units are not up
-        yet. The rendered config ships 0, so the enabled (1) value must be
+        yet. The rendered config ships 1, so the relaxed (0) value must be
         reasserted after every (re)start because CONFIG SET does not persist.
+
+        A failed CONFIG SET is logged and swallowed rather than raised: the
+        value is non-critical and gets reasserted on the next event or restart.
         """
         active_units = len([server for server in self.state.servers if server.is_active])
         value = "1" if active_units >= 3 else "0"
-        client = self._get_valkey_client()
-        if not client.config_set(
-            hostname=self.state.endpoint,
-            parameter="min-replicas-to-write",
-            value=value,
-        ):
-            raise ValkeyConfigSetError("Could not set min-replicas-to-write on Valkey server.")
+        try:
+            client = self._get_valkey_client()
+            if not client.config_set(
+                hostname=self.state.endpoint,
+                parameter="min-replicas-to-write",
+                value=value,
+            ):
+                raise ValkeyConfigSetError("Could not set min-replicas-to-write on Valkey server.")
+        except (ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+            # non-critical; reasserted on the next event or restart
+            logger.error("Failed to reconcile min-replicas-to-write: %s", e)
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""

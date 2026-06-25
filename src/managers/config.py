@@ -92,13 +92,14 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["save"] = "900 1 300 100 60 10000"
         config_properties["maxmemory-policy"] = "noeviction"
         config_properties["min-replicas-max-lag"] = "10"
-        # min-replicas-to-write gates writes on having an in-sync replica. It
-        # ships as 0 (writes always allowed); ClusterManager.reconcile_min_replicas_to_write
-        # raises it to 1 at runtime only when >= 3 units are active, leaving
-        # smaller or partially-rolled-out clusters at 0 so the primary is not
-        # write-frozen when its sole replica is unavailable (e.g. during a
-        # rolling restart or an in-progress scale-up).
-        config_properties["min-replicas-to-write"] = "0"
+        # min-replicas-to-write gates writes on having an in-sync replica. The
+        # file ships 1 (the backup-safe default); ClusterManager.reconcile_min_replicas_to_write
+        # relaxes it to 0 at runtime whenever fewer than 3 units are active, so
+        # the primary is not write-frozen when its sole replica is unavailable
+        # (e.g. during a rolling restart or an in-progress scale-up). The runtime
+        # value is reasserted after every (re)start because CONFIG SET does not
+        # persist.
+        config_properties["min-replicas-to-write"] = "1"
         if self.workload.total_memory_bytes() > _REPL_BACKLOG_MIN_RAM_BYTES:
             config_properties["repl-backlog-size"] = _REPL_BACKLOG_SIZE
 
