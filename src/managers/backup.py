@@ -26,10 +26,12 @@ from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
 from statuses import BackupStatuses, CharmStatuses
 
 if TYPE_CHECKING:
+    from mypy_boto3_s3.literals import BucketLocationConstraintType
     from mypy_boto3_s3.service_resource import Bucket, S3ServiceResource
 
     from core.base_workload import WorkloadBase
     from core.cluster_state import ClusterState
+    from core.models import S3Parameters
 
 logger = logging.getLogger(__name__)
 
@@ -100,24 +102,24 @@ class BackupManager(ManagerStatusProtocol):
 
     # ── boto3 client construction ────────────────────────────────────────
 
-    def _get_bucket_resource(self, s3_parameters: dict[str, object]) -> "Bucket":
+    def _get_bucket_resource(self, s3_parameters: "S3Parameters") -> "Bucket":
         """Build a boto3 Bucket resource configured per the s3-integrator envelope."""
         verify: bool | str = True
-        if s3_parameters.get("tls-ca-chain"):
+        if s3_parameters.tls_ca_chain:
             verify = self._backup_ca_path.as_posix()
 
         # Scope the credentials to a Session so they are not free-floating
         # kwargs that show up in repr(args) of any boto3 traceback.
         session = boto3.Session(
-            aws_access_key_id=s3_parameters["access-key"],
-            aws_secret_access_key=s3_parameters["secret-key"],
-            region_name=s3_parameters.get("region"),
+            aws_access_key_id=s3_parameters.access_key,
+            aws_secret_access_key=s3_parameters.secret_key,
+            region_name=s3_parameters.region,
         )
         s3 = cast(
             "S3ServiceResource",
             session.resource(
                 "s3",
-                endpoint_url=s3_parameters.get("endpoint"),
+                endpoint_url=s3_parameters.endpoint,
                 config=Config(
                     request_checksum_calculation="when_required",
                     response_checksum_validation="when_required",
@@ -125,21 +127,27 @@ class BackupManager(ManagerStatusProtocol):
                 verify=verify,
             ),
         )
-        return s3.Bucket(cast("str", s3_parameters["bucket"]))
+        return s3.Bucket(s3_parameters.bucket)
 
     # ── bucket lifecycle ────────────────────────────────────────────────
 
-    def create_bucket(self, s3_parameters: dict[str, Any]) -> None:
+    def create_bucket(self, s3_parameters: "S3Parameters") -> None:
         """Create the configured bucket; idempotent across S3 implementations."""
         bucket = self._get_bucket_resource(s3_parameters)
-        region = s3_parameters.get("region")
+        region = s3_parameters.region
         try:
             # us-east-1 is AWS S3's default region and is the one value that
             # must NOT be sent as a LocationConstraint: CreateBucket rejects
             # "us-east-1" with InvalidLocationConstraint. Any other region
             # (and only then) is passed explicitly. See aws-sdk-js#3647.
             if region and region != "us-east-1":
-                bucket.create(CreateBucketConfiguration={"LocationConstraint": region})
+                bucket.create(
+                    CreateBucketConfiguration={
+                        # region is a free-form str; the stub wants its region
+                        # Literal. Any non-default region is a valid constraint.
+                        "LocationConstraint": cast("BucketLocationConstraintType", region)
+                    }
+                )
             else:
                 bucket.create()
             # Bound the wait: the boto3 default is 20 * 5s = up to 100s, which
@@ -158,7 +166,7 @@ class BackupManager(ManagerStatusProtocol):
                 "BucketAlreadyExists",
                 "BucketNameUnavailable",
             }:
-                logger.info("Using existing bucket %s", s3_parameters["bucket"])
+                logger.info("Using existing bucket %s", s3_parameters.bucket)
                 return
             raise ValkeyBackupError(e) from e
 
@@ -194,7 +202,9 @@ class BackupManager(ManagerStatusProtocol):
         backup-id format so unrelated objects under the prefix are excluded.
         """
         s3_parameters = self.state.cluster.s3_credentials
-        path = s3_parameters["path"]
+        if s3_parameters is None:
+            raise ValkeyBackupError("S3 credentials unavailable")
+        path = s3_parameters.path
         bucket = self._get_bucket_resource(s3_parameters)
         try:
             keys = [obj.key for obj in bucket.objects.filter(Prefix=f"{path}/")]
@@ -226,17 +236,19 @@ class BackupManager(ManagerStatusProtocol):
         and cleans up the S3 object on failure.
         """
         s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyBackupError("S3 credentials unavailable")
         started = datetime.now(timezone.utc)
         backup_id = started.strftime(BACKUP_ID_FORMAT)
-        key = f"{s3_parameters['path']}/{backup_id}"
+        key = f"{s3_parameters.path}/{backup_id}"
         # Structured audit trail: who/what/where for forensics on a backup
         # that lands somewhere unexpected. Endpoint is logged; creds never.
         logger.info(
             "backup.started backup_id=%s unit=%s bucket=%s endpoint=%s",
             backup_id,
             self.state.unit_server.unit_name,
-            s3_parameters.get("bucket"),
-            s3_parameters.get("endpoint"),
+            s3_parameters.bucket,
+            s3_parameters.endpoint,
         )
 
         self.state.unit_server.update({"backup_id": backup_id})

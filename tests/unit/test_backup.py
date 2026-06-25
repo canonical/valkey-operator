@@ -21,21 +21,35 @@ def test_peer_app_model_has_s3_credentials_field():
     assert fields["s3_credentials"].default is None
 
 
-def test_cluster_s3_credentials_parses_json_and_defaults_empty(mocker):
-    """The envelope parses back to a dict; unset reads as {} (never None)."""
-    from src.core.models import ValkeyCluster
+def test_cluster_s3_credentials_parses_envelope_and_defaults_none(mocker):
+    """The stored envelope parses back to S3Parameters; unset reads as None."""
+    import json
+
+    from src.core.models import S3Parameters, ValkeyCluster
 
     cluster = ValkeyCluster.__new__(ValkeyCluster)
 
     cluster.model = mocker.MagicMock()
-    cluster.model.s3_credentials = '{"bucket": "b", "tls-ca-chain": ["c1", "c2"]}'
-    assert cluster.s3_credentials == {"bucket": "b", "tls-ca-chain": ["c1", "c2"]}
+    cluster.model.s3_credentials = json.dumps(
+        {
+            "bucket": "b",
+            "endpoint": "https://e",
+            "path": "p",
+            "access-key": "AK",
+            "secret-key": "SK",
+            "tls-ca-chain": ["c1", "c2"],
+        }
+    )
+    params = cluster.s3_credentials
+    assert isinstance(params, S3Parameters)
+    assert params.bucket == "b"
+    assert params.tls_ca_chain == ["c1", "c2"]
 
     cluster.model.s3_credentials = None
-    assert cluster.s3_credentials == {}
+    assert cluster.s3_credentials is None
 
     cluster.model = None
-    assert cluster.s3_credentials == {}
+    assert cluster.s3_credentials is None
 
 
 def test_peer_unit_model_has_backup_id_field():
@@ -126,13 +140,7 @@ def test_backup_manager_bucket_resource_built_with_checksum_workaround(mocker, t
 
     mgr = BackupManager(state=state, workload=workload)
     bucket = mgr._get_bucket_resource(
-        {
-            "bucket": "b",
-            "endpoint": "https://s3.example.com",
-            "access-key": "AK",
-            "secret-key": "SK",
-            "region": "us-west-2",
-        }
+        _s3_params(endpoint="https://s3.example.com", region="us-west-2")
     )
 
     _, session_kwargs = boto3.Session.call_args
@@ -162,15 +170,7 @@ def test_backup_manager_bucket_resource_uses_ca_chain_when_provided(mocker, tmp_
     mocker.patch("boto3.Session")
 
     mgr = BackupManager(state=state, workload=workload)
-    mgr._get_bucket_resource(
-        {
-            "bucket": "b",
-            "endpoint": "x",
-            "access-key": "AK",
-            "secret-key": "SK",
-            "tls-ca-chain": ["-----BEGIN CERTIFICATE-----\n..."],
-        }
-    )
+    mgr._get_bucket_resource(_s3_params(tls_ca_chain=["-----BEGIN CERTIFICATE-----\n..."]))
     _, kwargs = boto3.Session.return_value.resource.call_args
     assert kwargs["verify"] == str(tmp_path / BACKUP_CA_FILENAME)
 
@@ -239,9 +239,7 @@ def test_create_bucket_us_east_1_omits_location_constraint(mocker):
     fake_bucket = mocker.MagicMock()
     mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
 
-    BackupManager(state=state, workload=workload).create_bucket(
-        {"bucket": "b", "region": "us-east-1"}
-    )
+    BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
     fake_bucket.create.assert_called_once_with()
     fake_bucket.wait_until_exists.assert_called_once()
 
@@ -254,9 +252,7 @@ def test_create_bucket_non_default_region_sets_location_constraint(mocker):
     fake_bucket = mocker.MagicMock()
     mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
 
-    BackupManager(state=state, workload=workload).create_bucket(
-        {"bucket": "b", "region": "eu-west-1"}
-    )
+    BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="eu-west-1"))
     fake_bucket.create.assert_called_once_with(
         CreateBucketConfiguration={"LocationConstraint": "eu-west-1"}
     )
@@ -278,9 +274,7 @@ def test_create_bucket_tolerates_existing_buckets(mocker):
             {"Error": {"Code": token, "Message": token}}, "CreateBucket"
         )
         # Must not raise
-        BackupManager(state=state, workload=workload).create_bucket(
-            {"bucket": "b", "region": "us-east-1"}
-        )
+        BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
 
 
 def test_create_bucket_raises_for_other_client_errors(mocker):
@@ -299,21 +293,14 @@ def test_create_bucket_raises_for_other_client_errors(mocker):
     mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
 
     with pytest.raises(ValkeyBackupError):
-        BackupManager(state=state, workload=workload).create_bucket(
-            {"bucket": "b", "region": "us-east-1"}
-        )
+        BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
 
 
 def test_list_backups_filters_by_prefix_and_sorts_descending(mocker):
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.cluster.s3_credentials = {
-        "bucket": "b",
-        "path": "valkey",
-        "access-key": "k",
-        "secret-key": "s",
-    }
+    state.cluster.s3_credentials = _s3_params(path="valkey")
     workload = mocker.MagicMock()
     fake_bucket = mocker.MagicMock()
     fake_objects = [
@@ -347,12 +334,7 @@ def test_list_backups_wraps_client_error(mocker):
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.cluster.s3_credentials = {
-        "bucket": "b",
-        "path": "p",
-        "access-key": "k",
-        "secret-key": "s",
-    }
+    state.cluster.s3_credentials = _s3_params(path="p")
     workload = mocker.MagicMock()
     fake_bucket = mocker.MagicMock()
     fake_bucket.objects.filter.side_effect = ClientError(
@@ -380,15 +362,24 @@ def test_format_backup_list_empty():
     assert BackupManager.format_backup_list([]) == "No backups found."
 
 
-def _make_state(mocker, *, backup_id="", admin_pw="pw", tls=False):
-    state = mocker.MagicMock()
-    state.cluster.s3_credentials = {
+def _s3_params(**overrides):
+    """Build a valid S3Parameters, overriding individual fields by name."""
+    from src.core.models import S3Parameters
+
+    base = {
         "bucket": "b",
+        "endpoint": "https://e",
         "path": "valkey",
-        "endpoint": "x",
         "access-key": "AK",
         "secret-key": "SK",
     }
+    base.update(overrides)
+    return S3Parameters.model_validate(base)
+
+
+def _make_state(mocker, *, backup_id="", admin_pw="pw", tls=False):
+    state = mocker.MagicMock()
+    state.cluster.s3_credentials = _s3_params()
     state.unit_server.model.backup_id = backup_id
     state.unit_server.valkey_admin_password = admin_pw
     state.unit_server.is_tls_enabled = tls
@@ -679,6 +670,7 @@ def test_on_s3_credentials_changed_rejects_path_that_strips_to_empty(mocker):
 
 def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
     """An unchanged envelope must not trigger another create_bucket call."""
+    from src.core.models import S3Parameters
     from src.events.backup import BackupEvents
 
     envelope = {
@@ -691,7 +683,8 @@ def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
     charm = mocker.MagicMock()
     charm.unit.is_leader.return_value = True
     charm.state.peer_relation = mocker.MagicMock()
-    charm.state.cluster.s3_credentials = dict(envelope)  # already stored
+    # already stored: the parsed envelope the handler will compare against
+    charm.state.cluster.s3_credentials = S3Parameters.model_validate(dict(envelope))
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm

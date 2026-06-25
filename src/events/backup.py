@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import ops
 from botocore.exceptions import ClientError
@@ -17,8 +17,10 @@ from object_storage import (
     StorageConnectionInfoChangedEvent,
     StorageConnectionInfoGoneEvent,
 )
+from pydantic import ValidationError
 
 from common.exceptions import ValkeyBackupError
+from core.models import S3Parameters
 from literals import S3_RELATION_NAME
 from statuses import BackupStatuses
 
@@ -71,16 +73,14 @@ class BackupEvents(ops.Object):
         self, event: StorageConnectionInfoChangedEvent | ops.LeaderElectedEvent
     ) -> None:
         """Handle initial and updated S3 integrator credentials."""
-        if not (raw := self.s3_requirer.get_storage_connection_info()):
+        if not (s3_info := self.s3_requirer.get_storage_connection_info()):
             return
-        # ``get_storage_connection_info`` returns the ``S3Info`` TypedDict; copy
-        # into a plain dict so the normalisation below can rewrite arbitrary
-        # keys and the BackupManager methods (``dict[str, Any]``) accept it.
-        s3_info: dict[str, Any] = dict(raw)
         logger.info("S3 credentials changed; refreshing backup configuration")
 
         # CA chain must be on disk for every unit so any unit can use TLS to S3.
-        self.charm.backup_manager.store_tls_ca_chain(s3_info)
+        # Stored from the raw envelope (a follower needs only the CA, which may
+        # arrive before the full credentials); store_tls_ca_chain is tolerant.
+        self.charm.backup_manager.store_tls_ca_chain(dict(s3_info))
 
         if not self.charm.unit.is_leader():
             return
@@ -88,45 +88,31 @@ class BackupEvents(ops.Object):
             event.defer()
             return
 
-        # Normalise the integrator-supplied envelope before it is persisted
-        # and used to build S3 keys. First trim stray whitespace from every
-        # value (a copy-pasted access key with a trailing newline is common),
-        # then strip the separators that would otherwise corrupt key paths:
-        #   - endpoint: a trailing "/" would double up in the request URL.
-        #   - path/bucket: leading/trailing "/" would yield keys like
-        #     "//<id>"; stripping also collapses path="/" or bucket="/" to ""
-        #     so the validation below can reject them (see comment there).
-        for k, v in list(s3_info.items()):
-            if isinstance(v, str):
-                s3_info[k] = v.strip()
-        s3_info["endpoint"] = s3_info.get("endpoint", "").rstrip("/")
-        s3_info["path"] = s3_info.get("path", "").strip("/")
-        s3_info["bucket"] = s3_info.get("bucket", "").strip("/")
-
-        # Validate AFTER normalisation: path="/" or bucket="/" collapse to ""
-        # here, and an empty path makes list_backups enumerate the whole
-        # bucket (cross-tenant leak in a shared bucket).
-        required_params = ["bucket", "endpoint", "path", "access-key", "secret-key"]
-        if missing_params := [p for p in required_params if not s3_info.get(p)]:
-            logger.warning(
-                "S3 integrator parameters missing or empty after normalisation: %s",
-                missing_params,
-            )
+        # Parse + normalise + validate the integrator envelope in one step:
+        # S3Parameters trims whitespace, strips the separators that would
+        # corrupt S3 key paths, and rejects an envelope missing a required
+        # field or whose path/bucket strips to empty.
+        try:
+            params = S3Parameters.model_validate(dict(s3_info))
+        except ValidationError as e:
+            logger.warning("S3 integrator parameters invalid or incomplete: %s", e)
             return
 
         # leader_elected re-fires this handler; skip the create_bucket round
-        # trip (a synchronous S3 call) when the normalised envelope is
-        # unchanged. A real credentials rotation still falls through.
-        if self.charm.state.cluster.s3_credentials == s3_info:
+        # trip (a synchronous S3 call) when the envelope is unchanged. Compare
+        # by value (model_dump) rather than identity. A real credentials
+        # rotation still falls through.
+        stored = self.charm.state.cluster.s3_credentials
+        if stored is not None and stored.model_dump() == params.model_dump():
             return
 
         try:
-            self.charm.backup_manager.create_bucket(s3_info)
+            self.charm.backup_manager.create_bucket(params)
         except ValkeyBackupError as e:
             logger.error("Bucket setup failed: %s", e)
             return
 
-        self.charm.state.cluster.update({"s3_credentials": json.dumps(s3_info)})
+        self.charm.state.cluster.update({"s3_credentials": params.model_dump_json(by_alias=True)})
 
     def _on_s3_credentials_gone(self, event: StorageConnectionInfoGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
