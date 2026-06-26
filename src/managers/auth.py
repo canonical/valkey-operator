@@ -165,11 +165,13 @@ class AuthManager(ManagerStatusProtocol):
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        if (
-            scope == "app"
-            and self.state.ldap_relation
-            and not self.state.ldap_ca_cert_relation
-        ):
-            status_list.append(AuthStatuses.LDAP_CA_CERT_MISSING.value)
+        if scope == "app":
+            if self.state.ldap_relation and not self.state.ldap_ca_cert_relation:
+                status_list.append(AuthStatuses.LDAP_CA_CERT_MISSING.value)
+
+            return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
+
+        if self.state.ldap_relation and not self.state.unit_server.model.ldap_enabled:
+            status_list.append(AuthStatuses.LDAP_NOT_ENABLED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

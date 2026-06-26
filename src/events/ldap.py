@@ -21,7 +21,7 @@ from charms.glauth_k8s.v0.ldap import (
     LdapUnavailableEvent,
 )
 
-from common.exceptions import ValkeyWorkloadCommandError
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
 from literals import LDAP_CA_CERT_RELATION, LDAP_RELATION
 
 if TYPE_CHECKING:
@@ -51,12 +51,31 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
-        ldap_data = self.ldap_requirer.consume_ldap_relation_data(relation=event.relation)
-        logger.info(f"LDAP data: {ldap_data}")
+        logger.info("Update configuration after LDAP is ready")
+
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+            # todo: add config reload or rolling restart of Valkey
+            self.charm.state.unit_server.update({"ldap_enabled": True})
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update LDAP configuration: %s", e)
+            event.defer()
+            return
 
     def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
         """Handle the removal of the LDAP relation."""
-        pass
+        logger.info("Update configuration after LDAP was removed")
+
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+            # todo: add config reload or rolling restart of Valkey
+            self.charm.state.unit_server.update({"ldap_enabled": False})
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update LDAP configuration: %s", e)
+            event.defer()
+            return
 
     def _on_ldap_ca_available(self, event: CertificateAvailableEvent) -> None:
         """Handle the CA certificate available event for LDAP."""

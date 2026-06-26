@@ -10,7 +10,7 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISIONS = {"x86_64": 18, "aarch64": 17}
+SNAP_REVISIONS = {"x86_64": 20, "aarch64": 19}
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
 SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"

@@ -3,13 +3,14 @@
 # See LICENSE file for licensing details.
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import yaml
 from ops import testing
 
 from charm import ValkeyCharm
 from common.exceptions import ValkeyWorkloadCommandError
+from lib.charms.glauth_k8s.v0.ldap import LdapReadyEvent, LdapUnavailableEvent
 from literals import (
     LDAP_CA_CERT_RELATION,
     LDAP_RELATION,
@@ -180,3 +181,101 @@ def test_no_ldap_ca_cert_relation(cloud_spec):
     state_out = ctx.run(ctx.on.relation_changed(relation=ldap_relation), state_in)
     assert status_is(state_out, AuthStatuses.LDAP_CA_CERT_MISSING.value, is_app=True)
     assert not status_is(state_out, AuthStatuses.LDAP_CA_CERT_MISSING.value, is_app=False)
+
+
+def test_enable_ldap(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data=relation_data,
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
+        secrets={ldap_secret},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=LdapReadyEvent)
+
+        with (
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.config.ConfigManager.set_config_properties") as set_config,
+        ):
+            charm.ldap_events._on_ldap_ready(event)
+            state_out = manager.run()
+
+            ldap_config = charm.config_manager._generate_ldap_config()
+            assert ldap_config["loadmodule"] == "/lib/libvalkey_ldap.so"
+            assert ldap_config["ldap.search_bind_passwd"] == "dummy"
+            assert ldap_config["ldap.search_base"] == relation_data["base_dn"]
+            assert ldap_config["ldap.servers"] == relation_data["ldaps_urls"]
+            assert ldap_config["ldap.search_bind_dn"] == relation_data["bind_dn"]
+
+            set_config.assert_called_once()
+            assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
+
+
+def test_disable_ldap(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data={"bind_password_secret": ldap_secret.id},
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
+        secrets={ldap_secret},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=LdapUnavailableEvent)
+
+        with (
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.config.ConfigManager.set_config_properties") as set_config,
+        ):
+            charm.ldap_events._on_ldap_unavailable(event)
+            state_out = manager.run()
+            set_config.assert_called_once()
+            assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "false"

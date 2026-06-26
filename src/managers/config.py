@@ -10,6 +10,7 @@ from pathlib import Path
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from ops import ModelError, SecretNotFoundError
 
 from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -85,6 +86,10 @@ class ConfigManager(ManagerStatusProtocol):
         tls_config = self.generate_tls_config()
         config_properties.update(tls_config)
 
+        # LDAP related configuration
+        ldap_config = self._generate_ldap_config()
+        config_properties.update(ldap_config)
+
         return config_properties
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
@@ -154,6 +159,38 @@ class ConfigManager(ManagerStatusProtocol):
             tls_config["port"] = "0"
 
         return tls_config
+
+    def _generate_ldap_config(self) -> dict:
+        """Return the LDAP configuration for Valkey based on the current state."""
+        if not self.state.ldap_relation or not self.state.ldap_ca_cert_relation:
+            return {}
+
+        try:
+            ldap_bind_password = self.state.get_secret_from_id(
+                self.state.ldap.bind_password_secret
+            ).get("password")
+        except (ModelError, SecretNotFoundError) as e:
+            logger.error("LDAP configuration invalid:", e)
+            return {}
+
+        ldap_config = {
+            "loadmodule": self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so",
+            "ldap.auth_mode": "search+bind",
+            "ldap.servers": self.state.ldap.ldaps_urls
+            if self.state.ldap.ldaps_urls
+            else self.state.ldap.urls,
+            "ldap.tls_cert_path": self.workload.tls_paths.client_cert.as_posix(),
+            "ldap.tls_key_path": self.workload.tls_paths.client_key.as_posix(),
+            "ldap.tls_ca_cert_path": self.workload.tls_paths.ldap_ca.as_posix(),
+            "ldap.search_bind_dn": self.state.ldap.bind_dn,
+            "ldap.search_bind_passwd": ldap_bind_password,
+            "ldap.search_base": self.state.ldap.base_dn,
+            "ldap.search_attribute": self.state.config.get("ldap-search-attribute", ""),
+            "ldap.search_dn_attribute": self.state.config.get("ldap-search-dn-attribute", ""),
+            "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
+        }
+
+        return ldap_config
 
     def get_sentinel_config_properties(
         self, primary_endpoint: str

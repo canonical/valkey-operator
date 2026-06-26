@@ -15,7 +15,7 @@ from dpcharmlibs.interfaces import (
     OpsPeerUnitRepositoryInterface,
 )
 
-from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
+from core.models import LDAPState, PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
     CLIENT_TLS_RELATION_NAME,
     EXTERNAL_CLIENTS_RELATION,
@@ -206,3 +206,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def number_units_started(self) -> int:
         """Return the number of units in the cluster that have their Valkey server started."""
         return len([unit for unit in self.servers if unit.model and unit.is_started])
+
+    @property
+    def ldap(self) -> LDAPState:
+        """The ldap relation state."""
+        return LDAPState(
+            relation=self.ldap_relation,
+        )

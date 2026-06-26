@@ -160,3 +160,5 @@ class AuthStatuses(Enum):
     LDAP_CA_CERT_MISSING = StatusObject(
         status="blocked", message="LDAP: Missing CA certificate integration"
     )
+
+    LDAP_NOT_ENABLED = StatusObject(status="blocked", message="Failed to enable LDAP")
