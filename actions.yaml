@@ -8,3 +8,19 @@ status-detail:
       type: boolean
       default: false
       description: a boolean indicating whether a unit should recompute all statuses.
+
+create-backup:
+  description: |
+    Stream a fresh RDB backup of this unit's Valkey instance to S3.
+    Runs on the targeted unit (any unit, leader or follower).
+    S3 credentials are taken from the related s3-integrator charm.
+
+list-backups:
+  description: |
+    List all backup objects in the configured S3 bucket, newest first.
+    Safe to run while another backup is uploading.
+  params:
+    output:
+      type: string
+      default: table
+      description: Output format of the backup list, either "table" or "json".
