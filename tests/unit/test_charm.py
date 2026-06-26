@@ -423,9 +423,7 @@ def test_leader_elected_leader_password_specified(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch(
-            "managers.auth.AuthManager.generate_password", return_value="generated-password"
-        ),
+        patch("managers.auth.AuthManager.generate_password", return_value="generated-password"),
     ):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
         secret_out = state_out.get_secret(

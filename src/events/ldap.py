@@ -15,9 +15,14 @@ from charms.certificate_transfer_interface.v0.certificate_transfer import (
     CertificateRemovedEvent,
     CertificateTransferRequires,
 )
+from charms.glauth_k8s.v0.ldap import (
+    LdapReadyEvent,
+    LdapRequirer,
+    LdapUnavailableEvent,
+)
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import LDAP_CA_CERT_RELATION
+from literals import LDAP_CA_CERT_RELATION, LDAP_RELATION
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -32,13 +37,28 @@ class LDAPEvents(ops.Object):
         super().__init__(charm, key="ldap_events")
         self.charm = charm
 
+        self.ldap_requirer = LdapRequirer(self.charm, LDAP_RELATION)
         self.ldap_ca_transfer = CertificateTransferRequires(self.charm, LDAP_CA_CERT_RELATION)
-        self.framework.observe(
-            self.ldap_ca_transfer.on.certificate_available, self._on_ca_available
-        )
-        self.framework.observe(self.ldap_ca_transfer.on.certificate_removed, self._on_ca_removed)
 
-    def _on_ca_available(self, event: CertificateAvailableEvent) -> None:
+        self.framework.observe(self.ldap_requirer.on.ldap_ready, self._on_ldap_ready)
+        self.framework.observe(self.ldap_requirer.on.ldap_unavailable, self._on_ldap_unavailable)
+        self.framework.observe(
+            self.ldap_ca_transfer.on.certificate_available, self._on_ldap_ca_available
+        )
+        self.framework.observe(
+            self.ldap_ca_transfer.on.certificate_removed, self._on_ldap_ca_removed
+        )
+
+    def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
+        """Handle the setup of the LDAP relation."""
+        ldap_data = self.ldap_requirer.consume_ldap_relation_data(relation=event.relation)
+        logger.info(f"LDAP data: {ldap_data}")
+
+    def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
+        """Handle the removal of the LDAP relation."""
+        pass
+
+    def _on_ldap_ca_available(self, event: CertificateAvailableEvent) -> None:
         """Handle the CA certificate available event for LDAP."""
         try:
             self.charm.workload.make_dir(self.charm.workload.tls_dir, exist_ok=True)
@@ -50,7 +70,7 @@ class LDAPEvents(ops.Object):
             event.defer()
             return
 
-    def _on_ca_removed(self, event: CertificateRemovedEvent) -> None:
+    def _on_ldap_ca_removed(self, event: CertificateRemovedEvent) -> None:
         """Handle the CA certificate removed event for LDAP."""
         try:
             self.charm.workload.remove_file(self.charm.workload.tls_paths.ldap_ca)

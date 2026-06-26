@@ -12,9 +12,13 @@ from charm import ValkeyCharm
 from common.exceptions import ValkeyWorkloadCommandError
 from literals import (
     LDAP_CA_CERT_RELATION,
+    LDAP_RELATION,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
 )
+from statuses import AuthStatuses
+
+from .helpers import status_is
 
 CONTAINER = "valkey"
 
@@ -34,7 +38,7 @@ def test_ldap_new_ca_cert(cloud_spec):
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     ldap_ca_cert_relation = testing.Relation(
-        id=5,
+        id=3,
         endpoint=LDAP_CA_CERT_RELATION,
         remote_units_data={
             0: {
@@ -73,7 +77,7 @@ def test_ldap_ca_removed(cloud_spec):
         local_unit_data={"start-state": "started"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    ldap_ca_cert_relation = testing.Relation(id=5, endpoint=LDAP_CA_CERT_RELATION)
+    ldap_ca_cert_relation = testing.Relation(id=3, endpoint=LDAP_CA_CERT_RELATION)
 
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
@@ -104,7 +108,7 @@ def test_ca_available_error_defers(cloud_spec):
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     ldap_ca_cert_relation = testing.Relation(
-        id=5,
+        id=3,
         endpoint=LDAP_CA_CERT_RELATION,
         remote_units_data={
             0: {
@@ -139,7 +143,7 @@ def test_ca_removed_error_defers(cloud_spec):
         local_unit_data={"start-state": "started"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    ldap_ca_cert_relation = testing.Relation(id=5, endpoint=LDAP_CA_CERT_RELATION)
+    ldap_ca_cert_relation = testing.Relation(id=3, endpoint=LDAP_CA_CERT_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         leader=False,
@@ -153,3 +157,26 @@ def test_ca_removed_error_defers(cloud_spec):
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=ldap_ca_cert_relation), state_in)
     assert "certificate_removed" in [e.name for e in state_out.deferred]
+
+
+def test_no_ldap_ca_cert_relation(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_relation = testing.Relation(id=3, endpoint=LDAP_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, ldap_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    state_out = ctx.run(ctx.on.relation_changed(relation=ldap_relation), state_in)
+    assert status_is(state_out, AuthStatuses.LDAP_CA_CERT_MISSING.value, is_app=True)
+    assert not status_is(state_out, AuthStatuses.LDAP_CA_CERT_MISSING.value, is_app=False)

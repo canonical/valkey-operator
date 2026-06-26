@@ -53,6 +53,11 @@ requires:
     optional: true
   ldap-ca-cert:
     interface: certificate_transfer
+    limit: 1
+    optional: true
+  ldap:
+    interface: ldap
+    limit: 1
     optional: true
 
 storage:

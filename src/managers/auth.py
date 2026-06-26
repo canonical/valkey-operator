@@ -18,7 +18,7 @@ from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandErr
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import CHARM_USERS_ROLE_MAP, CharmUsers, StartState
-from statuses import CharmStatuses
+from statuses import AuthStatuses, CharmStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,18 @@ class AuthManager(ManagerStatusProtocol):
             raise ValkeyConfigurationError("Failed to set configuration") from e
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
-        """Compute the config manager's statuses."""
+        """Compute the auth manager's statuses."""
         status_list: list[StatusObject] = []
+
+        # Peer relation not established yet, or model not built yet for unit or app
+        if not self.state.cluster.model or not self.state.unit_server.model:
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+        if (
+            scope == "app"
+            and self.state.ldap_relation
+            and not self.state.ldap_ca_cert_relation
+        ):
+            status_list.append(AuthStatuses.LDAP_CA_CERT_MISSING.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

@@ -152,3 +152,11 @@ class ExternalClientsStatuses(Enum):
     USER_ACL_OUT_OF_DATE = StatusObject(
         status="maintenance", message="Client relation: Unit has not updated ACLs for client users"
     )
+
+
+class AuthStatuses(Enum):
+    """Collection of statuses related to authentication or authorization."""
+
+    LDAP_CA_CERT_MISSING = StatusObject(
+        status="blocked", message="LDAP: Missing CA certificate integration"
+    )

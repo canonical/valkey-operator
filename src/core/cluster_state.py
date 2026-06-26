@@ -19,6 +19,8 @@ from core.models import PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
 from literals import (
     CLIENT_TLS_RELATION_NAME,
     EXTERNAL_CLIENTS_RELATION,
+    LDAP_CA_CERT_RELATION,
+    LDAP_RELATION,
     PEER_RELATION,
     STATUS_PEERS_RELATION,
     Substrate,
@@ -117,6 +119,16 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def external_client_relations(self) -> set[ops.Relation]:
         """Get the client relations."""
         return set(self.model.relations[EXTERNAL_CLIENTS_RELATION])
+
+    @property
+    def ldap_relation(self) -> ops.Relation | None:
+        """Get the LDAP relation."""
+        return self.model.get_relation(LDAP_RELATION)
+
+    @property
+    def ldap_ca_cert_relation(self) -> ops.Relation | None:
+        """Get the certificate-transfer relation for LDAP."""
+        return self.model.get_relation(LDAP_CA_CERT_RELATION)
 
     @property
     def bind_address(self) -> str:
