@@ -237,6 +237,11 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
         StartLock(self.charm.state).release_lock()
 
+        # the rendered config ships min-replicas-to-write=1; reassert the
+        # topology-correct runtime value now the server is up, as CONFIG SET
+        # does not persist across a restart
+        self.charm.cluster_manager.reconcile_min_replicas_to_write()
+
         if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
@@ -258,6 +263,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # reassert min-replicas-to-write to match the (possibly changed) topology
+        if self.charm.state.unit_server.is_started:
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader():
             return
@@ -288,6 +297,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # a unit departed (scale down): relax min-replicas-to-write if we dropped below 3
+        if self.charm.state.unit_server.is_started:
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
             return

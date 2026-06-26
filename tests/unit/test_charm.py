@@ -589,6 +589,7 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
         ) as mock_create_certificate,
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
+        patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()

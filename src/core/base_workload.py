@@ -158,6 +158,47 @@ class WorkloadBase(ABC):
         """
         pass
 
+    @abstractmethod
+    def total_memory_bytes(self) -> int:
+        """Total memory budget visible to the Valkey workload.
+
+        On VM substrate this is the host's physical RAM. On K8s substrate this
+        is the pod's cgroup v2 memory limit (or node MemTotal when unlimited).
+        Returns 0 if undetectable; callers must treat 0 as "below any threshold".
+        """
+        pass
+
+    def _read_cgroup_limit(self, relative_path: str) -> int | None:
+        """Read a cgroup v2 memory limit file under ``root_dir``.
+
+        Returns the byte value, or ``None`` when the file is absent/unreadable
+        or set to the literal ``"max"`` (no limit at this level).
+        """
+        try:
+            raw = (self.root_dir / relative_path).read_text().strip()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return None
+        if raw == "max":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def _read_meminfo_total(self) -> int:
+        """Read ``/proc/meminfo`` ``MemTotal`` (KiB) and return it in bytes, else 0."""
+        try:
+            content = (self.root_dir / "proc/meminfo").read_text()
+        except (FileNotFoundError, OSError, pathops.PebbleConnectionError):
+            return 0
+        for line in content.splitlines():
+            if line.startswith("MemTotal:"):
+                try:
+                    return int(line.split()[1]) * 1024
+                except (IndexError, ValueError):
+                    return 0
+        return 0
+
     def write_file(
         self,
         content: str,

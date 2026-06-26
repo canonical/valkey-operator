@@ -1,0 +1,7 @@
+summary: test_two_unit_availability.py
+environment:
+  TEST_MODULE: ha/test_two_unit_availability.py
+execute: |
+  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results
