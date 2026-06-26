@@ -72,9 +72,9 @@ def test_add_new_client_user(cloud_spec):
             "common.client.ValkeyClient.info_server",
             return_value={"valkey_version": valkey_version},
         ),
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -144,9 +144,9 @@ def test_add_new_client_user_v0(cloud_spec):
             "common.client.ValkeyClient.info_server",
             return_value={"valkey_version": valkey_version},
         ),
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -222,9 +222,9 @@ def test_client_user_already_exists(cloud_spec):
         patch("managers.sentinel.SentinelManager.get_primary_ip"),
         patch("common.client.SentinelClient.replicas_primary"),
         patch("common.client.ValkeyClient.info_server"),
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -316,7 +316,7 @@ def test_client_request_acl_load_failed(cloud_spec):
         patch("managers.sentinel.SentinelManager.get_primary_ip"),
         patch("common.client.SentinelClient.replicas_primary"),
         patch("common.client.ValkeyClient.info_server"),
-        patch("managers.config.ConfigManager.set_acl_file"),
+        patch("managers.auth.AuthManager.set_acl_file"),
         patch(
             "common.client.ValkeyClient.exec_cli_command",
             side_effect=ValkeyWorkloadCommandError("Failed to reload ACLs"),
@@ -369,9 +369,9 @@ def test_add_new_client_user_non_leader(cloud_spec):
     )
 
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -433,9 +433,9 @@ def test_client_user_not_created_yet(cloud_spec):
     )
 
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -491,9 +491,9 @@ def test_remove_client_user(cloud_spec):
     )
 
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),
@@ -557,12 +557,12 @@ def test_relation_broken_non_leader(cloud_spec):
     )
 
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch(
             "managers.external_clients.ExternalClientsManager.remove_managed_users"
         ) as remove_user,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
         patch("managers.sentinel.SentinelManager.is_healthy"),

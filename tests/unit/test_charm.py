@@ -424,7 +424,7 @@ def test_leader_elected_leader_password_specified(cloud_spec):
     )
     with (
         patch(
-            "managers.config.ConfigManager.generate_password", return_value="generated-password"
+            "managers.auth.AuthManager.generate_password", return_value="generated-password"
         ),
     ):
         state_out = ctx.run(ctx.on.leader_elected(), state_in)
@@ -497,8 +497,8 @@ def test_config_changed_leader_unit(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
@@ -536,7 +536,7 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
     with (
-        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
         ctx(ctx.on.config_changed(), state_in) as manager,
     ):
         charm: ValkeyCharm = manager.charm
@@ -572,6 +572,7 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
     )
     with (
         patch("managers.config.ConfigManager.configure_services"),
+        patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
         patch("managers.sentinel.SentinelManager.restart_service") as mock_restart_sentinel,
         patch(
@@ -623,8 +624,8 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         patch(
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
-        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
@@ -667,8 +668,8 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
         patch(
             "events.base_events.BaseEvents._update_internal_users_password"
         ) as mock_update_password,
-        patch("managers.config.ConfigManager.set_acl_file") as mock_set_acl_file,
-        patch("managers.config.ConfigManager.set_sentinel_acl_file") as set_sentinel_acl_file,
+        patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
+        patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch(
             "common.client.ValkeyClient.exec_cli_command",
             side_effect=ValkeyWorkloadCommandError("Failed to execute command"),

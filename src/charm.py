@@ -18,6 +18,7 @@ from events.external_clients import ExternalClientsEvents
 from events.ldap import LDAPEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
+from managers.auth import AuthManager
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
@@ -61,12 +62,14 @@ class ValkeyCharm(ops.CharmBase):
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
         self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
         self.topology_manager = TopologyManager(state=self.state, workload=self.workload)
+        self.auth_manager = AuthManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
             self,
             self.cluster_manager,
             self.config_manager,
+            self.auth_manager,
             self.sentinel_manager,
             self.tls_manager,
             self.client_manager,
