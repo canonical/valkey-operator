@@ -54,6 +54,11 @@ TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
 
+# How long a unit waits in-process to acquire the scale-down lock before either
+# deferring the storage-detaching hook (so juju re-runs it) or, on full-app
+# removal, going away. Kept well under juju's hook timeout.
+SCALE_DOWN_LOCK_TIMEOUT = 30
+
 
 # As per the valkey users spec
 # https://docs.google.com/document/d/1EImKKHK3wLY73-D1M2ItpHe88NHeB-Iq2M3lz7AQB7E

@@ -8,8 +8,6 @@ import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol, override
 
-from tenacity import Retrying, stop_after_attempt, wait_fixed
-
 from common.client import ValkeyClient
 from core.cluster_state import ClusterState
 from literals import CharmUsers
@@ -246,38 +244,47 @@ class ScaleDownLock(Lockable):
             logger.debug("Last unit in the cluster scaling down. Lock will be skipped.")
             return True
 
-        number_of_retries = min(timeout // 5 if timeout else 1, 1)
+        # Poll the lock: a contended SET NX returns falsy WITHOUT raising, so we
+        # must re-attempt on a fixed interval until it is acquired or the timeout
+        # elapses. With no timeout we make a single attempt and let the caller
+        # decide how to wait (e.g. defer the hook so juju re-runs it later).
+        number_of_retries = max(timeout // 5, 1) if timeout else 1
 
-        for attempt in Retrying(
-            wait=wait_fixed(5),
-            stop=stop_after_attempt(number_of_retries),
-            retry_error_callback=lambda _: False,
-            after=lambda retry_state: logger.info(
-                "%s failed to acquire %s lock on attempt %d. Retrying in 5 seconds.",
-                self.charm.state.unit_server.unit_name,
-                self.name,
-                retry_state.attempt_number,
-            ),
-        ):
-            with attempt:
-                # update the primary ip in case a failover happens when we are waiting to acquire the lock
-                primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                if self.client.set(
-                    hostname=primary_ip,
-                    key=self.lock_key,
-                    value=self.charm.state.unit_server.unit_name,
-                    additional_args=[
-                        "NX",
-                        "PX",
-                        str(
-                            5 * 60 * 1000
-                        ),  # Set the lock with a TTL of 5 minutes to prevent deadlocks
-                    ],
-                ):
-                    logger.debug(
-                        "%s acquired %s lock.", self.charm.state.unit_server.unit_name, self.name
-                    )
-                    return True
+        # ValkeyClient is a stateless command builder (a fresh valkey-cli per call),
+        # so build it once rather than on every property access in the loop.
+        client = self.client
+
+        for attempt in range(number_of_retries):
+            if attempt > 0:
+                # we slept since the last attempt, so a failover may have happened:
+                # re-resolve the primary, using the resilient lookup that rides out
+                # the transient sentinel failures common during teardown.
+                primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
+            if client.set(
+                hostname=primary_ip,
+                key=self.lock_key,
+                value=self.charm.state.unit_server.unit_name,
+                additional_args=[
+                    "NX",
+                    "PX",
+                    str(
+                        5 * 60 * 1000
+                    ),  # Set the lock with a TTL of 5 minutes to prevent deadlocks
+                ],
+            ):
+                logger.debug(
+                    "%s acquired %s lock.", self.charm.state.unit_server.unit_name, self.name
+                )
+                return True
+
+            if attempt < number_of_retries - 1:
+                logger.info(
+                    "%s failed to acquire %s lock on attempt %d. Retrying in 5 seconds.",
+                    self.charm.state.unit_server.unit_name,
+                    self.name,
+                    attempt + 1,
+                )
+                time.sleep(5)
 
         return False
 
