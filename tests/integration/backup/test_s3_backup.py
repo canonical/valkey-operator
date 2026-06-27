@@ -6,38 +6,44 @@
 
 from __future__ import annotations
 
+import base64
 import re
 import time
 
 import jubilant
-import pytest
 
 APP_NAME = "valkey"
 S3_INTEGRATOR_APP = "s3-integrator"
 BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
-@pytest.fixture(scope="module")
-def juju() -> jubilant.Juju:
-    return jubilant.Juju()
-
-
 def _wait_active(juju: jubilant.Juju, *apps: str, timeout: int = 600) -> None:
+    # Require agents idle as well as workloads active: after `integrate` the
+    # workloads stay "active" while the relation hooks (the leader's
+    # create_bucket + credential storage) are still running, so a workload-only
+    # wait can return before S3 is actually wired up.
     juju.wait(
-        lambda status: all(
-            app in status.apps
-            and status.apps[app].is_active
-            and all(unit.is_active for unit in status.apps[app].units.values())
-            for app in apps
+        lambda status: (
+            all(
+                app in status.apps
+                and status.apps[app].is_active
+                and all(unit.is_active for unit in status.apps[app].units.values())
+                for app in apps
+            )
+            and jubilant.all_agents_idle(status, *apps)
         ),
         timeout=timeout,
     )
 
 
 def test_backup_and_list(juju: jubilant.Juju, microceph: dict, s3_bucket) -> None:
-    juju.deploy(APP_NAME, num_units=3, trust=True, base="ubuntu@24.04")
+    juju.deploy(APP_NAME, channel="9/edge", num_units=3, trust=True, base="ubuntu@24.04")
     juju.deploy(S3_INTEGRATOR_APP, channel="latest/edge")
 
+    # s3-integrator base64-decodes tls-ca-chain, so the charm can verify
+    # MicroCeph's self-signed RGW endpoint over TLS. Without it the charm
+    # falls back to the system trust store and every S3 call fails.
+    ca_chain = base64.b64encode(microceph["tls-ca-chain"][0].encode()).decode()
     juju.config(
         S3_INTEGRATOR_APP,
         {
@@ -46,17 +52,26 @@ def test_backup_and_list(juju: jubilant.Juju, microceph: dict, s3_bucket) -> Non
             "region": microceph["region"],
             "path": microceph["path"],
             "s3-uri-style": "path",
+            "tls-ca-chain": ca_chain,
         },
     )
 
-    secret_id = juju.cli(
-        "add-secret",
-        "s3-creds",
-        f"access-key={microceph['access-key']}",
-        f"secret-key={microceph['secret-key']}",
-    ).strip()
-    juju.cli("grant-secret", "s3-creds", S3_INTEGRATOR_APP)
-    juju.config(S3_INTEGRATOR_APP, {"credentials": secret_id})
+    # Credentials are supplied through the sync-s3-credentials action, not a
+    # config option. Wait for the agent to settle (charm deployed, action
+    # registered) before dispatching -- a freshly-allocated unit reports
+    # "no actions defined" until then.
+    juju.wait(
+        lambda status: jubilant.all_agents_idle(status, S3_INTEGRATOR_APP),
+        timeout=600,
+    )
+    juju.run(
+        f"{S3_INTEGRATOR_APP}/0",
+        "sync-s3-credentials",
+        {
+            "access-key": microceph["access-key"],
+            "secret-key": microceph["secret-key"],
+        },
+    )
 
     _wait_active(juju, S3_INTEGRATOR_APP)
     juju.integrate(APP_NAME, S3_INTEGRATOR_APP)
