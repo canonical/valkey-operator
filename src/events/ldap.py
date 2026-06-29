@@ -48,32 +48,32 @@ class LDAPEvents(ops.Object):
         self.framework.observe(
             self.ldap_ca_transfer.on.certificate_removed, self._on_ldap_ca_removed
         )
+        self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
+        self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
-        logger.info("Update configuration after LDAP is ready")
+        if not self.charm.state.is_ldap_valid:
+            return
 
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
-            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-            # todo: add config reload or rolling restart of Valkey
+            self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": True})
         except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
-            logger.error("Failed to update LDAP configuration: %s", e)
+            logger.error("Failed to enable LDAP: %s", e)
             event.defer()
             return
 
     def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
         """Handle the removal of the LDAP relation."""
-        logger.info("Update configuration after LDAP was removed")
+        if not self.charm.state.unit_server.model.ldap_enabled:
+            return
 
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
-            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-            # todo: add config reload or rolling restart of Valkey
+            self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": False})
         except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
-            logger.error("Failed to update LDAP configuration: %s", e)
+            logger.error("Failed to disable LDAP: %s", e)
             event.defer()
             return
 
@@ -89,6 +89,17 @@ class LDAPEvents(ops.Object):
             event.defer()
             return
 
+        if not self.charm.state.is_ldap_valid:
+            return
+
+        try:
+            self._update_ldap_config()
+            self.charm.state.unit_server.update({"ldap_enabled": True})
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to enable LDAP: %s", e)
+            event.defer()
+            return
+
     def _on_ldap_ca_removed(self, event: CertificateRemovedEvent) -> None:
         """Handle the CA certificate removed event for LDAP."""
         try:
@@ -97,3 +108,50 @@ class LDAPEvents(ops.Object):
             logger.error("Error removing CA certificate for LDAP: %s", e)
             event.defer()
             return
+
+        if not self.charm.state.unit_server.model.ldap_enabled:
+            return
+
+        try:
+            self._update_ldap_config()
+            self.charm.state.unit_server.update({"ldap_enabled": False})
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to disable LDAP: %s", e)
+            event.defer()
+            return
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle LDAP related config changes."""
+        if not self.charm.state.is_ldap_valid:
+            return
+
+        try:
+            self._update_ldap_config()
+            self.charm.state.unit_server.update({"ldap_enabled": True})
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update LDAP settings: %s", e)
+            event.defer()
+            return
+
+    def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
+        """Handle LDAP related secret updates."""
+        if not self.charm.state.is_ldap_valid:
+            return
+
+        if event.secret.id != self.charm.state.ldap.bind_password_secret:
+            return
+
+        try:
+            self._update_ldap_config()
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update LDAP settings: %s", e)
+            event.defer()
+            return
+
+    def _update_ldap_config(self) -> None:
+        """Update the current LDAP configuration."""
+        logger.info("Update LDAP configuration")
+
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+        # todo: add config reload or rolling restart of Valkey

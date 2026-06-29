@@ -161,17 +161,23 @@ class AuthManager(ManagerStatusProtocol):
         """Compute the auth manager's statuses."""
         status_list: list[StatusObject] = []
 
+        if not self.state.ldap_relation:
+            return [CharmStatuses.ACTIVE_IDLE.value]
+
         # Peer relation not established yet, or model not built yet for unit or app
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
         if scope == "app":
-            if self.state.ldap_relation and not self.state.ldap_ca_cert_relation:
+            if not self.state.ldap_ca_cert_relation:
                 status_list.append(AuthStatuses.LDAP_CA_CERT_MISSING.value)
+
+            if not self.state.config.get("ldap-map"):
+                status_list.append(AuthStatuses.LDAP_MAP_CONFIG_MISSING.value)
 
             return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
 
-        if self.state.ldap_relation and not self.state.unit_server.model.ldap_enabled:
+        if not self.state.unit_server.model.ldap_enabled:
             status_list.append(AuthStatuses.LDAP_NOT_ENABLED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

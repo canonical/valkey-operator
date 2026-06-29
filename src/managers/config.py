@@ -10,7 +10,6 @@ from pathlib import Path
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
-from ops import ModelError, SecretNotFoundError
 
 from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
@@ -162,16 +161,13 @@ class ConfigManager(ManagerStatusProtocol):
 
     def _generate_ldap_config(self) -> dict:
         """Return the LDAP configuration for Valkey based on the current state."""
-        if not self.state.ldap_relation or not self.state.ldap_ca_cert_relation:
+        if not self.state.is_ldap_valid:
             return {}
 
-        try:
-            ldap_bind_password = self.state.get_secret_from_id(
-                self.state.ldap.bind_password_secret
-            ).get("password")
-        except (ModelError, SecretNotFoundError) as e:
-            logger.error("LDAP configuration invalid:", e)
-            return {}
+        # no need for error handling, already present in state validator
+        ldap_bind_password = self.state.get_secret_from_id(
+            self.state.ldap.bind_password_secret
+        ).get("password")
 
         ldap_config = {
             "loadmodule": self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so",

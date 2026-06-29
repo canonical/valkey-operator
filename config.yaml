@@ -30,3 +30,31 @@ options:
       Use "{unit}" as a placeholder to be filled with the unit number, e.g. "worker-{unit}" will be translated as 
       "worker-0" for unit 0 and "worker-1" for unit 1 when requesting the certificate.
 
+  ldap-search-attribute:
+    type: string
+    default: "cn"
+    description: |
+      Config option for LDAP integration, to configure the entry attribute of the LDAP provider
+      when searching for a username. Corresponds to Valkey config `ldap.search_attribute`.
+
+  ldap-search-filter:
+    type: string
+    default: "objectClass=posixAccount"
+    description: |
+      Config option for LDAP integration, to configure the search filter used to filter LDAP 
+      directory entries. Corresponds to Valkey config `ldap.search_filter`. 
+
+  ldap-search-dn-attribute:
+    type: string
+    default: "DN"
+    description: |
+      Config option for LDAP integration, to configure the attribute that contains the DN of the 
+      user entry. Corresponds to Valkey config `ldap.search_dn_attribute`.
+
+  ldap-map:
+    type: string
+    description: |
+      Config option for LDAP integration, to configure the mapping of LDAP group names to 
+      pre-configured Valkey authorization groups. The authorization groups are defined via extra 
+      entity permissions through Data integrator.
+      Comma-separated list, for example: <ldap_group_1>=<valkey_read>,<ldap_group_2>=<valkey_write>

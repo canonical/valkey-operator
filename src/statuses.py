@@ -161,4 +161,10 @@ class AuthStatuses(Enum):
         status="blocked", message="LDAP: Missing CA certificate integration"
     )
 
-    LDAP_NOT_ENABLED = StatusObject(status="blocked", message="Failed to enable LDAP")
+    LDAP_MAP_CONFIG_MISSING = StatusObject(
+        status="blocked", message="LDAP: Missing configuration for `ldap-map`"
+    )
+
+    LDAP_NOT_ENABLED = StatusObject(
+        status="blocked", message="Could not enable LDAP, see `debug-log` for details"
+    )

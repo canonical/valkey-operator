@@ -213,3 +213,29 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return LDAPState(
             relation=self.ldap_relation,
         )
+
+    @property
+    def is_ldap_valid(self) -> bool:
+        """Validate the LDAP relations and configuration."""
+        if not self.ldap_relation:
+            return False
+
+        if not self.ldap_ca_cert_relation:
+            logger.warning("LDAP: Missing relation for TLS CA certificate")
+            return False
+
+        if not self.config.get("ldap-map"):
+            logger.warning("LDAP: Missing config value for `ldap-map`")
+            return False
+
+        try:
+            ldap_secret = self.get_secret_from_id(self.ldap.bind_password_secret)
+        except (ops.ModelError, ops.SecretNotFoundError) as e:
+            logger.error("Cannot read LDAP bind secret: %s", e)
+            return False
+
+        if not ldap_secret.get("password"):
+            logger.warning("Password missing in LDAP bind secret")
+            return False
+
+        return True
