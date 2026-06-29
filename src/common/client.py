@@ -9,7 +9,7 @@ from typing import Any
 
 from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
-from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
+from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, SENTINEL_TLS_PORT, TLS_PORT
 
@@ -263,24 +263,6 @@ class ValkeyClient(CliClient):
         """
         return self.exec_cli_command(["role"], hostname=hostname)
 
-    def config_set(self, hostname: str, parameter: str, value: str) -> bool:
-        """Set a runtime configuration parameter on the Valkey server.
-
-        Args:
-            hostname (str): The hostname to connect to.
-            parameter (str): The configuration parameter to set.
-            value (str): The value to set for the configuration parameter.
-
-        Returns:
-            bool: True if the command executed successfully, False otherwise.
-
-        Raises:
-            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
-        """
-        return (
-            self.exec_cli_command(["config", "set", parameter, value], hostname=hostname) == "OK"
-        )
-
     def acl_load(self, hostname: str) -> bool:
         """Load the ACL file into the Valkey server.
 
@@ -295,21 +277,16 @@ class ValkeyClient(CliClient):
         """
         return self.exec_cli_command(["acl", "load"], hostname=hostname) == "OK"
 
-    def reload_tls(self, tls_config: dict[str, str], hostname: str) -> None:
-        """Trigger to load the TLS settings."""
+    def load_config_settings(self, config_settings: dict[str, str], hostname: str) -> None:
+        """Load a dictionary of config settings in a Valkey server."""
         cmd = ["CONFIG", "SET"]
 
-        for key, value in tls_config.items():
+        for key, value in config_settings.items():
             cmd.append(key)
             cmd.append(value)
-        logger.debug("Loading TLS settings: %s", cmd)
+        logger.debug("Loading config settings: %s", cmd)
 
-        try:
-            result = self.exec_cli_command(command=cmd, hostname=hostname)
-            logger.debug("Loading TLS settings: %s", result)
-        except ValkeyWorkloadCommandError:
-            logger.error("Error loading TLS settings")
-            raise ValkeyTLSLoadError("Could not load TLS settings")
+        self.exec_cli_command(command=cmd, hostname=hostname)
 
     def save(self, hostname: str) -> None:
         """Run a synchronous (blocking) save for the dataset."""

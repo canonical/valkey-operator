@@ -498,7 +498,7 @@ def test_config_changed_leader_unit(cloud_spec):
         patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
-        patch("common.client.ValkeyClient.config_set") as mock_config_set,
+        patch("common.client.ValkeyClient.load_config_settings") as mock_config_set,
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
@@ -625,7 +625,7 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
         patch("managers.auth.AuthManager.set_acl_file") as mock_set_acl_file,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
-        patch("common.client.ValkeyClient.config_set") as mock_config_set,
+        patch("common.client.ValkeyClient.load_config_settings") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
         patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
         patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,

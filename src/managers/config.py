@@ -86,7 +86,8 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties.update(tls_config)
 
         # LDAP related configuration
-        ldap_config = self._generate_ldap_config()
+        config_properties["loadmodule"] = self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so"
+        ldap_config = self.generate_ldap_config()
         config_properties.update(ldap_config)
 
         return config_properties
@@ -159,7 +160,7 @@ class ConfigManager(ManagerStatusProtocol):
 
         return tls_config
 
-    def _generate_ldap_config(self) -> dict:
+    def generate_ldap_config(self) -> dict:
         """Return the LDAP configuration for Valkey based on the current state."""
         if not self.state.is_ldap_valid:
             return {}
@@ -169,14 +170,15 @@ class ConfigManager(ManagerStatusProtocol):
             self.state.ldap.bind_password_secret
         ).get("password")
 
+        ldap_urls = (
+            self.state.ldap.ldaps_urls if self.state.ldap.ldaps_urls else self.state.ldap.urls
+        )
+        ldap_servers = " ".join(url for url in ldap_urls)
+
         ldap_config = {
-            "loadmodule": self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so",
             "ldap.auth_mode": "search+bind",
-            "ldap.servers": self.state.ldap.ldaps_urls
-            if self.state.ldap.ldaps_urls
-            else self.state.ldap.urls,
-            "ldap.tls_cert_path": self.workload.tls_paths.client_cert.as_posix(),
-            "ldap.tls_key_path": self.workload.tls_paths.client_key.as_posix(),
+            "ldap.servers": ldap_servers,
+            "ldap.use_starttls": "no" if self.state.ldap.ldaps_urls else "yes",
             "ldap.tls_ca_cert_path": self.workload.tls_paths.ldap_ca.as_posix(),
             "ldap.search_bind_dn": self.state.ldap.bind_dn,
             "ldap.search_bind_passwd": ldap_bind_password,
@@ -184,6 +186,9 @@ class ConfigManager(ManagerStatusProtocol):
             "ldap.search_attribute": self.state.config.get("ldap-search-attribute", ""),
             "ldap.search_dn_attribute": self.state.config.get("ldap-search-dn-attribute", ""),
             "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
+            # disable the failure_detector_interval because of:
+            # failed to run WhoAmI command on the ldap server: LDAP operation result: rc=2 (protocolError), dn: "", text: "Protocol Error"
+            "ldap.failure_detector_interval": 9223372036854775807,
         }
 
         return ldap_config

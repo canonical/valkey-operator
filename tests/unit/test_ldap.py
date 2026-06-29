@@ -227,21 +227,22 @@ def test_enable_ldap(cloud_spec):
         with (
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
         ):
             charm.ldap_events._on_ldap_ready(event)
             state_out = manager.run()
 
-            ldap_config = charm.config_manager._generate_ldap_config()
-            assert ldap_config["loadmodule"] == "/lib/libvalkey_ldap.so"
+            ldap_config = charm.config_manager.generate_ldap_config()
             assert ldap_config["ldap.search_bind_passwd"] == "dummy"
             assert ldap_config["ldap.search_base"] == relation_data["base_dn"]
-            assert ldap_config["ldap.servers"] == relation_data["ldaps_urls"]
+            assert ldap_config["ldap.servers"] == "ldaps://glauth-k8s.ldap.svc.cluster.local:3894"
             assert ldap_config["ldap.search_bind_dn"] == relation_data["bind_dn"]
             assert ldap_config["ldap.search_attribute"] == "cn"
             assert ldap_config["ldap.search_dn_attribute"] == "DN"
             assert ldap_config["ldap.search_filter"] == "objectClass=posixAccount"
 
             set_config.assert_called_once()
+            reload_ldap.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
 
 
@@ -281,10 +282,12 @@ def test_disable_ldap(cloud_spec):
         with (
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
         ):
             charm.ldap_events._on_ldap_unavailable(event)
             state_out = manager.run()
             set_config.assert_called_once()
+            reload_ldap.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "false"
 
 
@@ -335,7 +338,7 @@ def test_invalid_config(cloud_spec):
             charm.ldap_events._on_ldap_ready(event)
             state_out = manager.run()
 
-            ldap_config = charm.config_manager._generate_ldap_config()
+            ldap_config = charm.config_manager.generate_ldap_config()
             assert ldap_config == {}
 
             set_config.assert_not_called()
@@ -389,7 +392,7 @@ def test_invalid_bind_secret(cloud_spec):
             charm.ldap_events._on_ldap_ready(event)
             state_out = manager.run()
 
-            ldap_config = charm.config_manager._generate_ldap_config()
+            ldap_config = charm.config_manager.generate_ldap_config()
             assert ldap_config == {}
 
             set_config.assert_not_called()
@@ -411,7 +414,7 @@ def test_config_change(cloud_spec):
         "base_dn": "dc=glauth,dc=com",
         "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
         "bind_password_secret": ldap_secret.id,
-        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894", "ldaps://glauth-k8s-1.ldap.svc.cluster.local:3894"]',
         "starttls": "True",
         "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
     }
@@ -444,20 +447,24 @@ def test_config_change(cloud_spec):
         with (
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
         ):
             state_out = manager.run()
 
-            ldap_config = charm.config_manager._generate_ldap_config()
-            assert ldap_config["loadmodule"] == "/lib/libvalkey_ldap.so"
+            ldap_config = charm.config_manager.generate_ldap_config()
             assert ldap_config["ldap.search_bind_passwd"] == "dummy"
             assert ldap_config["ldap.search_base"] == relation_data["base_dn"]
-            assert ldap_config["ldap.servers"] == relation_data["ldaps_urls"]
+            assert (
+                ldap_config["ldap.servers"]
+                == "ldaps://glauth-k8s.ldap.svc.cluster.local:3894 ldaps://glauth-k8s-1.ldap.svc.cluster.local:3894"
+            )
             assert ldap_config["ldap.search_bind_dn"] == relation_data["bind_dn"]
             assert ldap_config["ldap.search_attribute"] == "uid"
             assert ldap_config["ldap.search_dn_attribute"] == "entryDN"
             assert ldap_config["ldap.search_filter"] == "objectClass=user"
 
             set_config.assert_called_once()
+            reload_ldap.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
 
 
@@ -502,7 +509,6 @@ def test_config_change_but_invalid(cloud_spec):
         patch("managers.config.ConfigManager.set_config_properties") as set_config,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
-
 
         set_config.assert_not_called()
         assert not state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
@@ -554,14 +560,119 @@ def test_ldap_bind_secret_update(cloud_spec):
         with (
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
         ):
-            state_out = manager.run()
+            manager.run()
 
-            ldap_config = charm.config_manager._generate_ldap_config()
-            assert ldap_config["loadmodule"] == "/lib/libvalkey_ldap.so"
+            ldap_config = charm.config_manager.generate_ldap_config()
             assert ldap_config["ldap.search_bind_passwd"] == "dummy"
             assert ldap_config["ldap.search_base"] == relation_data["base_dn"]
-            assert ldap_config["ldap.servers"] == relation_data["ldaps_urls"]
+            assert ldap_config["ldap.servers"] == "ldaps://glauth-k8s.ldap.svc.cluster.local:3894"
             assert ldap_config["ldap.search_bind_dn"] == relation_data["bind_dn"]
 
             set_config.assert_called_once()
+            reload_ldap.assert_called_once()
+
+
+def test_reload_ldap_fails(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "ldap-enabled": "true",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data=relation_data,
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("managers.sentinel.SentinelManager.get_primary_ip"),
+        patch("managers.config.ConfigManager.set_config_properties") as set_config,
+        patch(
+            "common.client.ValkeyClient.exec_cli_command",
+            side_effect=ValkeyWorkloadCommandError("Failed to load LDAP settings"),
+        ),
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+
+        set_config.assert_called_once()
+        assert "config_changed" in [e.name for e in state_out.deferred]
+
+
+def test_not_started_no_config_load(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data=relation_data,
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=LdapReadyEvent)
+
+        with (
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
+        ):
+            charm.ldap_events._on_ldap_ready(event)
+            state_out = manager.run()
+
+            set_config.assert_not_called()
+            reload_ldap.assert_not_called()
+            assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"

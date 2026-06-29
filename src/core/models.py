@@ -4,6 +4,7 @@
 
 """Collection of state objects for the Valkey relations, apps and units."""
 
+import ast
 import json
 import logging
 from collections.abc import MutableMapping
@@ -296,14 +297,14 @@ class LDAPState:
         return self.relation.data[self.relation.app]
 
     @property
-    def urls(self) -> str:
+    def urls(self) -> list:
         """The URLs to connect to LDAP."""
-        return self.relation_data.get("urls", "")
+        return ast.literal_eval(self.relation_data.get("urls", ""))
 
     @property
-    def ldaps_urls(self) -> str:
+    def ldaps_urls(self) -> list:
         """The URLs for LDAP over TLS."""
-        return self.relation_data.get("ldaps_urls", "")
+        return ast.literal_eval(self.relation_data.get("ldaps_urls", ""))
 
     @property
     def starttls(self) -> str:

@@ -14,7 +14,6 @@ from common.exceptions import (
     RequestingLockTimedOutError,
     ValkeyACLLoadError,
     ValkeyCannotGetPrimaryIPError,
-    ValkeyConfigSetError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
     ValkeyServicesCouldNotBeStoppedError,
@@ -458,7 +457,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.update_primary_auth()
-            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+            except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -532,7 +531,6 @@ class BaseEvents(ops.Object):
             except (
                 ValkeyACLLoadError,
                 ValueError,
-                ValkeyConfigSetError,
                 ValkeyWorkloadCommandError,
             ) as e:
                 logger.error(e)

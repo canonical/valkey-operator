@@ -82,7 +82,7 @@ class LDAPEvents(ops.Object):
         try:
             self.charm.workload.make_dir(self.charm.workload.tls_dir, exist_ok=True)
             self.charm.workload.write_file(
-                content="\n".join(event.chain), path=self.charm.workload.tls_paths.ldap_ca
+                content=event.ca, path=self.charm.workload.tls_paths.ldap_ca
             )
         except ValkeyWorkloadCommandError as e:
             logger.error("Error storing CA certificate for LDAP provider: %s", e)
@@ -150,8 +150,12 @@ class LDAPEvents(ops.Object):
 
     def _update_ldap_config(self) -> None:
         """Update the current LDAP configuration."""
+        if not self.charm.state.unit_server.is_started:
+            return
+
         logger.info("Update LDAP configuration")
 
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-        # todo: add config reload or rolling restart of Valkey
+        ldap_config = self.charm.config_manager.generate_ldap_config()
+        self.charm.cluster_manager.reload_ldap_settings(ldap_config)

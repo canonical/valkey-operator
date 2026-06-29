@@ -15,7 +15,7 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
-    ValkeyConfigSetError,
+    ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
@@ -62,14 +62,14 @@ class ClusterManager(ManagerStatusProtocol):
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()
-        if not client.config_set(
+        client.load_config_settings(
             hostname=self.state.endpoint,
-            parameter="primaryauth",
-            value=self.state.cluster.internal_users_credentials.get(
-                CharmUsers.VALKEY_REPLICA.value, ""
-            ),
-        ):
-            raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
+            config_settings={
+                "primaryauth": self.state.cluster.internal_users_credentials.get(
+                    CharmUsers.VALKEY_REPLICA.value, ""
+                )
+            },
+        )
 
     @retry(
         wait=wait_fixed(5),
@@ -163,7 +163,16 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()
-        client.reload_tls(tls_config, hostname=self.state.endpoint)
+        try:
+            client.load_config_settings(tls_config, hostname=self.state.endpoint)
+        except ValkeyWorkloadCommandError:
+            logger.error("Error loading TLS settings")
+            raise ValkeyTLSLoadError("Could not load TLS settings")
+
+    def reload_ldap_settings(self, ldap_config: dict[str, str]) -> None:
+        """Update Valkey auth by loading the LDAP settings."""
+        client = self._get_valkey_client()
+        client.load_config_settings(ldap_config, hostname=self.state.endpoint)
 
     def save_database_blocking(self) -> None:
         """Run a synchronous save on the dataset and return when done, otherwise raise."""
