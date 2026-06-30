@@ -105,3 +105,12 @@ def test_is_backup_in_progress_any_checks_all_servers(mocker):
     assert ClusterState.is_backup_in_progress_any.fget(cs) is True
     cs.servers = {mocker.Mock(is_backup_in_progress=False)}
     assert ClusterState.is_backup_in_progress_any.fget(cs) is False
+
+
+def test_restore_statuses_present():
+    from src.statuses import RestoreStatuses
+
+    assert RestoreStatuses.RESTORE_IN_PROGRESS.value.status == "maintenance"
+    assert RestoreStatuses.RESTORE_FAILED.value.status == "blocked"
+    assert RestoreStatuses.RESTORE_UNHEALTHY.value.status == "blocked"
+    assert RestoreStatuses.RESTORE_FAILED.value.running == "async"
