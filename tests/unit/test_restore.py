@@ -175,3 +175,48 @@ def test_suppress_and_resume_failover_iterate_all_sentinels(mocker):
         "10.0.0.1", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
     )
     client.reset.assert_any_call(hostname="10.0.0.2")
+
+
+def test_download_backup_validates_head_and_moves_atomically(mocker):
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.workload = mocker.Mock()
+    mgr.workload.working_dir = mocker.MagicMock()
+    mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
+
+    bucket = mocker.Mock()
+
+    def fake_download(key, fileobj):
+        fileobj.write(b"REDIS0011" + b"\x00" * 100)
+
+    bucket.download_fileobj.side_effect = fake_download
+    mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
+
+    mgr.download_backup("2026-05-13T10:00:00Z")
+
+    # Pushed the temp file, then atomically moved it onto the final name.
+    assert mgr.workload.push_data_file.called
+    assert mgr.workload.move_file.called
+
+
+def test_download_backup_rejects_non_rdb_head(mocker):
+    from common.exceptions import ValkeyRestoreError
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.workload = mocker.Mock()
+    mgr.workload.working_dir = mocker.MagicMock()
+    mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
+    bucket = mocker.Mock()
+    bucket.download_fileobj.side_effect = lambda key, fobj: fobj.write(b"NOTRDB....")
+    mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
+
+    import pytest
+
+    with pytest.raises(ValkeyRestoreError):
+        mgr.download_backup("2026-05-13T10:00:00Z")
+    # Never promoted a bad file to the final name.
+    assert not mgr.workload.move_file.called

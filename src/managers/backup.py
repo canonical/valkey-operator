@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import pathlib
 import re
@@ -16,13 +17,20 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from charmlibs import pathops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyBackupError
-from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
+from common.exceptions import ValkeyBackupError, ValkeyRestoreError
+from literals import (
+    BACKUP_CA_FILENAME,
+    BACKUP_ID_FORMAT,
+    PRE_RESTORE_SUFFIX,
+    RESTORE_DOWNLOAD_FILENAME,
+    CharmUsers,
+)
 from statuses import BackupStatuses, CharmStatuses
 
 if TYPE_CHECKING:
@@ -99,6 +107,26 @@ class BackupManager(ManagerStatusProtocol):
         also stops the S3 endpoint CA being trusted as a Valkey client CA.
         """
         return self.state.charm.charm_dir / BACKUP_CA_FILENAME
+
+    @property
+    def _download_path(self) -> pathops.PathProtocol:
+        """Final path for a successfully-downloaded RDB before restore."""
+        return self.workload.working_dir / RESTORE_DOWNLOAD_FILENAME
+
+    @property
+    def _download_tmp_path(self) -> pathops.PathProtocol:
+        """Temp path used during download; renamed atomically to ``_download_path``."""
+        return self.workload.working_dir / (RESTORE_DOWNLOAD_FILENAME + ".part")
+
+    @property
+    def _dump_path(self) -> pathops.PathProtocol:
+        """Live Valkey RDB path (``dump.rdb``) inside the workload's data directory."""
+        return self.workload.working_dir / "dump.rdb"
+
+    @property
+    def _pre_restore_path(self) -> pathops.PathProtocol:
+        """Path where the pre-restore RDB snapshot is preserved for rollback."""
+        return self.workload.working_dir / ("dump.rdb" + PRE_RESTORE_SUFFIX)
 
     # ── boto3 client construction ────────────────────────────────────────
 
@@ -304,6 +332,42 @@ class BackupManager(ManagerStatusProtocol):
             self.state.unit_server.update({"backup_id": ""})
 
         return backup_id
+
+    # ── restore ─────────────────────────────────────────────────────────
+
+    def download_backup(self, backup_id: str) -> None:
+        """Download the RDB, validating the magic head in-stream, into the data dir.
+
+        Streams S3 -> a head-validating reader -> a temp name, then atomically
+        renames onto the final name on full success. A partial download never
+        carries the final name, so a later "re-download if missing" is correct.
+        """
+        s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyRestoreError("S3 credentials unavailable")
+        bucket = self._get_bucket_resource(s3_parameters)
+
+        # boto3 writes into this buffer; wrap it so we can inspect the head.
+        # (download_fileobj streams; we read the buffer back to push into the
+        # workload without holding more than the buffer boto3 already uses.)
+        buffer = io.BytesIO()
+        try:
+            bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", buffer)
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
+
+        head = buffer.getvalue()[:16]
+        if not head.startswith(_RDB_MAGIC):
+            raise ValkeyRestoreError(
+                f"Downloaded object for {backup_id} is not a valid RDB stream"
+            )
+
+        buffer.seek(0)
+        self.workload.push_data_file(
+            buffer, self._download_tmp_path, user=self.workload.user, group=self.workload.user
+        )
+        # Atomic promote: only now does the final name exist, and only complete.
+        self.workload.move_file(self._download_tmp_path, self._download_path)
 
     # ── helpers ─────────────────────────────────────────────────────────
 
