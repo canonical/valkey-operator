@@ -21,9 +21,11 @@ from literals import (
     CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
     PRIMARY_NAME,
+    SENTINEL_LOG_FILE,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
+    VALKEY_LOG_FILE,
     CharmUsers,
     StartState,
     Substrate,
@@ -84,6 +86,7 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["loglevel"] = "verbose"
         config_properties["aclfile"] = self.workload.acl_file.as_posix()
         config_properties["dir"] = self.workload.working_dir.as_posix()
+        config_properties["logfile"] = (self.workload.log_dir / VALKEY_LOG_FILE).as_posix()
 
         config_properties["bind"] = self.state.endpoint
 
@@ -292,6 +295,7 @@ class ConfigManager(ManagerStatusProtocol):
                     config_properties[key.strip()] = value.strip()
 
         config_properties["aclfile"] = self.workload.sentinel_acl_file.as_posix()
+        config_properties["logfile"] = (self.workload.log_dir / SENTINEL_LOG_FILE).as_posix()
 
         # sentinel configs
         config_properties["sentinel"] = sentinel_properties | self._generate_sentinel_configs(
