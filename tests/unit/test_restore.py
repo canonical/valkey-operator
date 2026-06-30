@@ -55,3 +55,53 @@ def test_valkey_cluster_is_restore_in_progress(mocker):
     assert ValkeyCluster.is_restore_in_progress.fget(cl) is True
     cl.model = mocker.Mock(restore_id="")
     assert ValkeyCluster.is_restore_in_progress.fget(cl) is False
+
+
+def test_barrier_fails_closed_on_departed_participant(mocker):
+    from src.core.cluster_state import ClusterState
+    from src.literals import RestoreStep
+
+    def srv(name, step):
+        return mocker.Mock(unit_name=name, restore_step=step)
+
+    cs = mocker.Mock(spec=ClusterState)
+    # Only valkey/0 and valkey/1 are live; valkey/2 departed.
+    cs.servers = {
+        srv("valkey/0", RestoreStep.RESTORE),
+        srv("valkey/1", RestoreStep.RESTORE),
+    }
+    cs.cluster = mocker.Mock(
+        restore_instruction=RestoreStep.RESTORE,
+        restore_participants=["valkey/0", "valkey/1", "valkey/2"],
+    )
+    # Call the real implementation against the mock.
+    assert ClusterState.can_restore_workflow_proceed.fget(cs) is False
+
+
+def test_barrier_passes_when_all_participants_reached(mocker):
+    from src.core.cluster_state import ClusterState
+    from src.literals import RestoreStep
+
+    def srv(name, step):
+        return mocker.Mock(unit_name=name, restore_step=step)
+
+    cs = mocker.Mock(spec=ClusterState)
+    cs.servers = {srv("valkey/0", RestoreStep.RESTORE), srv("valkey/1", RestoreStep.RESTORE)}
+    cs.cluster = mocker.Mock(
+        restore_instruction=RestoreStep.RESTORE,
+        restore_participants=["valkey/0", "valkey/1"],
+    )
+    assert ClusterState.can_restore_workflow_proceed.fget(cs) is True
+
+
+def test_is_backup_in_progress_any_checks_all_servers(mocker):
+    from src.core.cluster_state import ClusterState
+
+    cs = mocker.Mock(spec=ClusterState)
+    cs.servers = {
+        mocker.Mock(is_backup_in_progress=False),
+        mocker.Mock(is_backup_in_progress=True),  # a backup on a *different* unit
+    }
+    assert ClusterState.is_backup_in_progress_any.fget(cs) is True
+    cs.servers = {mocker.Mock(is_backup_in_progress=False)}
+    assert ClusterState.is_backup_in_progress_any.fget(cs) is False
