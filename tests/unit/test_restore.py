@@ -146,3 +146,32 @@ def test_k8s_move_file_uses_container_exec(mocker):
     wl.container.exec.assert_called_once()
     args = wl.container.exec.call_args.kwargs["command"]
     assert args == ["mv", "/var/lib/valkey/dump.rdb", "/var/lib/valkey/dump.rdb.pre-restore"]
+
+
+def test_suppress_and_resume_failover_iterate_all_sentinels(mocker):
+    from src.literals import (
+        PRIMARY_NAME,
+        SENTINEL_DOWN_AFTER_MS,
+        SENTINEL_DOWN_AFTER_SUPPRESSED_MS,
+    )
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    mocker.patch.object(mgr, "all_sentinel_endpoints", return_value=["10.0.0.1", "10.0.0.2"])
+
+    mgr.suppress_failover()
+    client.set.assert_any_call(
+        "10.0.0.1", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+    )
+    client.set.assert_any_call(
+        "10.0.0.2", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+    )
+
+    client.reset_mock()
+    mgr.resume_failover()
+    client.set.assert_any_call(
+        "10.0.0.1", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+    )
+    client.reset.assert_any_call(hostname="10.0.0.2")
