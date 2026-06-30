@@ -449,3 +449,144 @@ def test_external_clients_prc_skips_during_restore(mocker):
     ev.charm.state.cluster.is_restore_in_progress = True
     ev._on_peer_relation_changed(mocker.Mock())
     ev.charm.sentinel_manager.reconcile_k8s_services.assert_not_called()
+
+
+# ── Final-review fixes (FIX 1–5) ────────────────────────────────────────────
+
+
+def test_restore_failure_service_error_resumes_suppression(mocker):
+    """ValkeyServicesFailedToStartError from restore_on_primary must reach teardown.
+
+    This is the critical regression test for FIX 1: service-control errors are
+    standalone Exception subclasses not in the original narrow except tuple, so
+    without the broad catch they escape resume_failover() entirely.
+    """
+    from common.exceptions import ValkeyServicesFailedToStartError
+    from src.events.backup import BackupEvents
+    from src.literals import RestoreStep
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.cluster.is_restore_in_progress = True
+    ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
+    ev.charm.state.unit_server.restore_step = RestoreStep.DOWNLOAD
+    ev.charm.state.unit_server.restore_role = "primary"
+    ev.charm.unit.is_leader.return_value = True
+    # path_exists=True so the re-download guard is skipped.
+    ev.charm.workload.path_exists.return_value = True
+    ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyServicesFailedToStartError(
+        "boom"
+    )
+
+    ev._on_restore_workflow(mocker.Mock())
+
+    # roll_back triggered inside _do_primary_restore (FIX 1 broadened except)
+    ev.charm.backup_manager.roll_back.assert_called_once()
+    # resume_failover triggered inside _restore_teardown — the critical invariant
+    ev.charm.sentinel_manager.resume_failover.assert_called_once()
+
+
+def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
+    """ValkeyRestoreUnhealthyError must surface RESTORE_UNHEALTHY, not RESTORE_FAILED (FIX 3)."""
+    from common.exceptions import ValkeyRestoreUnhealthyError
+    from src.events.backup import BackupEvents
+    from src.literals import RestoreStep
+    from src.statuses import RestoreStatuses
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.cluster.is_restore_in_progress = True
+    ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
+    ev.charm.state.unit_server.restore_step = RestoreStep.DOWNLOAD
+    ev.charm.state.unit_server.restore_role = "primary"
+    ev.charm.unit.is_leader.return_value = True
+    ev.charm.workload.path_exists.return_value = True
+    ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyRestoreUnhealthyError(
+        "unhealthy"
+    )
+
+    ev._on_restore_workflow(mocker.Mock())
+
+    added_status_values = [call.args[0] for call in ev.charm.state.statuses.add.call_args_list]
+    assert RestoreStatuses.RESTORE_UNHEALTHY.value in added_status_values
+
+
+def test_restore_on_primary_preserves_existing_pre_restore(mocker):
+    """move_file(dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.workload = mocker.Mock(valkey_service="valkey")
+    # Simulate a redelivered hook: the pre-restore path already holds the original data.
+    mgr.workload.path_exists.return_value = True
+
+    dump = mocker.Mock()
+    pre = mocker.Mock()
+    dl = mocker.Mock()
+    mocker.patch.object(
+        BackupManager, "_dump_path", new_callable=mocker.PropertyMock, return_value=dump
+    )
+    mocker.patch.object(
+        BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock, return_value=pre
+    )
+    mocker.patch.object(
+        BackupManager, "_download_path", new_callable=mocker.PropertyMock, return_value=dl
+    )
+    mocker.patch.object(mgr, "_wait_until_loaded")
+
+    mgr.restore_on_primary()
+
+    move_calls = [c.args for c in mgr.workload.move_file.call_args_list]
+    # The move-aside (dump → pre-restore) must NOT have run; original data preserved.
+    assert (dump, pre) not in move_calls
+    # The swap (download → dump) MUST have run.
+    assert (dl, dump) in move_calls
+
+
+def test_wait_until_loaded_times_out_raises_unhealthy(mocker):
+    """_wait_until_loaded raises ValkeyRestoreUnhealthyError when ping never succeeds.
+
+    Import BackupManager via the flat path (``managers.backup``) so that the
+    patches on ``managers.backup.stop_after_delay`` / ``wait_fixed`` land in the
+    same module dict as ``_wait_until_loaded.__globals__``.  Using
+    ``src.managers.backup`` would produce a separate module object in the full
+    test suite (both names resolve to the same file, but Python registers them
+    as distinct entries in ``sys.modules``), causing the patch to miss.
+    """
+    import pytest
+    import tenacity
+
+    from common.exceptions import ValkeyRestoreUnhealthyError
+    from managers.backup import BackupManager  # flat path — must match patch target
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+
+    mocker.patch("managers.backup.stop_after_delay", return_value=tenacity.stop_after_attempt(2))
+    mocker.patch("managers.backup.wait_fixed", return_value=tenacity.wait_none())
+
+    client = mocker.Mock()
+    client.ping.return_value = False
+    mocker.patch.object(mgr, "_valkey_client", return_value=client)
+
+    with pytest.raises(ValkeyRestoreUnhealthyError):
+        mgr._wait_until_loaded()
+
+
+def test_on_restore_action_rejects_unknown_backup_id(mocker):
+    """restore-backup action must fail when backup-id is not in the bucket."""
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    mocker.patch.object(ev, "_restore_blocking_reason", return_value=None)
+    ev.charm.backup_manager.list_backups.return_value = ["2026-05-13T10:00:00Z"]
+
+    event = mocker.Mock()
+    event.params = {"backup-id": "nope"}
+
+    ev._on_restore_action(event)
+
+    event.fail.assert_called_once()
+    assert "not found" in event.fail.call_args.args[0].lower()
+    ev.charm.state.cluster.update.assert_not_called()

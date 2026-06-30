@@ -340,20 +340,22 @@ class BackupManager(ManagerStatusProtocol):
     # ── restore ─────────────────────────────────────────────────────────
 
     def download_backup(self, backup_id: str) -> None:
-        """Download the RDB, validating the magic head in-stream, into the data dir.
+        """Download the RDB, validating the magic head, into the data dir.
 
-        Streams S3 -> a head-validating reader -> a temp name, then atomically
-        renames onto the final name on full success. A partial download never
-        carries the final name, so a later "re-download if missing" is correct.
+        Buffers the full object via io.BytesIO (accepted MVP tradeoff; a future
+        improvement could stream via os.pipe). The temp-name -> validate ->
+        atomic-move shape (not the buffering strategy) is what guarantees the
+        final path never holds a partial or invalid file: the final name only
+        appears on full-success, so a later "re-download if missing" check is
+        always correct.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
             raise ValkeyRestoreError("S3 credentials unavailable")
         bucket = self._get_bucket_resource(s3_parameters)
 
-        # boto3 writes into this buffer; wrap it so we can inspect the head.
-        # (download_fileobj streams; we read the buffer back to push into the
-        # workload without holding more than the buffer boto3 already uses.)
+        # boto3 writes the whole object into this BytesIO buffer so we can
+        # inspect the magic header before committing the file to disk.
         buffer = io.BytesIO()
         try:
             bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", buffer)
@@ -460,7 +462,12 @@ class BackupManager(ManagerStatusProtocol):
         is_restore_in_progress defer on _on_restart_workload.
         """
         self.workload.stop_service(self.workload.valkey_service)
-        self.workload.move_file(self._dump_path, self._pre_restore_path)
+        # Guard: on a redelivered hook after a partial failure, _pre_restore_path
+        # already holds the ORIGINAL data. A second unconditional move-aside would
+        # overwrite it with the (possibly corrupt) restored dump.rdb, destroying the
+        # only copy we can roll back to. Skip the aside if the target already exists.
+        if not self.workload.path_exists(self._pre_restore_path):
+            self.workload.move_file(self._dump_path, self._pre_restore_path)
         self.workload.move_file(self._download_path, self._dump_path)
         self.workload.start_service(self.workload.valkey_service)
         self._wait_until_loaded()

@@ -22,9 +22,7 @@ from pydantic import ValidationError
 from common.exceptions import (
     ValkeyBackupError,
     ValkeyCannotGetPrimaryIPError,
-    ValkeyRestoreError,
     ValkeyRestoreUnhealthyError,
-    ValkeyWorkloadCommandError,
 )
 from core.models import S3Parameters
 from literals import PEER_RELATION, S3_RELATION_NAME, RestoreStep
@@ -267,6 +265,7 @@ class BackupEvents(ops.Object):
             return
         backup_id = event.params.get("backup-id", "")
         if not backup_id:
+            event.set_results({"error": "Must provide backup-id to restore."})
             event.fail("Must provide backup-id to restore.")
             return
         try:
@@ -320,9 +319,14 @@ class BackupEvents(ops.Object):
 
         try:
             self._run_restore_step(instruction, step, role)
-        except (ValkeyRestoreError, ValkeyBackupError, ValkeyWorkloadCommandError):
+        except Exception as e:
+            # Broad catch is deliberate: _restore_teardown -> resume_failover() is
+            # safety-critical and MUST run on ANY step failure — including
+            # ValkeyServicesCouldNotBeStoppedError / ValkeyServicesFailedToStartError
+            # (standalone Exception subclasses, NOT in the narrow restore-error
+            # hierarchy), or Sentinel failover stays suppressed cluster-wide.
             logger.exception("Restore step failed; tearing down")
-            self._restore_teardown()
+            self._restore_teardown(e)
             return
 
         if self.charm.unit.is_leader():
@@ -371,8 +375,11 @@ class BackupEvents(ops.Object):
             bm.download_backup(self.charm.state.cluster.restore_id)
         try:
             bm.restore_on_primary()
-        except ValkeyRestoreUnhealthyError:
-            bm.roll_back()
+        except Exception:
+            # Roll back before propagating so the teardown in _on_restore_workflow
+            # can resume_failover after any service-control failure (stop/start),
+            # not only ValkeyRestoreUnhealthyError.
+            self.charm.backup_manager.roll_back()
             raise
 
     def _advance_if_leader(self) -> None:
@@ -395,11 +402,20 @@ class BackupEvents(ops.Object):
             {"restore_instruction": self.charm.backup_manager.next_restore_step(instruction).value}
         )
 
-    def _restore_teardown(self) -> None:
-        """Resume failover suppression, flag failure, and (leader) clear restore state."""
+    def _restore_teardown(self, exc: Exception | None = None) -> None:
+        """Resume failover suppression, flag failure, and (leader) clear restore state.
+
+        Sets RESTORE_UNHEALTHY when the cluster came up but was not healthy
+        (ValkeyRestoreUnhealthyError), RESTORE_FAILED for all other failures.
+        """
         self.charm.sentinel_manager.resume_failover()
+        status = (
+            RestoreStatuses.RESTORE_UNHEALTHY
+            if isinstance(exc, ValkeyRestoreUnhealthyError)
+            else RestoreStatuses.RESTORE_FAILED
+        )
         self.charm.state.statuses.add(
-            RestoreStatuses.RESTORE_FAILED.value,
+            status.value,
             scope="app",
             component=self.charm.backup_manager.name,
         )
