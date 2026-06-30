@@ -38,6 +38,17 @@ EXTERNAL_CLIENTS_RELATION = "valkey-client"
 S3_RELATION_NAME = "s3-credentials"
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
+PRE_RESTORE_SUFFIX = ".pre-restore"
+RESTORE_DOWNLOAD_FILENAME = "restore-download.rdb"
+# Matches the value rendered by ConfigManager (config.py:322). Suppression
+# raises down-after to a day so the primary's restart isn't seen as a failure;
+# resume restores the normal value.
+SENTINEL_DOWN_AFTER_MS = 30000
+SENTINEL_DOWN_AFTER_SUPPRESSED_MS = 86_400_000
+# Generous bounded waits: a large RDB load / full resync may exceed the stock
+# 25s health helpers; an unbounded poll hangs the hook on a crash-loop.
+RESTORE_LOAD_TIMEOUT_S = 600
+RESTORE_RESYNC_TIMEOUT_S = 900
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -99,6 +110,16 @@ class StartState(StrEnum):
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     ERROR_ON_START = "error_on_start"
     STARTED = "started"
+
+
+class RestoreStep(StrEnum):
+    """Steps of the restore coordination workflow (ordered)."""
+
+    NOT_STARTED = ""
+    DOWNLOAD = "download"
+    RESTORE = "restore"
+    RESYNC = "resync"
+    COMPLETED = "completed"
 
 
 class ScaleDownState(StrEnum):
