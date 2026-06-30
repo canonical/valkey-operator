@@ -29,7 +29,7 @@ def test_build_and_deploy(charm: str, juju: jubilant.Juju, substrate: Substrate)
         trust=True,
     )
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME),
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS),
         timeout=900,
     )
 
@@ -42,7 +42,7 @@ def test_logs_and_archive_storage_attached(juju: jubilant.Juju) -> None:
 
 
 def test_log_files_present_in_logs_volume(juju: jubilant.Juju, substrate: Substrate) -> None:
-    """valkey.log and sentinel.log exist in the logs volume; archive is writable."""
+    """valkey.log and sentinel.log exist in the logs volume; the archive dir is present."""
     unit = f"{APP_NAME}/0"
     if substrate == Substrate.K8S:
         log_dir, archive_dir, container = "/var/log/valkey", "/var/backups/valkey", "valkey"
@@ -56,5 +56,5 @@ def test_log_files_present_in_logs_volume(juju: jubilant.Juju, substrate: Substr
     assert "valkey.log" in listing
     assert "sentinel.log" in listing
 
-    # archive mount exists and is writable by the workload user
+    # archive mount is present (provisioned + owned for future restore staging)
     juju.cli("ssh", *prefix, unit, f"test -d {archive_dir}")
