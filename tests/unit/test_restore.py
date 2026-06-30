@@ -220,3 +220,65 @@ def test_download_backup_rejects_non_rdb_head(mocker):
         mgr.download_backup("2026-05-13T10:00:00Z")
     # Never promoted a bad file to the final name.
     assert not mgr.workload.move_file.called
+
+
+def test_next_restore_step():
+    from src.literals import RestoreStep
+    from src.managers.backup import BackupManager
+
+    assert BackupManager.next_restore_step(RestoreStep.NOT_STARTED) == RestoreStep.DOWNLOAD
+    assert BackupManager.next_restore_step(RestoreStep.DOWNLOAD) == RestoreStep.RESTORE
+    assert BackupManager.next_restore_step(RestoreStep.RESTORE) == RestoreStep.RESYNC
+    assert BackupManager.next_restore_step(RestoreStep.RESYNC) == RestoreStep.COMPLETED
+
+
+def test_restore_on_primary_orders_stop_swap_start(mocker):
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=mocker.Mock())
+    calls = []
+    mgr.workload.stop_service.side_effect = lambda s: calls.append(("stop", s))
+    mgr.workload.move_file.side_effect = lambda a, b: calls.append(("move", a, b))
+    mgr.workload.start_service.side_effect = lambda s: calls.append(("start", s))
+    mocker.patch.object(mgr, "_wait_until_loaded")
+    mocker.patch.object(BackupManager, "_download_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
+
+    mgr.restore_on_primary()
+
+    kinds = [c[0] for c in calls]
+    # stop happens before the move-aside, start happens after the swap.
+    assert kinds.index("stop") < kinds.index("move") < kinds.index("start")
+
+
+def test_roll_back_stops_service_before_swap(mocker):
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.workload = mocker.Mock(valkey_service="valkey")
+    calls = []
+    mgr.workload.stop_service.side_effect = lambda s: calls.append("stop")
+    mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")
+    mgr.workload.start_service.side_effect = lambda s: calls.append("start")
+    mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
+    mgr.workload.path_exists.return_value = True
+
+    mgr.roll_back()
+    assert calls == ["stop", "move", "start"]
+
+
+def test_get_statuses_reports_restore_in_progress(mocker):
+    from src.managers.backup import BackupManager
+    from src.statuses import RestoreStatuses
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.name = "backup"
+    mgr.state = mocker.Mock()
+    mgr.state.statuses.get.return_value.root = []
+    mgr.state.cluster.is_restore_in_progress = True
+    mgr.state.s3_relation = None
+    assert RestoreStatuses.RESTORE_IN_PROGRESS.value in mgr.get_statuses(scope="app")
