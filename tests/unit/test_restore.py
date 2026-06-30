@@ -282,3 +282,29 @@ def test_get_statuses_reports_restore_in_progress(mocker):
     mgr.state.cluster.is_restore_in_progress = True
     mgr.state.s3_relation = None
     assert RestoreStatuses.RESTORE_IN_PROGRESS.value in mgr.get_statuses(scope="app")
+
+
+def test_restore_blocking_reason_rejects_non_leader(mocker):
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.unit.is_leader.return_value = False
+    assert "leader" in ev._restore_blocking_reason().lower()
+
+
+def test_blocking_reason_blocks_backup_during_restore(mocker):
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.s3_relation = True
+    ev.charm.state.cluster.s3_credentials = True
+    ev.charm.workload.alive.return_value = True
+    ev.charm.state.unit_server.is_backup_in_progress = False
+    ev.charm.state.cluster.is_restore_in_progress = True
+    # create-backup (check_running_operations=True) is blocked...
+    assert ev._blocking_reason(check_running_operations=True) is not None
+    # ...but list-backups (False) is NOT blocked by a restore.
+    ev.charm.state.cluster.is_restore_in_progress = True
+    assert ev._blocking_reason(check_running_operations=False) is None

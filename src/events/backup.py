@@ -19,10 +19,10 @@ from object_storage import (
 )
 from pydantic import ValidationError
 
-from common.exceptions import ValkeyBackupError
+from common.exceptions import ValkeyBackupError, ValkeyCannotGetPrimaryIPError
 from core.models import S3Parameters
-from literals import S3_RELATION_NAME
-from statuses import BackupStatuses
+from literals import S3_RELATION_NAME, RestoreStep
+from statuses import BackupStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -66,6 +66,7 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.leader_elected, self._on_s3_credentials_changed)
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
+        self.framework.observe(self.charm.on.restore_backup_action, self._on_restore_action)
 
     # ── event handlers ──────────────────────────────────────────────────
 
@@ -116,8 +117,11 @@ class BackupEvents(ops.Object):
 
     def _on_s3_credentials_gone(self, event: StorageConnectionInfoGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
-        if self.charm.state.unit_server.is_backup_in_progress:
-            logger.warning("Backup in progress; deferring credentials_gone")
+        if (
+            self.charm.state.unit_server.is_backup_in_progress
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
+            logger.warning("Backup or restore in progress; deferring credentials_gone")
             event.defer()
             return
 
@@ -212,4 +216,74 @@ class BackupEvents(ops.Object):
             return "Valkey is not running on this unit."
         if check_running_operations and self.charm.state.unit_server.is_backup_in_progress:
             return "A backup is already in progress on this unit."
+        if check_running_operations and self.charm.state.cluster.is_restore_in_progress:
+            return "A restore is in progress; backups are paused."
         return None
+
+    def _restore_blocking_reason(self) -> str | None:
+        """Return why a restore cannot start, or None if it can."""
+        if not self.charm.unit.is_leader():
+            return "Restore must be run on the leader unit."
+        if not self.charm.state.s3_relation:
+            return "No S3 relation. Integrate with s3-integrator first."
+        if not self.charm.state.cluster.s3_credentials:
+            return "S3 credentials unavailable. Check s3-integrator config."
+        if self.charm.state.is_backup_in_progress_any:
+            return "A backup is in progress; cannot restore."
+        if self.charm.state.cluster.is_restore_in_progress:
+            return "A restore is already in progress."
+        # Stable cluster: all participants active + a resolvable primary + no failover in flight.
+        if not all(s.is_active for s in self.charm.state.servers):
+            return "Not all units are active; wait for the cluster to settle."
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError:
+            return "No primary available; cannot restore."
+        if "failover_in_progress" in (
+            self.charm.sentinel_manager._get_sentinel_client()
+            .primary(hostname=primary_ip)
+            .get("flags", "")
+        ):
+            return "A Sentinel failover is in progress; cannot restore."
+        return None
+
+    def _on_restore_action(self, event: ops.ActionEvent) -> None:
+        """Validate, then initiate the async restore workflow (leader only)."""
+        if reason := self._restore_blocking_reason():
+            event.set_results({"error": reason})
+            event.fail(reason)
+            return
+        backup_id = event.params.get("backup-id", "")
+        if not backup_id:
+            event.fail("Must provide backup-id to restore.")
+            return
+        try:
+            if backup_id not in self.charm.backup_manager.list_backups():
+                event.fail(f"backup-id {backup_id} not found.")
+                return
+        except ValkeyBackupError as e:
+            event.set_results({"error": _safe_error(e)})
+            event.fail("Could not list backups. Check juju debug-log.")
+            return
+
+        logger.info(
+            "audit: restore-backup action invoked action_id=%s backup_id=%s unit=%s",
+            event.id,
+            backup_id,
+            self.charm.unit.name,
+        )
+        # Clear any stale RESTORE_FAILED from a prior attempt.
+        self.charm.state.statuses.delete(
+            RestoreStatuses.RESTORE_FAILED.value,
+            scope="app",
+            component=self.charm.backup_manager.name,
+        )
+        participants = ",".join(sorted(s.unit_name for s in self.charm.state.servers))
+        self.charm.state.cluster.update(
+            {
+                "restore_id": backup_id,
+                "restore_instruction": RestoreStep.DOWNLOAD.value,
+                "restore_participants": participants,
+            }
+        )
+        event.set_results({"restore": f"initiated for {backup_id}"})
