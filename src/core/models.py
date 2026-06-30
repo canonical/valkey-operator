@@ -333,6 +333,11 @@ class ValkeyCluster(RelationState):
             return None
 
     @property
+    def restore_id(self) -> str:
+        """The backup id being restored, or '' if no restore is running."""
+        return self.model.restore_id if self.model else ""
+
+    @property
     def is_restore_in_progress(self) -> bool:
         """True while a restore is coordinating (restore_id is the flag)."""
         return bool(self.model.restore_id) if self.model else False

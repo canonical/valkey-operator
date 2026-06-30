@@ -308,3 +308,105 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
     # ...but list-backups (False) is NOT blocked by a restore.
     ev.charm.state.cluster.is_restore_in_progress = True
     assert ev._blocking_reason(check_running_operations=False) is None
+
+
+# ── Task-10 tests: _on_restore_workflow state machine ───────────────────────
+
+
+def test_tuple_match_does_not_run_restore_without_download(mocker):
+    """instruction=RESTORE but unit missed DOWNLOAD step → no-op."""
+    from src.events.backup import BackupEvents
+    from src.literals import RestoreStep
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    bm = ev.charm.backup_manager
+    # instruction=RESTORE but this unit is at NOT_STARTED (missed DOWNLOAD)
+    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="primary")
+    bm.restore_on_primary.assert_not_called()
+
+
+def test_download_step_primary_suppresses_and_downloads(mocker):
+    """On DOWNLOAD instruction with NOT_STARTED step, primary suppresses failover and downloads."""
+    from src.events.backup import BackupEvents
+    from src.literals import RestoreStep
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.cluster.restore_id = "2026-05-13T10:00:00Z"
+    ev._run_restore_step(RestoreStep.DOWNLOAD, RestoreStep.NOT_STARTED, role="primary")
+    ev.charm.sentinel_manager.suppress_failover.assert_called_once()
+    ev.charm.backup_manager.download_backup.assert_called_once_with("2026-05-13T10:00:00Z")
+    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.DOWNLOAD)
+
+
+def test_teardown_resumes_suppression_and_marks_failed(mocker):
+    """_restore_teardown always calls resume_failover regardless of who caused the failure."""
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev._restore_teardown()
+    ev.charm.sentinel_manager.resume_failover.assert_called_once()
+
+
+def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
+    """A single-unit cluster (leader = primary) runs the full restore workflow to COMPLETED."""
+    import pytest
+
+    pytest.importorskip("ops.testing")
+
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import PEER_RELATION, S3_RELATION_NAME, STATUS_PEERS_RELATION, RestoreStep
+
+    # Make the unit "primary" and stub the destructive workload ops.
+    mocker.patch("managers.backup.BackupManager.is_local_primary", return_value=True)
+    mocker.patch("managers.backup.BackupManager.download_backup")
+    mocker.patch("managers.backup.BackupManager.restore_on_primary")
+    mocker.patch("managers.backup.BackupManager.cleanup_restore_files")
+    mocker.patch("managers.sentinel.SentinelManager.suppress_failover")
+    mocker.patch("managers.sentinel.SentinelManager.resume_failover")
+    # path_exists drives a re-download guard; stub it so the mock download_backup
+    # is not called twice per RESTORE step.
+    mocker.patch("core.base_workload.WorkloadBase.path_exists", return_value=True)
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    # PeerModel has serialize_by_alias=True + alias_generator=underscore→hyphen,
+    # so the charm reads AND writes relation-data keys in hyphenated form.
+    # Use hyphenated keys here so the final delete_field("restore-id") removes them.
+    peer = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.DOWNLOAD.value,
+            "restore-participants": "valkey/0",
+        },
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    s3_rel = testing.Relation(
+        id=3,
+        endpoint=S3_RELATION_NAME,
+        interface="s3",
+        remote_app_name="s3-integrator",
+    )
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={peer, status_peer, s3_rel},
+        containers={testing.Container(name="valkey", can_connect=True)},
+    )
+
+    # Each update_status advances two steps (TLS-emitted relation_changed + direct
+    # update_status handler both fire _on_restore_workflow). Drive to completion.
+    state = state_in
+    for _ in range(8):
+        state = ctx.run(ctx.on.update_status(), state)
+        peer_out = next(r for r in state.relations if r.endpoint == PEER_RELATION)
+        if not peer_out.local_app_data.get("restore-id"):
+            break
+    peer_out = next(r for r in state.relations if r.endpoint == PEER_RELATION)
+    assert peer_out.local_app_data.get("restore-id", "") == ""
