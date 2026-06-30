@@ -90,8 +90,11 @@ class ValkeyCharm(ops.CharmBase):
             event.restart_valkey,
             event.restart_sentinel,
         )
-        if self.state.unit_server.is_backup_in_progress:
-            logger.info("Backup in progress on this unit; deferring restart_workload")
+        if (
+            self.state.unit_server.is_backup_in_progress
+            or self.state.cluster.is_restore_in_progress
+        ):
+            logger.info("Backup/restore in progress on this unit; deferring restart_workload")
             event.defer()
             return
         restart_lock = RestartLock(self.state)

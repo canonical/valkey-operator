@@ -410,3 +410,42 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
             break
     peer_out = next(r for r in state.relations if r.endpoint == PEER_RELATION)
     assert peer_out.local_app_data.get("restore-id", "") == ""
+
+
+# ── Task-11 tests: restore-awareness guards ──────────────────────────────────
+
+
+def test_storage_detaching_refuses_during_restore(mocker):
+    from src.events.base_events import BaseEvents
+
+    ev = BaseEvents.__new__(BaseEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.unit_server.is_backup_in_progress = False
+    ev.charm.state.cluster.is_restore_in_progress = True
+    import pytest
+
+    with pytest.raises(Exception):  # ValkeyBackupInProgressError or a restore-specific error
+        ev._on_storage_detaching(mocker.Mock())
+
+
+def test_restart_workload_defers_during_restore(mocker):
+    from src.charm import ValkeyCharm
+
+    charm = ValkeyCharm.__new__(ValkeyCharm)
+    charm.state = mocker.Mock()
+    charm.state.unit_server.is_backup_in_progress = False
+    charm.state.cluster.is_restore_in_progress = True
+    event = mocker.Mock()
+    ValkeyCharm._on_restart_workload(charm, event)
+    event.defer.assert_called_once()
+
+
+def test_external_clients_prc_skips_during_restore(mocker):
+    from src.events.external_clients import ExternalClientsEvents
+
+    ev = ExternalClientsEvents.__new__(ExternalClientsEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.state.unit_server.is_started = True
+    ev.charm.state.cluster.is_restore_in_progress = True
+    ev._on_peer_relation_changed(mocker.Mock())
+    ev.charm.sentinel_manager.reconcile_k8s_services.assert_not_called()
