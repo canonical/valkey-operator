@@ -36,6 +36,7 @@ from literals import (
     INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     CharmUsers,
+    RestoreStep,
     ScaleDownState,
     StartState,
     Substrate,
@@ -132,6 +133,9 @@ class PeerAppModel(PeerModel):
     external_client_users: ClientUsersSecret = Field(default="")
     client_user_epoch: float = Field(default=0)
     s3_credentials: ExtraSecretStr = Field(default=None)
+    restore_id: str = Field(default="")
+    restore_instruction: str = Field(default="")
+    restore_participants: str = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -153,6 +157,8 @@ class PeerUnitModel(PeerModel):
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
     backup_id: str = Field(default="")
+    restore_step: str = Field(default="")
+    restore_role: str = Field(default="")
 
 
 class RelationState:
@@ -243,6 +249,18 @@ class ValkeyServer(RelationState):
         return bool(self.model.backup_id) if self.model else False
 
     @property
+    def restore_step(self) -> RestoreStep:
+        """This unit's most recently completed restore step."""
+        if not self.model:
+            return RestoreStep.NOT_STARTED
+        return RestoreStep(self.model.restore_step or RestoreStep.NOT_STARTED.value)
+
+    @property
+    def restore_role(self) -> str:
+        """`primary` or `replica`, captured at DOWNLOAD; empty if not in a restore."""
+        return self.model.restore_role if self.model else ""
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -313,6 +331,25 @@ class ValkeyCluster(RelationState):
             return S3Parameters.model_validate_json(self.model.s3_credentials)
         except ValidationError:
             return None
+
+    @property
+    def is_restore_in_progress(self) -> bool:
+        """True while a restore is coordinating (restore_id is the flag)."""
+        return bool(self.model.restore_id) if self.model else False
+
+    @property
+    def restore_instruction(self) -> RestoreStep:
+        """Current target step every participant should advance to."""
+        if not self.model or not self.model.restore_instruction:
+            return RestoreStep.NOT_STARTED
+        return RestoreStep(self.model.restore_instruction)
+
+    @property
+    def restore_participants(self) -> list[str]:
+        """Unit names snapshotted at initiation; the fixed barrier set."""
+        if not self.model or not self.model.restore_participants:
+            return []
+        return self.model.restore_participants.split(",")
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:
