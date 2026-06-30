@@ -166,5 +166,5 @@ class AuthStatuses(Enum):
     )
 
     LDAP_NOT_ENABLED = StatusObject(
-        status="blocked", message="Could not enable LDAP, see `debug-log` for details"
+        status="blocked", message="LDAP not yet enabled, see `debug-log` for details"
     )
