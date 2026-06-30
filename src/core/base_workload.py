@@ -6,7 +6,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import IO, Protocol, runtime_checkable
+from typing import IO, BinaryIO, Protocol, runtime_checkable
 
 from charmlibs import pathops
 
@@ -305,3 +305,33 @@ class WorkloadBase(ABC):
             UnicodeError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
+
+    @abstractmethod
+    def stop_service(self, service: str) -> None:
+        """Stop a single workload service (e.g. just valkey-server, leaving sentinel up).
+
+        Must verify the SPECIFIC service stopped, not ``alive()`` (which
+        requires all services up and would never see a valkey-only stop).
+        """
+        pass
+
+    @abstractmethod
+    def start_service(self, service: str) -> None:
+        """Start a single workload service."""
+        pass
+
+    @abstractmethod
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        """Stream a binary file object into the data dir without buffering it whole in memory."""
+        pass
+
+    @abstractmethod
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        """Rename a file within the data dir."""
+        pass

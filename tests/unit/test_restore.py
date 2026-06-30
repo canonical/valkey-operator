@@ -114,3 +114,35 @@ def test_restore_statuses_present():
     assert RestoreStatuses.RESTORE_FAILED.value.status == "blocked"
     assert RestoreStatuses.RESTORE_UNHEALTHY.value.status == "blocked"
     assert RestoreStatuses.RESTORE_FAILED.value.running == "async"
+
+
+def test_workload_has_new_primitives():
+    from src.core.base_workload import WorkloadBase
+
+    for name in ("stop_service", "start_service", "push_data_file", "move_file"):
+        assert getattr(WorkloadBase, name).__isabstractmethod__ is True
+
+
+def test_vm_stop_service_stops_only_that_service(mocker):
+    from src.workload_vm import ValkeyVmWorkload
+
+    wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
+    wl.valkey = mocker.Mock()
+    wl.valkey_service = "server"
+    # Pretend the service is stopped after the call.
+    wl.valkey.services = {"server": {"active": False}}
+    wl.stop_service("server")
+    wl.valkey.stop.assert_called_once_with(services=["server"])
+
+
+def test_k8s_move_file_uses_container_exec(mocker):
+    from src.workload_k8s import ValkeyK8sWorkload
+
+    wl = ValkeyK8sWorkload.__new__(ValkeyK8sWorkload)
+    wl.container = mocker.Mock()
+    src = mocker.Mock(as_posix=lambda: "/var/lib/valkey/dump.rdb")
+    dest = mocker.Mock(as_posix=lambda: "/var/lib/valkey/dump.rdb.pre-restore")
+    wl.move_file(src, dest)
+    wl.container.exec.assert_called_once()
+    args = wl.container.exec.call_args.kwargs["command"]
+    assert args == ["mv", "/var/lib/valkey/dump.rdb", "/var/lib/valkey/dump.rdb.pre-restore"]
