@@ -17,8 +17,10 @@ from literals import (
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TOPOLOGY_OBSERVER_LOG_FILE,
+    TOPOLOGY_OBSERVER_LOG_FILE_NAME,
     TOPOLOGY_OBSERVER_TLS_CA_FILE,
     CharmUsers,
+    Substrate,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,25 @@ class TopologyManager:
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
+
+    def _open_observer_log(self):
+        """Open the observer log for append, falling back to the legacy path.
+
+        On VM the log lives on the Juju-managed logs volume; if its parent is
+        absent (storage not yet attached, or detached during teardown) the
+        open raises OSError, which the callers do not catch — so fall back to
+        the always-present /var/log path.
+        """
+        if self.state.substrate == Substrate.VM:
+            observer_log_path = (
+                self.workload.log_dir / TOPOLOGY_OBSERVER_LOG_FILE_NAME
+            ).as_posix()
+        else:
+            observer_log_path = TOPOLOGY_OBSERVER_LOG_FILE
+        try:
+            return open(observer_log_path, "a")  # noqa: SIM115
+        except OSError:
+            return open(TOPOLOGY_OBSERVER_LOG_FILE, "a")  # noqa: SIM115
 
     def start_observer(self) -> None:
         """Start the topology observer as a subprocess."""
@@ -92,7 +113,7 @@ class TopologyManager:
                 self.state.charm.charm_dir,
             ],
             # File shouldn't close
-            stdout=open(TOPOLOGY_OBSERVER_LOG_FILE, "a"),  # noqa: SIM115
+            stdout=self._open_observer_log(),
             stderr=subprocess.STDOUT,
             env=env,
         ).pid
