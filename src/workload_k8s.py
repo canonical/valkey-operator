@@ -116,6 +116,8 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root_dir / SENTINEL_ACL_FILE
         # todo: update this path once directories in the rock are complying with the standard
         self.working_dir = self.root_dir / "var/lib/valkey"
+        self.log_dir = self.root_dir / "var/log/valkey"
+        self.archive_dir = self.root_dir / "var/backups/valkey"
         self.tls_dir = self.root_dir / "var/lib/valkey/tls"
         self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
         self.valkey_service = "valkey"

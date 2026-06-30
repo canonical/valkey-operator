@@ -53,6 +53,12 @@ INTERNAL_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
+LOG_STORAGE = "logs"
+ARCHIVE_STORAGE = "archive"
+
+VALKEY_LOG_FILE = "valkey.log"
+SENTINEL_LOG_FILE = "sentinel.log"
+TOPOLOGY_OBSERVER_LOG_FILE_NAME = "topology_observer.log"
 
 
 # As per the valkey users spec
