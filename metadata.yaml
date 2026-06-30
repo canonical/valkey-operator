@@ -25,6 +25,10 @@ containers:
     mounts:
       - storage: data
         location: /var/lib/valkey/
+      - storage: logs
+        location: /var/log/valkey/
+      - storage: archive
+        location: /var/backups/valkey/
 
 resources:
   valkey-image:
@@ -61,4 +65,14 @@ storage:
     type: filesystem
     location: /var/snap/charmed-valkey/common/var/lib/charmed-valkey
     description: storage for valkey data
+    minimum-size: 1G
+  logs:
+    type: filesystem
+    location: /var/snap/charmed-valkey/common/var/log/charmed-valkey
+    description: storage for logfiles of valkey server and sentinel
+    minimum-size: 1G
+  archive:
+    type: filesystem
+    location: /var/snap/charmed-valkey/common/archive
+    description: storage for local backup files during transfer to/from remote object storage
     minimum-size: 1G

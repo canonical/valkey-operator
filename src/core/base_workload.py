@@ -92,6 +92,8 @@ class WorkloadBase(ABC):
     acl_file: pathops.PathProtocol
     sentinel_acl_file: pathops.PathProtocol
     working_dir: pathops.PathProtocol
+    log_dir: pathops.PathProtocol
+    archive_dir: pathops.PathProtocol
     tls_dir: pathops.PathProtocol
     tls_paths: TLSPaths
     valkey_service: str

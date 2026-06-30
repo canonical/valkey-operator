@@ -24,10 +24,12 @@ from common.exceptions import (
 )
 from common.locks import RestartLock, ScaleDownLock, StartLock
 from literals import (
+    ARCHIVE_STORAGE,
     CLIENT_PORT,
     DATA_STORAGE,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    LOG_STORAGE,
     PEER_RELATION,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
@@ -55,9 +57,10 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_attached, self._on_storage_attached
+            )
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
@@ -76,29 +79,36 @@ class BaseEvents(ops.Object):
         )
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
-        """Handle storage attachment."""
+        """Set ownership/permissions on the attached storage dir.
+
+        Mirrors the etcd reference: ownership is set here only, never in the
+        start/config path. chmod runs on both substrates; chown runs on K8s
+        only (VM valkey runs as root, and a VM chown would run pre-install).
+        """
+        storage_dirs = {
+            DATA_STORAGE: self.charm.workload.working_dir,
+            LOG_STORAGE: self.charm.workload.log_dir,
+            ARCHIVE_STORAGE: self.charm.workload.archive_dir,
+        }
+        target = storage_dirs.get(event.storage.name)
+        if target is None:
+            return
+        path = target.as_posix()
+
         if self.charm.state.substrate == Substrate.K8S:
-            # some K8s clouds create a lost+found folder (owned by root) when attaching a volume
-            # we need to ensure the path is accessible for the charm
+            # K8s valkey runs as the non-root workload user, which must own the
+            # dir (some K8s clouds also drop a root-owned lost+found here).
             try:
                 self.charm.workload.exec(
-                    [
-                        "chown",
-                        "-R",
-                        f"{self.charm.workload.user}:{self.charm.workload.user}",
-                        self.charm.workload.working_dir.as_posix(),
-                    ]
+                    ["chown", "-R", f"{self.charm.workload.user}:{self.charm.workload.user}", path]
                 )
             except ValkeyWorkloadCommandError as e:
                 logger.error("Error when ensuring storage ownership: %s", e)
                 event.defer()
                 return
 
-        # fix the permissions of the directory if re-attaching existing storage
         try:
-            self.charm.workload.exec(
-                ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
-            )
+            self.charm.workload.exec(["chmod", "-R", "750", path])
         except ValkeyWorkloadCommandError as e:
             logger.error("Error when setting storage permissions: %s", e)
             event.defer()
