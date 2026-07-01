@@ -188,7 +188,7 @@ class ConfigManager(ManagerStatusProtocol):
             "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
             # disable the failure_detector_interval because of:
             # failed to run WhoAmI command on the ldap server: LDAP operation result: rc=2 (protocolError), dn: "", text: "Protocol Error"
-            "ldap.failure_detector_interval": 9223372036854775807,
+            "ldap.failure_detector_interval": "9223372036854775807",
         }
 
         return ldap_config

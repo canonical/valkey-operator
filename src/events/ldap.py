@@ -21,7 +21,11 @@ from charms.glauth_k8s.v0.ldap import (
     LdapUnavailableEvent,
 )
 
-from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyACLLoadError,
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyWorkloadCommandError,
+)
 from literals import LDAP_CA_CERT_RELATION, LDAP_RELATION
 
 if TYPE_CHECKING:
@@ -59,7 +63,11 @@ class LDAPEvents(ops.Object):
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to enable LDAP: %s", e)
             event.defer()
             return
@@ -72,7 +80,11 @@ class LDAPEvents(ops.Object):
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": False})
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to disable LDAP: %s", e)
             event.defer()
             return
@@ -95,7 +107,11 @@ class LDAPEvents(ops.Object):
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to enable LDAP: %s", e)
             event.defer()
             return
@@ -115,7 +131,11 @@ class LDAPEvents(ops.Object):
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": False})
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to disable LDAP: %s", e)
             event.defer()
             return
@@ -128,7 +148,11 @@ class LDAPEvents(ops.Object):
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to update LDAP settings: %s", e)
             event.defer()
             return
@@ -143,7 +167,11 @@ class LDAPEvents(ops.Object):
 
         try:
             self._update_ldap_config()
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+        except (
+            ValkeyACLLoadError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
             logger.error("Failed to update LDAP settings: %s", e)
             event.defer()
             return
@@ -154,8 +182,12 @@ class LDAPEvents(ops.Object):
             return
 
         logger.info("Update LDAP configuration")
-
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         ldap_config = self.charm.config_manager.generate_ldap_config()
         self.charm.cluster_manager.reload_ldap_settings(ldap_config)
+
+        logger.info("Update ACL configuration")
+        # only update Valkey ACLs, we do not support LDAP for Sentinel
+        self.charm.auth_manager.set_acl_file()
+        self.charm.cluster_manager.reload_acl_file()

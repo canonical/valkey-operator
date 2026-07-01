@@ -10,9 +10,11 @@ import ops
 from data_platform_helpers.advanced_statuses.components import StatusesState
 from data_platform_helpers.advanced_statuses.protocol import StatusesStateProtocol
 from dpcharmlibs.interfaces import (
+    EntityPermissionModel,
     OpsOtherPeerUnitRepositoryInterface,
     OpsPeerRepositoryInterface,
     OpsPeerUnitRepositoryInterface,
+    OpsRelationRepository,
 )
 
 from core.models import LDAPState, PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
@@ -238,4 +240,61 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             logger.warning("Password missing in LDAP bind secret")
             return False
 
+        if not self.is_ldap_permission_config_valid:
+            logger.warning("Permission request missing for LDAP group in `ldap-map`")
+            return False
+
         return True
+
+    @property
+    def is_ldap_permission_config_valid(self) -> bool:
+        """Validate the `ldap-map` config against the `requested entity-permissions`."""
+        ldap_maps = str(self.config.get("ldap-map", "")).split(",")
+        requested_permissions = [p.resource_name for p in self.requested_entity_permissions]
+
+        for mapping in ldap_maps:
+            try:
+                _, permission = mapping.split(":")
+            except ValueError:
+                return False
+
+            if permission not in requested_permissions:
+                logger.debug("No requested entity-permission for ldap-map %s", permission)
+                return False
+
+        return True
+
+    @property
+    def requested_entity_permissions(self) -> list[EntityPermissionModel]:
+        """All requested entity-permissions from client relations / Data integrator."""
+        entity_permissions = []
+
+        if not self.external_client_relations:
+            return entity_permissions
+
+        for relation in self.external_client_relations:
+            if not relation.app:
+                continue
+
+            repository = OpsRelationRepository(self.model, relation, relation.app)
+            if not (relation_data := repository.get_data()):
+                continue
+
+            if not (requests := relation_data.get("requests", [])):
+                # Data integrator supports valkey-client with data-interfaces v1, no need for v0
+                continue
+
+            for request in requests:
+                if not (requested_permissions := request.get("entity-permissions")):
+                    continue
+
+                for permission in requested_permissions:
+                    entity_permissions.append(
+                        EntityPermissionModel(
+                            resource_name=permission.get("resource_name"),
+                            resource_type=permission.get("resource_type"),
+                            privileges=permission.get("privileges"),
+                        )
+                    )
+
+        return entity_permissions

@@ -91,7 +91,7 @@ class AuthManager(ManagerStatusProtocol):
             return acl_content
 
         for username, values in external_client_users.items():
-            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info ~{values['resource']} &{values['resource']}"
+            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info +ping +role ~{values['resource']} &{values['resource']}"
             if for_sentinel:
                 permissions = sentinel_base_permissions + sentinel_sentinel_permissions
             password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
@@ -174,6 +174,12 @@ class AuthManager(ManagerStatusProtocol):
 
             if not self.state.config.get("ldap-map"):
                 status_list.append(AuthStatuses.LDAP_MAP_CONFIG_MISSING.value)
+
+            if not self.state.requested_entity_permissions:
+                status_list.append(AuthStatuses.LDAP_MAP_INTEGRATION_MISSING.value)
+
+            if not self.state.is_ldap_permission_config_valid:
+                status_list.append(AuthStatuses.LDAP_MAP_PERMISSION_REQUEST_MISSING.value)
 
             return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
 
