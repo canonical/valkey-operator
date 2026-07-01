@@ -7,9 +7,12 @@
 import hashlib
 import logging
 import secrets
+import ssl
 import string
 from pathlib import Path
 
+import ldap3
+import ldap3.core.exceptions
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -44,18 +47,49 @@ class AuthManager(ManagerStatusProtocol):
         """
         logger.debug("Writing ACL configuration")
         acl_content = "user default off\n"
+
+        # charm internal users
         for user in CharmUsers:
             # only process VALKEY users
             # Sentinel users should be in the sentinel acl file
             if "VALKEY_" not in user.name:
                 continue
             acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
+
+        # users for external client relations
         acl_content += self._get_client_user_acl_lines()
+
+        # users for LDAP
+        acl_content += self._get_ldap_user_acl_lines()
+
         self.workload.write_file(
             acl_content,
             self.workload.acl_file,
             user=self.workload.user,
             group=self.workload.user,
+        )
+
+    def _get_ldap_connection(self) -> ldap3.Connection:
+        """Get a connection to the related LDAP provider."""
+        ldap_urls = (
+            self.state.ldap.ldaps_urls if self.state.ldap.ldaps_urls else self.state.ldap.urls
+        )
+        tls_context = ldap3.Tls(
+            validate=ssl.CERT_REQUIRED,
+            ca_certs_file=self.workload.tls_paths.ldap_ca.as_posix(),
+        )
+        ldap_server = ldap3.Server(host=ldap_urls[0], use_ssl=True, tls=tls_context)
+
+        # no need for error handling, already present in state validator
+        ldap_bind_password = self.state.get_secret_from_id(
+            self.state.ldap.bind_password_secret
+        ).get("password")
+
+        return ldap3.Connection(
+            server=ldap_server,
+            user=self.state.ldap.bind_dn,
+            password=ldap_bind_password,
+            read_only=True,
         )
 
     def _get_internal_user_acl_line(
@@ -98,6 +132,80 @@ class AuthManager(ManagerStatusProtocol):
             acl_content += f"user {username} on #{password_hash} {permissions}\n"
 
         return acl_content
+
+    def _get_ldap_user_acl_lines(self) -> str:
+        """Generate the ACL lines for LDAP users.
+
+        Gets all configured LDAP groups, queries the LDAP provider for the users per group and
+        creates an ACL line with the configured group permissions for each user.
+
+        Returns:
+            str: ACL lines for the LDAP users.
+        """
+        acl_content = ""
+
+        if not self.state.is_ldap_valid:
+            return acl_content
+
+        base_auth_rule = "-@all"
+        for group, permissions in self._resolve_ldap_group_permissions():
+            group_auth_rule = " ".join(permission for permission in permissions)
+            ldap_users = self._get_ldap_users_for_group(group)
+            for username in ldap_users:
+                acl_content += f"user {username} on {base_auth_rule} {group_auth_rule}\n"
+
+        return acl_content
+
+    def _resolve_ldap_group_permissions(self) -> dict[str, list[str]]:
+        """Match the configured LDAP groups from `ldap-map` to requested entity-permissions.
+
+        Return:
+            A dict with the list of privileges per configured LDAP group.
+        """
+        ldap_maps = str(self.state.config.get("ldap-map", "")).split(",")
+        ldap_group_permissions = {}
+
+        for mapping in ldap_maps:
+            ldap_group, role = mapping.split(":")
+            for entity_permission in self.state.requested_entity_permissions:
+                if entity_permission.resource_name == role:
+                    ldap_group_permissions[ldap_group] = entity_permission.privileges
+                    break
+
+        return ldap_group_permissions
+
+    def _get_ldap_users_for_group(self, ldap_group: str) -> list[str]:
+        """Query the related LDAP provider and get all users for an LDAP group."""
+        ldap_users = []
+
+        try:
+            ldap_connection = self._get_ldap_connection()
+        except ldap3.core.exceptions.LDAPException as e:
+            logger.error("Could not get LDAP connection: %s", e)
+            return ldap_users
+
+        base_dn = self.state.ldap.base_dn
+        search_attribute = str(self.state.config.get("ldap-search-attribute", ""))
+        search_filter = str(self.state.config.get("ldap-search-filter", ""))
+
+        if not ldap_connection.search(
+            search_base=base_dn,
+            search_filter=f"(&({search_filter})(memberOf=ou={ldap_group},*))",
+            attributes=search_attribute,
+            time_limit=10,
+        ):
+            logger.error(
+                "Failed to perform LDAP search with base dn %s, filter %s and attribute %s",
+                base_dn,
+                search_filter,
+                search_attribute,
+            )
+            return ldap_users
+
+        for entry in ldap_connection.entries:
+            ldap_users.append(entry[search_attribute])
+
+        return ldap_users
 
     def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
         """Write the Sentinel ACL file with appropriate user permissions.

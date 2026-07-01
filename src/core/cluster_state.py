@@ -232,7 +232,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         try:
             ldap_secret = self.get_secret_from_id(self.ldap.bind_password_secret)
-        except (ops.ModelError, ops.SecretNotFoundError) as e:
+        except (ops.ModelError, ops.SecretNotFoundError, TypeError) as e:
             logger.error("Cannot read LDAP bind secret: %s", e)
             return False
 
