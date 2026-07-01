@@ -74,9 +74,10 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_detaching, self._on_storage_detaching
+            )
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
         """Set ownership/permissions on the attached storage dir."""
@@ -567,7 +568,14 @@ class BaseEvents(ops.Object):
         )
 
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
-        """Handle removal of the data storage mount, e.g. when removing a unit."""
+        """Handle removal of a storage mount, e.g. when removing a unit.
+
+        Unit teardown detaches every storage; whichever detaches first runs the
+        safe scale-down (which stops the workload), so the later ones are no-ops.
+        """
+        if self.charm.state.unit_server.is_being_removed:
+            return
+
         if self.charm.state.unit_server.is_backup_in_progress:
             # A plain return would let teardown proceed and lose the in-flight
             # RDB. Raise so the hook errors and Juju retries storage-detaching
@@ -576,6 +584,10 @@ class BaseEvents(ops.Object):
                 "Backup in progress on this unit; refusing to scale down until it finishes."
             )
 
+        self._scale_down_unit()
+
+    def _scale_down_unit(self) -> None:
+        """Failover if needed, flush the dataset, and stop the workload."""
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
 
@@ -619,10 +631,8 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        unit_is_primary = (
-            True
-            if primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-            else False
+        unit_is_primary = primary_ip == self.charm.state.unit_server.get_endpoint(
+            self.charm.state.substrate
         )
 
         if unit_is_primary and len(active_sentinels) > 1:
