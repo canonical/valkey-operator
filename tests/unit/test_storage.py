@@ -6,6 +6,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from ops import testing
 
 from literals import PEER_RELATION, STATUS_PEERS_RELATION
@@ -67,6 +68,32 @@ def test_storage_attached_archive_targets_archive_dir_on_k8s(cloud_spec):
     with patch("workload_k8s.ValkeyK8sWorkload.exec") as mock_exec:
         ctx.run(ctx.on.storage_attached(archive), state_in)
     mock_exec.assert_any_call(["chmod", "-R", "750", "/var/backups/valkey"])
+
+
+@pytest.mark.parametrize("storage_name", ["logs", "archive"])
+def test_storage_is_a_readable_writable_mount(cloud_spec, storage_name):
+    """A file placed on the volume is visible to the charm and survives the hook."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    storage = testing.Storage(name=storage_name)
+    (storage.get_filesystem(ctx) / "seed.txt").write_text("seeded")
+
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        containers={testing.Container(name=CONTAINER, can_connect=True)},
+        storages={storage},
+        relations=_base_relations(),
+    )
+
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec"),
+        ctx(ctx.on.storage_attached(storage), state_in) as manager,
+    ):
+        location = manager.charm.model.storages[storage_name][0].location
+        assert (location / "seed.txt").read_text() == "seeded"
+        (location / "written.txt").write_text("by-charm")
+
+    assert (storage.get_filesystem(ctx) / "written.txt").read_text() == "by-charm"
 
 
 def test_storage_attached_logs_chmods_only_on_vm(cloud_spec_vm):
