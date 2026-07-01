@@ -79,12 +79,7 @@ class BaseEvents(ops.Object):
         )
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
-        """Set ownership/permissions on the attached storage dir.
-
-        Mirrors the etcd reference: ownership is set here only, never in the
-        start/config path. chmod runs on both substrates; chown runs on K8s
-        only (VM valkey runs as root, and a VM chown would run pre-install).
-        """
+        """Set ownership/permissions on the attached storage dir."""
         storage_dirs = {
             DATA_STORAGE: self.charm.workload.working_dir,
             LOG_STORAGE: self.charm.workload.log_dir,
@@ -95,9 +90,8 @@ class BaseEvents(ops.Object):
             return
         path = target.as_posix()
 
+        # chown is K8s-only: VM valkey runs as root and a VM chown would run pre-install.
         if self.charm.state.substrate == Substrate.K8S:
-            # K8s valkey runs as the non-root workload user, which must own the
-            # dir (some K8s clouds also drop a root-owned lost+found here).
             try:
                 self.charm.workload.exec(
                     ["chown", "-R", f"{self.charm.workload.user}:{self.charm.workload.user}", path]
