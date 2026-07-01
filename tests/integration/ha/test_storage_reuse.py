@@ -69,6 +69,32 @@ def test_build_and_deploy(
     )
 
 
+def test_logs_and_archive_storage_attached(juju: jubilant.Juju) -> None:
+    """The logs and archive volumes are attached to unit 0."""
+    unit = f"{APP_NAME}/0"
+    assert get_storage_id(juju, unit, "logs") is not None
+    assert get_storage_id(juju, unit, "archive") is not None
+
+
+def test_log_files_present_in_logs_volume(juju: jubilant.Juju, substrate: Substrate) -> None:
+    """valkey.log and sentinel.log land in the logs volume; the archive dir exists."""
+    unit = f"{APP_NAME}/0"
+    if substrate == Substrate.K8S:
+        log_dir, archive_dir = "/var/log/valkey", "/var/backups/valkey"
+        prefix = ["--container", "valkey"]
+    else:
+        log_dir = "/var/snap/charmed-valkey/common/var/log/charmed-valkey"
+        archive_dir = "/var/snap/charmed-valkey/common/var/backups/charmed-valkey"
+        prefix = []
+
+    listing = juju.cli("ssh", *prefix, unit, f"ls -1 {log_dir}")
+    assert "valkey.log" in listing
+    assert "sentinel.log" in listing
+
+    # archive mount is present (provisioned + owned for future restore staging)
+    juju.cli("ssh", *prefix, unit, f"test -d {archive_dir}")
+
+
 def test_seed_data(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Seed some data to the cluster."""
     logger.info("Feed data into Valkey")
