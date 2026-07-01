@@ -77,23 +77,9 @@ class BaseEvents(ops.Object):
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
         """Handle storage attachment."""
+        # we do not need to fix permissions on k8s they are owned by juju 170
         if self.charm.state.substrate == Substrate.K8S:
-            # some K8s clouds create a lost+found folder (owned by root) when attaching a volume
-            # we need to ensure the path is accessible for the charm
-            try:
-                self.charm.workload.exec(
-                    [
-                        "chown",
-                        "-R",
-                        f"{self.charm.workload.user}:{self.charm.workload.user}",
-                        self.charm.workload.working_dir.as_posix(),
-                    ]
-                )
-            except ValkeyWorkloadCommandError as e:
-                logger.error("Error when ensuring storage ownership: %s", e)
-                event.defer()
-                return
-
+            return
         # fix the permissions of the directory if re-attaching existing storage
         try:
             self.charm.workload.exec(

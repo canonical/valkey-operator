@@ -19,8 +19,12 @@ website:
   - https://github.com/canonical/valkey-operator
   - https://matrix.to/#/%23charmhub-data-platform%3Aubuntu.com
 
+charm-user: non-root
+
 containers:
   valkey:
+    uid: 584792
+    gid: 584792
     resource: valkey-image
     mounts:
       - storage: data
