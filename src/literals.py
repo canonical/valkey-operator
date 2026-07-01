@@ -58,7 +58,6 @@ ARCHIVE_STORAGE = "archive"
 
 VALKEY_LOG_FILE = "valkey.log"
 SENTINEL_LOG_FILE = "sentinel.log"
-TOPOLOGY_OBSERVER_LOG_FILE_NAME = "topology_observer.log"
 
 
 # As per the valkey users spec
