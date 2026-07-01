@@ -73,6 +73,6 @@ storage:
     minimum-size: 1G
   archive:
     type: filesystem
-    location: /var/snap/charmed-valkey/common/archive
+    location: /var/snap/charmed-valkey/common/var/backups/charmed-valkey
     description: storage for local backup files during transfer to/from remote object storage
     minimum-size: 1G
