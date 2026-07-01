@@ -10,6 +10,7 @@ on:
   pull_request:
     paths-ignore:
       - "docs/**"
+      - "**/*.md"
   schedule:
     - cron: "53 0 * * *" # Daily at 00:53 UTC
   # Triggered on push to branch "*/edge" by .github/workflows/release.yaml

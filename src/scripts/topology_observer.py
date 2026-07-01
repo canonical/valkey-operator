@@ -11,7 +11,7 @@ import time
 
 from valkey.sentinel import MasterNotFoundError, Sentinel
 
-from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_TLS_CA_FILE
+from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_TLS_CA_FILENAME
 
 # use global variable for gracefully handling stop signals
 continue_running = True
@@ -58,7 +58,9 @@ def main() -> None:
         "password": password,
         "decode_responses": True,
         "ssl": tls_enabled,
-        "ssl_ca_certs": TOPOLOGY_OBSERVER_TLS_CA_FILE if tls_enabled else None,
+        "ssl_ca_certs": f"{charm_dir}/{TOPOLOGY_OBSERVER_TLS_CA_FILENAME}"
+        if tls_enabled
+        else None,
     }
 
     primary_name = ""

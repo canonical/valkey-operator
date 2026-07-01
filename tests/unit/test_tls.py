@@ -537,35 +537,33 @@ def test_client_certificate_renewed(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
-        with ctx(ctx.on.update_status(), state_in) as manager:
-            charm: ValkeyCharm = manager.charm
-            event = MagicMock(spec=CertificateAvailableEvent)
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
 
-            with (
-                patch(
-                    "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
-                    return_value=([certificate], private_key),
-                ),
-                patch("charmlibs.pathops.ContainerPath.mkdir"),
-                patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
-                patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_ca"),
-                patch("charmlibs.pathops.ContainerPath.write_text"),
-                patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
-                patch("managers.tls.TLSManager.rehash_ca_certificates"),
-                patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-                patch("managers.sentinel.SentinelManager.get_primary_ip"),
-            ):
-                event.certificate = certificate.certificate
-                charm.tls_events._on_certificate_available(event)
-                state_out = manager.run()
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                return_value=([certificate], private_key),
+            ),
+            patch("charmlibs.pathops.ContainerPath.mkdir"),
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+            patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_ca"),
+            patch("charmlibs.pathops.ContainerPath.write_text"),
+            patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
+            patch("managers.tls.TLSManager.rehash_ca_certificates"),
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("workload_k8s.ValkeyK8sWorkload.restart"),
+        ):
+            event.certificate = certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
 
-                # we store the cert, the key and the ca cert
-                assert write_certs.call_count == 3
-                reload_tls.assert_called_once()
-                assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
-
-    assert "two objects claiming to be ValkeyCharm/restart_workload" in str(exc_info.value)
+            # we store the cert, the key and the ca cert
+            assert write_certs.call_count == 3
+            reload_tls.assert_called_once()
+            assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
 
 
 def test_new_client_ca_single_unit(cloud_spec):
@@ -600,38 +598,36 @@ def test_new_client_ca_single_unit(cloud_spec):
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
-    with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
-        with ctx(ctx.on.update_status(), state_in) as manager:
-            charm: ValkeyCharm = manager.charm
-            event = MagicMock(spec=CertificateAvailableEvent)
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
 
-            with (
-                patch(
-                    "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
-                    return_value=([certificate], private_key),
-                ),
-                patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
-                patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_old_ca"),
-                patch("charmlibs.pathops.ContainerPath.write_text"),
-                patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
-                patch("managers.tls.TLSManager.rehash_ca_certificates"),
-                patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-                patch("managers.sentinel.SentinelManager.get_primary_ip"),
-            ):
-                event.certificate = certificate.certificate
-                charm.tls_events._on_certificate_available(event)
-                state_out = manager.run()
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                return_value=([certificate], private_key),
+            ),
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+            patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_old_ca"),
+            patch("charmlibs.pathops.ContainerPath.write_text"),
+            patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
+            patch("managers.tls.TLSManager.rehash_ca_certificates"),
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("workload_k8s.ValkeyK8sWorkload.restart"),
+        ):
+            event.certificate = certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
 
-                # we copy the old ca and then store the cert, the key and the ca cert
-                assert write_certs.call_count == 4
-                assert reload_tls.call_count == 2
-                assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
-                assert (
-                    state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
-                    == TLSCARotationState.NO_ROTATION.value
-                )
-
-    assert "two objects claiming to be ValkeyCharm/restart_workload" in str(exc_info.value)
+            # we copy the old ca and then store the cert, the key and the ca cert
+            assert write_certs.call_count == 4
+            assert reload_tls.call_count == 2
+            assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
+            assert (
+                state_out.get_relation(1).local_unit_data.get("tls-ca-rotation")
+                == TLSCARotationState.NO_ROTATION.value
+            )
 
 
 def test_new_client_ca_rotation_started(cloud_spec):
@@ -1343,3 +1339,32 @@ def test_client_tls_relation_broken_not_active_yet(cloud_spec):
     state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
     assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
     assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
+
+
+def test_peer_relation_changed_ca_rotation_workload_error_defers(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "tls-client-state": "tls",
+            "tls-ca-rotation": TLSCARotationState.NEW_CA_DETECTED.value,
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with patch(
+        "src.events.tls.TLSEvents._orchestrate_ca_rotation",
+        side_effect=ValkeyWorkloadCommandError("Pebble down"),
+    ):
+        state_out = ctx.run(
+            ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
+        )
+    assert "valkey_peers_relation_changed" in [e.name for e in state_out.deferred]

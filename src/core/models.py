@@ -21,7 +21,14 @@ from dpcharmlibs.interfaces import (
     OptionalSecretStr,
     PeerModel,
 )
-from pydantic import Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 from typing_extensions import Annotated
 
 from literals import (
@@ -49,6 +56,65 @@ InternalCertificatesSecret = Annotated[
 ]
 
 
+class S3Parameters(BaseModel):
+    """Validated, normalised S3 connection parameters from the s3 relation.
+
+    Parses the s3-integrator envelope (hyphenated keys) into typed
+    attributes, trimming whitespace and the separators that would corrupt
+    S3 key paths, and rejecting an envelope missing a required field or
+    whose bucket/endpoint/path strip to empty. Unknown integrator fields
+    (``storage-class``, ``s3-uri-style``, ...) are ignored.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    bucket: str
+    endpoint: str
+    path: str
+    access_key: str = Field(alias="access-key")
+    secret_key: str = Field(alias="secret-key")
+    region: str | None = None
+    tls_ca_chain: list[str] = Field(alias="tls-ca-chain", default_factory=list)
+
+    @field_validator(
+        "bucket", "endpoint", "path", "access_key", "secret_key", "region", mode="before"
+    )
+    @classmethod
+    def _strip_whitespace(cls, value: object) -> object:
+        # A copy-pasted key with a trailing newline is common.
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("tls_ca_chain", mode="before")
+    @classmethod
+    def _coerce_ca_chain(cls, value: object) -> object:
+        # A misconfigured integrator may send a bare string; never let that
+        # reject the whole envelope -- drop to no chain (boto3 uses system
+        # CAs). store_tls_ca_chain does the strict PEM check before writing.
+        return value if isinstance(value, list) else []
+
+    @field_validator("endpoint")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        # A trailing "/" on the endpoint would double up in the request URL.
+        return value.rstrip("/")
+
+    @field_validator("bucket", "path")
+    @classmethod
+    def _strip_surrounding_slashes(cls, value: str) -> str:
+        # Leading/trailing "/" would yield keys like "//<id>"; stripping also
+        # collapses bucket="/" or path="/" to "" so _reject_empty catches it.
+        return value.strip("/")
+
+    @field_validator("bucket", "endpoint", "path", "access_key", "secret_key")
+    @classmethod
+    def _reject_empty(cls, value: str, info: ValidationInfo) -> str:
+        # An empty path makes list_backups enumerate the whole bucket
+        # (cross-tenant leak in a shared bucket); reject empties outright.
+        if not value:
+            raise ValueError(f"{info.field_name} must not be empty")
+        return value
+
+
 class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 
@@ -65,6 +131,7 @@ class PeerAppModel(PeerModel):
     tls_client_private_key: ExtraSecretStr = Field(default=None)
     external_client_users: ClientUsersSecret = Field(default="")
     client_user_epoch: float = Field(default=0)
+    s3_credentials: ExtraSecretStr = Field(default=None)
 
 
 class PeerUnitModel(PeerModel):
@@ -85,6 +152,7 @@ class PeerUnitModel(PeerModel):
     is_sentinel_healthy: bool = Field(default=True)
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
+    backup_id: str = Field(default="")
 
 
 class RelationState:
@@ -170,6 +238,11 @@ class ValkeyServer(RelationState):
         return self.is_started and not self.is_being_removed
 
     @property
+    def is_backup_in_progress(self) -> bool:
+        """Check if a backup is currently being uploaded by this unit."""
+        return bool(self.model.backup_id) if self.model else False
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -223,6 +296,23 @@ class ValkeyCluster(RelationState):
         super().__init__(relation, data_interface, component)
         self.app = component
         self.data_interface = data_interface
+
+    @property
+    def s3_credentials(self) -> "S3Parameters | None":
+        """Return the parsed S3 connection envelope, or None if not set.
+
+        The leader writes a JSON-serialised ``S3Parameters`` to
+        ``s3_credentials``; this parses it back for BackupManager. Callers
+        gate on truthiness (``if s3_credentials``), so None reads as unset.
+        The stored envelope was validated before writing, so a parse failure
+        here is defensive and also reads as unset.
+        """
+        if not self.model or not self.model.s3_credentials:
+            return None
+        try:
+            return S3Parameters.model_validate_json(self.model.s3_credentials)
+        except ValidationError:
+            return None
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:

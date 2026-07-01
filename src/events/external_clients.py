@@ -330,11 +330,11 @@ class ExternalClientsEvents(ops.Object):
             logger.error("Could not retrieve CA certificates for relation %s", event.relation_id)
             return
 
-        self.charm.workload.tls_dir.mkdir(exist_ok=True)
-        self.charm.workload.tls_paths.ca_certs_dir.mkdir(exist_ok=True)
         ca_certs_file = f"external_client_cas_{event.relation_id}.pem"
 
         try:
+            self.charm.workload.make_dir(self.charm.workload.tls_dir, exist_ok=True)
+            self.charm.workload.make_dir(self.charm.workload.tls_paths.ca_certs_dir, exist_ok=True)
             self.charm.workload.write_file(
                 content="\n".join(ca_certs),
                 path=self.charm.workload.tls_paths.ca_certs_dir / ca_certs_file,
@@ -355,11 +355,10 @@ class ExternalClientsEvents(ops.Object):
             / f"external_client_cas_{event.relation_id}.pem"
         )
 
-        if not ca_certs_file.exists():
-            logger.warning("No CA certificates stored for relation %s", event.relation_id)
-            return
-
         try:
+            if not self.charm.workload.path_exists(ca_certs_file):
+                logger.warning("No CA certificates stored for relation %s", event.relation_id)
+                return
             self.charm.workload.remove_file(ca_certs_file)
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
