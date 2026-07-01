@@ -77,7 +77,7 @@ class BaseEvents(ops.Object):
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
         """Handle storage attachment."""
-        # we do not need to fix permissions on k8s
+        # we do not need to fix permissions on k8s they are owned by juju 170
         if self.charm.state.substrate == Substrate.K8S:
             return
         # fix the permissions of the directory if re-attaching existing storage
