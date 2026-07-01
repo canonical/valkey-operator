@@ -171,3 +171,23 @@ class BackupStatuses(Enum):
         message="Last backup attempt failed - check juju debug-log",
         running="async",
     )
+
+
+class RestoreStatuses(Enum):
+    """Collection of restore-related statuses."""
+
+    RESTORE_IN_PROGRESS = StatusObject(
+        status="maintenance",
+        message="Database restore is in progress",
+        running="async",
+    )
+    RESTORE_FAILED = StatusObject(
+        status="blocked",
+        message="Last restore attempt failed - check juju debug-log",
+        running="async",
+    )
+    RESTORE_UNHEALTHY = StatusObject(
+        status="blocked",
+        message="Cluster unhealthy after restoring backup - check juju debug-log",
+        running="async",
+    )

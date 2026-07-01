@@ -26,6 +26,8 @@ from core.cluster_state import ClusterState
 from literals import (
     CLIENT_PORT,
     PRIMARY_NAME,
+    SENTINEL_DOWN_AFTER_MS,
+    SENTINEL_DOWN_AFTER_SUPPRESSED_MS,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
@@ -352,6 +354,37 @@ class SentinelManager(ManagerStatusProtocol):
         """Restart the sentinel service to load configuration."""
         logger.info("Restarting sentinel service")
         self.workload.restart(self.workload.sentinel_service)
+
+    def all_sentinel_endpoints(self) -> list[str]:
+        """Endpoints of every active unit's sentinel (the suppression fan-out set)."""
+        return [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
+
+    def suppress_failover(self) -> None:
+        """Raise down-after-milliseconds on every sentinel so the primary's restart isn't a failure."""
+        client = self._get_sentinel_client()
+        for endpoint in self.all_sentinel_endpoints():
+            client.set(
+                endpoint,
+                PRIMARY_NAME,
+                "down-after-milliseconds",
+                str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS),
+            )
+
+    def resume_failover(self) -> None:
+        """Restore the configured down-after-milliseconds and SENTINEL RESET on every sentinel.
+
+        Idempotent — safe to call from every restore abort/teardown path.
+        """
+        client = self._get_sentinel_client()
+        for endpoint in self.all_sentinel_endpoints():
+            client.set(
+                endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+            )
+            client.reset(hostname=endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

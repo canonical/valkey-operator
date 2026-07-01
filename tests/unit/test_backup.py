@@ -523,6 +523,7 @@ def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True):
     charm.state.cluster.s3_credentials = {"bucket": "b"} if credentials else None
     charm.workload.alive.return_value = alive
     charm.state.unit_server.is_backup_in_progress = False
+    charm.state.cluster.is_restore_in_progress = False
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     return evt
@@ -732,6 +733,7 @@ def test_on_s3_credentials_gone_removes_ca_and_clears_databag(mocker):
 
     charm = mocker.MagicMock()
     charm.state.unit_server.is_backup_in_progress = False
+    charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = True
 
     evt = BackupEvents.__new__(BackupEvents)
@@ -954,6 +956,7 @@ def test_on_s3_credentials_gone_non_leader_does_not_clear_databag(mocker):
 
     charm = mocker.MagicMock()
     charm.state.unit_server.is_backup_in_progress = False
+    charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = False
 
     evt = BackupEvents.__new__(BackupEvents)

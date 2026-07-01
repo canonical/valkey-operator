@@ -200,3 +200,30 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def number_units_started(self) -> int:
         """Return the number of units in the cluster that have their Valkey server started."""
         return len([unit for unit in self.servers if unit.model and unit.is_started])
+
+    @property
+    def can_restore_workflow_proceed(self) -> bool:
+        """True only when every snapshotted participant has reached the current instruction.
+
+        Fail-closed: iterate the snapshotted participant *names* and look each
+        up in the live servers. A participant absent from the live set (it
+        departed mid-step) counts as NOT reached, so the gate stalls rather
+        than silently dropping it (which a `for s in servers if name in ...`
+        filter would do).
+        """
+        instruction = self.cluster.restore_instruction
+        by_name = {server.unit_name: server for server in self.servers}
+        for name in self.cluster.restore_participants:
+            server = by_name.get(name)
+            if server is None or server.restore_step != instruction:
+                return False
+        return True
+
+    @property
+    def is_backup_in_progress_any(self) -> bool:
+        """True if ANY peer unit is uploading a backup (backup_id is per-unit).
+
+        create-backup runs on any unit, so a leader-driven restore must check
+        every server, not just the local one.
+        """
+        return any(server.is_backup_in_progress for server in self.servers)

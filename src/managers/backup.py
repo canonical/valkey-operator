@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import pathlib
 import re
@@ -16,14 +17,25 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from charmlibs import pathops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyBackupError
-from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
-from statuses import BackupStatuses, CharmStatuses
+from common.exceptions import ValkeyBackupError, ValkeyRestoreError, ValkeyRestoreUnhealthyError
+from literals import (
+    BACKUP_CA_FILENAME,
+    BACKUP_ID_FORMAT,
+    PRE_RESTORE_SUFFIX,
+    RESTORE_DOWNLOAD_FILENAME,
+    RESTORE_LOAD_TIMEOUT_S,
+    RESTORE_RESYNC_TIMEOUT_S,
+    CharmUsers,
+    RestoreStep,
+)
+from statuses import BackupStatuses, CharmStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.literals import BucketLocationConstraintType
@@ -99,6 +111,26 @@ class BackupManager(ManagerStatusProtocol):
         also stops the S3 endpoint CA being trusted as a Valkey client CA.
         """
         return self.state.charm.charm_dir / BACKUP_CA_FILENAME
+
+    @property
+    def _download_path(self) -> pathops.PathProtocol:
+        """Final path for a successfully-downloaded RDB before restore."""
+        return self.workload.working_dir / RESTORE_DOWNLOAD_FILENAME
+
+    @property
+    def _download_tmp_path(self) -> pathops.PathProtocol:
+        """Temp path used during download; renamed atomically to ``_download_path``."""
+        return self.workload.working_dir / (RESTORE_DOWNLOAD_FILENAME + ".part")
+
+    @property
+    def _dump_path(self) -> pathops.PathProtocol:
+        """Live Valkey RDB path (``dump.rdb``) inside the workload's data directory."""
+        return self.workload.working_dir / "dump.rdb"
+
+    @property
+    def _pre_restore_path(self) -> pathops.PathProtocol:
+        """Path where the pre-restore RDB snapshot is preserved for rollback."""
+        return self.workload.working_dir / ("dump.rdb" + PRE_RESTORE_SUFFIX)
 
     # ── boto3 client construction ────────────────────────────────────────
 
@@ -305,6 +337,153 @@ class BackupManager(ManagerStatusProtocol):
 
         return backup_id
 
+    # ── restore ─────────────────────────────────────────────────────────
+
+    def download_backup(self, backup_id: str) -> None:
+        """Download the RDB, validating the magic head, into the data dir.
+
+        Buffers the full object via io.BytesIO (accepted MVP tradeoff; a future
+        improvement could stream via os.pipe). The temp-name -> validate ->
+        atomic-move shape (not the buffering strategy) is what guarantees the
+        final path never holds a partial or invalid file: the final name only
+        appears on full-success, so a later "re-download if missing" check is
+        always correct.
+        """
+        s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyRestoreError("S3 credentials unavailable")
+        bucket = self._get_bucket_resource(s3_parameters)
+
+        # boto3 writes the whole object into this BytesIO buffer so we can
+        # inspect the magic header before committing the file to disk.
+        buffer = io.BytesIO()
+        try:
+            bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", buffer)
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
+
+        head = buffer.getvalue()[:16]
+        if not head.startswith(_RDB_MAGIC):
+            raise ValkeyRestoreError(
+                f"Downloaded object for {backup_id} is not a valid RDB stream"
+            )
+
+        buffer.seek(0)
+        self.workload.push_data_file(
+            buffer, self._download_tmp_path, user=self.workload.user, group=self.workload.user
+        )
+        # Atomic promote: only now does the final name exist, and only complete.
+        self.workload.move_file(self._download_tmp_path, self._download_path)
+
+    # ── restore steps ────────────────────────────────────────────────────
+
+    @staticmethod
+    def next_restore_step(step: RestoreStep) -> RestoreStep:
+        """Return the step following ``step`` in the restore workflow."""
+        order = [
+            RestoreStep.NOT_STARTED,
+            RestoreStep.DOWNLOAD,
+            RestoreStep.RESTORE,
+            RestoreStep.RESYNC,
+            RestoreStep.COMPLETED,
+        ]
+        return order[order.index(step) + 1]
+
+    def set_restore_step(self, step: RestoreStep) -> None:
+        """Record this unit's completed restore step on its databag."""
+        self.state.unit_server.update({"restore_step": step.value})
+
+    def _valkey_client(self) -> ValkeyClient:
+        return ValkeyClient(
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=self.state.unit_server.valkey_admin_password,
+            tls=self.state.unit_server.is_tls_enabled,
+            workload=self.workload,
+        )
+
+    def is_local_primary(self) -> bool:
+        """Return True if this unit's Valkey server currently reports the master role."""
+        return self._valkey_client().role(hostname=self.state.endpoint)[0] == "master"
+
+    def _wait_until_loaded(self) -> None:
+        """Bounded poll until the server is up and not loading; else raise unhealthy.
+
+        Distinguishes "still loading" (loading != 0) from "won't come up"
+        (ping fails / crash-loop) only by timing out either way -> rollback,
+        with a generous ceiling so a big RDB load is not a false failure.
+        """
+        client = self._valkey_client()
+        try:
+            for attempt in Retrying(
+                stop=stop_after_delay(RESTORE_LOAD_TIMEOUT_S),
+                wait=wait_fixed(5),
+                reraise=True,
+            ):
+                with attempt:
+                    if not client.ping(hostname=self.state.endpoint):
+                        raise ValkeyRestoreUnhealthyError("server not responding yet")
+                    if (
+                        client.info_persistence(hostname=self.state.endpoint).get("loading", "1")
+                        != "0"
+                    ):
+                        raise ValkeyRestoreUnhealthyError("still loading RDB")
+        except Exception as e:  # tenacity reraises the last attempt error
+            raise ValkeyRestoreUnhealthyError(
+                f"Primary did not come up healthy within {RESTORE_LOAD_TIMEOUT_S}s"
+            ) from e
+
+    def wait_until_resynced(self) -> None:
+        """Bounded poll until this replica reports a connected, in-sync link.
+
+        Purpose-built: the stock ``wait_for_replica_fully_synced`` has no ceiling
+        and returns silently on a query error (a false "synced"); this times out
+        into RESTORE_UNHEALTHY instead. ``is_replica_synced`` checks ROLE link
+        state (``cluster.py:109``).
+        """
+        try:
+            for attempt in Retrying(
+                stop=stop_after_delay(RESTORE_RESYNC_TIMEOUT_S),
+                wait=wait_fixed(5),
+                reraise=True,
+            ):
+                with attempt:
+                    if not self.state.charm.cluster_manager.is_replica_synced():  # pyright: ignore[reportAttributeAccessIssue]
+                        raise ValkeyRestoreUnhealthyError("replica not yet synced")
+        except Exception as e:
+            raise ValkeyRestoreUnhealthyError(
+                f"Replica did not resync within {RESTORE_RESYNC_TIMEOUT_S}s"
+            ) from e
+
+    def restore_on_primary(self) -> None:
+        """Stop valkey-server, swap in the restored RDB, restart, wait for load.
+
+        NOTE: deliberately bypasses restart_workload/RestartLock (the lock path
+        can't bracket a file swap); concurrent restarts are held off by the
+        is_restore_in_progress defer on _on_restart_workload.
+        """
+        self.workload.stop_service(self.workload.valkey_service)
+        # Guard: on a redelivered hook after a partial failure, _pre_restore_path
+        # already holds the ORIGINAL data. A second unconditional move-aside would
+        # overwrite it with the (possibly corrupt) restored dump.rdb, destroying the
+        # only copy we can roll back to. Skip the aside if the target already exists.
+        if not self.workload.path_exists(self._pre_restore_path):
+            self.workload.move_file(self._dump_path, self._pre_restore_path)
+        self.workload.move_file(self._download_path, self._dump_path)
+        self.workload.start_service(self.workload.valkey_service)
+        self._wait_until_loaded()
+
+    def roll_back(self) -> None:
+        """Restore the pre-restore dump and restart (stop_service FIRST to defeat auto-restart)."""
+        self.workload.stop_service(self.workload.valkey_service)
+        if self.workload.path_exists(self._pre_restore_path):
+            self.workload.move_file(self._pre_restore_path, self._dump_path)
+        self.workload.start_service(self.workload.valkey_service)
+
+    def cleanup_restore_files(self) -> None:
+        """Remove the pre-restore copy and the downloaded RDB after a successful restore."""
+        self.workload.remove_file(self._pre_restore_path)
+        self.workload.remove_file(self._download_path)
+
     # ── helpers ─────────────────────────────────────────────────────────
 
     def _build_rdb_command(self) -> list[str]:
@@ -333,7 +512,7 @@ class BackupManager(ManagerStatusProtocol):
     # ── advanced statuses ───────────────────────────────────────────────
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
-        """Contribute backup-related statuses to the StatusHandler."""
+        """Contribute backup- and restore-related statuses to the StatusHandler."""
         # Copy: ``.root`` is the live list inside the StatusObjectList model,
         # and the appends below would otherwise mutate persisted state.
         status_list: list[StatusObject] = list(
@@ -349,5 +528,8 @@ class BackupManager(ManagerStatusProtocol):
 
         if scope == "app" and self.state.s3_relation and not self.state.cluster.s3_credentials:
             status_list.append(BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value)
+
+        if scope == "app" and self.state.cluster.is_restore_in_progress:
+            status_list.append(RestoreStatuses.RESTORE_IN_PROGRESS.value)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]

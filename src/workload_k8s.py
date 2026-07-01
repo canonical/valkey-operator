@@ -8,7 +8,7 @@ import collections
 import logging
 import signal
 import threading
-from typing import IO, override
+from typing import IO, BinaryIO, override
 
 import ops
 from charmlibs import pathops
@@ -190,6 +190,72 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServicesFailedToStartError(
                 f"Failed to start service {service}: {e}"
             ) from e
+
+    @override
+    def stop_service(self, service: str) -> None:
+        try:
+            self.container.stop(service)
+        except (
+            pebble.ChangeError,
+            pebble.TimeoutError,
+            pebble.ConnectionError,
+            pebble.APIError,
+        ) as e:
+            logger.error("Failed to stop service %s: %s", service, e)
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Failed to stop service {service}: {e}"
+            ) from e
+        try:
+            if self.container.get_service(service).is_running():
+                raise ValkeyServicesCouldNotBeStoppedError(
+                    f"Service {service} still running after stop."
+                )
+        except (pebble.ConnectionError, ops.ModelError) as e:
+            raise ValkeyServicesCouldNotBeStoppedError(str(e)) from e
+
+    @override
+    def start_service(self, service: str) -> None:
+        try:
+            self.container.start(service)
+        except (pebble.ChangeError, pebble.ConnectionError, pebble.APIError) as e:
+            raise ValkeyServicesFailedToStartError(
+                f"Failed to start service {service}: {e}"
+            ) from e
+
+    @override
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        # K8s: charm and valkey containers are separate; stream into the
+        # container via Pebble push (accepts a file-like source).
+        try:
+            self.container.push(
+                dest.as_posix(),
+                source=src,
+                make_dirs=True,
+                user=user,
+                group=group or user,
+            )
+        except (pebble.PathError, pebble.ConnectionError, pebble.APIError) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        # No rename primitive in pathops, and the charm can't os.replace inside
+        # the valkey container; shell out via Pebble exec.
+        try:
+            self.container.exec(command=["mv", src.as_posix(), dest.as_posix()]).wait()
+        except (
+            pebble.ExecError,
+            pebble.ChangeError,
+            pebble.ConnectionError,
+            pebble.APIError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     @retry(

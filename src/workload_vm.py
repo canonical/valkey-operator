@@ -8,10 +8,11 @@ import collections
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
-from typing import override
+from typing import BinaryIO, override
 
 from charmlibs import pathops, snap
 from tenacity import (
@@ -189,6 +190,54 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyServicesFailedToStartError(
                 "Failed to restart service %s: %s", service, e
             ) from e
+
+    @override
+    def stop_service(self, service: str) -> None:
+        try:
+            self.valkey.stop(services=[service])
+        except snap.SnapError as e:
+            logger.error("Failed to stop service %s: %s", service, e)
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Failed to stop service {service}: {e}"
+            ) from e
+        if bool(self.valkey.services.get(service, {}).get("active", False)):
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Service {service} still active after stop."
+            )
+
+    @override
+    def start_service(self, service: str) -> None:
+        try:
+            self.valkey.start(services=[service])
+        except snap.SnapError as e:
+            logger.exception(str(e))
+            raise ValkeyServicesFailedToStartError(
+                f"Failed to start service {service}: {e}"
+            ) from e
+
+    @override
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        # VM: charm and snap share the filesystem; stream straight to disk, then chown.
+        try:
+            with open(dest.as_posix(), "wb") as fh:
+                shutil.copyfileobj(src, fh)
+            if user:
+                shutil.chown(dest.as_posix(), user=user, group=group or user)
+        except OSError as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        try:
+            os.replace(src.as_posix(), dest.as_posix())
+        except OSError as e:
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     def exec(

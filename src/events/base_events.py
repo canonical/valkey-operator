@@ -258,6 +258,9 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_changed(self, _: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
+        if self.charm.state.cluster.is_restore_in_progress:
+            return
+
         try:
             self._reconfigure_quorum_if_necessary()
         except ValkeyWorkloadCommandError as e:
@@ -292,6 +295,9 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
+        if self.charm.state.cluster.is_restore_in_progress:
+            return
+
         try:
             self._reconfigure_quorum_if_necessary()
         except ValkeyWorkloadCommandError as e:
@@ -564,12 +570,15 @@ class BaseEvents(ops.Object):
 
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
         """Handle removal of the data storage mount, e.g. when removing a unit."""
-        if self.charm.state.unit_server.is_backup_in_progress:
+        if (
+            self.charm.state.unit_server.is_backup_in_progress
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
             # A plain return would let teardown proceed and lose the in-flight
             # RDB. Raise so the hook errors and Juju retries storage-detaching
-            # until the backup finishes and clears the lock.
+            # until the backup/restore finishes and clears the lock.
             raise ValkeyBackupInProgressError(
-                "Backup in progress on this unit; refusing to scale down until it finishes."
+                "Backup or restore in progress on this unit; refusing to scale down until it finishes."
             )
 
         # get scale down lock

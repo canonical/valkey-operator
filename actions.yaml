@@ -24,3 +24,13 @@ list-backups:
       type: string
       default: table
       description: Output format of the backup list, either "table" or "json".
+
+restore-backup:
+  description: |
+    Restore the cluster's dataset from a backup in S3. Replaces the data on all units.
+    Run on the leader unit. The backup-id must be one returned by list-backups.
+    S3 credentials are taken from the related s3-integrator charm.
+  params:
+    backup-id:
+      type: string
+      description: The backup-id to restore, in the format produced by list-backups (YYYY-MM-DDTHH:MM:SSZ).

@@ -19,10 +19,14 @@ from object_storage import (
 )
 from pydantic import ValidationError
 
-from common.exceptions import ValkeyBackupError
+from common.exceptions import (
+    ValkeyBackupError,
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyRestoreUnhealthyError,
+)
 from core.models import S3Parameters
-from literals import S3_RELATION_NAME
-from statuses import BackupStatuses
+from literals import PEER_RELATION, S3_RELATION_NAME, RestoreStep
+from statuses import BackupStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -66,6 +70,13 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.leader_elected, self._on_s3_credentials_changed)
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
+        self.framework.observe(self.charm.on.restore_backup_action, self._on_restore_action)
+        # Drive the async restore state machine on every peer data change and
+        # on update-status (leader can advance without waiting for a remote change).
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_changed, self._on_restore_workflow
+        )
+        self.framework.observe(self.charm.on.update_status, self._on_restore_workflow)
 
     # ── event handlers ──────────────────────────────────────────────────
 
@@ -116,8 +127,11 @@ class BackupEvents(ops.Object):
 
     def _on_s3_credentials_gone(self, event: StorageConnectionInfoGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
-        if self.charm.state.unit_server.is_backup_in_progress:
-            logger.warning("Backup in progress; deferring credentials_gone")
+        if (
+            self.charm.state.unit_server.is_backup_in_progress
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
+            logger.warning("Backup or restore in progress; deferring credentials_gone")
             event.defer()
             return
 
@@ -212,4 +226,200 @@ class BackupEvents(ops.Object):
             return "Valkey is not running on this unit."
         if check_running_operations and self.charm.state.unit_server.is_backup_in_progress:
             return "A backup is already in progress on this unit."
+        if check_running_operations and self.charm.state.cluster.is_restore_in_progress:
+            return "A restore is in progress; backups are paused."
         return None
+
+    def _restore_blocking_reason(self) -> str | None:
+        """Return why a restore cannot start, or None if it can."""
+        if not self.charm.unit.is_leader():
+            return "Restore must be run on the leader unit."
+        if not self.charm.state.s3_relation:
+            return "No S3 relation. Integrate with s3-integrator first."
+        if not self.charm.state.cluster.s3_credentials:
+            return "S3 credentials unavailable. Check s3-integrator config."
+        if self.charm.state.is_backup_in_progress_any:
+            return "A backup is in progress; cannot restore."
+        if self.charm.state.cluster.is_restore_in_progress:
+            return "A restore is already in progress."
+        # Stable cluster: all participants active + a resolvable primary + no failover in flight.
+        if not all(s.is_active for s in self.charm.state.servers):
+            return "Not all units are active; wait for the cluster to settle."
+        try:
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError:
+            return "No primary available; cannot restore."
+        if "failover_in_progress" in (
+            self.charm.sentinel_manager._get_sentinel_client()
+            .primary(hostname=primary_ip)
+            .get("flags", "")
+        ):
+            return "A Sentinel failover is in progress; cannot restore."
+        return None
+
+    def _on_restore_action(self, event: ops.ActionEvent) -> None:
+        """Validate, then initiate the async restore workflow (leader only)."""
+        if reason := self._restore_blocking_reason():
+            event.set_results({"error": reason})
+            event.fail(reason)
+            return
+        backup_id = event.params.get("backup-id", "")
+        if not backup_id:
+            event.set_results({"error": "Must provide backup-id to restore."})
+            event.fail("Must provide backup-id to restore.")
+            return
+        try:
+            if backup_id not in self.charm.backup_manager.list_backups():
+                event.fail(f"backup-id {backup_id} not found.")
+                return
+        except ValkeyBackupError as e:
+            event.set_results({"error": _safe_error(e)})
+            event.fail("Could not list backups. Check juju debug-log.")
+            return
+
+        logger.info(
+            "audit: restore-backup action invoked action_id=%s backup_id=%s unit=%s",
+            event.id,
+            backup_id,
+            self.charm.unit.name,
+        )
+        # Clear any stale RESTORE_FAILED from a prior attempt.
+        self.charm.state.statuses.delete(
+            RestoreStatuses.RESTORE_FAILED.value,
+            scope="app",
+            component=self.charm.backup_manager.name,
+        )
+        participants = ",".join(sorted(s.unit_name for s in self.charm.state.servers))
+        self.charm.state.cluster.update(
+            {
+                "restore_id": backup_id,
+                "restore_instruction": RestoreStep.DOWNLOAD.value,
+                "restore_participants": participants,
+            }
+        )
+        event.set_results({"restore": f"initiated for {backup_id}"})
+
+    # ── restore workflow ─────────────────────────────────────────────────
+
+    def _on_restore_workflow(self, _: ops.RelationChangedEvent | ops.UpdateStatusEvent) -> None:
+        """Drive this unit's restore step, then (leader) advance the instruction."""
+        cluster = self.charm.state.cluster
+        unit = self.charm.state.unit_server
+
+        # COMPLETED ordering: once the leader has cleared restore_id, units
+        # clear their own per-unit restore state (and only then).
+        if not cluster.is_restore_in_progress:
+            if unit.restore_step != RestoreStep.NOT_STARTED:
+                unit.update({"restore_step": "", "restore_role": ""})
+            return
+
+        instruction = cluster.restore_instruction
+        step = unit.restore_step
+        role = unit.restore_role  # "" until DOWNLOAD records it
+
+        try:
+            self._run_restore_step(instruction, step, role)
+        except Exception as e:
+            # Broad catch is deliberate: _restore_teardown -> resume_failover() is
+            # safety-critical and MUST run on ANY step failure — including
+            # ValkeyServicesCouldNotBeStoppedError / ValkeyServicesFailedToStartError
+            # (standalone Exception subclasses, NOT in the narrow restore-error
+            # hierarchy), or Sentinel failover stays suppressed cluster-wide.
+            logger.exception("Restore step failed; tearing down")
+            self._restore_teardown(e)
+            return
+
+        if self.charm.unit.is_leader():
+            self._advance_if_leader()
+
+    def _run_restore_step(self, instruction: RestoreStep, step: RestoreStep, role: str) -> None:
+        """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""
+        cluster = self.charm.state.cluster
+        unit = self.charm.state.unit_server
+        bm = self.charm.backup_manager
+
+        match (instruction, step):
+            case (RestoreStep.DOWNLOAD, RestoreStep.NOT_STARTED):
+                is_primary = bm.is_local_primary()
+                unit.update({"restore_role": "primary" if is_primary else "replica"})
+                if is_primary:
+                    self.charm.sentinel_manager.suppress_failover()
+                    bm.download_backup(cluster.restore_id)
+                bm.set_restore_step(RestoreStep.DOWNLOAD)
+
+            case (RestoreStep.RESTORE, RestoreStep.DOWNLOAD):
+                if role == "primary":
+                    self._do_primary_restore()
+                bm.set_restore_step(RestoreStep.RESTORE)
+
+            case (RestoreStep.RESYNC, RestoreStep.RESTORE):
+                if role == "primary":
+                    self.charm.sentinel_manager.resume_failover()
+                else:
+                    bm.wait_until_resynced()
+                bm.set_restore_step(RestoreStep.RESYNC)
+
+            case (RestoreStep.COMPLETED, RestoreStep.RESYNC):
+                if role == "primary":
+                    bm.cleanup_restore_files()
+                bm.set_restore_step(RestoreStep.COMPLETED)
+
+            case _:
+                # Not our turn (tuple doesn't match an expected transition): no-op.
+                return
+
+    def _do_primary_restore(self) -> None:
+        """Re-download the RDB if missing, then restore in-place; roll back on unhealthy state."""
+        bm = self.charm.backup_manager
+        if not self.charm.workload.path_exists(bm._download_path):
+            bm.download_backup(self.charm.state.cluster.restore_id)
+        try:
+            bm.restore_on_primary()
+        except Exception:
+            # Roll back before propagating so the teardown in _on_restore_workflow
+            # can resume_failover after any service-control failure (stop/start),
+            # not only ValkeyRestoreUnhealthyError.
+            self.charm.backup_manager.roll_back()
+            raise
+
+    def _advance_if_leader(self) -> None:
+        """Advance the instruction once every participant has reached it; clear on COMPLETED."""
+        cluster = self.charm.state.cluster
+        if not self.charm.state.can_restore_workflow_proceed:
+            return
+        instruction = cluster.restore_instruction
+        if instruction == RestoreStep.COMPLETED:
+            self.charm.state.statuses.delete(
+                RestoreStatuses.RESTORE_FAILED.value,
+                scope="app",
+                component=self.charm.backup_manager.name,
+            )
+            cluster.update(
+                {"restore_id": "", "restore_instruction": "", "restore_participants": ""}
+            )
+            return
+        cluster.update(
+            {"restore_instruction": self.charm.backup_manager.next_restore_step(instruction).value}
+        )
+
+    def _restore_teardown(self, exc: Exception | None = None) -> None:
+        """Resume failover suppression, flag failure, and (leader) clear restore state.
+
+        Sets RESTORE_UNHEALTHY when the cluster came up but was not healthy
+        (ValkeyRestoreUnhealthyError), RESTORE_FAILED for all other failures.
+        """
+        self.charm.sentinel_manager.resume_failover()
+        status = (
+            RestoreStatuses.RESTORE_UNHEALTHY
+            if isinstance(exc, ValkeyRestoreUnhealthyError)
+            else RestoreStatuses.RESTORE_FAILED
+        )
+        self.charm.state.statuses.add(
+            status.value,
+            scope="app",
+            component=self.charm.backup_manager.name,
+        )
+        if self.charm.unit.is_leader():
+            self.charm.state.cluster.update(
+                {"restore_id": "", "restore_instruction": "", "restore_participants": ""}
+            )
