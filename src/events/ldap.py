@@ -54,6 +54,7 @@ class LDAPEvents(ops.Object):
         )
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
+        self.framework.observe(self.charm.on.sync_ldap_users_action, self._on_sync_ldap_users)
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
@@ -191,3 +192,41 @@ class LDAPEvents(ops.Object):
         # only update Valkey ACLs, we do not support LDAP for Sentinel
         self.charm.auth_manager.set_acl_file()
         self.charm.cluster_manager.reload_acl_file()
+
+    def _on_sync_ldap_users(self, event: ops.ActionEvent) -> None:
+        """Handle the action event for sync-ldap-users."""
+        if not self.charm.state.unit_server.is_started:
+            error = "Unit not fully started yet, wait for startup to complete"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        if not self.charm.state.unit_server.model.ldap_enabled:
+            error = "LDAP not yet enabled on this unit"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        if not self.charm.state.is_ldap_valid:
+            error = "LDAP configuration is invalid, see `debug-log` for details"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        logger.info("Update ACL configuration")
+        event.log(f"Querying LDAP and updating Valkey ACL configuration on {self.charm.unit.name}")
+
+        try:
+            self.charm.auth_manager.set_acl_file()
+            self.charm.cluster_manager.reload_acl_file()
+        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update ACL settings: %s", e)
+            event.set_results({"error": e})
+            event.fail("Failed to update ACL settings, check `debug-log` for details")
+            return
+
+        event.set_results(
+            {
+                "result": f"Updated ACL configuration on {self.charm.unit.name}, check `debug-log` for errors"
+            }
+        )

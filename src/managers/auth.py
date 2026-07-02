@@ -75,6 +75,8 @@ class AuthManager(ManagerStatusProtocol):
             self.state.ldap.ldaps_urls if self.state.ldap.ldaps_urls else self.state.ldap.urls
         )
         tls_context = ldap3.Tls(
+            ciphers="ALL",
+            version=ssl.PROTOCOL_TLSv1,
             validate=ssl.CERT_REQUIRED,
             ca_certs_file=self.workload.tls_paths.ldap_ca.as_posix(),
         )
@@ -90,6 +92,7 @@ class AuthManager(ManagerStatusProtocol):
             user=self.state.ldap.bind_dn,
             password=ldap_bind_password,
             read_only=True,
+            auto_bind=True,
         )
 
     def _get_internal_user_acl_line(
@@ -143,15 +146,29 @@ class AuthManager(ManagerStatusProtocol):
             str: ACL lines for the LDAP users.
         """
         acl_content = ""
-
         if not self.state.is_ldap_valid:
             return acl_content
 
+        # get non-LDAP users to avoid adding duplicate usernames to ACL files
+        internal_users = (user.value for user in CharmUsers)
+        client_users = []
+        if external_client_users := self.state.cluster.external_users_credentials:
+            client_users = (username for username in external_client_users)
+
+        # get configured LDAP groups and generate ACL lines for the LDAP members of these groups
         base_auth_rule = "-@all"
-        for group, permissions in self._resolve_ldap_group_permissions():
+        for group, permissions in self._resolve_ldap_group_permissions().items():
             group_auth_rule = " ".join(permission for permission in permissions)
             ldap_users = self._get_ldap_users_for_group(group)
             for username in ldap_users:
+                # safeguards to avoid inconsistent ACL files
+                if (
+                    username in internal_users
+                    or username in client_users
+                    or f" {username} " in acl_content
+                ):
+                    continue
+
                 acl_content += f"user {username} on {base_auth_rule} {group_auth_rule}\n"
 
         return acl_content
@@ -166,7 +183,7 @@ class AuthManager(ManagerStatusProtocol):
         ldap_group_permissions = {}
 
         for mapping in ldap_maps:
-            ldap_group, role = mapping.split(":")
+            ldap_group, role = mapping.strip().split(":")
             for entity_permission in self.state.requested_entity_permissions:
                 if entity_permission.resource_name == role:
                     ldap_group_permissions[ldap_group] = entity_permission.privileges
@@ -174,9 +191,9 @@ class AuthManager(ManagerStatusProtocol):
 
         return ldap_group_permissions
 
-    def _get_ldap_users_for_group(self, ldap_group: str) -> list[str]:
+    def _get_ldap_users_for_group(self, ldap_group: str) -> set[str]:
         """Query the related LDAP provider and get all users for an LDAP group."""
-        ldap_users = []
+        ldap_users = set()
 
         try:
             ldap_connection = self._get_ldap_connection()
@@ -188,22 +205,26 @@ class AuthManager(ManagerStatusProtocol):
         search_attribute = str(self.state.config.get("ldap-search-attribute", ""))
         search_filter = str(self.state.config.get("ldap-search-filter", ""))
 
-        if not ldap_connection.search(
-            search_base=base_dn,
-            search_filter=f"(&({search_filter})(memberOf=ou={ldap_group},*))",
-            attributes=search_attribute,
-            time_limit=10,
-        ):
-            logger.error(
-                "Failed to perform LDAP search with base dn %s, filter %s and attribute %s",
-                base_dn,
-                search_filter,
-                search_attribute,
-            )
+        try:
+            if not ldap_connection.search(
+                search_base=base_dn,
+                search_filter=f"(&({search_filter})(memberOf=ou={ldap_group},*))",
+                attributes=search_attribute,
+                time_limit=10,
+            ):
+                logger.error(
+                    "Failed to perform LDAP search with base dn %s, filter %s and attribute %s",
+                    base_dn,
+                    search_filter,
+                    search_attribute,
+                )
+                return ldap_users
+        except ldap3.core.exceptions.LDAPException as e:
+            logger.error("Could not get LDAP connection: %s", e)
             return ldap_users
 
         for entry in ldap_connection.entries:
-            ldap_users.append(entry[search_attribute])
+            ldap_users.add(entry[search_attribute])
 
         return ldap_users
 

@@ -8,3 +8,6 @@ status-detail:
       type: boolean
       default: false
       description: a boolean indicating whether a unit should recompute all statuses.
+
+sync-ldap-users:
+  description: Synchronize users from related LDAP provider to Valkey's ACL file.
