@@ -12,33 +12,40 @@ import time
 
 import jubilant
 
-APP_NAME = "valkey"
+from literals import Substrate
+from tests.integration.helpers import (
+    APP_NAME,
+    IMAGE_RESOURCE,
+    are_apps_active_and_agents_idle,
+)
+
 S3_INTEGRATOR_APP = "s3-integrator"
 BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
-def _wait_active(juju: jubilant.Juju, *apps: str, timeout: int = 600) -> None:
-    # Require agents idle as well as workloads active: after `integrate` the
-    # workloads stay "active" while the relation hooks (the leader's
-    # create_bucket + credential storage) are still running, so a workload-only
-    # wait can return before S3 is actually wired up.
-    juju.wait(
-        lambda status: (
-            all(
-                app in status.apps
-                and status.apps[app].is_active
-                and all(unit.is_active for unit in status.apps[app].units.values())
-                for app in apps
-            )
-            and jubilant.all_agents_idle(status, *apps)
-        ),
-        timeout=timeout,
+def test_backup_and_list(
+    charm: str,
+    juju: jubilant.Juju,
+    substrate: Substrate,
+    microceph: dict,
+    s3_bucket,
+) -> None:
+    juju.deploy(
+        charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+        num_units=3,
+        trust=True,
     )
+    juju.deploy(S3_INTEGRATOR_APP, channel="2/edge")
 
-
-def test_backup_and_list(juju: jubilant.Juju, microceph: dict, s3_bucket) -> None:
-    juju.deploy(APP_NAME, channel="9/edge", num_units=3, trust=True, base="ubuntu@24.04")
-    juju.deploy(S3_INTEGRATOR_APP, channel="latest/edge")
+    # s3-integrator 2/edge takes credentials as a Juju secret (the
+    # sync-s3-credentials action is gone in v2): create + grant the secret,
+    # then point the `credentials` config at its URI.
+    creds = juju.add_secret(
+        name="s3-creds",
+        content={"access-key": microceph["access-key"], "secret-key": microceph["secret-key"]},
+    )
+    juju.grant_secret(identifier=creds, app=S3_INTEGRATOR_APP)
 
     # s3-integrator base64-decodes tls-ca-chain, so the charm can verify
     # MicroCeph's self-signed RGW endpoint over TLS. Without it the charm
@@ -47,6 +54,7 @@ def test_backup_and_list(juju: jubilant.Juju, microceph: dict, s3_bucket) -> Non
     juju.config(
         S3_INTEGRATOR_APP,
         {
+            "credentials": creds,
             "bucket": microceph["bucket"],
             "endpoint": microceph["endpoint"],
             "region": microceph["region"],
@@ -56,42 +64,47 @@ def test_backup_and_list(juju: jubilant.Juju, microceph: dict, s3_bucket) -> Non
         },
     )
 
-    # Credentials are supplied through the sync-s3-credentials action, not a
-    # config option. Wait for the agent to settle (charm deployed, action
-    # registered) before dispatching -- a freshly-allocated unit reports
-    # "no actions defined" until then.
+    # Require agents idle as well as workloads active: after `integrate` the
+    # workloads stay "active" while the relation hooks (the leader's
+    # create_bucket + credential storage) are still running, so a workload-only
+    # wait can return before S3 is actually wired up.
     juju.wait(
-        lambda status: jubilant.all_agents_idle(status, S3_INTEGRATOR_APP),
-        timeout=600,
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, S3_INTEGRATOR_APP, idle_period=30
+        ),
+        timeout=1000,
+        delay=5,
+        successes=3,
     )
-    juju.run(
-        f"{S3_INTEGRATOR_APP}/0",
-        "sync-s3-credentials",
-        {
-            "access-key": microceph["access-key"],
-            "secret-key": microceph["secret-key"],
-        },
-    )
-
-    _wait_active(juju, S3_INTEGRATOR_APP)
     juju.integrate(APP_NAME, S3_INTEGRATOR_APP)
-    _wait_active(juju, APP_NAME, S3_INTEGRATOR_APP)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, S3_INTEGRATOR_APP, idle_period=30
+        ),
+        timeout=1000,
+        delay=5,
+        successes=3,
+    )
 
-    # Backup from unit/0
-    task0 = juju.run(f"{APP_NAME}/0", "create-backup")
+    # Three distinct units exercise the any-unit backup guarantee.
+    units = list(juju.status().get_units(APP_NAME))
+    assert len(units) >= 3, units
+
+    # Backup from the first unit.
+    task0 = juju.run(units[0], "create-backup")
     assert task0.success, task0.stderr
     backup_id_0 = task0.results["backup-id"]
     assert BACKUP_ID_RE.match(backup_id_0), backup_id_0
 
-    # Backup from unit/1 (different unit, separate id, exercises any-unit guarantee)
+    # Backup from a second unit (distinct id, exercises any-unit guarantee).
     time.sleep(2)
-    task1 = juju.run(f"{APP_NAME}/1", "create-backup")
+    task1 = juju.run(units[1], "create-backup")
     assert task1.success, task1.stderr
     backup_id_1 = task1.results["backup-id"]
     assert backup_id_1 != backup_id_0
 
-    # List from unit/2. Newest first.
-    listing = juju.run(f"{APP_NAME}/2", "list-backups")
+    # List from a third unit. Newest first.
+    listing = juju.run(units[2], "list-backups")
     assert listing.success
     table = listing.results["backups"]
     assert backup_id_0 in table

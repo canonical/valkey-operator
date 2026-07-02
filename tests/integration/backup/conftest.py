@@ -33,18 +33,16 @@ RGW_SSL_PORT = 445
 # Self-signed cert + key, persisted so repeated local runs reuse the exact
 # material the already-running gateway serves -- regenerating without
 # re-enabling RGW would break TLS verification against the old certificate.
-_CERT_DIR = Path.home() / ".cache" / "valkey-itest"
+# Named for the MicroCeph RGW (not this product) so a shared MicroCeph serving
+# several data-platform suites reuses one gateway certificate.
+_CERT_DIR = Path.home() / ".cache" / "microceph-rgw"
 _CERT = _CERT_DIR / "rgw-cert.pem"
 _KEY = _CERT_DIR / "rgw-key.pem"
 
 
 def _run(*cmd: str, **kwargs) -> str:
-    return subprocess.check_output(cmd, text=True, **kwargs).strip()
-
-
-def _ok(*cmd: str) -> bool:
-    """Return True if the command exits 0 (idempotent check-then-act helper)."""
-    return subprocess.run(cmd, capture_output=True).returncode == 0
+    """Run a command, returning its stdout; raise CalledProcessError (with stderr) on failure."""
+    return subprocess.run(cmd, capture_output=True, text=True, check=True, **kwargs).stdout.strip()
 
 
 def _host_ip() -> str:
@@ -60,9 +58,13 @@ def _port_open(host: str, port: int) -> bool:
 
 def _ensure_microceph() -> None:
     """Install + bootstrap MicroCeph with OSDs; each step idempotent."""
-    if not _ok("snap", "list", "microceph"):
+    try:
+        _run("snap", "list", "microceph")
+    except subprocess.CalledProcessError:
         _run("sudo", "snap", "install", "microceph", "--channel=squid/stable")
-    if not _ok("sudo", "microceph", "status"):
+    try:
+        _run("sudo", "microceph", "status")
+    except subprocess.CalledProcessError:
         _run("sudo", "microceph", "cluster", "bootstrap")
         _run("sudo", "microceph", "disk", "add", "loop,4G,3", "--wipe")
 
@@ -85,7 +87,10 @@ def _ensure_rgw_tls(host_ip: str) -> str:
     # (Re)configure RGW when the cert is freshly minted or the gateway is down:
     # a new certificate must replace whatever the running gateway presents.
     if not have_cert or not _port_open(host_ip, RGW_SSL_PORT):
-        subprocess.run(["sudo", "microceph", "disable", "rgw"], capture_output=True)
+        try:
+            _run("sudo", "microceph", "disable", "rgw")
+        except subprocess.CalledProcessError:
+            pass  # already disabled -- nothing to tear down before re-enabling
         _run(
             "sudo", "microceph", "enable", "rgw",
             f"--ssl-port={RGW_SSL_PORT}",
@@ -101,9 +106,9 @@ def _ensure_rgw_tls(host_ip: str) -> str:
 
 def _ensure_user(uid: str = "test") -> tuple[str, str]:
     """Get-or-create an RGW user; return (access_key, secret_key)."""
-    if _ok("sudo", "radosgw-admin", "user", "info", f"--uid={uid}"):
+    try:
         out = _run("sudo", "radosgw-admin", "user", "info", f"--uid={uid}")
-    else:
+    except subprocess.CalledProcessError:
         out = _run(
             "sudo", "radosgw-admin", "user", "create",
             f"--uid={uid}", f"--display-name={uid}",
