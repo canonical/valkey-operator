@@ -81,18 +81,21 @@ def test_log_files_present_in_logs_volume(juju: jubilant.Juju, substrate: Substr
     unit = f"{APP_NAME}/0"
     if substrate == Substrate.K8S:
         log_dir, archive_dir = "/var/log/valkey", "/var/backups/valkey"
-        prefix = ["--container", "valkey"]
+        # the container shell runs as root, which can read the 0750 dirs
+        prefix, sudo = ["--container", "valkey"], ""
     else:
         log_dir = "/var/snap/charmed-valkey/common/var/log/charmed-valkey"
         archive_dir = "/var/snap/charmed-valkey/common/var/backups/charmed-valkey"
-        prefix = []
+        # the dirs are 0750 and root-owned (VM valkey runs as root); juju ssh
+        # lands as the unprivileged ubuntu user, so inspect them via sudo
+        prefix, sudo = [], "sudo "
 
-    listing = juju.cli("ssh", *prefix, unit, f"ls -1 {log_dir}")
+    listing = juju.cli("ssh", *prefix, unit, f"{sudo}ls -1 {log_dir}")
     assert "valkey.log" in listing
     assert "sentinel.log" in listing
 
     # archive mount is present (provisioned + owned for future restore staging)
-    juju.cli("ssh", *prefix, unit, f"test -d {archive_dir}")
+    juju.cli("ssh", *prefix, unit, f"{sudo}test -d {archive_dir}")
 
 
 def test_seed_data(juju: jubilant.Juju, substrate: Substrate) -> None:
