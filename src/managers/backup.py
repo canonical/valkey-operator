@@ -6,12 +6,12 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import pathlib
 import re
+import tempfile
 from datetime import datetime, timezone
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import IO, TYPE_CHECKING, Any, BinaryIO, cast
 
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -340,38 +340,45 @@ class BackupManager(ManagerStatusProtocol):
     # ── restore ─────────────────────────────────────────────────────────
 
     def download_backup(self, backup_id: str) -> None:
-        """Download the RDB, validating the magic head, into the data dir.
+        """Download and validate the RDB, placing it atomically in the data dir.
 
-        Buffers the full object via io.BytesIO (accepted MVP tradeoff; a future
-        improvement could stream via os.pipe). The temp-name -> validate ->
-        atomic-move shape (not the buffering strategy) is what guarantees the
-        final path never holds a partial or invalid file: the final name only
-        appears on full-success, so a later "re-download if missing" check is
-        always correct.
+        Streams the S3 object into a charm-local temp file -- O(1) memory, so a
+        multi-GB dataset is never buffered whole in the charm process -- then
+        checks the magic header before committing anything to the workload. The
+        file lands under a temp name inside the data dir (``.part``) and is
+        renamed onto the final name only on full success, so the final path
+        never holds a partial or invalid file even if the hook is interrupted
+        mid-download.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
             raise ValkeyRestoreError("S3 credentials unavailable")
         bucket = self._get_bucket_resource(s3_parameters)
 
-        # boto3 writes the whole object into this BytesIO buffer so we can
-        # inspect the magic header before committing the file to disk.
-        buffer = io.BytesIO()
-        try:
-            bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", buffer)
-        except ClientError as e:
-            raise ValkeyRestoreError(e) from e
+        # boto3 streams the object to this temp file on disk (not into memory)
+        # so we can inspect the magic header before pushing it to the workload.
+        with tempfile.NamedTemporaryFile() as tmp:
+            try:
+                bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", tmp)
+            except ClientError as e:
+                raise ValkeyRestoreError(e) from e
 
-        head = buffer.getvalue()[:16]
-        if not head.startswith(_RDB_MAGIC):
-            raise ValkeyRestoreError(
-                f"Downloaded object for {backup_id} is not a valid RDB stream"
+            tmp.seek(0)
+            if not tmp.read(16).startswith(_RDB_MAGIC):
+                raise ValkeyRestoreError(
+                    f"Downloaded object for {backup_id} is not a valid RDB stream"
+                )
+
+            tmp.seek(0)
+            # push_data_file streams the handle into the workload data dir. The
+            # NamedTemporaryFile wrapper is a binary file at runtime; the stub
+            # types it narrowly, so cast to the BinaryIO the signature expects.
+            self.workload.push_data_file(
+                cast(BinaryIO, tmp),
+                self._download_tmp_path,
+                user=self.workload.user,
+                group=self.workload.user,
             )
-
-        buffer.seek(0)
-        self.workload.push_data_file(
-            buffer, self._download_tmp_path, user=self.workload.user, group=self.workload.user
-        )
         # Atomic promote: only now does the final name exist, and only complete.
         self.workload.move_file(self._download_tmp_path, self._download_path)
 
