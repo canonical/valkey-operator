@@ -382,7 +382,6 @@ class BackupManager(ManagerStatusProtocol):
         """Return the step following ``step`` in the restore workflow."""
         order = [
             RestoreStep.NOT_STARTED,
-            RestoreStep.DOWNLOAD,
             RestoreStep.RESTORE,
             RestoreStep.RESYNC,
             RestoreStep.COMPLETED,

@@ -293,7 +293,7 @@ class BackupEvents(ops.Object):
         self.charm.state.cluster.update(
             {
                 "restore_id": backup_id,
-                "restore_instruction": RestoreStep.DOWNLOAD.value,
+                "restore_instruction": RestoreStep.RESTORE.value,
                 "restore_participants": participants,
             }
         )
@@ -334,21 +334,22 @@ class BackupEvents(ops.Object):
 
     def _run_restore_step(self, instruction: RestoreStep, step: RestoreStep, role: str) -> None:
         """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""
-        cluster = self.charm.state.cluster
         unit = self.charm.state.unit_server
         bm = self.charm.backup_manager
 
         match (instruction, step):
-            case (RestoreStep.DOWNLOAD, RestoreStep.NOT_STARTED):
+            case (RestoreStep.RESTORE, RestoreStep.NOT_STARTED):
+                # Fused download+restore. The primary suppresses failover, then
+                # downloads and swaps in the RDB in one sweep; replicas only
+                # record the step (they resync at the next barrier). There is no
+                # cross-unit work between download and restore, and
+                # suppress_failover already configures *every* sentinel in one
+                # call, so a separate DOWNLOAD barrier would add a hook
+                # round-trip for no coordination benefit.
                 is_primary = bm.is_local_primary()
                 unit.update({"restore_role": "primary" if is_primary else "replica"})
                 if is_primary:
                     self.charm.sentinel_manager.suppress_failover()
-                    bm.download_backup(cluster.restore_id)
-                bm.set_restore_step(RestoreStep.DOWNLOAD)
-
-            case (RestoreStep.RESTORE, RestoreStep.DOWNLOAD):
-                if role == "primary":
                     self._do_primary_restore()
                 bm.set_restore_step(RestoreStep.RESTORE)
 
@@ -369,17 +370,21 @@ class BackupEvents(ops.Object):
                 return
 
     def _do_primary_restore(self) -> None:
-        """Re-download the RDB if missing, then restore in-place; roll back on unhealthy state."""
+        """Download the RDB, then restore it in-place; roll back on any restore failure.
+
+        Download stays outside the try: if it fails (e.g. a corrupt object fails
+        the magic-byte check) nothing has been swapped yet, so there is nothing
+        to roll back -- the live dump is untouched and teardown just resumes
+        failover. Only a restore_on_primary failure (a bad service stop/start or
+        an unhealthy server after the swap) needs roll_back before propagating,
+        so the teardown in _on_restore_workflow can resume_failover afterwards.
+        """
         bm = self.charm.backup_manager
-        if not self.charm.workload.path_exists(bm._download_path):
-            bm.download_backup(self.charm.state.cluster.restore_id)
+        bm.download_backup(self.charm.state.cluster.restore_id)
         try:
             bm.restore_on_primary()
         except Exception:
-            # Roll back before propagating so the teardown in _on_restore_workflow
-            # can resume_failover after any service-control failure (stop/start),
-            # not only ValkeyRestoreUnhealthyError.
-            self.charm.backup_manager.roll_back()
+            bm.roll_back()
             raise
 
     def _advance_if_leader(self) -> None:

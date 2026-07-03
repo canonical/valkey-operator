@@ -113,10 +113,14 @@ class StartState(StrEnum):
 
 
 class RestoreStep(StrEnum):
-    """Steps of the restore coordination workflow (ordered)."""
+    """Steps of the restore coordination workflow (ordered).
+
+    RESTORE is a single fused barrier: the primary suppresses failover,
+    downloads the RDB, and swaps it in. Download and restore are not separate
+    barriers because no unit has cross-unit work to do between them.
+    """
 
     NOT_STARTED = ""
-    DOWNLOAD = "download"
     RESTORE = "restore"
     RESYNC = "resync"
     COMPLETED = "completed"

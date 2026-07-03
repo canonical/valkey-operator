@@ -12,7 +12,6 @@ def test_restore_step_order_and_values():
     assert RestoreStep.NOT_STARTED.value == ""
     assert [s.value for s in RestoreStep] == [
         "",
-        "download",
         "restore",
         "resync",
         "completed",
@@ -226,8 +225,7 @@ def test_next_restore_step():
     from src.literals import RestoreStep
     from src.managers.backup import BackupManager
 
-    assert BackupManager.next_restore_step(RestoreStep.NOT_STARTED) == RestoreStep.DOWNLOAD
-    assert BackupManager.next_restore_step(RestoreStep.DOWNLOAD) == RestoreStep.RESTORE
+    assert BackupManager.next_restore_step(RestoreStep.NOT_STARTED) == RestoreStep.RESTORE
     assert BackupManager.next_restore_step(RestoreStep.RESTORE) == RestoreStep.RESYNC
     assert BackupManager.next_restore_step(RestoreStep.RESYNC) == RestoreStep.COMPLETED
 
@@ -313,31 +311,55 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
 # ── Task-10 tests: _on_restore_workflow state machine ───────────────────────
 
 
-def test_tuple_match_does_not_run_restore_without_download(mocker):
-    """instruction=RESTORE but unit missed DOWNLOAD step → no-op."""
+def test_tuple_match_skips_step_when_prior_not_reached(mocker):
+    """A later instruction is a no-op unless this unit reached the exact prior step.
+
+    instruction=RESYNC but the unit never recorded RESTORE → it must not run the
+    resync work nor advance its own step, so a unit that missed the fused
+    RESTORE can never act out of order.
+    """
     from src.events.backup import BackupEvents
     from src.literals import RestoreStep
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
     bm = ev.charm.backup_manager
-    # instruction=RESTORE but this unit is at NOT_STARTED (missed DOWNLOAD)
-    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="primary")
-    bm.restore_on_primary.assert_not_called()
+    ev._run_restore_step(RestoreStep.RESYNC, RestoreStep.NOT_STARTED, role="replica")
+    bm.wait_until_resynced.assert_not_called()
+    ev.charm.sentinel_manager.resume_failover.assert_not_called()
+    bm.set_restore_step.assert_not_called()
 
 
-def test_download_step_primary_suppresses_and_downloads(mocker):
-    """On DOWNLOAD instruction with NOT_STARTED step, primary suppresses failover and downloads."""
+def test_restore_step_primary_suppresses_downloads_and_restores(mocker):
+    """On RESTORE from NOT_STARTED, the primary suppresses, downloads, and restores in one sweep."""
     from src.events.backup import BackupEvents
     from src.literals import RestoreStep
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
+    ev.charm.backup_manager.is_local_primary.return_value = True
     ev.charm.state.cluster.restore_id = "2026-05-13T10:00:00Z"
-    ev._run_restore_step(RestoreStep.DOWNLOAD, RestoreStep.NOT_STARTED, role="primary")
+    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
     ev.charm.sentinel_manager.suppress_failover.assert_called_once()
     ev.charm.backup_manager.download_backup.assert_called_once_with("2026-05-13T10:00:00Z")
-    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.DOWNLOAD)
+    ev.charm.backup_manager.restore_on_primary.assert_called_once()
+    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.RESTORE)
+
+
+def test_restore_step_replica_records_role_without_restoring(mocker):
+    """A replica on the fused RESTORE step records its role/step but never touches the dataset."""
+    from src.events.backup import BackupEvents
+    from src.literals import RestoreStep
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.backup_manager.is_local_primary.return_value = False
+    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
+    ev.charm.sentinel_manager.suppress_failover.assert_not_called()
+    ev.charm.backup_manager.download_backup.assert_not_called()
+    ev.charm.backup_manager.restore_on_primary.assert_not_called()
+    ev.charm.state.unit_server.update.assert_called_once_with({"restore_role": "replica"})
+    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.RESTORE)
 
 
 def test_teardown_resumes_suppression_and_marks_failed(mocker):
@@ -368,9 +390,6 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
     mocker.patch("managers.backup.BackupManager.cleanup_restore_files")
     mocker.patch("managers.sentinel.SentinelManager.suppress_failover")
     mocker.patch("managers.sentinel.SentinelManager.resume_failover")
-    # path_exists drives a re-download guard; stub it so the mock download_backup
-    # is not called twice per RESTORE step.
-    mocker.patch("core.base_workload.WorkloadBase.path_exists", return_value=True)
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     # PeerModel has serialize_by_alias=True + alias_generator=underscore→hyphen,
@@ -381,7 +400,7 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
         endpoint=PEER_RELATION,
         local_app_data={
             "restore-id": "2026-05-13T10:00:00Z",
-            "restore-instruction": RestoreStep.DOWNLOAD.value,
+            "restore-instruction": RestoreStep.RESTORE.value,
             "restore-participants": "valkey/0",
         },
         local_unit_data={"start-state": "started"},
@@ -469,11 +488,10 @@ def test_restore_failure_service_error_resumes_suppression(mocker):
     ev.charm = mocker.Mock()
     ev.charm.state.cluster.is_restore_in_progress = True
     ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
-    ev.charm.state.unit_server.restore_step = RestoreStep.DOWNLOAD
+    ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
     ev.charm.state.unit_server.restore_role = "primary"
     ev.charm.unit.is_leader.return_value = True
-    # path_exists=True so the re-download guard is skipped.
-    ev.charm.workload.path_exists.return_value = True
+    ev.charm.backup_manager.is_local_primary.return_value = True
     ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyServicesFailedToStartError(
         "boom"
     )
@@ -497,10 +515,10 @@ def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
     ev.charm = mocker.Mock()
     ev.charm.state.cluster.is_restore_in_progress = True
     ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
-    ev.charm.state.unit_server.restore_step = RestoreStep.DOWNLOAD
+    ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
     ev.charm.state.unit_server.restore_role = "primary"
     ev.charm.unit.is_leader.return_value = True
-    ev.charm.workload.path_exists.return_value = True
+    ev.charm.backup_manager.is_local_primary.return_value = True
     ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyRestoreUnhealthyError(
         "unhealthy"
     )
