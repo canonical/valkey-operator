@@ -23,19 +23,21 @@ from datetime import datetime, timedelta, timezone
 
 import jubilant
 import pytest
-
-from literals import CharmUsers, Substrate
 from tests.integration.backup.test_s3_backup import (
     APP_NAME,
     BACKUP_ID_RE,
     S3_INTEGRATOR_APP,
     _wait_active,
 )
+
+from literals import CharmUsers, Substrate
+from statuses import RestoreStatuses
 from tests.integration.ha.helpers.helpers import (
     get_unit_name_from_primary_ip,
     send_process_control_signal,
 )
 from tests.integration.helpers import (
+    does_status_match,
     exec_valkey_cli,
     get_password,
     get_primary_ip,
@@ -198,7 +200,7 @@ def test_restore_rollback(
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
     # Wait for the restore workflow to complete and the cluster to return to active.
-    # The restore steps (DOWNLOAD → RESTORE → RESYNC → COMPLETED) are driven by
+    # The restore steps (RESTORE → RESYNC → COMPLETED) are driven by
     # relation_changed / update_status hooks; _wait_active uses active workload
     # status + all agents idle as the convergence signal.
     _wait_active(juju, APP_NAME, timeout=1200)
@@ -217,6 +219,10 @@ def test_restore_disaster_recovery(
     substrate: Substrate,
 ) -> None:
     """Remove the app entirely, redeploy a fresh cluster, restore from S3 -- data comes back."""
+    # Independently runnable: deploy the cluster + S3 wiring if a prior test did
+    # not already leave them in place (_deploy_cluster_and_s3 is idempotent).
+    _deploy_cluster_and_s3(juju, microceph)
+
     _write_key(juju, "dr_key", "dr-value")
 
     task = juju.run(f"{APP_NAME}/leader", "create-backup")
@@ -270,12 +276,17 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
-    # Allow the restore hooks (relation_changed-driven) to fire and settle.
-    # The download step is fast (magic-byte check on a tiny object), so 15 s
-    # is a comfortable head start before polling for agent idle.
-    time.sleep(15)
+    # The corrupt object fails the magic-byte check in the restore step, so the
+    # workflow tears down and the leader records RESTORE_FAILED on the app. Wait
+    # on that status -- a real convergence signal -- rather than a bare sleep,
+    # and settle the agents before probing data.
     juju.wait(
-        lambda s: jubilant.all_agents_idle(s, APP_NAME),
+        lambda s: (
+            does_status_match(
+                s, expected_app_statuses={APP_NAME: [RestoreStatuses.RESTORE_FAILED.value]}
+            )
+            and jubilant.all_agents_idle(s, APP_NAME)
+        ),
         timeout=600,
         delay=5,
     )
