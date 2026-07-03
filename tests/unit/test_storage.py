@@ -4,6 +4,7 @@
 
 """Unit tests for the logs/archive storage volumes."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -94,6 +95,31 @@ def test_storage_is_a_readable_writable_mount(cloud_spec, storage_name):
         (location / "written.txt").write_text("by-charm")
 
     assert (storage.get_filesystem(ctx) / "written.txt").read_text() == "by-charm"
+
+
+def test_storage_attached_unknown_storage_logs_warning(cloud_spec, caplog):
+    """An unrecognised storage name is logged and skipped, not silently dropped."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        containers={testing.Container(name=CONTAINER, can_connect=True)},
+        relations=_base_relations(),
+    )
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec") as mock_exec,
+        ctx(ctx.on.update_status(), state_in) as manager,
+    ):
+        mock_exec.reset_mock()  # ignore any setup-time calls
+        event = MagicMock()
+        event.storage.name = "bogus"
+        with caplog.at_level(logging.WARNING):
+            manager.charm.base_events._on_storage_attached(event)
+        # assert inside the block, before the manager runs update-status on exit
+        mock_exec.assert_not_called()
+        event.defer.assert_not_called()
+
+    assert any("bogus" in record.message for record in caplog.records)
 
 
 def test_storage_attached_logs_chmods_only_on_vm(cloud_spec_vm):

@@ -86,8 +86,8 @@ class BaseEvents(ops.Object):
             LOG_STORAGE: self.charm.workload.log_dir,
             ARCHIVE_STORAGE: self.charm.workload.archive_dir,
         }
-        target = storage_dirs.get(event.storage.name)
-        if target is None:
+        if (target := storage_dirs.get(event.storage.name)) is None:
+            logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
             return
         path = target.as_posix()
 
