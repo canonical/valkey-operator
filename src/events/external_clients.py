@@ -193,6 +193,13 @@ class ExternalClientsEvents(ops.Object):
         This handler catches all changes from scaling operations, TLS switchover, TLS CA rotation,
         IP changes, etc.
         """
+        # Skip during a restore: the primary briefly restarts and Sentinel is
+        # suppressed, so reconciling client endpoints / K8s Services now would
+        # act on transient state. This is a safe skip, not a dropped update --
+        # completing the restore clears restore_id on the app databag, which
+        # fires another peer-relation-changed; this handler reconciles from
+        # current state (it is delta-independent), so any IP/topology change
+        # that arrived mid-restore is picked up then.
         if (
             not self.charm.state.unit_server.is_started
             or self.charm.state.cluster.is_restore_in_progress

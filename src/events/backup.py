@@ -316,11 +316,14 @@ class BackupEvents(ops.Object):
         try:
             self._run_restore_step(instruction, step, role)
         except Exception as e:
-            # Broad catch is deliberate: _restore_teardown -> resume_failover() is
-            # safety-critical and MUST run on ANY step failure — including
-            # ValkeyServicesCouldNotBeStoppedError / ValkeyServicesFailedToStartError
-            # (standalone Exception subclasses, NOT in the narrow restore-error
-            # hierarchy), or Sentinel failover stays suppressed cluster-wide.
+            # Catch everything on purpose. If any step raises, teardown MUST run
+            # resume_failover() to undo the cluster-wide failover suppression --
+            # otherwise Sentinel can never promote a replica again. A narrower
+            # except would let unrelated error types escape and leave
+            # suppression stuck on; the service-control errors
+            # ValkeyServicesFailedToStartError / ValkeyServicesCouldNotBeStoppedError
+            # are plain Exception subclasses, not part of the restore-error
+            # hierarchy, so they are exactly the kind that would slip through.
             logger.exception("Restore step failed; tearing down")
             self._restore_teardown(e)
             return

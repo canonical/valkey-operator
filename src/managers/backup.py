@@ -439,12 +439,15 @@ class BackupManager(ManagerStatusProtocol):
             ) from e
 
     def wait_until_resynced(self) -> None:
-        """Bounded poll until this replica reports a connected, in-sync link.
+        """Poll until this replica's link to the primary is connected and in sync.
 
-        Purpose-built: the stock ``wait_for_replica_fully_synced`` has no ceiling
-        and returns silently on a query error (a false "synced"); this times out
-        into RESTORE_UNHEALTHY instead. ``is_replica_synced`` checks ROLE link
-        state (``cluster.py:109``).
+        Bounded by RESTORE_RESYNC_TIMEOUT_S: on timeout it raises
+        ValkeyRestoreUnhealthyError (surfaced as RESTORE_UNHEALTHY) rather than
+        hanging the hook. We deliberately do NOT reuse
+        ``wait_for_replica_fully_synced``: that helper is unbounded and treats a
+        failed query as "synced", which could false-pass a restore. Sync is
+        judged by ``is_replica_synced``, which inspects the ROLE reply's link
+        state.
         """
         try:
             for attempt in Retrying(
