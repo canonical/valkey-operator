@@ -176,6 +176,22 @@ def test_suppress_and_resume_failover_iterate_all_sentinels(mocker):
     client.reset.assert_any_call(hostname="10.0.0.2")
 
 
+def test_sentinel_is_failover_in_progress_reads_flags(mocker):
+    """Manager helper reports failover from the primary flags with no retry/blocking."""
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    mgr.state = mocker.Mock(endpoint="10.0.0.1")
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+
+    client.primary.return_value = {"flags": "master,failover_in_progress"}
+    assert mgr.is_failover_in_progress() is True
+
+    client.primary.return_value = {"flags": "master"}
+    assert mgr.is_failover_in_progress() is False
+
+
 def test_download_backup_validates_head_and_moves_atomically(mocker):
     from src.managers.backup import BackupManager
 

@@ -246,14 +246,10 @@ class BackupEvents(ops.Object):
         if not all(s.is_active for s in self.charm.state.servers):
             return "Not all units are active; wait for the cluster to settle."
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             return "No primary available; cannot restore."
-        if "failover_in_progress" in (
-            self.charm.sentinel_manager._get_sentinel_client()
-            .primary(hostname=primary_ip)
-            .get("flags", "")
-        ):
+        if self.charm.sentinel_manager.is_failover_in_progress():
             return "A Sentinel failover is in progress; cannot restore."
         return None
 
