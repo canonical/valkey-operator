@@ -182,15 +182,24 @@ class LDAPEvents(ops.Object):
         if not self.charm.state.unit_server.is_started:
             return
 
-        logger.info("Update LDAP configuration")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         ldap_config = self.charm.config_manager.generate_ldap_config()
+        # only update Valkey ACLs, we do not support LDAP for Sentinel
+        self.charm.auth_manager.set_acl_file()
+
+        if not self.charm.state.unit_server.model.ldap_enabled:
+            # to pick up the initial LDAP config, a restart is required
+            # subsequent LDAP config changes can be reloaded
+            self.charm.restart_workload.emit(
+                restart_valkey=True, restart_sentinel=False, primary_endpoint=primary_ip
+            )
+            return
+
+        logger.info("Update LDAP configuration")
         self.charm.cluster_manager.reload_ldap_settings(ldap_config)
 
         logger.info("Update ACL configuration")
-        # only update Valkey ACLs, we do not support LDAP for Sentinel
-        self.charm.auth_manager.set_acl_file()
         self.charm.cluster_manager.reload_acl_file()
 
     def _on_sync_ldap_users(self, event: ops.ActionEvent) -> None:

@@ -74,11 +74,13 @@ class AuthManager(ManagerStatusProtocol):
         ldap_urls = (
             self.state.ldap.ldaps_urls if self.state.ldap.ldaps_urls else self.state.ldap.urls
         )
+        ldap_ca_cert = self.workload.read_file(self.workload.tls_paths.ldap_ca)
+
         tls_context = ldap3.Tls(
             ciphers="ALL",
             version=ssl.PROTOCOL_TLSv1,
             validate=ssl.CERT_REQUIRED,
-            ca_certs_file=self.workload.tls_paths.ldap_ca.as_posix(),
+            ca_certs_data=ldap_ca_cert,
         )
         ldap_server = ldap3.Server(host=ldap_urls[0], use_ssl=True, tls=tls_context)
 
@@ -213,9 +215,10 @@ class AuthManager(ManagerStatusProtocol):
                 time_limit=10,
             ):
                 logger.error(
-                    "Failed to perform LDAP search with base dn %s, filter %s and attribute %s",
+                    "Failed to perform LDAP search with base dn %s, filter %s, group %s and attribute %s",
                     base_dn,
                     search_filter,
+                    ldap_group,
                     search_attribute,
                 )
                 return ldap_users
@@ -224,7 +227,7 @@ class AuthManager(ManagerStatusProtocol):
             return ldap_users
 
         for entry in ldap_connection.entries:
-            ldap_users.add(entry[search_attribute])
+            ldap_users.add(entry[search_attribute].value)
 
         return ldap_users
 

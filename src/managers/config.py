@@ -186,8 +186,8 @@ class ConfigManager(ManagerStatusProtocol):
             "ldap.search_attribute": self.state.config.get("ldap-search-attribute", ""),
             "ldap.search_dn_attribute": self.state.config.get("ldap-search-dn-attribute", ""),
             "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
-            # disable the failure_detector_interval because of:
-            # failed to run WhoAmI command on the ldap server: LDAP operation result: rc=2 (protocolError), dn: "", text: "Protocol Error"
+            # disable the failure detection because glauth does not support `WhoAmI` command
+            # https://glauth.github.io/docs/limitations.html
             "ldap.failure_detector_interval": "9223372036854775807",
         }
 
