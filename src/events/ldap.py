@@ -183,7 +183,8 @@ class LDAPEvents(ops.Object):
             return
 
         if (
-            self.charm.state.ldap_ca_cert_relation and not self.charm.workload.tls_paths.ldap_ca.exists()
+            self.charm.state.ldap_ca_cert_relation
+            and not self.charm.workload.tls_paths.ldap_ca.exists()
         ):
             raise ValkeyWorkloadCommandError("LDAP TLS CA certificate not stored yet")
 
