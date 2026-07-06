@@ -313,6 +313,28 @@ class BackupManager(ManagerStatusProtocol):
 
     # ── restore ─────────────────────────────────────────────────────────
 
+    def verify_backup_is_rdb(self, backup_id: str) -> None:
+        """Confirm the S3 object starts with the RDB magic, cheaply, before touching valkey.
+
+        A ranged GET of just the first bytes (not the whole object), so a missing
+        or non-RDB backup-id fails while valkey is still serving -- the primary is
+        stopped only once we know the object is plausibly a real snapshot.
+        """
+        s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyRestoreError("S3 credentials unavailable")
+        bucket = self._get_bucket_resource(s3_parameters)
+        try:
+            head = (
+                bucket.Object(f"{s3_parameters.path}/{backup_id}")
+                .get(Range="bytes=0-15")["Body"]
+                .read()
+            )
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
+        if not head.startswith(_RDB_MAGIC):
+            raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
+
     def download_backup(self, backup_id: str) -> None:
         """Download and validate the RDB straight onto the data partition as ``dump.rdb``.
 

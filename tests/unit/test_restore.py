@@ -237,6 +237,63 @@ def test_download_backup_rejects_non_rdb_head(mocker):
     assert not mgr.workload.move_file.called
 
 
+def test_verify_backup_is_rdb_accepts_valid_head(mocker):
+    """Pre-stop check reads only the head via a ranged GET and passes a real RDB magic."""
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
+    bucket = mocker.Mock()
+    bucket.Object.return_value.get.return_value = {"Body": mocker.Mock(read=lambda: b"REDIS0011")}
+    mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
+
+    mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")  # no raise
+
+    # ranged GET of just the head, not the whole object
+    bucket.Object.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    bucket.Object.return_value.get.assert_called_once_with(Range="bytes=0-15")
+
+
+def test_verify_backup_is_rdb_rejects_bad_head(mocker):
+    """A non-RDB object is rejected by the pre-stop check (before valkey is touched)."""
+    import pytest
+
+    from common.exceptions import ValkeyRestoreError
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
+    bucket = mocker.Mock()
+    bucket.Object.return_value.get.return_value = {
+        "Body": mocker.Mock(read=lambda: b"NOT-AN-RDB..")
+    }
+    mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
+
+    with pytest.raises(ValkeyRestoreError):
+        mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")
+
+
+def test_do_primary_restore_validates_before_touching_valkey(mocker):
+    """A bad backup fails the pre-stop check, so the primary is never stopped or rolled back."""
+    import pytest
+
+    from common.exceptions import ValkeyRestoreError
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    bm = ev.charm.backup_manager
+    bm.verify_backup_is_rdb.side_effect = ValkeyRestoreError("not an RDB")
+
+    with pytest.raises(ValkeyRestoreError):
+        ev._do_primary_restore()
+
+    bm.restore_on_primary.assert_not_called()
+    bm.roll_back.assert_not_called()
+
+
 def test_restore_files_on_correct_partitions(mocker):
     """Only the rollback copy is on archive; the dump and its download temp stay on data."""
     import pathlib
@@ -435,6 +492,7 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
 
     # Make the unit "primary" and stub the destructive workload ops.
     mocker.patch("managers.backup.BackupManager.is_local_primary", return_value=True)
+    mocker.patch("managers.backup.BackupManager.verify_backup_is_rdb")
     mocker.patch("managers.backup.BackupManager.download_backup")
     mocker.patch("managers.backup.BackupManager.restore_on_primary")
     mocker.patch("managers.backup.BackupManager.cleanup_restore_files")

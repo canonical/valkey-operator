@@ -346,7 +346,7 @@ class BackupEvents(ops.Object):
                 return
 
     def _do_primary_restore(self) -> None:
-        """Restore in-place, rolling back on any failure.
+        """Validate the object, then restore in-place, rolling back on any failure.
 
         stop -> back up the current dump -> download the restore RDB onto the
         data partition -> restart all happen inside restore_on_primary. Any
@@ -354,6 +354,10 @@ class BackupEvents(ops.Object):
         copy before propagating to teardown.
         """
         bm = self.charm.backup_manager
+        # Pre-stop gate: reject an object that isn't a real RDB (wrong magic /
+        # missing) while valkey still serves, so a bad backup-id never bounces
+        # the primary. Outside the try: nothing has changed, nothing to roll back.
+        bm.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
         try:
             bm.restore_on_primary()
         except Exception:
