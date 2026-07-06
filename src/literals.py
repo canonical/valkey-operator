@@ -39,7 +39,6 @@ S3_RELATION_NAME = "s3-credentials"
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
-RESTORE_DOWNLOAD_FILENAME = "restore-download.rdb"
 # Normal down-after (matches ConfigManager, config.py:322); suppression raises
 # it to a day so the primary's restart isn't seen as a failure.
 SENTINEL_DOWN_AFTER_MS = 30000

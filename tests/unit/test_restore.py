@@ -198,7 +198,7 @@ def test_download_backup_validates_head_and_moves_atomically(mocker):
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
     mgr.workload = mocker.Mock()
-    mgr.workload.working_dir = mocker.MagicMock()
+    mgr.workload.working_dir = mocker.MagicMock()  # download lands on the data partition
     mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
 
     bucket = mocker.Mock()
@@ -237,6 +237,37 @@ def test_download_backup_rejects_non_rdb_head(mocker):
     assert not mgr.workload.move_file.called
 
 
+def test_restore_files_on_correct_partitions(mocker):
+    """Only the rollback copy is on archive; the dump and its download temp stay on data."""
+    import pathlib
+
+    from src.literals import PRE_RESTORE_SUFFIX
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.workload = mocker.Mock()
+    mgr.workload.working_dir = pathlib.PurePosixPath("/data")
+    mgr.workload.archive_dir = pathlib.PurePosixPath("/archive")
+
+    # New dump is downloaded straight onto the data partition (single write, no
+    # cross-device install); only the pre-restore rollback copy goes to archive.
+    assert str(mgr._dump_path) == "/data/dump.rdb"
+    assert str(mgr._dump_tmp_path) == "/data/dump.rdb.part"
+    assert str(mgr._pre_restore_path) == f"/archive/dump.rdb{PRE_RESTORE_SUFFIX}"
+
+
+def test_vm_move_file_uses_shutil_move_for_cross_device(mocker):
+    """VM move_file uses shutil.move so cross-partition (data<->archive) moves work."""
+    from src.workload_vm import ValkeyVmWorkload
+
+    wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
+    move = mocker.patch("workload_vm.shutil.move")
+    src = mocker.Mock(as_posix=lambda: "/data/dump.rdb")
+    dest = mocker.Mock(as_posix=lambda: "/archive/dump.rdb.pre-restore")
+    wl.move_file(src, dest)
+    move.assert_called_once_with("/data/dump.rdb", "/archive/dump.rdb.pre-restore")
+
+
 def test_next_restore_step():
     from src.literals import RestoreStep
     from src.managers.backup import BackupManager
@@ -246,26 +277,27 @@ def test_next_restore_step():
     assert BackupManager.next_restore_step(RestoreStep.RESYNC) == RestoreStep.COMPLETED
 
 
-def test_restore_on_primary_orders_stop_swap_start(mocker):
+def test_restore_on_primary_orders_stop_backup_download_start(mocker):
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
     mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=mocker.Mock())
+    mgr.workload.path_exists.return_value = False  # no existing pre-restore -> move-aside runs
     calls = []
-    mgr.workload.stop_service.side_effect = lambda s: calls.append(("stop", s))
-    mgr.workload.move_file.side_effect = lambda a, b: calls.append(("move", a, b))
-    mgr.workload.start_service.side_effect = lambda s: calls.append(("start", s))
+    mgr.workload.stop_service.side_effect = lambda s: calls.append("stop")
+    mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")  # dump -> pre-restore
+    mgr.workload.start_service.side_effect = lambda s: calls.append("start")
+    mocker.patch.object(mgr, "download_backup", side_effect=lambda bid: calls.append("download"))
     mocker.patch.object(mgr, "_wait_until_loaded")
-    mocker.patch.object(BackupManager, "_download_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
 
     mgr.restore_on_primary()
 
-    kinds = [c[0] for c in calls]
-    # stop happens before the move-aside, start happens after the swap.
-    assert kinds.index("stop") < kinds.index("move") < kinds.index("start")
+    # back up the current dump first, download the new one onto the freed data
+    # partition, then start -- the download must land after the move-aside.
+    assert calls == ["stop", "move", "download", "start"]
 
 
 def test_roll_back_stops_service_before_swap(mocker):
@@ -346,18 +378,20 @@ def test_tuple_match_skips_step_when_prior_not_reached(mocker):
     bm.set_restore_step.assert_not_called()
 
 
-def test_restore_step_primary_suppresses_downloads_and_restores(mocker):
-    """On RESTORE from NOT_STARTED, the primary suppresses, downloads, and restores in one sweep."""
+def test_restore_step_primary_suppresses_and_restores(mocker):
+    """On RESTORE from NOT_STARTED, the primary suppresses failover then restores.
+
+    The download now happens inside restore_on_primary (after stop + move-aside),
+    so the step just drives suppress + restore_on_primary.
+    """
     from src.events.backup import BackupEvents
     from src.literals import RestoreStep
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
     ev.charm.backup_manager.is_local_primary.return_value = True
-    ev.charm.state.cluster.restore_id = "2026-05-13T10:00:00Z"
     ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
     ev.charm.sentinel_manager.suppress_failover.assert_called_once()
-    ev.charm.backup_manager.download_backup.assert_called_once_with("2026-05-13T10:00:00Z")
     ev.charm.backup_manager.restore_on_primary.assert_called_once()
     ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.RESTORE)
 
@@ -547,26 +581,24 @@ def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
 
 
 def test_restore_on_primary_preserves_existing_pre_restore(mocker):
-    """move_file(dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
+    """move-aside (dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
     mgr.workload = mocker.Mock(valkey_service="valkey")
     # Simulate a redelivered hook: the pre-restore path already holds the original data.
     mgr.workload.path_exists.return_value = True
 
     dump = mocker.Mock()
     pre = mocker.Mock()
-    dl = mocker.Mock()
     mocker.patch.object(
         BackupManager, "_dump_path", new_callable=mocker.PropertyMock, return_value=dump
     )
     mocker.patch.object(
         BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock, return_value=pre
     )
-    mocker.patch.object(
-        BackupManager, "_download_path", new_callable=mocker.PropertyMock, return_value=dl
-    )
+    mocker.patch.object(mgr, "download_backup")
     mocker.patch.object(mgr, "_wait_until_loaded")
 
     mgr.restore_on_primary()
@@ -574,8 +606,8 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
     move_calls = [c.args for c in mgr.workload.move_file.call_args_list]
     # The move-aside (dump → pre-restore) must NOT have run; original data preserved.
     assert (dump, pre) not in move_calls
-    # The swap (download → dump) MUST have run.
-    assert (dl, dump) in move_calls
+    # The restore RDB is still downloaded onto the (preserved) data partition.
+    mgr.download_backup.assert_called_once()
 
 
 def test_wait_until_loaded_times_out_raises_unhealthy(mocker):

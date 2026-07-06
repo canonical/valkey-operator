@@ -346,14 +346,14 @@ class BackupEvents(ops.Object):
                 return
 
     def _do_primary_restore(self) -> None:
-        """Download the RDB, then restore it in-place; roll back on a restore failure.
+        """Restore in-place, rolling back on any failure.
 
-        Download stays outside the try: a failed download swapped nothing, so
-        there is nothing to roll back. Only a restore_on_primary failure needs
-        roll_back before propagating to teardown.
+        stop -> back up the current dump -> download the restore RDB onto the
+        data partition -> restart all happen inside restore_on_primary. Any
+        failure (bad download, unhealthy server) rolls back to the pre-restore
+        copy before propagating to teardown.
         """
         bm = self.charm.backup_manager
-        bm.download_backup(self.charm.state.cluster.restore_id)
         try:
             bm.restore_on_primary()
         except Exception:

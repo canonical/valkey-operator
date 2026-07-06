@@ -29,7 +29,6 @@ from literals import (
     BACKUP_CA_FILENAME,
     BACKUP_ID_FORMAT,
     PRE_RESTORE_SUFFIX,
-    RESTORE_DOWNLOAD_FILENAME,
     RESTORE_LOAD_TIMEOUT_S,
     RESTORE_RESYNC_TIMEOUT_S,
     CharmUsers,
@@ -105,24 +104,26 @@ class BackupManager(ManagerStatusProtocol):
         return self.state.charm.charm_dir / BACKUP_CA_FILENAME
 
     @property
-    def _download_path(self) -> pathops.PathProtocol:
-        """Final path for a successfully-downloaded RDB before restore."""
-        return self.workload.working_dir / RESTORE_DOWNLOAD_FILENAME
-
-    @property
-    def _download_tmp_path(self) -> pathops.PathProtocol:
-        """Temp path used during download; renamed atomically to ``_download_path``."""
-        return self.workload.working_dir / (RESTORE_DOWNLOAD_FILENAME + ".part")
-
-    @property
     def _dump_path(self) -> pathops.PathProtocol:
         """Live Valkey RDB path (``dump.rdb``) inside the workload's data directory."""
         return self.workload.working_dir / "dump.rdb"
 
     @property
+    def _dump_tmp_path(self) -> pathops.PathProtocol:
+        """Temp path for a fresh download; renamed atomically onto ``_dump_path``.
+
+        On the data partition next to ``dump.rdb``, so the promote is a
+        same-partition rename (not a cross-device copy).
+        """
+        return self.workload.working_dir / "dump.rdb.part"
+
+    @property
     def _pre_restore_path(self) -> pathops.PathProtocol:
-        """Path where the pre-restore RDB snapshot is preserved for rollback."""
-        return self.workload.working_dir / ("dump.rdb" + PRE_RESTORE_SUFFIX)
+        """Pre-restore RDB snapshot kept for rollback, on the archive partition.
+
+        On archive_dir so the rollback copy doesn't double the data partition.
+        """
+        return self.workload.archive_dir / ("dump.rdb" + PRE_RESTORE_SUFFIX)
 
     # ── boto3 client construction ────────────────────────────────────────
 
@@ -313,12 +314,15 @@ class BackupManager(ManagerStatusProtocol):
     # ── restore ─────────────────────────────────────────────────────────
 
     def download_backup(self, backup_id: str) -> None:
-        """Download and validate the RDB, placing it atomically in the data dir.
+        """Download and validate the RDB straight onto the data partition as ``dump.rdb``.
 
         Streams into a charm-local temp file (O(1) memory, not a whole-object
-        buffer), checks the magic header, then pushes under a ``.part`` name and
-        renames onto the final name only on success -- so the final path never
-        holds a partial or invalid file.
+        buffer), checks the magic header, then pushes under ``dump.rdb.part`` and
+        renames onto ``dump.rdb`` (same partition -> atomic), so the final file
+        never appears partial or invalid. The caller (restore_on_primary) has
+        already moved the old dump aside to the archive partition, so the data
+        partition holds only ~1x the dataset and the new dump is written once,
+        with no cross-device copy to install it.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
@@ -342,12 +346,12 @@ class BackupManager(ManagerStatusProtocol):
             # The NamedTemporaryFile wrapper is a binary file at runtime; cast for the stub.
             self.workload.push_data_file(
                 cast(BinaryIO, tmp),
-                self._download_tmp_path,
+                self._dump_tmp_path,
                 user=self.workload.user,
                 group=self.workload.user,
             )
-        # Atomic promote: only now does the final name exist, and only complete.
-        self.workload.move_file(self._download_tmp_path, self._download_path)
+        # Atomic promote: same-partition rename, so dump.rdb only ever appears complete.
+        self.workload.move_file(self._dump_tmp_path, self._dump_path)
 
     # ── restore steps ────────────────────────────────────────────────────
 
@@ -426,17 +430,21 @@ class BackupManager(ManagerStatusProtocol):
             ) from e
 
     def restore_on_primary(self) -> None:
-        """Stop valkey-server, swap in the restored RDB, restart, wait for load.
+        """Stop valkey, back up the current dump, download the restore RDB in its place, restart.
 
-        Bypasses restart_workload/RestartLock (can't bracket a file swap);
-        concurrent restarts are held off by the is_restore_in_progress defer.
+        Moves the current dump to the archive partition for rollback, then
+        downloads the restore RDB straight onto the (now-free) data partition, so
+        neither partition ever holds more than ~1x the dataset. Bypasses
+        restart_workload/RestartLock (can't bracket a file swap); concurrent
+        restarts are held off by the is_restore_in_progress defer.
         """
         self.workload.stop_service(self.workload.valkey_service)
         # On a redelivered hook _pre_restore_path already holds the ORIGINAL data;
         # don't overwrite it (the only rollback copy). Skip the aside if it exists.
         if not self.workload.path_exists(self._pre_restore_path):
             self.workload.move_file(self._dump_path, self._pre_restore_path)
-        self.workload.move_file(self._download_path, self._dump_path)
+        # Data partition is now free; download the restore RDB directly onto it.
+        self.download_backup(self.state.cluster.restore_id)
         self.workload.start_service(self.workload.valkey_service)
         self._wait_until_loaded()
 
@@ -448,9 +456,8 @@ class BackupManager(ManagerStatusProtocol):
         self.workload.start_service(self.workload.valkey_service)
 
     def cleanup_restore_files(self) -> None:
-        """Remove the pre-restore copy and the downloaded RDB after a successful restore."""
+        """Remove the pre-restore rollback copy after a successful restore."""
         self.workload.remove_file(self._pre_restore_path)
-        self.workload.remove_file(self._download_path)
 
     # ── helpers ─────────────────────────────────────────────────────────
 
