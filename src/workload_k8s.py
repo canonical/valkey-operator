@@ -230,8 +230,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         user: str | None = None,
         group: str | None = None,
     ) -> None:
-        # K8s: charm and valkey containers are separate; stream into the
-        # container via Pebble push (accepts a file-like source).
+        # K8s: separate containers; stream into the workload via Pebble push.
         try:
             self.container.push(
                 dest.as_posix(),
@@ -245,8 +244,7 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
-        # No rename primitive in pathops, and the charm can't os.replace inside
-        # the valkey container; shell out via Pebble exec.
+        # No pathops rename inside the container; shell out via Pebble exec.
         try:
             self.container.exec(command=["mv", src.as_posix(), dest.as_posix()]).wait()
         except (

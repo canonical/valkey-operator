@@ -408,9 +408,8 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
     mocker.patch("managers.sentinel.SentinelManager.resume_failover")
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    # PeerModel has serialize_by_alias=True + alias_generator=underscore→hyphen,
-    # so the charm reads AND writes relation-data keys in hyphenated form.
-    # Use hyphenated keys here so the final delete_field("restore-id") removes them.
+    # PeerModel serializes with hyphenated aliases, so use hyphenated keys here
+    # (the final delete_field("restore-id") must match).
     peer = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
@@ -580,12 +579,9 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
 def test_wait_until_loaded_times_out_raises_unhealthy(mocker):
     """_wait_until_loaded raises ValkeyRestoreUnhealthyError when ping never succeeds.
 
-    Import BackupManager via the flat path (``managers.backup``) so that the
-    patches on ``managers.backup.stop_after_delay`` / ``wait_fixed`` land in the
-    same module dict as ``_wait_until_loaded.__globals__``.  Using
-    ``src.managers.backup`` would produce a separate module object in the full
-    test suite (both names resolve to the same file, but Python registers them
-    as distinct entries in ``sys.modules``), causing the patch to miss.
+    Import via the flat path (``managers.backup``, not ``src.managers.backup``)
+    so the stop_after_delay / wait_fixed patches hit the same module object the
+    function's globals resolve to -- the two paths are distinct sys.modules keys.
     """
     import pytest
     import tenacity

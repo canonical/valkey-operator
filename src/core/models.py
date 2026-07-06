@@ -257,7 +257,7 @@ class ValkeyServer(RelationState):
 
     @property
     def restore_role(self) -> str:
-        """`primary` or `replica`, captured at DOWNLOAD; empty if not in a restore."""
+        """`primary` or `replica`, captured at the RESTORE step; empty if not in a restore."""
         return self.model.restore_role if self.model else ""
 
     @property

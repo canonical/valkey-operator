@@ -366,12 +366,9 @@ class SentinelManager(ManagerStatusProtocol):
     def is_failover_in_progress(self) -> bool:
         """Snapshot whether Sentinel reports a failover in flight for the primary.
 
-        Deliberately does NOT call ``SentinelClient.is_failover_in_progress``,
-        which is ``@retry``-decorated and blocks up to ~3 min waiting for an
-        in-flight failover to settle. The restore action guard needs an
-        instantaneous read so it can fail fast, so this reads the primary flags
-        directly. Any sentinel knows the monitored primary, so we query the
-        local endpoint (as ``failover`` does).
+        Reads the primary flags directly rather than the ``@retry``-decorated
+        ``SentinelClient.is_failover_in_progress`` (which blocks ~3 min): the
+        restore guard needs an instantaneous, fail-fast read.
         """
         client = self._get_sentinel_client()
         return "failover_in_progress" in client.primary(hostname=self.state.endpoint).get(

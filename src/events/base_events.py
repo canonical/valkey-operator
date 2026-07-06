@@ -295,11 +295,9 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
-        # A restore refuses scale-down (storage-detaching raises), so a genuine
-        # departure should not occur mid-restore. If one is observed anyway we
-        # return rather than defer: deferring a relation-departed event is
-        # unsafe (the departing unit's data may already be gone), and quorum is
-        # reconciled by the next relation event after the restore completes.
+        # Scale-down is refused during a restore (storage-detaching raises), so a
+        # departure shouldn't happen mid-restore; if it does, return rather than
+        # defer (deferring a departed event is unsafe). Quorum reconciles later.
         if self.charm.state.cluster.is_restore_in_progress:
             return
 

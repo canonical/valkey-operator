@@ -205,17 +205,11 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def can_restore_workflow_proceed(self) -> bool:
         """True only when every restore participant has reached the current step.
 
-        The leader advances the restore one step at a time and calls this to
-        decide when the whole cluster is ready for the next step. It returns
-        True only if every unit named in ``restore_participants`` (the set
-        snapshotted when the restore began) is currently live AND has recorded
-        ``restore_step == restore_instruction``.
-
-        Fail-closed by design: a participant that has since departed is absent
-        from the live ``servers`` set, so it counts as "not reached" and the
-        gate blocks. We iterate the snapshotted participant names -- not the
-        live servers -- precisely so a departed unit stalls the restore instead
-        of being silently skipped, which is what iterating ``servers`` would do.
+        The leader advances the restore one step at a time; this gates the next
+        step until every unit in ``restore_participants`` (snapshotted at
+        initiation) is live and has recorded ``restore_step == restore_instruction``.
+        Fail-closed: a departed participant is absent from ``servers`` and counts
+        as not reached, so the restore stalls rather than silently skipping it.
         """
         instruction = self.cluster.restore_instruction
         by_name = {server.unit_name: server for server in self.servers}

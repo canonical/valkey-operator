@@ -308,10 +308,9 @@ class WorkloadBase(ABC):
 
     @abstractmethod
     def stop_service(self, service: str) -> None:
-        """Stop a single workload service (e.g. just valkey-server, leaving sentinel up).
+        """Stop a single workload service (e.g. valkey-server, leaving sentinel up).
 
-        Must verify the SPECIFIC service stopped, not ``alive()`` (which
-        requires all services up and would never see a valkey-only stop).
+        Must verify the SPECIFIC service stopped, not ``alive()`` (which needs all up).
         """
         pass
 

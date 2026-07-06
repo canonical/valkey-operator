@@ -40,13 +40,12 @@ BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
 RESTORE_DOWNLOAD_FILENAME = "restore-download.rdb"
-# Matches the value rendered by ConfigManager (config.py:322). Suppression
-# raises down-after to a day so the primary's restart isn't seen as a failure;
-# resume restores the normal value.
+# Normal down-after (matches ConfigManager, config.py:322); suppression raises
+# it to a day so the primary's restart isn't seen as a failure.
 SENTINEL_DOWN_AFTER_MS = 30000
 SENTINEL_DOWN_AFTER_SUPPRESSED_MS = 86_400_000
-# Generous bounded waits: a large RDB load / full resync may exceed the stock
-# 25s health helpers; an unbounded poll hangs the hook on a crash-loop.
+# Generous bounded waits: a big RDB load / resync can exceed the stock 25s
+# helpers, but an unbounded poll would hang the hook on a crash-loop.
 RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 
@@ -115,9 +114,8 @@ class StartState(StrEnum):
 class RestoreStep(StrEnum):
     """Steps of the restore coordination workflow (ordered).
 
-    RESTORE is a single fused barrier: the primary suppresses failover,
-    downloads the RDB, and swaps it in. Download and restore are not separate
-    barriers because no unit has cross-unit work to do between them.
+    RESTORE is one fused barrier (primary suppresses failover, downloads, swaps
+    in the RDB); download and restore aren't split since no unit has work between.
     """
 
     NOT_STARTED = ""

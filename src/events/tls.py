@@ -112,10 +112,8 @@ class TLSEvents(ops.Object):
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle TLS related changes to the peer relation."""
-        # Skip during a restore: CA rotation / cert renewal would collide with
-        # the primary's restart. Safe, not dropped -- restore completion clears
-        # restore_id, firing another peer-relation-changed that re-runs this
-        # handler from current state once the restore is done.
+        # Skip during a restore (CA rotation would collide with the primary
+        # restart). Restore completion re-fires relation-changed, reconciling then.
         if self.charm.state.cluster.is_restore_in_progress:
             return
 

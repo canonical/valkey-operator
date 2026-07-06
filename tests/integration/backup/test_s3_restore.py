@@ -150,13 +150,9 @@ def _leader_unit_name(juju: jubilant.Juju) -> str:
 def upload_corrupt_backup(juju: jubilant.Juju, s3_bucket, microceph: dict) -> str:  # noqa: ARG001
     """Upload a corrupt (non-RDB) object to the S3 bucket; return its backup-id.
 
-    The object's first bytes are ``b'CORRUPT'`` -- not ``b'REDIS'`` or
-    ``b'VALKEY'`` -- so ``download_backup`` raises ``ValkeyRestoreError`` on
-    the magic-byte check, triggering ``_restore_teardown`` without touching
-    the live RDB.
-
-    Uses a timestamp one hour in the past to avoid colliding with real backup
-    ids that might be generated during the same test run.
+    Its bytes aren't the RDB magic, so download_backup fails the magic-byte check
+    and tears down without touching the live RDB. The id is timestamped an hour
+    back to avoid colliding with real backups made during the run.
     """
     backup_id = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     key = f"{microceph['path']}/{backup_id}"

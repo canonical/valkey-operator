@@ -37,12 +37,8 @@ logger = logging.getLogger(__name__)
 def _safe_error(exc: ValkeyBackupError) -> str:
     """Render a backup error safe to return in an action result.
 
-    Action results are readable by any Juju user, unlike ``juju
-    debug-log``. The raw exception text can carry the S3 endpoint,
-    request/host ids, or RDB stream metadata, so only the structured S3
-    error code -- a fixed, non-sensitive token such as "AccessDenied" --
-    is surfaced. Everything else collapses to a generic message; the full
-    detail stays in the unit log.
+    Action results are world-readable, so surface only the structured S3 error
+    code (e.g. "AccessDenied"); the full detail stays in the unit log.
     """
     cause = exc.__cause__ or (exc.args[0] if exc.args else None)
     if isinstance(cause, ClientError):
@@ -71,8 +67,7 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
         self.framework.observe(self.charm.on.restore_backup_action, self._on_restore_action)
-        # Drive the async restore state machine on every peer data change and
-        # on update-status (leader can advance without waiting for a remote change).
+        # Drive the async restore state machine on peer data changes and update-status.
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_changed, self._on_restore_workflow
         )
@@ -88,9 +83,8 @@ class BackupEvents(ops.Object):
             return
         logger.info("S3 credentials changed; refreshing backup configuration")
 
-        # CA chain must be on disk for every unit so any unit can use TLS to S3.
-        # Stored from the raw envelope (a follower needs only the CA, which may
-        # arrive before the full credentials); store_tls_ca_chain is tolerant.
+        # Every unit needs the S3 CA on disk for TLS; a follower may receive it
+        # before full credentials, and store_tls_ca_chain tolerates that.
         self.charm.backup_manager.store_tls_ca_chain(dict(s3_info))
 
         if not self.charm.unit.is_leader():
@@ -99,20 +93,15 @@ class BackupEvents(ops.Object):
             event.defer()
             return
 
-        # Parse + normalise + validate the integrator envelope in one step:
-        # S3Parameters trims whitespace, strips the separators that would
-        # corrupt S3 key paths, and rejects an envelope missing a required
-        # field or whose path/bucket strips to empty.
+        # S3Parameters trims/validates the envelope and rejects missing/empty fields.
         try:
             params = S3Parameters.model_validate(dict(s3_info))
         except ValidationError as e:
             logger.warning("S3 integrator parameters invalid or incomplete: %s", e)
             return
 
-        # leader_elected re-fires this handler; skip the create_bucket round
-        # trip (a synchronous S3 call) when the envelope is unchanged. Compare
-        # by value (model_dump) rather than identity. A real credentials
-        # rotation still falls through.
+        # leader_elected re-fires this; skip the create_bucket round trip when the
+        # envelope is unchanged (compare by value). A real rotation still falls through.
         stored = self.charm.state.cluster.s3_credentials
         if stored is not None and stored.model_dump() == params.model_dump():
             return
@@ -146,17 +135,14 @@ class BackupEvents(ops.Object):
             event.set_results({"error": reason})
             event.fail(reason)
             return
-        # Audit the invocation itself, not just the manager-level transfer
-        # (P1-24): ties a specific Juju action run to the resulting backup,
-        # for forensics if an RDB later turns up somewhere unexpected.
+        # Audit the action invocation (P1-24): ties an action run to its backup.
         logger.info(
             "audit: create-backup action invoked action_id=%s unit=%s",
             event.id,
             self.charm.unit.name,
         )
         event.log("Streaming backup to S3 ...")
-        # Surface the long-running backup in `juju status` while the action
-        # blocks; is_action forces it past lower-priority statuses.
+        # Surface the running backup in juju status; is_action beats lower-priority statuses.
         self.charm.status.set_running_status(
             BackupStatuses.BACKUP_IN_PROGRESS.value,
             scope="unit",
@@ -212,11 +198,8 @@ class BackupEvents(ops.Object):
     def _blocking_reason(self, check_running_operations: bool = True) -> str | None:
         """Return why a backup action cannot run, or None if it can.
 
-        Covers the preconditions shared by create-backup and list-backups.
-        With ``check_running_operations`` (the default), it also rejects a
-        backup already running on this unit; list-backups passes ``False``
-        because it is read-only and safe to run concurrently. The same flag
-        will let a future restore action share this guard.
+        Shared by create-backup and list-backups; the latter passes
+        ``check_running_operations=False`` since it is read-only.
         """
         if not self.charm.state.s3_relation:
             return "No S3 relation. Integrate with s3-integrator first."
@@ -242,7 +225,7 @@ class BackupEvents(ops.Object):
             return "A backup is in progress; cannot restore."
         if self.charm.state.cluster.is_restore_in_progress:
             return "A restore is already in progress."
-        # Stable cluster: all participants active + a resolvable primary + no failover in flight.
+        # Require a stable cluster: all active, a resolvable primary, no failover in flight.
         if not all(s.is_active for s in self.charm.state.servers):
             return "Not all units are active; wait for the cluster to settle."
         try:
@@ -302,8 +285,8 @@ class BackupEvents(ops.Object):
         cluster = self.charm.state.cluster
         unit = self.charm.state.unit_server
 
-        # COMPLETED ordering: once the leader has cleared restore_id, units
-        # clear their own per-unit restore state (and only then).
+        # Restore done: once the leader clears restore_id, each unit clears its
+        # own per-unit state (and only then).
         if not cluster.is_restore_in_progress:
             if unit.restore_step != RestoreStep.NOT_STARTED:
                 unit.update({"restore_step": "", "restore_role": ""})
@@ -311,19 +294,15 @@ class BackupEvents(ops.Object):
 
         instruction = cluster.restore_instruction
         step = unit.restore_step
-        role = unit.restore_role  # "" until DOWNLOAD records it
+        role = unit.restore_role  # "" until the RESTORE step records it
 
         try:
             self._run_restore_step(instruction, step, role)
         except Exception as e:
-            # Catch everything on purpose. If any step raises, teardown MUST run
-            # resume_failover() to undo the cluster-wide failover suppression --
-            # otherwise Sentinel can never promote a replica again. A narrower
-            # except would let unrelated error types escape and leave
-            # suppression stuck on; the service-control errors
-            # ValkeyServicesFailedToStartError / ValkeyServicesCouldNotBeStoppedError
-            # are plain Exception subclasses, not part of the restore-error
-            # hierarchy, so they are exactly the kind that would slip through.
+            # Catch everything: teardown MUST resume_failover() on any failure to
+            # undo the cluster-wide suppression, else Sentinel can never promote
+            # again. Service-control errors sit outside the restore-error hierarchy,
+            # so a narrower except would let them escape.
             logger.exception("Restore step failed; tearing down")
             self._restore_teardown(e)
             return
@@ -338,13 +317,11 @@ class BackupEvents(ops.Object):
 
         match (instruction, step):
             case (RestoreStep.RESTORE, RestoreStep.NOT_STARTED):
-                # Fused download+restore. The primary suppresses failover, then
-                # downloads and swaps in the RDB in one sweep; replicas only
-                # record the step (they resync at the next barrier). There is no
-                # cross-unit work between download and restore, and
-                # suppress_failover already configures *every* sentinel in one
-                # call, so a separate DOWNLOAD barrier would add a hook
-                # round-trip for no coordination benefit.
+                # Fused download+restore: primary suppresses failover then
+                # downloads and swaps the RDB in one sweep; replicas just record
+                # the step. No cross-unit work sits between download and restore
+                # (suppress_failover already hits every sentinel), so a split
+                # barrier buys nothing.
                 is_primary = bm.is_local_primary()
                 unit.update({"restore_role": "primary" if is_primary else "replica"})
                 if is_primary:
@@ -365,18 +342,15 @@ class BackupEvents(ops.Object):
                 bm.set_restore_step(RestoreStep.COMPLETED)
 
             case _:
-                # Not our turn (tuple doesn't match an expected transition): no-op.
+                # Not our turn: tuple doesn't match a valid transition.
                 return
 
     def _do_primary_restore(self) -> None:
-        """Download the RDB, then restore it in-place; roll back on any restore failure.
+        """Download the RDB, then restore it in-place; roll back on a restore failure.
 
-        Download stays outside the try: if it fails (e.g. a corrupt object fails
-        the magic-byte check) nothing has been swapped yet, so there is nothing
-        to roll back -- the live dump is untouched and teardown just resumes
-        failover. Only a restore_on_primary failure (a bad service stop/start or
-        an unhealthy server after the swap) needs roll_back before propagating,
-        so the teardown in _on_restore_workflow can resume_failover afterwards.
+        Download stays outside the try: a failed download swapped nothing, so
+        there is nothing to roll back. Only a restore_on_primary failure needs
+        roll_back before propagating to teardown.
         """
         bm = self.charm.backup_manager
         bm.download_backup(self.charm.state.cluster.restore_id)
@@ -407,10 +381,9 @@ class BackupEvents(ops.Object):
         )
 
     def _restore_teardown(self, exc: Exception | None = None) -> None:
-        """Resume failover suppression, flag failure, and (leader) clear restore state.
+        """Resume failover, flag failure, and (leader) clear restore state.
 
-        Sets RESTORE_UNHEALTHY when the cluster came up but was not healthy
-        (ValkeyRestoreUnhealthyError), RESTORE_FAILED for all other failures.
+        RESTORE_UNHEALTHY on ValkeyRestoreUnhealthyError, RESTORE_FAILED otherwise.
         """
         self.charm.sentinel_manager.resume_failover()
         status = (
