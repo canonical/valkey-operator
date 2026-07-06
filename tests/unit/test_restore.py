@@ -454,6 +454,8 @@ def test_storage_detaching_refuses_during_restore(mocker):
 
     ev = BaseEvents.__new__(BaseEvents)
     ev.charm = mocker.Mock()
+    # Not already scaled down (the is_being_removed early-return runs first).
+    ev.charm.state.unit_server.is_being_removed = False
     ev.charm.state.unit_server.is_backup_in_progress = False
     ev.charm.state.cluster.is_restore_in_progress = True
     import pytest

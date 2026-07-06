@@ -4,6 +4,7 @@
 
 """Unit tests for ConfigManager.get_config_properties override block."""
 
+from pathlib import PurePosixPath
 from unittest.mock import MagicMock
 
 import pytest
@@ -92,3 +93,22 @@ def test_repl_backlog_size_is_ram_gated(ram_bytes, expected_present, expected_va
         assert props["repl-backlog-size"] == expected_value
     else:
         assert "repl-backlog-size" not in props
+
+
+def test_valkey_logfile_points_to_logs_volume():
+    """valkey.conf logs to <log_dir>/valkey.log; dir stays the data volume."""
+    cm = _make_config_manager()
+    cm.workload.log_dir = PurePosixPath("/var/log/valkey")
+    props = cm.get_config_properties(primary_endpoint="10.0.0.5")
+    assert props["logfile"] == "/var/log/valkey/valkey.log"
+    assert props["dir"] == "/var/lib/valkey"  # unchanged — data volume
+
+
+def test_sentinel_logfile_points_to_logs_volume(mocker):
+    """sentinel.conf gets a top-level logfile in the logs volume."""
+    cm = _make_config_manager()
+    cm.workload.log_dir = PurePosixPath("/var/log/valkey")
+    mocker.patch.object(cm, "_generate_sentinel_configs", return_value={})
+    mocker.patch.object(cm, "generate_sentinel_tls_config", return_value={})
+    props = cm.get_sentinel_config_properties(primary_endpoint="10.0.0.5")
+    assert props["logfile"] == "/var/log/valkey/sentinel.log"
