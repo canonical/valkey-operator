@@ -158,7 +158,7 @@ class AuthManager(ManagerStatusProtocol):
             client_users = (username for username in external_client_users)
 
         # get configured LDAP groups and generate ACL lines for the LDAP members of these groups
-        base_auth_rule = "-@all"
+        base_auth_rule = "-@all +info +ping"
         for group, permissions in self._resolve_ldap_group_permissions().items():
             group_auth_rule = " ".join(permission for permission in permissions)
             ldap_users = self._get_ldap_users_for_group(group)

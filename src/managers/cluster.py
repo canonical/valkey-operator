@@ -78,13 +78,13 @@ class ClusterManager(ManagerStatusProtocol):
         value = "1" if active_units >= 3 else "0"
         try:
             client = self._get_valkey_client()
-            if not client.config_set(
+            client.load_config_settings(
                 hostname=self.state.endpoint,
-                parameter="min-replicas-to-write",
-                value=value,
-            ):
-                raise ValkeyConfigSetError("Could not set min-replicas-to-write on Valkey server.")
-        except (ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+                config_settings={
+                    "min-replicas-to-write": value,
+                },
+            )
+        except ValkeyWorkloadCommandError as e:
             # non-critical; reasserted on the next event or restart
             logger.error("Failed to reconcile min-replicas-to-write: %s", e)
 

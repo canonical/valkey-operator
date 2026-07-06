@@ -244,6 +244,7 @@ def test_enable_ldap(cloud_spec):
         event = MagicMock(spec=LdapReadyEvent)
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists"),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
@@ -303,6 +304,7 @@ def test_disable_ldap(cloud_spec):
         event = MagicMock(spec=LdapUnavailableEvent)
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists"),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
@@ -501,6 +503,7 @@ def test_config_change(cloud_spec):
         charm: ValkeyCharm = manager.charm
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists"),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
@@ -641,6 +644,7 @@ def test_ldap_bind_secret_update(cloud_spec):
         charm: ValkeyCharm = manager.charm
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists"),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
@@ -719,6 +723,7 @@ def test_reload_ldap_fails(cloud_spec):
     )
 
     with (
+        patch("charmlibs.pathops.ContainerPath.exists"),
         patch("managers.sentinel.SentinelManager.get_primary_ip"),
         patch("managers.config.ConfigManager.set_config_properties") as set_config,
         patch(

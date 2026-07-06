@@ -173,7 +173,6 @@ class BackupStatuses(Enum):
     )
 
 
-
 class AuthStatuses(Enum):
     """Collection of statuses related to authentication or authorization."""
 

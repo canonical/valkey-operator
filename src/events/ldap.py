@@ -182,6 +182,11 @@ class LDAPEvents(ops.Object):
         if not self.charm.state.unit_server.is_started:
             return
 
+        if (
+            self.charm.state.ldap_ca_cert_relation and not self.charm.workload.tls_paths.ldap_ca.exists()
+        ):
+            raise ValkeyWorkloadCommandError("LDAP TLS CA certificate not stored yet")
+
         logger.info("Update LDAP configuration")
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
