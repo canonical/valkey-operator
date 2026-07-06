@@ -200,6 +200,10 @@ class ClusterManager(ManagerStatusProtocol):
 
     def reload_ldap_settings(self, ldap_config: dict[str, str]) -> None:
         """Update Valkey auth by loading the LDAP settings."""
+        if not ldap_config:
+            # disable LDAP by unsetting the server connection
+            ldap_config["ldap.servers"] = ""
+
         client = self._get_valkey_client()
         client.load_config_settings(ldap_config, hostname=self.state.endpoint)
 

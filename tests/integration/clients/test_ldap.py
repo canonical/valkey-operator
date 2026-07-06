@@ -5,6 +5,7 @@
 import logging
 
 import jubilant
+import pytest
 
 from literals import CharmUsers, Substrate
 from statuses import AuthStatuses
@@ -14,6 +15,7 @@ from tests.integration.helpers import (
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
+    WrongPassError,
     are_agents_idle,
     auth_test,
     does_status_match,
@@ -84,11 +86,9 @@ def test_build_and_deploy(
         timeout=600,
     )
 
-    if substrate == "vm":
+    if substrate == Substrate.VM:
         logger.info("Set up ingress")
-        juju_k8s_model.integrate(
-            f"{LDAP_NAME}:ldaps-ingress", f"{LDAP_INGRESS_NAME}:ingress-per-unit"
-        )
+        juju_k8s_model.integrate(f"{LDAP_NAME}:ingress", f"{LDAP_INGRESS_NAME}:ingress-per-unit")
         juju_k8s_model.wait(jubilant.all_active)
 
     logger.info("Set up LDAP users")
@@ -100,10 +100,10 @@ def test_build_and_deploy(
     ldif_action = juju_k8s_model.run(utils_unit, "apply-ldif", params={"path": target_path})
     assert ldif_action.status == "completed", "ldif-apply should succeed"
 
-    if substrate == "vm":
+    if substrate == Substrate.VM:
         logger.info("Set up cross-model offers")
-        juju_k8s_model.offer(app=LDAP_NAME, endpoint="ldap")
-        juju_k8s_model.offer(app=LDAP_NAME, endpoint="send-ca-cert")
+        juju_k8s_model.offer(app=LDAP_NAME, endpoint="ldap", name="ldap")
+        juju_k8s_model.offer(app=LDAP_NAME, endpoint="send-ca-cert", name="ca")
 
 
 def test_ldap_integration(
@@ -111,13 +111,17 @@ def test_ldap_integration(
 ) -> None:
     """Connect Valkey to the LDAP provider."""
     logger.info("Integrating Valkey with LDAP")
-    if substrate == "vm":
+    if substrate == Substrate.VM:
         juju_k8s_model_name = juju_k8s_model.model.split(":")[1]
-        ldap_name = f"{juju_k8s_model_name}.{LDAP_NAME}"
+        ldap_name = "ldap"
+        ca_name = "ca"
+        juju.consume(f"{juju_k8s_model_name}.{ldap_name}")
+        juju.consume(f"{juju_k8s_model_name}.{ca_name}")
     else:
         ldap_name = LDAP_NAME
+        ca_name = LDAP_NAME
 
-    juju.integrate(f"{APP_NAME}:ldap", f"{ldap_name}:ldap")
+    juju.integrate(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
         lambda status: does_status_match(
@@ -128,7 +132,7 @@ def test_ldap_integration(
     )
 
     logger.info("Add LDAP CA certificate")
-    juju.integrate(f"{APP_NAME}:ldap-ca-cert", f"{ldap_name}:send-ca-cert")
+    juju.integrate(f"{APP_NAME}:ldap-ca-cert", ca_name)
     juju.wait(
         lambda status: does_status_match(
             status,
@@ -196,8 +200,14 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     ), "Failed to read data for charm user with LDAP enabled"
 
 
-def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
+def test_ensure_ldap_auth(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Ensure authentication with LDAP works and authorization is set up correctly."""
+    if substrate == Substrate.VM:
+        logger.info(
+            "Skip test on VM due to GLAuth not advertising IP SAN in TLS certs, see issue #281"
+        )
+        return
+
     endpoints = get_cluster_endpoints(juju, APP_NAME)
 
     logger.info("Ensure access for LDAP user with read and write permissions")
@@ -265,7 +275,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
     )
 
 
-def test_disable_ldap(juju: jubilant.Juju) -> None:
+def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Ensure LDAP users can no longer access Valkey after LDAP was disabled."""
     logger.info("Disabling LDAP")
     juju.remove_relation(f"{APP_NAME}:ldap", LDAP_NAME)
@@ -298,14 +308,21 @@ def test_disable_ldap(juju: jubilant.Juju) -> None:
         == TEST_VALUE
     ), "Failed to read data for charm user with LDAP enabled"
 
+    if substrate == Substrate.VM:
+        logger.info(
+            "Skip test on VM due to GLAuth not advertising IP SAN in TLS certs, see issue #281"
+        )
+        return
+
     logger.info("Ensure access fails for LDAP user")
     # connect with user in LDAP group "superheroes"
     username = "johndoe"
     password = "dogood"
 
-    assert not auth_test(
-        juju=juju,
-        endpoints=endpoints,
-        username=username,
-        password=password,
-    )
+    with pytest.raises(WrongPassError):
+        auth_test(
+            juju=juju,
+            endpoints=endpoints,
+            username=username,
+            password=password,
+        )

@@ -14,7 +14,7 @@ from tenacity import Retrying, stop_after_delay, wait_fixed
 from literals import Substrate
 from tests.integration.helpers import GLIDE_RUNNER_NAME, are_apps_active_and_agents_idle
 
-MICROK8S_CLOUD_NAME = "2nd_k8s"
+MICROK8S_CLOUD_NAME = "mk8s"
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,11 @@ def juju(arch: str):
 
 
 @pytest.fixture(scope="module")
-def lxd_cloud(juju: jubilant.Juju):
+def lxd_cloud(juju: jubilant.Juju, substrate: Substrate):
+    if substrate == Substrate.K8S:
+        yield ""
+        return
+
     clouds = json.loads(juju.cli("clouds", "--format", "json", include_model=False))
     for cloud, details in clouds.items():
         if "lxd" == details.get("type"):
@@ -87,7 +91,11 @@ def lxd_cloud(juju: jubilant.Juju):
 
 
 @pytest.fixture(scope="module")
-def lxd_controller(lxd_cloud: str, juju: jubilant.Juju):
+def lxd_controller(lxd_cloud: str, juju: jubilant.Juju, substrate: Substrate):
+    if substrate == Substrate.K8S:
+        yield ""
+        return
+
     controllers = json.loads(juju.cli("controllers", "--format", "json", include_model=False))
     for controller, details in controllers.get("controllers").items():
         if lxd_cloud == details.get("cloud"):
@@ -172,7 +180,7 @@ def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju):
 
 @pytest.fixture(scope="module")
 def juju_k8s_model(arch: str, k8s_cloud: str, lxd_controller: str, substrate: Substrate):
-    if substrate == "k8s":
+    if substrate == Substrate.K8S:
         juju_k8s = jubilant.Juju(model="testing")
         juju_k8s.wait_timeout = 1000
         yield juju_k8s
