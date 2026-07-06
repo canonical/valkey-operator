@@ -162,12 +162,12 @@ class AuthStatuses(Enum):
     )
 
     LDAP_MAP_CONFIG_MISSING = StatusObject(
-        status="blocked", message="LDAP: Missing configuration for `ldap-map`"
+        status="blocked", message="LDAP: Missing config for `ldap-map`"
     )
 
     LDAP_MAP_INTEGRATION_MISSING = StatusObject(
         status="blocked",
-        message="LDAP: Missing authorization rule requests (`entity-permissions`)",
+        message="LDAP: Missing `entity-permissions`",
     )
 
     LDAP_MAP_PERMISSION_REQUEST_MISSING = StatusObject(

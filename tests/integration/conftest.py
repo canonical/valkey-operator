@@ -78,6 +78,24 @@ def juju(arch: str):
 
 
 @pytest.fixture(scope="module")
+def lxd_cloud(juju: jubilant.Juju):
+    clouds = json.loads(juju.cli("clouds", "--format", "json", include_model=False))
+    for cloud, details in clouds.items():
+        if "lxd" == details.get("type"):
+            logger.info(f"Identified LXD cloud: {cloud}")
+            yield cloud
+
+
+@pytest.fixture(scope="module")
+def lxd_controller(lxd_cloud: str, juju: jubilant.Juju):
+    controllers = json.loads(juju.cli("controllers", "--format", "json", include_model=False))
+    for controller, details in controllers.get("controllers").items():
+        if lxd_cloud == details.get("cloud"):
+            logger.info(f"Identified LXD controller: {controller}")
+            yield controller
+
+
+@pytest.fixture(scope="module")
 def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju):
     """Provision a microk8s cloud, if a k8s cloud isn't already present, and return the name."""
     clouds = json.loads(juju.cli("clouds", "--format", "json", include_model=False))
@@ -153,8 +171,13 @@ def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju):
 
 
 @pytest.fixture(scope="module")
-def juju_k8s_model(arch: str, k8s_cloud: str, lxd_controller: str):
-    with jubilant.temp_model(cloud=k8s_cloud, controller=lxd_controller) as juju_k8s:
+def juju_k8s_model(arch: str, k8s_cloud: str, lxd_controller: str, substrate: Substrate):
+    if substrate == "k8s":
+        juju_k8s = jubilant.Juju(model="testing")
         juju_k8s.wait_timeout = 1000
-        juju_k8s.cli("set-model-constraints", f"arch={arch}")
         yield juju_k8s
+    else:
+        with jubilant.temp_model(cloud=k8s_cloud, controller=lxd_controller) as juju_k8s:
+            juju_k8s.wait_timeout = 1000
+            juju_k8s.cli("set-model-constraints", f"arch={arch}")
+            yield juju_k8s

@@ -10,6 +10,7 @@ from literals import CharmUsers, Substrate
 from statuses import AuthStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -36,6 +37,7 @@ DATA_INTEGRATOR_NAME = "data-integrator"
 
 def test_build_and_deploy(
     charm: str,
+    glide_runner_charm: str,
     juju: jubilant.Juju,
     substrate: Substrate,
     juju_k8s_model: jubilant.Juju,
@@ -47,19 +49,15 @@ def test_build_and_deploy(
         num_units=NUM_UNITS,
         trust=True,
     )
-    juju.deploy(DATA_INTEGRATOR_NAME)
+    juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
+    juju.deploy(DATA_INTEGRATOR_NAME, channel="latest/edge")
     juju_k8s_model.deploy(
         LDAP_PG_NAME,
         channel="14/stable",
         trust=True,
         config={"profile": "testing"},
     )
-    juju_k8s_model.deploy(
-        LDAP_NAME,
-        channel="latest/edge",
-        trust=True,
-        config={"ldaps_enabled": True},
-    )
+    juju_k8s_model.deploy(LDAP_NAME, channel="latest/edge", trust=True)
     juju_k8s_model.deploy(LDAP_UTILS_NAME, channel="latest/edge", trust=True)
     juju_k8s_model.deploy(LDAP_INGRESS_NAME, trust=True)
     juju_k8s_model.deploy(TLS_NAME, channel=TLS_CHANNEL)
@@ -68,14 +66,30 @@ def test_build_and_deploy(
     juju_k8s_model.integrate(f"{LDAP_NAME}:pg-database", f"{LDAP_PG_NAME}:database")
     juju_k8s_model.integrate(LDAP_NAME, LDAP_UTILS_NAME)
     juju_k8s_model.integrate(LDAP_NAME, TLS_NAME)
-    juju_k8s_model.integrate(f"{LDAP_NAME}:ldaps-ingress", f"{LDAP_INGRESS_NAME}:ingress-per-unit")
 
-    juju_k8s_model.wait(jubilant.all_active)
-    juju_k8s_model.wait(jubilant.all_agents_idle)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
     )
+
+    juju_k8s_model.wait(
+        lambda status: are_agents_idle(
+            status,
+            LDAP_NAME,
+            LDAP_UTILS_NAME,
+            TLS_NAME,
+            LDAP_PG_NAME,
+            idle_period=30,
+        ),
+        timeout=600,
+    )
+
+    if substrate == "vm":
+        logger.info("Set up ingress")
+        juju_k8s_model.integrate(
+            f"{LDAP_NAME}:ldaps-ingress", f"{LDAP_INGRESS_NAME}:ingress-per-unit"
+        )
+        juju_k8s_model.wait(jubilant.all_active)
 
     logger.info("Set up LDAP users")
     utils_unit = next(iter(juju_k8s_model.status().get_units(LDAP_UTILS_NAME)))
@@ -86,15 +100,24 @@ def test_build_and_deploy(
     ldif_action = juju_k8s_model.run(utils_unit, "apply-ldif", params={"path": target_path})
     assert ldif_action.status == "completed", "ldif-apply should succeed"
 
-    logger.info("Set up cross-model offers")
-    juju_k8s_model.offer(app=LDAP_NAME, endpoint="ldap")
-    juju_k8s_model.offer(app=LDAP_NAME, endpoint="send-ca-cert")
+    if substrate == "vm":
+        logger.info("Set up cross-model offers")
+        juju_k8s_model.offer(app=LDAP_NAME, endpoint="ldap")
+        juju_k8s_model.offer(app=LDAP_NAME, endpoint="send-ca-cert")
 
 
-def test_ldap_integration(juju: jubilant.Juju, juju_k8s_model: jubilant.Juju) -> None:
+def test_ldap_integration(
+    juju: jubilant.Juju, juju_k8s_model: jubilant.Juju, substrate: Substrate
+) -> None:
     """Connect Valkey to the LDAP provider."""
     logger.info("Integrating Valkey with LDAP")
-    juju.integrate(f"{APP_NAME}:ldap", f"{juju_k8s_model.model.split(':')[1]}.{LDAP_NAME}:ldap")
+    if substrate == "vm":
+        juju_k8s_model_name = juju_k8s_model.model.split(":")[1]
+        ldap_name = f"{juju_k8s_model_name}.{LDAP_NAME}"
+    else:
+        ldap_name = LDAP_NAME
+
+    juju.integrate(f"{APP_NAME}:ldap", f"{ldap_name}:ldap")
 
     juju.wait(
         lambda status: does_status_match(
@@ -105,14 +128,11 @@ def test_ldap_integration(juju: jubilant.Juju, juju_k8s_model: jubilant.Juju) ->
     )
 
     logger.info("Add LDAP CA certificate")
-    juju.integrate(
-        f"{APP_NAME}:ldap-ca-cert",
-        f"{juju_k8s_model.model.split(':')[1]}.{LDAP_NAME}:send-ca-cert",
-    )
+    juju.integrate(f"{APP_NAME}:ldap-ca-cert", f"{ldap_name}:send-ca-cert")
     juju.wait(
         lambda status: does_status_match(
             status,
-            expected_app_statuses={APP_NAME: [AuthStatuses.LDAP_MAP_INTEGRATION_MISSING.value]},
+            expected_app_statuses={APP_NAME: [AuthStatuses.LDAP_MAP_CONFIG_MISSING.value]},
         ),
         timeout=100,
     )
@@ -122,15 +142,12 @@ def test_relation_with_data_integrator(juju: jubilant.Juju) -> None:
     """Connect Valkey to Data Integrator for setup of permission model."""
     data_integrator_config = {
         "prefix-name": "my-keys:",
-        "entity-permissions": """[{\'resource_name\': \'ldap_users_write\', \'resource_type\': \'acl\', \
-                            \'privileges\': [\'+@read\', \'+@write\', \'+@pubsub\', \'~*\', \'&*\']}, \
-                            {\'resource_name\': \'ldap_users_read\', \'resource_type\': \'acl\', \
-                            \'privileges\': [\'+@read\',  \'~*\']}]""",
+        "entity-permissions": '[{"resource_name": "ldap_users_write", "resource_type": "acl", "privileges": ["+@read", "+@write", "+@pubsub", "~*", "&*"]}, {"resource_name": "ldap_users_read", "resource_type": "acl", "privileges": ["+@read",  "~*"]}]',
     }
     juju.config(DATA_INTEGRATOR_NAME, data_integrator_config)
 
     logger.info("Integrating Valkey with Data Integrator")
-    juju.integrate(f"{APP_NAME}:valkey-client", f"{DATA_INTEGRATOR_NAME}:valkey-client")
+    juju.integrate(f"{APP_NAME}:valkey-client", f"{DATA_INTEGRATOR_NAME}:valkey")
     juju.wait(
         lambda status: does_status_match(
             status,

@@ -192,6 +192,14 @@ class ValkeyServer(RelationState):
         """Check if TLS is enabled for client connections."""
         return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
 
+    @property
+    def is_ldap_enabled(self) -> bool:
+        """Check if LDAP is enabled."""
+        if not self.model:
+            return False
+
+        return self.model.ldap_enabled
+
     def get_endpoint(self, substrate: Substrate) -> str:
         """Return the endpoint to be used by other units to connect to this unit.
 

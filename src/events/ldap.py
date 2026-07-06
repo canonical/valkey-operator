@@ -75,7 +75,7 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
         """Handle the removal of the LDAP relation."""
-        if not self.charm.state.unit_server.model.ldap_enabled:
+        if not self.charm.state.unit_server.is_ldap_enabled:
             return
 
         try:
@@ -126,7 +126,7 @@ class LDAPEvents(ops.Object):
             event.defer()
             return
 
-        if not self.charm.state.unit_server.model.ldap_enabled:
+        if not self.charm.state.unit_server.is_ldap_enabled:
             return
 
         try:
@@ -201,7 +201,7 @@ class LDAPEvents(ops.Object):
             event.fail(error)
             return
 
-        if not self.charm.state.unit_server.model.ldap_enabled:
+        if not self.charm.state.unit_server.is_ldap_enabled:
             error = "LDAP not yet enabled on this unit"
             event.set_results({"error": error})
             event.fail(error)

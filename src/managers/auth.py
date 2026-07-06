@@ -315,7 +315,7 @@ class AuthManager(ManagerStatusProtocol):
 
             return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
 
-        if not self.state.unit_server.model.ldap_enabled:
+        if not self.state.unit_server.is_ldap_enabled:
             status_list.append(AuthStatuses.LDAP_NOT_ENABLED.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
