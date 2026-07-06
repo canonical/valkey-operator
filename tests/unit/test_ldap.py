@@ -263,9 +263,9 @@ def test_enable_ldap(cloud_spec):
             assert ldap_config["ldap.search_filter"] == "objectClass=posixAccount"
 
             set_config.assert_called_once()
+            reload_ldap.assert_called_once()
             set_acl.assert_called_once()
-            reload_ldap.assert_not_called()
-            reload_acl.assert_not_called()
+            reload_acl.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
 
 
@@ -443,10 +443,7 @@ def test_config_change(cloud_spec):
     peer_relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={
-            "start-state": "started",
-            "ldap-enabled": "true",
-        },
+        local_unit_data={"start-state": "started"},
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     ldap_secret = testing.Secret({"password": "dummy"})
@@ -734,7 +731,7 @@ def test_reload_ldap_fails(cloud_spec):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
 
         set_config.assert_called_once()
-        set_acl.assert_called_once()
+        set_acl.assert_not_called()
         reload_acl.assert_not_called()
         assert "config_changed" in [e.name for e in state_out.deferred]
 

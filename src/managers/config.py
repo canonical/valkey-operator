@@ -87,6 +87,9 @@ class ConfigManager(ManagerStatusProtocol):
 
         # LDAP related configuration
         config_properties["loadmodule"] = self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so"
+        # disable the failure detection by default because glauth does not support `WhoAmI` command
+        # https://glauth.github.io/docs/limitations.html
+        config_properties["ldap.failure_detector_interval"] = "9223372036854775807"
         ldap_config = self.generate_ldap_config()
         config_properties.update(ldap_config)
 
@@ -186,9 +189,6 @@ class ConfigManager(ManagerStatusProtocol):
             "ldap.search_attribute": self.state.config.get("ldap-search-attribute", ""),
             "ldap.search_dn_attribute": self.state.config.get("ldap-search-dn-attribute", ""),
             "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
-            # disable the failure detection because glauth does not support `WhoAmI` command
-            # https://glauth.github.io/docs/limitations.html
-            "ldap.failure_detector_interval": "9223372036854775807",
         }
 
         return ldap_config
