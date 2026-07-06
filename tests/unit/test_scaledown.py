@@ -9,7 +9,7 @@ from ops import testing
 
 from charm import ValkeyCharm
 from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
-from literals import CONTAINER, PEER_RELATION
+from literals import CONTAINER, PEER_RELATION, ScaleDownState
 from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
 
@@ -267,6 +267,79 @@ def test_last_leader_unit_going_down(cloud_spec):
         cluster_update.assert_called_once_with(
             {"internal_ca_certificate": None, "internal_ca_private_key": None}
         )
+
+
+def test_logs_storage_detaching_triggers_scaledown(cloud_spec):
+    """Detaching a non-data storage (logs) must also run the scale-down path.
+
+    A unit teardown detaches every storage; whichever detaches first must run
+    the safe scale-down so the workload is stopped before it can lose a volume.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    logs_storage = testing.Storage(name="logs")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={logs_storage},
+    )
+
+    with (
+        patch("common.locks.ScaleDownLock.request_lock", return_value=False),
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            side_effect=[
+                ValkeyWorkloadCommandError("errored out"),
+                ("10.0.1.1", 6379),
+            ],
+        ),
+    ):
+        # reaching the lock request proves the handler ran for the logs storage
+        with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
+            ctx.run(ctx.on.storage_detaching(logs_storage), state_in)
+        assert "RequestingLockTimedOutError" in str(exc_info.value)
+
+
+def test_repeat_detach_is_noop_once_going_away(cloud_spec):
+    """Once scale-down has run, later storage detaches must not re-run it."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "hostname": "valkey-0",
+            "private-ip": "10.0.1.0",
+            "start-state": "started",
+            "scale-down-state": ScaleDownState.GOING_AWAY.value,
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
+            return_value="10.0.1.0",
+        ) as mock_get_primary,
+        patch("common.locks.ScaleDownLock.request_lock") as mock_request_lock,
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
+    ):
+        ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    # the guard returns before any scale-down work happens
+    mock_get_primary.assert_not_called()
+    mock_request_lock.assert_not_called()
+    mock_stop.assert_not_called()
 
 
 def test_cannot_get_primary_ip_leader(cloud_spec):

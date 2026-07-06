@@ -37,6 +37,9 @@ CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 LDAP_CA_CERT_RELATION = "ldap-ca-cert"
 LDAP_RELATION = "ldap"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
+S3_RELATION_NAME = "s3-credentials"
+BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -52,6 +55,11 @@ INTERNAL_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
+LOG_STORAGE = "logs"
+ARCHIVE_STORAGE = "archive"
+
+VALKEY_LOG_FILE = "valkey.log"
+SENTINEL_LOG_FILE = "sentinel.log"
 
 
 # As per the valkey users spec

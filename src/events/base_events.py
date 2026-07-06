@@ -13,6 +13,7 @@ from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
     RequestingLockTimedOutError,
     ValkeyACLLoadError,
+    ValkeyBackupInProgressError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
@@ -22,10 +23,12 @@ from common.exceptions import (
 )
 from common.locks import RestartLock, ScaleDownLock, StartLock
 from literals import (
+    ARCHIVE_STORAGE,
     CLIENT_PORT,
     DATA_STORAGE,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    LOG_STORAGE,
     PEER_RELATION,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
@@ -53,9 +56,10 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_attached, self._on_storage_attached
+            )
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
@@ -69,34 +73,36 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_detaching, self._on_storage_detaching
+            )
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
-        """Handle storage attachment."""
+        """Set ownership/permissions on the attached storage dir."""
+        storage_dirs = {
+            DATA_STORAGE: self.charm.workload.working_dir,
+            LOG_STORAGE: self.charm.workload.log_dir,
+            ARCHIVE_STORAGE: self.charm.workload.archive_dir,
+        }
+        if (target := storage_dirs.get(event.storage.name)) is None:
+            logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
+            return
+        path = target.as_posix()
+
+        # chown is K8s-only: VM valkey runs as root and a VM chown would run pre-install.
         if self.charm.state.substrate == Substrate.K8S:
-            # some K8s clouds create a lost+found folder (owned by root) when attaching a volume
-            # we need to ensure the path is accessible for the charm
             try:
                 self.charm.workload.exec(
-                    [
-                        "chown",
-                        "-R",
-                        f"{self.charm.workload.user}:{self.charm.workload.user}",
-                        self.charm.workload.working_dir.as_posix(),
-                    ]
+                    ["chown", "-R", f"{self.charm.workload.user}:{self.charm.workload.user}", path]
                 )
             except ValkeyWorkloadCommandError as e:
                 logger.error("Error when ensuring storage ownership: %s", e)
                 event.defer()
                 return
 
-        # fix the permissions of the directory if re-attaching existing storage
         try:
-            self.charm.workload.exec(
-                ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
-            )
+            self.charm.workload.exec(["chmod", "-R", "750", path])
         except ValkeyWorkloadCommandError as e:
             logger.error("Error when setting storage permissions: %s", e)
             event.defer()
@@ -236,6 +242,11 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
         StartLock(self.charm.state).release_lock()
 
+        # the rendered config ships min-replicas-to-write=1; reassert the
+        # topology-correct runtime value now the server is up, as CONFIG SET
+        # does not persist across a restart
+        self.charm.cluster_manager.reconcile_min_replicas_to_write()
+
         if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
@@ -257,6 +268,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # reassert min-replicas-to-write to match the (possibly changed) topology
+        if self.charm.state.unit_server.is_started:
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader():
             return
@@ -287,6 +302,10 @@ class BaseEvents(ops.Object):
         except ValkeyWorkloadCommandError as e:
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
+
+        # a unit departed (scale down): relax min-replicas-to-write if we dropped below 3
+        if self.charm.state.unit_server.is_started:
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
 
         if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
             return
@@ -554,7 +573,26 @@ class BaseEvents(ops.Object):
         )
 
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
-        """Handle removal of the data storage mount, e.g. when removing a unit."""
+        """Handle removal of a storage mount, e.g. when removing a unit.
+
+        Unit teardown detaches every storage; whichever detaches first runs the
+        safe scale-down (which stops the workload), so the later ones are no-ops.
+        """
+        if self.charm.state.unit_server.is_being_removed:
+            return
+
+        if self.charm.state.unit_server.is_backup_in_progress:
+            # A plain return would let teardown proceed and lose the in-flight
+            # RDB. Raise so the hook errors and Juju retries storage-detaching
+            # until the backup finishes and clears the lock.
+            raise ValkeyBackupInProgressError(
+                "Backup in progress on this unit; refusing to scale down until it finishes."
+            )
+
+        self._scale_down_unit()
+
+    def _scale_down_unit(self) -> None:
+        """Failover if needed, flush the dataset, and stop the workload."""
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
 
@@ -598,10 +636,8 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        unit_is_primary = (
-            True
-            if primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-            else False
+        unit_is_primary = primary_ip == self.charm.state.unit_server.get_endpoint(
+            self.charm.state.substrate
         )
 
         if unit_is_primary and len(active_sentinels) > 1:

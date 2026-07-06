@@ -114,6 +114,8 @@ class ValkeyVmWorkload(WorkloadBase):
         self.acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_ACL_FILE
         self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
+        self.log_dir = self.root_dir / SNAP_COMMON_PATH / "var/log/charmed-valkey"
+        self.archive_dir = self.root_dir / SNAP_COMMON_PATH / "var/backups/charmed-valkey"
         self.lib_dir = self.root_dir / SNAP_CURRENT_PATH / "usr/lib"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
         self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
@@ -283,3 +285,21 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyServicesCouldNotBeStoppedError(
                 "Valkey services are still alive after stop."
             )
+
+    @override
+    def total_memory_bytes(self) -> int:
+        """Per-unit memory budget for this machine.
+
+        Returns the cgroup v2 memory limit when one is set — an LXD
+        ``limits.memory`` constraint maps to ``memory.max`` (or ``memory.high``
+        in soft-enforce mode) — otherwise falls back to ``/proc/meminfo``
+        MemTotal. lxcfs virtualizes MemTotal to the container limit inside an
+        LXD system container, and it reflects the guest's RAM in an LXD VM,
+        MAAS, or cloud VM. Returns 0 if nothing is readable. Cgroup v1 is not
+        supported (Ubuntu noble is cgroup v2 only).
+        """
+        return (
+            self._read_cgroup_limit("sys/fs/cgroup/memory.max")
+            or self._read_cgroup_limit("sys/fs/cgroup/memory.high")
+            or self._read_meminfo_total()
+        )

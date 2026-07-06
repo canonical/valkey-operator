@@ -642,7 +642,7 @@ def get_number_connected_replicas(
         {"command": "info replication", "config": serialize_glide_config(glide_config)},
     )
     assert task_result.status == "completed", f"Command execution failed: {task_result.results}"
-    search_result = re.search(r"connected_slaves:([\d+])", task_result.results.get("result", ""))
+    search_result = re.search(r"connected_slaves:(\d+)", task_result.results.get("result", ""))
     if not search_result:
         raise ValueError("Could not parse number of connected replicas from info output")
     return int(search_result.group(1))
