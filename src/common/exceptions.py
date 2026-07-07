@@ -90,7 +90,3 @@ class ValkeyBackupInProgressError(ValkeyBackupError):
 
 class ValkeyRestoreError(Exception):
     """Raised when a restore operation fails."""
-
-
-class ValkeyRestoreUnhealthyError(ValkeyRestoreError):
-    """Raised when the cluster is unhealthy after a restore step."""

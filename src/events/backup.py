@@ -22,10 +22,16 @@ from pydantic import ValidationError
 from common.exceptions import (
     ValkeyBackupError,
     ValkeyCannotGetPrimaryIPError,
-    ValkeyRestoreUnhealthyError,
+    ValkeyClusterNotReadyError,
 )
 from core.models import S3Parameters
-from literals import PEER_RELATION, S3_RELATION_NAME, RestoreStep
+from literals import (
+    PEER_RELATION,
+    RESTORE_LOAD_TIMEOUT_S,
+    RESTORE_RESYNC_TIMEOUT_S,
+    S3_RELATION_NAME,
+    RestoreStep,
+)
 from statuses import BackupStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
@@ -322,7 +328,7 @@ class BackupEvents(ops.Object):
                 # the step. No cross-unit work sits between download and restore
                 # (suppress_failover already hits every sentinel), so a split
                 # barrier buys nothing.
-                is_primary = bm.is_local_primary()
+                is_primary = self.charm.cluster_manager.is_primary()
                 unit.update({"restore_role": "primary" if is_primary else "replica"})
                 if is_primary:
                     self.charm.sentinel_manager.suppress_failover()
@@ -333,7 +339,7 @@ class BackupEvents(ops.Object):
                 if role == "primary":
                     self.charm.sentinel_manager.resume_failover()
                 else:
-                    bm.wait_until_resynced()
+                    self.charm.cluster_manager.wait_until_resynced(RESTORE_RESYNC_TIMEOUT_S)
                 bm.set_restore_step(RestoreStep.RESYNC)
 
             case (RestoreStep.COMPLETED, RestoreStep.RESYNC):
@@ -349,9 +355,10 @@ class BackupEvents(ops.Object):
         """Validate the object, then restore in-place, rolling back on any failure.
 
         stop -> back up the current dump -> download the restore RDB onto the
-        data partition -> restart all happen inside restore_on_primary. Any
-        failure (bad download, unhealthy server) rolls back to the pre-restore
-        copy before propagating to teardown.
+        data partition -> restart happen inside restore_on_primary; the cluster
+        manager then confirms the server came up and finished loading. Any failure
+        (bad download, unhealthy server) rolls back to the pre-restore copy before
+        propagating to teardown.
         """
         bm = self.charm.backup_manager
         # Pre-stop gate: reject an object that isn't a real RDB (wrong magic /
@@ -360,6 +367,7 @@ class BackupEvents(ops.Object):
         bm.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
         try:
             bm.restore_on_primary()
+            self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
         except Exception:
             bm.roll_back()
             raise
@@ -387,12 +395,13 @@ class BackupEvents(ops.Object):
     def _restore_teardown(self, exc: Exception | None = None) -> None:
         """Resume failover, flag failure, and (leader) clear restore state.
 
-        RESTORE_UNHEALTHY on ValkeyRestoreUnhealthyError, RESTORE_FAILED otherwise.
+        RESTORE_UNHEALTHY when the cluster never became ready
+        (ValkeyClusterNotReadyError), RESTORE_FAILED otherwise.
         """
         self.charm.sentinel_manager.resume_failover()
         status = (
             RestoreStatuses.RESTORE_UNHEALTHY
-            if isinstance(exc, ValkeyRestoreUnhealthyError)
+            if isinstance(exc, ValkeyClusterNotReadyError)
             else RestoreStatuses.RESTORE_FAILED
         )
         self.charm.state.statuses.add(

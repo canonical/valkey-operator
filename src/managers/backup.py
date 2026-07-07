@@ -21,16 +21,13 @@ from charmlibs import pathops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
-from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyBackupError, ValkeyRestoreError, ValkeyRestoreUnhealthyError
+from common.exceptions import ValkeyBackupError, ValkeyRestoreError
 from literals import (
     BACKUP_CA_FILENAME,
     BACKUP_ID_FORMAT,
     PRE_RESTORE_SUFFIX,
-    RESTORE_LOAD_TIMEOUT_S,
-    RESTORE_RESYNC_TIMEOUT_S,
     CharmUsers,
     RestoreStep,
 )
@@ -392,65 +389,6 @@ class BackupManager(ManagerStatusProtocol):
         """Record this unit's completed restore step on its databag."""
         self.state.unit_server.update({"restore_step": step.value})
 
-    def _valkey_client(self) -> ValkeyClient:
-        return ValkeyClient(
-            username=CharmUsers.VALKEY_ADMIN.value,
-            password=self.state.unit_server.valkey_admin_password,
-            tls=self.state.unit_server.is_tls_enabled,
-            workload=self.workload,
-        )
-
-    def is_local_primary(self) -> bool:
-        """Return True if this unit's Valkey server currently reports the master role."""
-        return self._valkey_client().role(hostname=self.state.endpoint)[0] == "master"
-
-    def _wait_until_loaded(self) -> None:
-        """Bounded poll until the server is up and done loading; else raise unhealthy.
-
-        Times out (-> rollback) on either "still loading" or "won't come up", with
-        a generous ceiling so a big RDB load isn't a false failure.
-        """
-        client = self._valkey_client()
-        try:
-            for attempt in Retrying(
-                stop=stop_after_delay(RESTORE_LOAD_TIMEOUT_S),
-                wait=wait_fixed(5),
-                reraise=True,
-            ):
-                with attempt:
-                    if not client.ping(hostname=self.state.endpoint):
-                        raise ValkeyRestoreUnhealthyError("server not responding yet")
-                    if (
-                        client.info_persistence(hostname=self.state.endpoint).get("loading", "1")
-                        != "0"
-                    ):
-                        raise ValkeyRestoreUnhealthyError("still loading RDB")
-        except Exception as e:  # tenacity reraises the last attempt error
-            raise ValkeyRestoreUnhealthyError(
-                f"Primary did not come up healthy within {RESTORE_LOAD_TIMEOUT_S}s"
-            ) from e
-
-    def wait_until_resynced(self) -> None:
-        """Bounded poll until this replica's link to the primary is in sync.
-
-        On timeout raises ValkeyRestoreUnhealthyError instead of hanging. Not
-        ``wait_for_replica_fully_synced``, which is unbounded and false-passes on
-        a failed query. Sync is judged by ``is_replica_synced`` (ROLE link state).
-        """
-        try:
-            for attempt in Retrying(
-                stop=stop_after_delay(RESTORE_RESYNC_TIMEOUT_S),
-                wait=wait_fixed(5),
-                reraise=True,
-            ):
-                with attempt:
-                    if not self.state.charm.cluster_manager.is_replica_synced():  # pyright: ignore[reportAttributeAccessIssue]
-                        raise ValkeyRestoreUnhealthyError("replica not yet synced")
-        except Exception as e:
-            raise ValkeyRestoreUnhealthyError(
-                f"Replica did not resync within {RESTORE_RESYNC_TIMEOUT_S}s"
-            ) from e
-
     def restore_on_primary(self) -> None:
         """Stop valkey, back up the current dump, download the restore RDB in its place, restart.
 
@@ -458,7 +396,8 @@ class BackupManager(ManagerStatusProtocol):
         downloads the restore RDB straight onto the (now-free) data partition, so
         neither partition ever holds more than ~1x the dataset. Bypasses
         restart_workload/RestartLock (can't bracket a file swap); concurrent
-        restarts are held off by the is_restore_in_progress defer.
+        restarts are held off by the is_restore_in_progress defer. The caller
+        confirms the server came up healthy (cluster_manager.wait_until_loaded).
         """
         self.workload.stop_service(self.workload.valkey_service)
         # On a redelivered hook _pre_restore_path already holds the ORIGINAL data;
@@ -468,7 +407,6 @@ class BackupManager(ManagerStatusProtocol):
         # Data partition is now free; download the restore RDB directly onto it.
         self.download_backup(self.state.cluster.restore_id)
         self.workload.start_service(self.workload.valkey_service)
-        self._wait_until_loaded()
 
     def roll_back(self) -> None:
         """Restore the pre-restore dump and restart (stop_service FIRST to defeat auto-restart)."""

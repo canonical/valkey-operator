@@ -346,14 +346,14 @@ def test_restore_on_primary_orders_stop_backup_download_start(mocker):
     mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")  # dump -> pre-restore
     mgr.workload.start_service.side_effect = lambda s: calls.append("start")
     mocker.patch.object(mgr, "download_backup", side_effect=lambda bid: calls.append("download"))
-    mocker.patch.object(mgr, "_wait_until_loaded")
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
 
     mgr.restore_on_primary()
 
     # back up the current dump first, download the new one onto the freed data
-    # partition, then start -- the download must land after the move-aside.
+    # partition, then start -- the download must land after the move-aside. The
+    # health wait is now the caller's job (cluster_manager.wait_until_loaded).
     assert calls == ["stop", "move", "download", "start"]
 
 
@@ -430,7 +430,7 @@ def test_tuple_match_skips_step_when_prior_not_reached(mocker):
     ev.charm = mocker.Mock()
     bm = ev.charm.backup_manager
     ev._run_restore_step(RestoreStep.RESYNC, RestoreStep.NOT_STARTED, role="replica")
-    bm.wait_until_resynced.assert_not_called()
+    ev.charm.cluster_manager.wait_until_resynced.assert_not_called()
     ev.charm.sentinel_manager.resume_failover.assert_not_called()
     bm.set_restore_step.assert_not_called()
 
@@ -446,7 +446,7 @@ def test_restore_step_primary_suppresses_and_restores(mocker):
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
-    ev.charm.backup_manager.is_local_primary.return_value = True
+    ev.charm.cluster_manager.is_primary.return_value = True
     ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
     ev.charm.sentinel_manager.suppress_failover.assert_called_once()
     ev.charm.backup_manager.restore_on_primary.assert_called_once()
@@ -460,7 +460,7 @@ def test_restore_step_replica_records_role_without_restoring(mocker):
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
-    ev.charm.backup_manager.is_local_primary.return_value = False
+    ev.charm.cluster_manager.is_primary.return_value = False
     ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
     ev.charm.sentinel_manager.suppress_failover.assert_not_called()
     ev.charm.backup_manager.download_backup.assert_not_called()
@@ -490,8 +490,11 @@ def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
     from src.charm import ValkeyCharm
     from src.literals import PEER_RELATION, S3_RELATION_NAME, STATUS_PEERS_RELATION, RestoreStep
 
-    # Make the unit "primary" and stub the destructive workload ops.
-    mocker.patch("managers.backup.BackupManager.is_local_primary", return_value=True)
+    # Make the unit "primary" and stub the destructive workload ops and the
+    # post-restore health/resync waits (now owned by the cluster manager).
+    mocker.patch("managers.cluster.ClusterManager.is_primary", return_value=True)
+    mocker.patch("managers.cluster.ClusterManager.wait_until_loaded")
+    mocker.patch("managers.cluster.ClusterManager.wait_until_resynced")
     mocker.patch("managers.backup.BackupManager.verify_backup_is_rdb")
     mocker.patch("managers.backup.BackupManager.download_backup")
     mocker.patch("managers.backup.BackupManager.restore_on_primary")
@@ -600,7 +603,7 @@ def test_restore_failure_service_error_resumes_suppression(mocker):
     ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
     ev.charm.state.unit_server.restore_role = "primary"
     ev.charm.unit.is_leader.return_value = True
-    ev.charm.backup_manager.is_local_primary.return_value = True
+    ev.charm.cluster_manager.is_primary.return_value = True
     ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyServicesFailedToStartError(
         "boom"
     )
@@ -614,8 +617,13 @@ def test_restore_failure_service_error_resumes_suppression(mocker):
 
 
 def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
-    """ValkeyRestoreUnhealthyError must surface RESTORE_UNHEALTHY, not RESTORE_FAILED (FIX 3)."""
-    from common.exceptions import ValkeyRestoreUnhealthyError
+    """A cluster-not-ready failure must surface RESTORE_UNHEALTHY, not RESTORE_FAILED.
+
+    The unhealthy signal now comes from cluster_manager.wait_until_loaded raising
+    ValkeyClusterNotReadyError after the RDB swap, which teardown maps to
+    RESTORE_UNHEALTHY.
+    """
+    from common.exceptions import ValkeyClusterNotReadyError
     from src.events.backup import BackupEvents
     from src.literals import RestoreStep
     from src.statuses import RestoreStatuses
@@ -627,13 +635,15 @@ def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
     ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
     ev.charm.state.unit_server.restore_role = "primary"
     ev.charm.unit.is_leader.return_value = True
-    ev.charm.backup_manager.is_local_primary.return_value = True
-    ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyRestoreUnhealthyError(
+    ev.charm.cluster_manager.is_primary.return_value = True
+    ev.charm.cluster_manager.wait_until_loaded.side_effect = ValkeyClusterNotReadyError(
         "unhealthy"
     )
 
     ev._on_restore_workflow(mocker.Mock())
 
+    # roll_back runs (the RDB swap succeeded but the server never came up healthy).
+    ev.charm.backup_manager.roll_back.assert_called_once()
     added_status_values = [call.args[0] for call in ev.charm.state.statuses.add.call_args_list]
     assert RestoreStatuses.RESTORE_UNHEALTHY.value in added_status_values
 
@@ -657,7 +667,6 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
         BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock, return_value=pre
     )
     mocker.patch.object(mgr, "download_backup")
-    mocker.patch.object(mgr, "_wait_until_loaded")
 
     mgr.restore_on_primary()
 
@@ -666,33 +675,6 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
     assert (dump, pre) not in move_calls
     # The restore RDB is still downloaded onto the (preserved) data partition.
     mgr.download_backup.assert_called_once()
-
-
-def test_wait_until_loaded_times_out_raises_unhealthy(mocker):
-    """_wait_until_loaded raises ValkeyRestoreUnhealthyError when ping never succeeds.
-
-    Import via the flat path (``managers.backup``, not ``src.managers.backup``)
-    so the stop_after_delay / wait_fixed patches hit the same module object the
-    function's globals resolve to -- the two paths are distinct sys.modules keys.
-    """
-    import pytest
-    import tenacity
-
-    from common.exceptions import ValkeyRestoreUnhealthyError
-    from managers.backup import BackupManager  # flat path — must match patch target
-
-    mgr = BackupManager.__new__(BackupManager)
-    mgr.state = mocker.Mock()
-
-    mocker.patch("managers.backup.stop_after_delay", return_value=tenacity.stop_after_attempt(2))
-    mocker.patch("managers.backup.wait_fixed", return_value=tenacity.wait_none())
-
-    client = mocker.Mock()
-    client.ping.return_value = False
-    mocker.patch.object(mgr, "_valkey_client", return_value=client)
-
-    with pytest.raises(ValkeyRestoreUnhealthyError):
-        mgr._wait_until_loaded()
 
 
 def test_on_restore_action_rejects_unknown_backup_id(mocker):
