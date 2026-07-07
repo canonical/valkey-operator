@@ -192,7 +192,12 @@ def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     assert mgr.is_failover_in_progress() is False
 
 
-def test_download_backup_validates_head_and_moves_atomically(mocker):
+def test_download_backup_streams_body_to_data_partition_and_moves_atomically(mocker):
+    """The full RDB streams straight to the data partition; no whole-object charm buffer.
+
+    The magic header is validated up front by verify_backup_is_rdb (a tiny ranged
+    GET), so download_backup itself just streams the S3 body onto disk.
+    """
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
@@ -202,39 +207,18 @@ def test_download_backup_validates_head_and_moves_atomically(mocker):
     mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
 
     bucket = mocker.Mock()
-
-    def fake_download(key, fileobj):
-        fileobj.write(b"REDIS0011" + b"\x00" * 100)
-
-    bucket.download_fileobj.side_effect = fake_download
+    body = mocker.Mock()  # the S3 StreamingBody
+    bucket.Object.return_value.get.return_value = {"Body": body}
     mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
 
     mgr.download_backup("2026-05-13T10:00:00Z")
 
-    # Pushed the temp file, then atomically moved it onto the final name.
-    assert mgr.workload.push_data_file.called
+    # Fetched the object by key and pushed the streaming body straight through --
+    # the pushed source is the S3 body itself, not a charm-local temp file.
+    bucket.Object.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    assert mgr.workload.push_data_file.call_args.args[0] is body
+    # Then atomically promoted the .part file onto the final name.
     assert mgr.workload.move_file.called
-
-
-def test_download_backup_rejects_non_rdb_head(mocker):
-    from common.exceptions import ValkeyRestoreError
-    from src.managers.backup import BackupManager
-
-    mgr = BackupManager.__new__(BackupManager)
-    mgr.state = mocker.Mock()
-    mgr.workload = mocker.Mock()
-    mgr.workload.working_dir = mocker.MagicMock()
-    mgr.state.cluster.s3_credentials = mocker.Mock(path="valkey")
-    bucket = mocker.Mock()
-    bucket.download_fileobj.side_effect = lambda key, fobj: fobj.write(b"NOTRDB....")
-    mocker.patch.object(mgr, "_get_bucket_resource", return_value=bucket)
-
-    import pytest
-
-    with pytest.raises(ValkeyRestoreError):
-        mgr.download_backup("2026-05-13T10:00:00Z")
-    # Never promoted a bad file to the final name.
-    assert not mgr.workload.move_file.called
 
 
 def test_verify_backup_is_rdb_accepts_valid_head(mocker):

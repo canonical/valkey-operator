@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-import tempfile
 from datetime import datetime, timezone
 from typing import IO, TYPE_CHECKING, Any, BinaryIO, cast
 
@@ -313,8 +312,9 @@ class BackupManager(ManagerStatusProtocol):
     def verify_backup_is_rdb(self, backup_id: str) -> None:
         """Confirm the S3 object starts with the RDB magic, cheaply, before touching valkey.
 
-        A ranged GET of just the first bytes (not the whole object), so a missing
-        or non-RDB backup-id fails while valkey is still serving -- the primary is
+        NOT a full download: a ranged GET of just the first 16 bytes -- a
+        super-small metadata read to validate the magic header. So a missing or
+        non-RDB backup-id fails while valkey is still serving; the primary is
         stopped only once we know the object is plausibly a real snapshot.
         """
         s3_parameters = self.state.cluster.s3_credentials
@@ -333,42 +333,36 @@ class BackupManager(ManagerStatusProtocol):
             raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
 
     def download_backup(self, backup_id: str) -> None:
-        """Download and validate the RDB straight onto the data partition as ``dump.rdb``.
+        """Stream the full RDB straight onto the data partition as ``dump.rdb``.
 
-        Streams into a charm-local temp file (O(1) memory, not a whole-object
-        buffer), checks the magic header, then pushes under ``dump.rdb.part`` and
-        renames onto ``dump.rdb`` (same partition -> atomic), so the final file
-        never appears partial or invalid. The caller (restore_on_primary) has
-        already moved the old dump aside to the archive partition, so the data
-        partition holds only ~1x the dataset and the new dump is written once,
-        with no cross-device copy to install it.
+        Streams the S3 object body directly into the workload's data partition:
+        push_data_file copies in bounded chunks, so the full object is never
+        buffered whole in the (small) charm container regardless of RDB size. It
+        lands under ``dump.rdb.part`` and is renamed onto ``dump.rdb`` (same
+        partition -> atomic) so the final file never appears partial. The RDB
+        magic is validated up front by verify_backup_is_rdb (a tiny ranged GET)
+        before the primary is stopped; restore_on_primary has already moved the
+        old dump aside, so the data partition holds only ~1x the dataset with no
+        cross-device copy to install it.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
             raise ValkeyRestoreError("S3 credentials unavailable")
         bucket = self._get_bucket_resource(s3_parameters)
 
-        # Stream to a temp file on disk so we can check the magic header first.
-        with tempfile.NamedTemporaryFile() as tmp:
-            try:
-                bucket.download_fileobj(f"{s3_parameters.path}/{backup_id}", tmp)
-            except ClientError as e:
-                raise ValkeyRestoreError(e) from e
+        try:
+            body = bucket.Object(f"{s3_parameters.path}/{backup_id}").get()["Body"]
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
 
-            tmp.seek(0)
-            if not tmp.read(16).startswith(_RDB_MAGIC):
-                raise ValkeyRestoreError(
-                    f"Downloaded object for {backup_id} is not a valid RDB stream"
-                )
-
-            tmp.seek(0)
-            # The NamedTemporaryFile wrapper is a binary file at runtime; cast for the stub.
-            self.workload.push_data_file(
-                cast(BinaryIO, tmp),
-                self._dump_tmp_path,
-                user=self.workload.user,
-                group=self.workload.user,
-            )
+        # Stream S3 -> data partition; the StreamingBody is a binary read()-able
+        # at runtime (cast for the stub), copied in bounded chunks by the workload.
+        self.workload.push_data_file(
+            cast(BinaryIO, body),
+            self._dump_tmp_path,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
         # Atomic promote: same-partition rename, so dump.rdb only ever appears complete.
         self.workload.move_file(self._dump_tmp_path, self._dump_path)
 
