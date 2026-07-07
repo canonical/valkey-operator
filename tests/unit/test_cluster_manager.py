@@ -2,12 +2,14 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Unit tests for ClusterManager.reconcile_min_replicas_to_write."""
+"""Unit tests for ClusterManager."""
 
 from unittest.mock import MagicMock
 
 import pytest
+import tenacity
 
+from common.exceptions import ValkeyClusterNotReadyError
 from managers.cluster import ClusterManager
 
 
@@ -61,3 +63,49 @@ def test_reconcile_swallows_config_set_failure(caplog):
 
     client.config_set.assert_called_once()
     assert "Failed to reconcile min-replicas-to-write" in caplog.text
+
+
+def _cluster_manager_with_client():
+    """Build a ClusterManager whose _get_valkey_client returns a fresh mock client."""
+    state = MagicMock()
+    state.endpoint = "10.0.0.5"
+    cm = ClusterManager(state=state, workload=MagicMock())
+    client = MagicMock()
+    cm._get_valkey_client = MagicMock(return_value=client)
+    return cm, client
+
+
+@pytest.mark.parametrize(
+    "role_first,expected",
+    [("master", True), ("slave", False)],
+)
+def test_is_primary_reads_local_role(role_first, expected):
+    """is_primary is True only when the local server reports the master role."""
+    cm, client = _cluster_manager_with_client()
+    client.role.return_value = [role_first, "0", []]
+
+    assert cm.is_primary() is expected
+    client.role.assert_called_once_with(hostname="10.0.0.5")
+
+
+def test_wait_until_loaded_times_out_raises_not_ready(mocker):
+    """wait_until_loaded raises ValkeyClusterNotReadyError when ping never succeeds."""
+    cm, client = _cluster_manager_with_client()
+    client.ping.return_value = False
+    # Collapse the bounded retry so the test doesn't actually wait.
+    mocker.patch("managers.cluster.stop_after_delay", return_value=tenacity.stop_after_attempt(2))
+    mocker.patch("managers.cluster.wait_fixed", return_value=tenacity.wait_none())
+
+    with pytest.raises(ValkeyClusterNotReadyError):
+        cm.wait_until_loaded(600)
+
+
+def test_wait_until_resynced_times_out_raises_not_ready(mocker):
+    """wait_until_resynced raises ValkeyClusterNotReadyError when the replica never syncs."""
+    cm, _ = _cluster_manager_with_client()
+    cm.is_replica_synced = MagicMock(return_value=False)
+    mocker.patch("managers.cluster.stop_after_delay", return_value=tenacity.stop_after_attempt(2))
+    mocker.patch("managers.cluster.wait_fixed", return_value=tenacity.wait_none())
+
+    with pytest.raises(ValkeyClusterNotReadyError):
+        cm.wait_until_resynced(900)

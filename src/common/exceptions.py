@@ -44,6 +44,10 @@ class ValkeyConfigurationError(Exception):
     """Custom Exception if Valkey configuration fails to be set."""
 
 
+class ValkeyClusterNotReadyError(Exception):
+    """Raised when the cluster does not reach a ready state within a bounded wait."""
+
+
 class SentinelFailoverError(Exception):
     """Custom Exception if triggering sentinel failover fails."""
 
