@@ -288,19 +288,16 @@ class BackupEvents(ops.Object):
 
     def _on_restore_workflow(self, _: ops.RelationChangedEvent | ops.UpdateStatusEvent) -> None:
         """Drive this unit's restore step, then (leader) advance the instruction."""
-        cluster = self.charm.state.cluster
-        unit = self.charm.state.unit_server
-
         # Restore done: once the leader clears restore_id, each unit clears its
         # own per-unit state (and only then).
-        if not cluster.is_restore_in_progress:
-            if unit.restore_step != RestoreStep.NOT_STARTED:
-                unit.update({"restore_step": "", "restore_role": ""})
+        if not self.charm.state.cluster.is_restore_in_progress:
+            if self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED:
+                self.charm.state.unit_server.update({"restore_step": "", "restore_role": ""})
             return
 
-        instruction = cluster.restore_instruction
-        step = unit.restore_step
-        role = unit.restore_role  # "" until the RESTORE step records it
+        instruction = self.charm.state.cluster.restore_instruction
+        step = self.charm.state.unit_server.restore_step
+        role = self.charm.state.unit_server.restore_role  # "" until the RESTORE step records it
 
         try:
             self._run_restore_step(instruction, step, role)
@@ -318,9 +315,6 @@ class BackupEvents(ops.Object):
 
     def _run_restore_step(self, instruction: RestoreStep, step: RestoreStep, role: str) -> None:
         """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""
-        unit = self.charm.state.unit_server
-        bm = self.charm.backup_manager
-
         match (instruction, step):
             case (RestoreStep.RESTORE, RestoreStep.NOT_STARTED):
                 # Fused download+restore: primary suppresses failover then
@@ -329,23 +323,25 @@ class BackupEvents(ops.Object):
                 # (suppress_failover already hits every sentinel), so a split
                 # barrier buys nothing.
                 is_primary = self.charm.cluster_manager.is_primary()
-                unit.update({"restore_role": "primary" if is_primary else "replica"})
+                self.charm.state.unit_server.update(
+                    {"restore_role": "primary" if is_primary else "replica"}
+                )
                 if is_primary:
                     self.charm.sentinel_manager.suppress_failover()
                     self._do_primary_restore()
-                bm.set_restore_step(RestoreStep.RESTORE)
+                self.charm.backup_manager.set_restore_step(RestoreStep.RESTORE)
 
             case (RestoreStep.RESYNC, RestoreStep.RESTORE):
                 if role == "primary":
                     self.charm.sentinel_manager.resume_failover()
                 else:
                     self.charm.cluster_manager.wait_until_resynced(RESTORE_RESYNC_TIMEOUT_S)
-                bm.set_restore_step(RestoreStep.RESYNC)
+                self.charm.backup_manager.set_restore_step(RestoreStep.RESYNC)
 
             case (RestoreStep.COMPLETED, RestoreStep.RESYNC):
                 if role == "primary":
-                    bm.cleanup_restore_files()
-                bm.set_restore_step(RestoreStep.COMPLETED)
+                    self.charm.backup_manager.cleanup_restore_files()
+                self.charm.backup_manager.set_restore_step(RestoreStep.COMPLETED)
 
             case _:
                 # Not our turn: tuple doesn't match a valid transition.
@@ -360,35 +356,33 @@ class BackupEvents(ops.Object):
         (bad download, unhealthy server) rolls back to the pre-restore copy before
         propagating to teardown.
         """
-        bm = self.charm.backup_manager
         # Pre-stop gate: reject an object that isn't a real RDB (wrong magic /
         # missing) while valkey still serves, so a bad backup-id never bounces
         # the primary. Outside the try: nothing has changed, nothing to roll back.
-        bm.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
+        self.charm.backup_manager.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
         try:
-            bm.restore_on_primary()
+            self.charm.backup_manager.restore_on_primary()
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
         except Exception:
-            bm.roll_back()
+            self.charm.backup_manager.roll_back()
             raise
 
     def _advance_if_leader(self) -> None:
         """Advance the instruction once every participant has reached it; clear on COMPLETED."""
-        cluster = self.charm.state.cluster
         if not self.charm.state.can_restore_workflow_proceed:
             return
-        instruction = cluster.restore_instruction
+        instruction = self.charm.state.cluster.restore_instruction
         if instruction == RestoreStep.COMPLETED:
             self.charm.state.statuses.delete(
                 RestoreStatuses.RESTORE_FAILED.value,
                 scope="app",
                 component=self.charm.backup_manager.name,
             )
-            cluster.update(
+            self.charm.state.cluster.update(
                 {"restore_id": "", "restore_instruction": "", "restore_participants": ""}
             )
             return
-        cluster.update(
+        self.charm.state.cluster.update(
             {"restore_instruction": self.charm.backup_manager.next_restore_step(instruction).value}
         )
 
