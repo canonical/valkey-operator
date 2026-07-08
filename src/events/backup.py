@@ -287,31 +287,52 @@ class BackupEvents(ops.Object):
     # ── restore workflow ─────────────────────────────────────────────────
 
     def _on_restore_workflow(self, _: ops.RelationChangedEvent | ops.UpdateStatusEvent) -> None:
-        """Drive this unit's restore step, then (leader) advance the instruction."""
-        # Restore done: once the leader clears restore_id, each unit clears its
-        # own per-unit state (and only then).
-        if not self.charm.state.cluster.is_restore_in_progress:
-            if self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED:
-                self.charm.state.unit_server.update({"restore_step": "", "restore_role": ""})
-            return
+        """Drive the restore state machine as far as this unit can in one hook.
 
-        instruction = self.charm.state.cluster.restore_instruction
-        step = self.charm.state.unit_server.restore_step
-        role = self.charm.state.unit_server.restore_role  # "" until the RESTORE step records it
+        Each pass runs this unit's matching step and (leader only) advances the
+        shared instruction once every participant has caught up, then repeats
+        until it can make no further local progress. So a single-unit cluster
+        completes in a single hook instead of crawling one step per
+        ~5-min update_status; a multi-unit cluster runs itself right up to the
+        next cross-unit barrier, where the peer relation_changed cascade (with
+        update_status as a backstop) carries it forward. Bounded: a pass that
+        moves neither the shared instruction nor this unit's own step ends it.
+        """
+        while True:
+            # Restore done: once the leader clears restore_id, each unit clears
+            # its own per-unit state (and only then).
+            if not self.charm.state.cluster.is_restore_in_progress:
+                if self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED:
+                    self.charm.state.unit_server.update({"restore_step": "", "restore_role": ""})
+                return
 
-        try:
-            self._run_restore_step(instruction, step, role)
-        except Exception as e:
-            # Catch everything: teardown MUST resume_failover() on any failure to
-            # undo the cluster-wide suppression, else Sentinel can never promote
-            # again. Service-control errors sit outside the restore-error hierarchy,
-            # so a narrower except would let them escape.
-            logger.exception("Restore step failed; tearing down")
-            self._restore_teardown(e)
-            return
+            instruction = self.charm.state.cluster.restore_instruction
+            step = self.charm.state.unit_server.restore_step
+            role = self.charm.state.unit_server.restore_role  # "" until RESTORE records it
 
-        if self.charm.unit.is_leader():
-            self._advance_if_leader()
+            try:
+                self._run_restore_step(instruction, step, role)
+            except Exception as e:
+                # Catch everything: teardown MUST resume_failover() on any failure to
+                # undo the cluster-wide suppression, else Sentinel can never promote
+                # again. Service-control errors sit outside the restore-error hierarchy,
+                # so a narrower except would let them escape.
+                logger.exception("Restore step failed; tearing down")
+                self._restore_teardown(e)
+                return
+
+            if self.charm.unit.is_leader():
+                self._advance_if_leader()
+
+            # Stop when this hook can make no further local progress: neither the
+            # shared instruction nor this unit's own step moved. In multi-unit
+            # that fixed point is the cross-unit barrier; the relation_changed
+            # cascade resumes the workflow once peers catch up.
+            if (
+                self.charm.state.cluster.restore_instruction == instruction
+                and self.charm.state.unit_server.restore_step == step
+            ):
+                return
 
     def _run_restore_step(self, instruction: RestoreStep, step: RestoreStep, role: str) -> None:
         """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""

@@ -2,10 +2,25 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Unit tests for the S3 restore feature."""
+"""Unit tests for the S3 restore feature.
+
+Two layers, on purpose (PR #79 review, reneradoi):
+
+* The restore **state machine** and the **restore action** are exercised through
+  real Juju events (``ctx.on.action`` / ``ctx.on.update_status``) via
+  ``ops.testing``, so the peer-relation data-interface integration is covered
+  end-to-end and a later refactor of the private handlers won't silently gut the
+  tests. See the "event-driven" section.
+* Managers, workloads, models, and pure helpers are unit-tested directly below
+  the event layer, where that granularity belongs.
+"""
+
+import pytest
 
 from src.core.models import PeerAppModel, PeerUnitModel
 from src.literals import RestoreStep
+
+# ── models / enums (pure) ────────────────────────────────────────────────────
 
 
 def test_restore_step_order_and_values():
@@ -54,6 +69,9 @@ def test_valkey_cluster_is_restore_in_progress(mocker):
     assert ValkeyCluster.is_restore_in_progress.fget(cl) is True
     cl.model = mocker.Mock(restore_id="")
     assert ValkeyCluster.is_restore_in_progress.fget(cl) is False
+
+
+# ── barrier / cluster-state (pure) ───────────────────────────────────────────
 
 
 def test_barrier_fails_closed_on_departed_participant(mocker):
@@ -115,6 +133,9 @@ def test_restore_statuses_present():
     assert RestoreStatuses.RESTORE_FAILED.value.running == "async"
 
 
+# ── workload primitives (per-substrate) ──────────────────────────────────────
+
+
 def test_workload_has_new_primitives():
     from src.core.base_workload import WorkloadBase
 
@@ -145,6 +166,21 @@ def test_k8s_move_file_uses_container_exec(mocker):
     wl.container.exec.assert_called_once()
     args = wl.container.exec.call_args.kwargs["command"]
     assert args == ["mv", "/var/lib/valkey/dump.rdb", "/var/lib/valkey/dump.rdb.pre-restore"]
+
+
+def test_vm_move_file_uses_shutil_move_for_cross_device(mocker):
+    """VM move_file uses shutil.move so cross-partition (data<->archive) moves work."""
+    from src.workload_vm import ValkeyVmWorkload
+
+    wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
+    move = mocker.patch("workload_vm.shutil.move")
+    src = mocker.Mock(as_posix=lambda: "/data/dump.rdb")
+    dest = mocker.Mock(as_posix=lambda: "/archive/dump.rdb.pre-restore")
+    wl.move_file(src, dest)
+    move.assert_called_once_with("/data/dump.rdb", "/archive/dump.rdb.pre-restore")
+
+
+# ── sentinel manager ─────────────────────────────────────────────────────────
 
 
 def test_suppress_and_resume_failover_iterate_all_sentinels(mocker):
@@ -190,6 +226,9 @@ def test_sentinel_is_failover_in_progress_reads_flags(mocker):
 
     client.primary.return_value = {"flags": "master"}
     assert mgr.is_failover_in_progress() is False
+
+
+# ── backup manager: download / verify / restore primitives ───────────────────
 
 
 def test_download_backup_streams_body_to_data_partition_and_moves_atomically(mocker):
@@ -241,8 +280,6 @@ def test_verify_backup_is_rdb_accepts_valid_head(mocker):
 
 def test_verify_backup_is_rdb_rejects_bad_head(mocker):
     """A non-RDB object is rejected by the pre-stop check (before valkey is touched)."""
-    import pytest
-
     from common.exceptions import ValkeyRestoreError
     from src.managers.backup import BackupManager
 
@@ -257,25 +294,6 @@ def test_verify_backup_is_rdb_rejects_bad_head(mocker):
 
     with pytest.raises(ValkeyRestoreError):
         mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")
-
-
-def test_do_primary_restore_validates_before_touching_valkey(mocker):
-    """A bad backup fails the pre-stop check, so the primary is never stopped or rolled back."""
-    import pytest
-
-    from common.exceptions import ValkeyRestoreError
-    from src.events.backup import BackupEvents
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    bm = ev.charm.backup_manager
-    bm.verify_backup_is_rdb.side_effect = ValkeyRestoreError("not an RDB")
-
-    with pytest.raises(ValkeyRestoreError):
-        ev._do_primary_restore()
-
-    bm.restore_on_primary.assert_not_called()
-    bm.roll_back.assert_not_called()
 
 
 def test_restore_files_on_correct_partitions(mocker):
@@ -295,18 +313,6 @@ def test_restore_files_on_correct_partitions(mocker):
     assert str(mgr._dump_path) == "/data/dump.rdb"
     assert str(mgr._dump_tmp_path) == "/data/dump.rdb.part"
     assert str(mgr._pre_restore_path) == f"/archive/dump.rdb{PRE_RESTORE_SUFFIX}"
-
-
-def test_vm_move_file_uses_shutil_move_for_cross_device(mocker):
-    """VM move_file uses shutil.move so cross-partition (data<->archive) moves work."""
-    from src.workload_vm import ValkeyVmWorkload
-
-    wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
-    move = mocker.patch("workload_vm.shutil.move")
-    src = mocker.Mock(as_posix=lambda: "/data/dump.rdb")
-    dest = mocker.Mock(as_posix=lambda: "/archive/dump.rdb.pre-restore")
-    wl.move_file(src, dest)
-    move.assert_called_once_with("/data/dump.rdb", "/archive/dump.rdb.pre-restore")
 
 
 def test_next_restore_step():
@@ -341,6 +347,35 @@ def test_restore_on_primary_orders_stop_backup_download_start(mocker):
     assert calls == ["stop", "move", "download", "start"]
 
 
+def test_restore_on_primary_preserves_existing_pre_restore(mocker):
+    """move-aside (dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.workload = mocker.Mock(valkey_service="valkey")
+    # Simulate a redelivered hook: the pre-restore path already holds the original data.
+    mgr.workload.path_exists.return_value = True
+
+    dump = mocker.Mock()
+    pre = mocker.Mock()
+    mocker.patch.object(
+        BackupManager, "_dump_path", new_callable=mocker.PropertyMock, return_value=dump
+    )
+    mocker.patch.object(
+        BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock, return_value=pre
+    )
+    mocker.patch.object(mgr, "download_backup")
+
+    mgr.restore_on_primary()
+
+    move_calls = [c.args for c in mgr.workload.move_file.call_args_list]
+    # The move-aside (dump → pre-restore) must NOT have run; original data preserved.
+    assert (dump, pre) not in move_calls
+    # The restore RDB is still downloaded onto the (preserved) data partition.
+    mgr.download_backup.assert_called_once()
+
+
 def test_roll_back_stops_service_before_swap(mocker):
     from src.managers.backup import BackupManager
 
@@ -371,16 +406,8 @@ def test_get_statuses_reports_restore_in_progress(mocker):
     assert RestoreStatuses.RESTORE_IN_PROGRESS.value in mgr.get_statuses(scope="app")
 
 
-def test_restore_blocking_reason_rejects_non_leader(mocker):
-    from src.events.backup import BackupEvents
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev.charm.unit.is_leader.return_value = False
-    assert "leader" in ev._restore_blocking_reason().lower()
-
-
 def test_blocking_reason_blocks_backup_during_restore(mocker):
+    """A restore in progress blocks create-backup but never the read-only list-backups."""
     from src.events.backup import BackupEvents
 
     ev = BackupEvents.__new__(BackupEvents)
@@ -393,139 +420,329 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
     # create-backup (check_running_operations=True) is blocked...
     assert ev._blocking_reason(check_running_operations=True) is not None
     # ...but list-backups (False) is NOT blocked by a restore.
-    ev.charm.state.cluster.is_restore_in_progress = True
     assert ev._blocking_reason(check_running_operations=False) is None
 
 
-# ── Task-10 tests: _on_restore_workflow state machine ───────────────────────
+# ── event-driven (ops.testing / Scenario) ────────────────────────────────────
+#
+# The restore action + state machine are driven through real Juju events so the
+# peer-relation data-interface wiring is part of the test, per PR #79 review.
 
 
-def test_tuple_match_skips_step_when_prior_not_reached(mocker):
-    """A later instruction is a no-op unless this unit reached the exact prior step.
-
-    instruction=RESYNC but the unit never recorded RESTORE → it must not run the
-    resync work nor advance its own step, so a unit that missed the fused
-    RESTORE can never act out of order.
-    """
-    from src.events.backup import BackupEvents
-    from src.literals import RestoreStep
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    bm = ev.charm.backup_manager
-    ev._run_restore_step(RestoreStep.RESYNC, RestoreStep.NOT_STARTED, role="replica")
-    ev.charm.cluster_manager.wait_until_resynced.assert_not_called()
-    ev.charm.sentinel_manager.resume_failover.assert_not_called()
-    bm.set_restore_step.assert_not_called()
-
-
-def test_restore_step_primary_suppresses_and_restores(mocker):
-    """On RESTORE from NOT_STARTED, the primary suppresses failover then restores.
-
-    The download now happens inside restore_on_primary (after stop + move-aside),
-    so the step just drives suppress + restore_on_primary.
-    """
-    from src.events.backup import BackupEvents
-    from src.literals import RestoreStep
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev.charm.cluster_manager.is_primary.return_value = True
-    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
-    ev.charm.sentinel_manager.suppress_failover.assert_called_once()
-    ev.charm.backup_manager.restore_on_primary.assert_called_once()
-    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.RESTORE)
-
-
-def test_restore_step_replica_records_role_without_restoring(mocker):
-    """A replica on the fused RESTORE step records its role/step but never touches the dataset."""
-    from src.events.backup import BackupEvents
-    from src.literals import RestoreStep
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev.charm.cluster_manager.is_primary.return_value = False
-    ev._run_restore_step(RestoreStep.RESTORE, RestoreStep.NOT_STARTED, role="")
-    ev.charm.sentinel_manager.suppress_failover.assert_not_called()
-    ev.charm.backup_manager.download_backup.assert_not_called()
-    ev.charm.backup_manager.restore_on_primary.assert_not_called()
-    ev.charm.state.unit_server.update.assert_called_once_with({"restore_role": "replica"})
-    ev.charm.backup_manager.set_restore_step.assert_called_with(RestoreStep.RESTORE)
-
-
-def test_teardown_resumes_suppression_and_marks_failed(mocker):
-    """_restore_teardown always calls resume_failover regardless of who caused the failure."""
-    from src.events.backup import BackupEvents
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev._restore_teardown()
-    ev.charm.sentinel_manager.resume_failover.assert_called_once()
-
-
-def test_single_unit_restore_reaches_completed(mocker, cloud_spec):
-    """A single-unit cluster (leader = primary) runs the full restore workflow to COMPLETED."""
-    import pytest
-
-    pytest.importorskip("ops.testing")
-
+def _restore_context_and_state(cloud_spec, *, leader=True, app_data=None, unit_data=None):
+    """Build a Context + single-unit State wired for the restore workflow."""
     from ops import testing
 
     from src.charm import ValkeyCharm
-    from src.literals import PEER_RELATION, S3_RELATION_NAME, STATUS_PEERS_RELATION, RestoreStep
-
-    # Make the unit "primary" and stub the destructive workload ops and the
-    # post-restore health/resync waits (now owned by the cluster manager).
-    mocker.patch("managers.cluster.ClusterManager.is_primary", return_value=True)
-    mocker.patch("managers.cluster.ClusterManager.wait_until_loaded")
-    mocker.patch("managers.cluster.ClusterManager.wait_until_resynced")
-    mocker.patch("managers.backup.BackupManager.verify_backup_is_rdb")
-    mocker.patch("managers.backup.BackupManager.download_backup")
-    mocker.patch("managers.backup.BackupManager.restore_on_primary")
-    mocker.patch("managers.backup.BackupManager.cleanup_restore_files")
-    mocker.patch("managers.sentinel.SentinelManager.suppress_failover")
-    mocker.patch("managers.sentinel.SentinelManager.resume_failover")
+    from src.literals import PEER_RELATION, S3_RELATION_NAME, STATUS_PEERS_RELATION
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    # PeerModel serializes with hyphenated aliases, so use hyphenated keys here
-    # (the final delete_field("restore-id") must match).
+    # PeerModel serializes with hyphenated aliases, so app_data/unit_data keys
+    # (and the reads below) use hyphens.
     peer = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={
+        local_app_data=app_data or {},
+        local_unit_data={"start-state": "started", **(unit_data or {})},
+    )
+    status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    s3_rel = testing.Relation(
+        id=3, endpoint=S3_RELATION_NAME, interface="s3", remote_app_name="s3-integrator"
+    )
+    state = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=leader,
+        relations={peer, status_peer, s3_rel},
+        containers={testing.Container(name="valkey", can_connect=True)},
+    )
+    return ctx, state
+
+
+def _peer_app_data(state):
+    from src.literals import PEER_RELATION
+
+    return next(r for r in state.relations if r.endpoint == PEER_RELATION).local_app_data
+
+
+def _peer_unit_data(state):
+    from src.literals import PEER_RELATION
+
+    return next(r for r in state.relations if r.endpoint == PEER_RELATION).local_unit_data
+
+
+@pytest.fixture
+def restore_managers(mocker):
+    """Patch every manager op the restore workflow drives, returning the mocks.
+
+    These are the external/infra effects (Valkey/Sentinel/S3/workload). Patching
+    them lets the Scenario tests assert orchestration and the resulting peer
+    databag without a live cluster. ``is_primary`` defaults to True (this unit is
+    the primary); flip it per-test for the replica branch.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        is_primary=mocker.patch("managers.cluster.ClusterManager.is_primary", return_value=True),
+        wait_until_loaded=mocker.patch("managers.cluster.ClusterManager.wait_until_loaded"),
+        wait_until_resynced=mocker.patch("managers.cluster.ClusterManager.wait_until_resynced"),
+        verify_backup_is_rdb=mocker.patch("managers.backup.BackupManager.verify_backup_is_rdb"),
+        restore_on_primary=mocker.patch("managers.backup.BackupManager.restore_on_primary"),
+        download_backup=mocker.patch("managers.backup.BackupManager.download_backup"),
+        cleanup_restore_files=mocker.patch("managers.backup.BackupManager.cleanup_restore_files"),
+        roll_back=mocker.patch("managers.backup.BackupManager.roll_back"),
+        suppress_failover=mocker.patch("managers.sentinel.SentinelManager.suppress_failover"),
+        resume_failover=mocker.patch("managers.sentinel.SentinelManager.resume_failover"),
+    )
+
+
+def _pass_restore_preconditions(mocker, backups):
+    """Satisfy the gates in ``_restore_blocking_reason``.
+
+    ``s3_credentials`` is an ``ExtraSecretStr`` routed through a Juju secret
+    (only presence is gated on here), so it's patched at the property rather than
+    forged into the databag.
+    """
+    from unittest.mock import PropertyMock
+
+    mocker.patch(
+        "core.models.ValkeyCluster.s3_credentials",
+        new_callable=PropertyMock,
+        return_value=object(),  # truthy; the credentials themselves are unused here
+    )
+    mocker.patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="10.0.0.1")
+    mocker.patch("managers.sentinel.SentinelManager.is_failover_in_progress", return_value=False)
+    mocker.patch("managers.backup.BackupManager.list_backups", return_value=backups)
+
+
+# ── restore action ───────────────────────────────────────────────────────────
+
+
+def test_restore_action_initiates_workflow(mocker, cloud_spec, restore_managers):
+    """`restore` on the leader validates, then writes the workflow's app-databag target."""
+    from src.literals import RestoreStep
+
+    _pass_restore_preconditions(mocker, ["2026-05-13T10:00:00Z"])
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    state_out = ctx.run(
+        ctx.on.action("restore", params={"backup-id": "2026-05-13T10:00:00Z"}), state
+    )
+
+    app = _peer_app_data(state_out)
+    assert app["restore-id"] == "2026-05-13T10:00:00Z"
+    assert app["restore-instruction"] == RestoreStep.RESTORE.value
+    assert app["restore-participants"] == "valkey/0"
+    assert ctx.action_results == {"restore": "initiated for 2026-05-13T10:00:00Z"}
+    # The action only *initiates*; the destructive work is the async workflow.
+    restore_managers.restore_on_primary.assert_not_called()
+
+
+def test_restore_action_rejected_on_non_leader(cloud_spec):
+    """A follower must refuse restore and write nothing to the app databag."""
+    from ops import testing
+
+    ctx, state = _restore_context_and_state(cloud_spec, leader=False)
+    with pytest.raises(testing.ActionFailed) as exc:
+        ctx.run(ctx.on.action("restore", params={"backup-id": "2026-05-13T10:00:00Z"}), state)
+
+    assert "leader" in exc.value.message.lower()
+    assert _peer_app_data(exc.value.state).get("restore-id", "") == ""
+
+
+def test_restore_action_rejects_unknown_backup_id(mocker, cloud_spec, restore_managers):
+    """An unknown backup-id fails the action and never initiates the workflow."""
+    from ops import testing
+
+    _pass_restore_preconditions(mocker, ["2026-05-13T10:00:00Z"])
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    with pytest.raises(testing.ActionFailed) as exc:
+        ctx.run(ctx.on.action("restore", params={"backup-id": "nope"}), state)
+
+    assert "not found" in exc.value.message.lower()
+    assert _peer_app_data(exc.value.state).get("restore-id", "") == ""
+
+
+# ── restore workflow state machine ───────────────────────────────────────────
+
+
+def test_single_unit_restore_completes_in_one_hook(cloud_spec, restore_managers):
+    """A single-unit restore must finish (id + per-unit step cleared) in ONE hook.
+
+    Without a peer to bounce relation_changed, a single-unit leader would
+    otherwise crawl one step per ~5-min update_status. Driving the state machine
+    to a fixed point inside the hook makes it complete on the first event.
+    """
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
             "restore-id": "2026-05-13T10:00:00Z",
             "restore-instruction": RestoreStep.RESTORE.value,
             "restore-participants": "valkey/0",
         },
-        local_unit_data={"start-state": "started"},
-    )
-    status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    s3_rel = testing.Relation(
-        id=3,
-        endpoint=S3_RELATION_NAME,
-        interface="s3",
-        remote_app_name="s3-integrator",
-    )
-    state_in = testing.State(
-        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
-        leader=True,
-        relations={peer, status_peer, s3_rel},
-        containers={testing.Container(name="valkey", can_connect=True)},
     )
 
-    # Each update_status advances two steps (TLS-emitted relation_changed + direct
-    # update_status handler both fire _on_restore_workflow). Drive to completion.
-    state = state_in
-    for _ in range(8):
-        state = ctx.run(ctx.on.update_status(), state)
-        peer_out = next(r for r in state.relations if r.endpoint == PEER_RELATION)
-        if not peer_out.local_app_data.get("restore-id"):
-            break
-    peer_out = next(r for r in state.relations if r.endpoint == PEER_RELATION)
-    assert peer_out.local_app_data.get("restore-id", "") == ""
+    state_out = ctx.run(ctx.on.update_status(), state)  # exactly ONE hook
+
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+    assert _peer_unit_data(state_out).get("restore-step", "") == ""
 
 
-# ── Task-11 tests: restore-awareness guards ──────────────────────────────────
+def test_primary_runs_full_restore_workflow(cloud_spec, restore_managers):
+    """A single-unit primary drives RESTORE→RESYNC→COMPLETED and clears state, no rollback."""
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.suppress_failover.assert_called_once()  # RESTORE
+    restore_managers.restore_on_primary.assert_called_once()  # RESTORE
+    restore_managers.wait_until_loaded.assert_called_once()  # RESTORE post-check
+    restore_managers.resume_failover.assert_called_once()  # RESYNC (primary)
+    restore_managers.cleanup_restore_files.assert_called_once()  # COMPLETED
+    restore_managers.roll_back.assert_not_called()
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+    assert _peer_unit_data(state_out).get("restore-step", "") == ""
+
+
+def test_replica_records_role_and_barrier_holds(cloud_spec, restore_managers):
+    """A replica records role/step but never restores; the barrier stalls on an absent peer."""
+    restore_managers.is_primary.return_value = False
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            # valkey/1 is a listed participant but absent -> fail-closed barrier.
+            "restore-participants": "valkey/0,valkey/1",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.restore_on_primary.assert_not_called()
+    restore_managers.suppress_failover.assert_not_called()
+    assert _peer_unit_data(state_out)["restore-role"] == "replica"
+    assert _peer_unit_data(state_out)["restore-step"] == RestoreStep.RESTORE.value
+    # Barrier not met (valkey/1 never reached RESTORE): still in progress, no advance.
+    assert _peer_app_data(state_out)["restore-id"] == "2026-05-13T10:00:00Z"
+    assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESTORE.value
+
+
+def test_step_skipped_when_prior_not_reached(cloud_spec, restore_managers):
+    """instruction=RESYNC but this unit never recorded RESTORE → it acts on nothing."""
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESYNC.value,
+            "restore-participants": "valkey/0",
+        },
+        # No restore-step recorded: this unit missed the fused RESTORE.
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.wait_until_resynced.assert_not_called()
+    restore_managers.resume_failover.assert_not_called()
+    assert _peer_unit_data(state_out).get("restore-step", "") == ""
+    # An out-of-step unit can never satisfy the barrier, so the instruction holds.
+    assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESYNC.value
+
+
+def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_managers):
+    """A non-RDB backup fails the pre-stop check: the primary is never stopped or rolled back."""
+    from common.exceptions import ValkeyRestoreError
+
+    restore_managers.verify_backup_is_rdb.side_effect = ValkeyRestoreError("not an RDB")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.restore_on_primary.assert_not_called()
+    restore_managers.roll_back.assert_not_called()
+    # Teardown still resumes the suppression it turned on before validating.
+    restore_managers.resume_failover.assert_called_once()
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+
+
+def test_restore_failure_rolls_back_and_resumes_failover(cloud_spec, restore_managers):
+    """A service failure mid-restore rolls back, resumes failover, flags FAILED, clears state.
+
+    Regression for FIX 1: service-control errors are standalone Exception
+    subclasses outside the restore-error hierarchy, so only the broad catch keeps
+    them from escaping resume_failover().
+    """
+    from common.exceptions import ValkeyServicesFailedToStartError
+    from src.statuses import RestoreStatuses
+
+    restore_managers.restore_on_primary.side_effect = ValkeyServicesFailedToStartError("boom")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    restore_managers.roll_back.assert_called_once()
+    restore_managers.resume_failover.assert_called_once()  # the critical invariant
+    assert RestoreStatuses.RESTORE_FAILED.value in statuses
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+
+
+def test_restore_failure_unhealthy_status(cloud_spec, restore_managers):
+    """A cluster-not-ready failure surfaces RESTORE_UNHEALTHY, not RESTORE_FAILED."""
+    from common.exceptions import ValkeyClusterNotReadyError
+    from src.statuses import RestoreStatuses
+
+    restore_managers.wait_until_loaded.side_effect = ValkeyClusterNotReadyError("unhealthy")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        mgr.run()
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    # The RDB swap succeeded but the server never came up healthy → roll back.
+    restore_managers.roll_back.assert_called_once()
+    assert RestoreStatuses.RESTORE_UNHEALTHY.value in statuses
+    assert RestoreStatuses.RESTORE_FAILED.value not in statuses
+
+
+# ── restore-awareness guards (single early-return clauses) ────────────────────
+#
+# These assert one guard clause on a handler that otherwise has nothing to do
+# with restore; driving them through full events would entangle unrelated
+# handlers (and re-run the restore workflow), so they stay at the unit layer.
 
 
 def test_storage_detaching_refuses_during_restore(mocker):
@@ -537,7 +754,6 @@ def test_storage_detaching_refuses_during_restore(mocker):
     ev.charm.state.unit_server.is_being_removed = False
     ev.charm.state.unit_server.is_backup_in_progress = False
     ev.charm.state.cluster.is_restore_in_progress = True
-    import pytest
 
     with pytest.raises(Exception):  # ValkeyBackupInProgressError or a restore-specific error
         ev._on_storage_detaching(mocker.Mock())
@@ -564,117 +780,3 @@ def test_external_clients_prc_skips_during_restore(mocker):
     ev.charm.state.cluster.is_restore_in_progress = True
     ev._on_peer_relation_changed(mocker.Mock())
     ev.charm.sentinel_manager.reconcile_k8s_services.assert_not_called()
-
-
-# ── Final-review fixes (FIX 1–5) ────────────────────────────────────────────
-
-
-def test_restore_failure_service_error_resumes_suppression(mocker):
-    """ValkeyServicesFailedToStartError from restore_on_primary must reach teardown.
-
-    This is the critical regression test for FIX 1: service-control errors are
-    standalone Exception subclasses not in the original narrow except tuple, so
-    without the broad catch they escape resume_failover() entirely.
-    """
-    from common.exceptions import ValkeyServicesFailedToStartError
-    from src.events.backup import BackupEvents
-    from src.literals import RestoreStep
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev.charm.state.cluster.is_restore_in_progress = True
-    ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
-    ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
-    ev.charm.state.unit_server.restore_role = "primary"
-    ev.charm.unit.is_leader.return_value = True
-    ev.charm.cluster_manager.is_primary.return_value = True
-    ev.charm.backup_manager.restore_on_primary.side_effect = ValkeyServicesFailedToStartError(
-        "boom"
-    )
-
-    ev._on_restore_workflow(mocker.Mock())
-
-    # roll_back triggered inside _do_primary_restore (FIX 1 broadened except)
-    ev.charm.backup_manager.roll_back.assert_called_once()
-    # resume_failover triggered inside _restore_teardown — the critical invariant
-    ev.charm.sentinel_manager.resume_failover.assert_called_once()
-
-
-def test_restore_failure_unhealthy_sets_unhealthy_status(mocker):
-    """A cluster-not-ready failure must surface RESTORE_UNHEALTHY, not RESTORE_FAILED.
-
-    The unhealthy signal now comes from cluster_manager.wait_until_loaded raising
-    ValkeyClusterNotReadyError after the RDB swap, which teardown maps to
-    RESTORE_UNHEALTHY.
-    """
-    from common.exceptions import ValkeyClusterNotReadyError
-    from src.events.backup import BackupEvents
-    from src.literals import RestoreStep
-    from src.statuses import RestoreStatuses
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    ev.charm.state.cluster.is_restore_in_progress = True
-    ev.charm.state.cluster.restore_instruction = RestoreStep.RESTORE
-    ev.charm.state.unit_server.restore_step = RestoreStep.NOT_STARTED
-    ev.charm.state.unit_server.restore_role = "primary"
-    ev.charm.unit.is_leader.return_value = True
-    ev.charm.cluster_manager.is_primary.return_value = True
-    ev.charm.cluster_manager.wait_until_loaded.side_effect = ValkeyClusterNotReadyError(
-        "unhealthy"
-    )
-
-    ev._on_restore_workflow(mocker.Mock())
-
-    # roll_back runs (the RDB swap succeeded but the server never came up healthy).
-    ev.charm.backup_manager.roll_back.assert_called_once()
-    added_status_values = [call.args[0] for call in ev.charm.state.statuses.add.call_args_list]
-    assert RestoreStatuses.RESTORE_UNHEALTHY.value in added_status_values
-
-
-def test_restore_on_primary_preserves_existing_pre_restore(mocker):
-    """move-aside (dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
-    from src.managers.backup import BackupManager
-
-    mgr = BackupManager.__new__(BackupManager)
-    mgr.state = mocker.Mock()
-    mgr.workload = mocker.Mock(valkey_service="valkey")
-    # Simulate a redelivered hook: the pre-restore path already holds the original data.
-    mgr.workload.path_exists.return_value = True
-
-    dump = mocker.Mock()
-    pre = mocker.Mock()
-    mocker.patch.object(
-        BackupManager, "_dump_path", new_callable=mocker.PropertyMock, return_value=dump
-    )
-    mocker.patch.object(
-        BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock, return_value=pre
-    )
-    mocker.patch.object(mgr, "download_backup")
-
-    mgr.restore_on_primary()
-
-    move_calls = [c.args for c in mgr.workload.move_file.call_args_list]
-    # The move-aside (dump → pre-restore) must NOT have run; original data preserved.
-    assert (dump, pre) not in move_calls
-    # The restore RDB is still downloaded onto the (preserved) data partition.
-    mgr.download_backup.assert_called_once()
-
-
-def test_on_restore_action_rejects_unknown_backup_id(mocker):
-    """The restore action must fail when backup-id is not in the bucket."""
-    from src.events.backup import BackupEvents
-
-    ev = BackupEvents.__new__(BackupEvents)
-    ev.charm = mocker.Mock()
-    mocker.patch.object(ev, "_restore_blocking_reason", return_value=None)
-    ev.charm.backup_manager.list_backups.return_value = ["2026-05-13T10:00:00Z"]
-
-    event = mocker.Mock()
-    event.params = {"backup-id": "nope"}
-
-    ev._on_restore_action(event)
-
-    event.fail.assert_called_once()
-    assert "not found" in event.fail.call_args.args[0].lower()
-    ev.charm.state.cluster.update.assert_not_called()
