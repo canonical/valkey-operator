@@ -278,7 +278,11 @@ def test_ensure_ldap_auth(juju: jubilant.Juju, substrate: Substrate) -> None:
 def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Ensure LDAP users can no longer access Valkey after LDAP was disabled."""
     logger.info("Disabling LDAP")
-    juju.remove_relation(f"{APP_NAME}:ldap", LDAP_NAME)
+    if substrate == Substrate.VM:
+        ldap_name = "ldap"
+    else:
+        ldap_name = LDAP_NAME
+    juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
