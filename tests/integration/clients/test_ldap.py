@@ -68,6 +68,7 @@ def test_build_and_deploy(
     juju_k8s_model.integrate(f"{LDAP_NAME}:pg-database", f"{LDAP_PG_NAME}:database")
     juju_k8s_model.integrate(LDAP_NAME, LDAP_UTILS_NAME)
     juju_k8s_model.integrate(LDAP_NAME, TLS_NAME)
+    juju_k8s_model.integrate(f"{LDAP_INGRESS_NAME}:certificates", TLS_NAME)
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
