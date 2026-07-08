@@ -16,27 +16,23 @@ Run only with a bootstrapped Juju controller and built charm:
 
 from __future__ import annotations
 
-import base64
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 
 import jubilant
 import pytest
-from tests.integration.backup.test_s3_backup import (
-    APP_NAME,
-    BACKUP_ID_RE,
-    S3_INTEGRATOR_APP,
-    _wait_active,
-)
 
 from literals import CharmUsers, Substrate
 from statuses import RestoreStatuses
+from tests.integration.backup.helpers import BACKUP_ID_RE, deploy_and_relate_s3
 from tests.integration.ha.helpers.helpers import (
     get_unit_name_from_primary_ip,
     send_process_control_signal,
 )
 from tests.integration.helpers import (
+    APP_NAME,
+    are_apps_active_and_agents_idle,
     does_status_match,
     exec_valkey_cli,
     get_password,
@@ -56,58 +52,20 @@ _FAILOVER_WAIT_S = 90
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _deploy_cluster_and_s3(juju: jubilant.Juju, microceph: dict) -> None:
-    """Deploy the valkey cluster + s3-integrator and wire up the S3 relation.
+def _wait_restore_active(juju: jubilant.Juju) -> None:
+    """Wait for the valkey app to converge back to active/idle after a restore.
 
-    Idempotent: skips individual steps when the relevant apps / relations
-    already exist (safe to call at the top of each test).
+    The restore steps (RESTORE -> RESYNC -> COMPLETED) are driven by
+    relation_changed / update_status hooks; active workloads + idle agents is the
+    convergence signal. Generous timeout -- a restore restarts the primary and
+    resyncs replicas.
     """
-    status = juju.status()
-
-    if APP_NAME not in status.apps:
-        juju.deploy(APP_NAME, channel="9/edge", num_units=3, trust=True, base="ubuntu@24.04")
-    if S3_INTEGRATOR_APP not in status.apps:
-        juju.deploy(S3_INTEGRATOR_APP, channel="latest/edge")
-
-    # s3-integrator requires the CA chain base64-encoded in its tls-ca-chain config.
-    ca_chain = base64.b64encode(microceph["tls-ca-chain"][0].encode()).decode()
-    juju.config(
-        S3_INTEGRATOR_APP,
-        {
-            "bucket": microceph["bucket"],
-            "endpoint": microceph["endpoint"],
-            "region": microceph["region"],
-            "path": microceph["path"],
-            "s3-uri-style": "path",
-            "tls-ca-chain": ca_chain,
-        },
-    )
-
-    # Credentials go through the sync-s3-credentials action, not config;
-    # wait for the agent to settle before dispatching so the action is registered.
     juju.wait(
-        lambda s: jubilant.all_agents_idle(s, S3_INTEGRATOR_APP),
-        timeout=600,
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        timeout=1200,
+        delay=5,
+        successes=3,
     )
-    juju.run(
-        f"{S3_INTEGRATOR_APP}/0",
-        "sync-s3-credentials",
-        {
-            "access-key": microceph["access-key"],
-            "secret-key": microceph["secret-key"],
-        },
-    )
-    _wait_active(juju, S3_INTEGRATOR_APP)
-
-    # Only integrate when the S3 relation does not yet exist.
-    try:
-        juju.integrate(APP_NAME, S3_INTEGRATOR_APP)
-    except Exception as exc:
-        if "already exists" not in str(exc).lower():
-            raise
-        logger.info("S3 relation already exists, skipping integrate")
-
-    _wait_active(juju, APP_NAME, S3_INTEGRATOR_APP)
 
 
 def _write_key(juju: jubilant.Juju, key: str, value: str) -> None:
@@ -172,13 +130,14 @@ def get_primary_unit(juju: jubilant.Juju, substrate: Substrate) -> str:
 
 @pytest.mark.abort_on_fail
 def test_restore_rollback(
+    charm: str,
     juju: jubilant.Juju,
     microceph: dict,
     s3_bucket,
     substrate: Substrate,
 ) -> None:
     """Write data -> backup -> mutate -> restore -> original value is back on all units."""
-    _deploy_cluster_and_s3(juju, microceph)
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     _write_key(juju, "restore_test_key", "original")
 
@@ -196,10 +155,7 @@ def test_restore_rollback(
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
     # Wait for the restore workflow to complete and the cluster to return to active.
-    # The restore steps (RESTORE → RESYNC → COMPLETED) are driven by
-    # relation_changed / update_status hooks; _wait_active uses active workload
-    # status + all agents idle as the convergence signal.
-    _wait_active(juju, APP_NAME, timeout=1200)
+    _wait_restore_active(juju)
 
     # Verify every unit has the pre-backup value.
     for unit_name in juju.status().apps[APP_NAME].units:
@@ -209,6 +165,7 @@ def test_restore_rollback(
 
 @pytest.mark.abort_on_fail
 def test_restore_disaster_recovery(
+    charm: str,
     juju: jubilant.Juju,
     microceph: dict,
     s3_bucket,
@@ -216,8 +173,8 @@ def test_restore_disaster_recovery(
 ) -> None:
     """Remove the app entirely, redeploy a fresh cluster, restore from S3 -- data comes back."""
     # Independently runnable: deploy the cluster + S3 wiring if a prior test did
-    # not already leave them in place (_deploy_cluster_and_s3 is idempotent).
-    _deploy_cluster_and_s3(juju, microceph)
+    # not already leave them in place (deploy_and_relate_s3 is idempotent).
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     _write_key(juju, "dr_key", "dr-value")
 
@@ -232,14 +189,14 @@ def test_restore_disaster_recovery(
 
     # Redeploy a blank 3-unit cluster and reconnect it to the existing S3 bucket
     # (the backup objects are still there).
-    _deploy_cluster_and_s3(juju, microceph)
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     # Restore the pre-wipe snapshot.
     task = juju.run(f"{APP_NAME}/leader", "restore-backup", {"backup-id": backup_id})
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
-    _wait_active(juju, APP_NAME, timeout=1200)
+    _wait_restore_active(juju)
 
     got = _read_key(juju, _leader_unit_name(juju), "dr_key")
     assert got == "dr-value", f"Expected 'dr-value' after DR restore, got {got!r}"
@@ -247,6 +204,7 @@ def test_restore_disaster_recovery(
 
 @pytest.mark.abort_on_fail
 def test_corrupt_restore_keeps_cluster_and_failover(
+    charm: str,
     juju: jubilant.Juju,
     microceph: dict,
     s3_bucket,
@@ -259,6 +217,9 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     will silently refuse to promote a replica after this test kills the primary
     process.
     """
+    # Independently runnable (deploy_and_relate_s3 is idempotent).
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
+
     _write_key(juju, "safe_key", "safe-value")
 
     corrupt_id = upload_corrupt_backup(juju, s3_bucket, microceph)

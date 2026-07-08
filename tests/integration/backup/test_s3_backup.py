@@ -6,21 +6,13 @@
 
 from __future__ import annotations
 
-import base64
-import re
 import time
 
 import jubilant
 
 from literals import Substrate
-from tests.integration.helpers import (
-    APP_NAME,
-    IMAGE_RESOURCE,
-    are_apps_active_and_agents_idle,
-)
-
-S3_INTEGRATOR_APP = "s3-integrator"
-BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+from tests.integration.backup.helpers import BACKUP_ID_RE, deploy_and_relate_s3
+from tests.integration.helpers import APP_NAME
 
 
 def test_backup_and_list(
@@ -30,61 +22,7 @@ def test_backup_and_list(
     microceph: dict,
     s3_bucket,
 ) -> None:
-    juju.deploy(
-        charm,
-        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
-        num_units=3,
-        trust=True,
-    )
-    juju.deploy(S3_INTEGRATOR_APP, channel="2/edge")
-
-    # s3-integrator 2/edge takes credentials as a Juju secret (the
-    # sync-s3-credentials action is gone in v2): create + grant the secret,
-    # then point the `credentials` config at its URI.
-    creds = juju.add_secret(
-        name="s3-creds",
-        content={"access-key": microceph["access-key"], "secret-key": microceph["secret-key"]},
-    )
-    juju.grant_secret(identifier=creds, app=S3_INTEGRATOR_APP)
-
-    # s3-integrator base64-decodes tls-ca-chain, so the charm can verify
-    # MicroCeph's self-signed RGW endpoint over TLS. Without it the charm
-    # falls back to the system trust store and every S3 call fails.
-    ca_chain = base64.b64encode(microceph["tls-ca-chain"][0].encode()).decode()
-    juju.config(
-        S3_INTEGRATOR_APP,
-        {
-            "credentials": creds,
-            "bucket": microceph["bucket"],
-            "endpoint": microceph["endpoint"],
-            "region": microceph["region"],
-            "path": microceph["path"],
-            "s3-uri-style": "path",
-            "tls-ca-chain": ca_chain,
-        },
-    )
-
-    # Require agents idle as well as workloads active: after `integrate` the
-    # workloads stay "active" while the relation hooks (the leader's
-    # create_bucket + credential storage) are still running, so a workload-only
-    # wait can return before S3 is actually wired up.
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, S3_INTEGRATOR_APP, idle_period=30
-        ),
-        timeout=1000,
-        delay=5,
-        successes=3,
-    )
-    juju.integrate(APP_NAME, S3_INTEGRATOR_APP)
-    juju.wait(
-        lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, S3_INTEGRATOR_APP, idle_period=30
-        ),
-        timeout=1000,
-        delay=5,
-        successes=3,
-    )
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     # Three distinct units exercise the any-unit backup guarantee.
     units = list(juju.status().get_units(APP_NAME))
