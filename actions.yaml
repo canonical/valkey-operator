@@ -25,7 +25,7 @@ list-backups:
       default: table
       description: Output format of the backup list, either "table" or "json".
 
-restore-backup:
+restore:
   description: |
     Restore the cluster's dataset from a backup in S3. Replaces the data on all units.
     Run on the leader unit. The backup-id must be one returned by list-backups.

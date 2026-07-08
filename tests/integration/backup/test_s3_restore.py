@@ -149,8 +149,8 @@ def test_restore_rollback(
     # Overwrite the key so the restore has something visible to undo.
     _write_key(juju, "restore_test_key", "mutated")
 
-    # restore-backup action initiates the async restore workflow (leader only).
-    task = juju.run(f"{APP_NAME}/leader", "restore-backup", {"backup-id": backup_id})
+    # restore action initiates the async restore workflow (leader only).
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": backup_id})
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
@@ -192,7 +192,7 @@ def test_restore_disaster_recovery(
     deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     # Restore the pre-wipe snapshot.
-    task = juju.run(f"{APP_NAME}/leader", "restore-backup", {"backup-id": backup_id})
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": backup_id})
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
@@ -229,7 +229,7 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     # (the backup-id is present in S3 and matches _BACKUP_ID_RE), but the
     # async download step raises ValkeyRestoreError on the magic-byte check,
     # causing _restore_teardown() to call resume_failover() and set RESTORE_FAILED.
-    task = juju.run(f"{APP_NAME}/leader", "restore-backup", {"backup-id": corrupt_id})
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": corrupt_id})
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 

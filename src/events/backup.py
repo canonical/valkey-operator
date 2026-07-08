@@ -72,7 +72,7 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.leader_elected, self._on_s3_credentials_changed)
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
-        self.framework.observe(self.charm.on.restore_backup_action, self._on_restore_action)
+        self.framework.observe(self.charm.on.restore_action, self._on_restore_action)
         # Drive the async restore state machine on peer data changes and update-status.
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_changed, self._on_restore_workflow
@@ -263,7 +263,7 @@ class BackupEvents(ops.Object):
             return
 
         logger.info(
-            "audit: restore-backup action invoked action_id=%s backup_id=%s unit=%s",
+            "audit: restore action invoked action_id=%s backup_id=%s unit=%s",
             event.id,
             backup_id,
             self.charm.unit.name,

@@ -662,7 +662,7 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
 
 
 def test_on_restore_action_rejects_unknown_backup_id(mocker):
-    """restore-backup action must fail when backup-id is not in the bucket."""
+    """The restore action must fail when backup-id is not in the bucket."""
     from src.events.backup import BackupEvents
 
     ev = BackupEvents.__new__(BackupEvents)
