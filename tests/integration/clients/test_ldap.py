@@ -203,12 +203,6 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
 
 def test_ensure_ldap_auth(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Ensure authentication with LDAP works and authorization is set up correctly."""
-    if substrate == Substrate.VM:
-        logger.info(
-            "Skip test on VM due to GLAuth not advertising IP SAN in TLS certs, see issue #281"
-        )
-        return
-
     endpoints = get_cluster_endpoints(juju, APP_NAME)
 
     logger.info("Ensure access for LDAP user with read and write permissions")
@@ -312,12 +306,6 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
         )
         == TEST_VALUE
     ), "Failed to read data for charm user with LDAP enabled"
-
-    if substrate == Substrate.VM:
-        logger.info(
-            "Skip test on VM due to GLAuth not advertising IP SAN in TLS certs, see issue #281"
-        )
-        return
 
     logger.info("Ensure access fails for LDAP user")
     # connect with user in LDAP group "superheroes"
