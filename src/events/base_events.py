@@ -24,10 +24,12 @@ from common.exceptions import (
 )
 from common.locks import RestartLock, ScaleDownLock, StartLock
 from literals import (
+    ARCHIVE_STORAGE,
     CLIENT_PORT,
     DATA_STORAGE,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    LOG_STORAGE,
     PEER_RELATION,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
@@ -55,9 +57,10 @@ class BaseEvents(ops.Object):
         super().__init__(charm, key="base_events")
         self.charm = charm
 
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_attached, self._on_storage_attached
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_attached, self._on_storage_attached
+            )
         self.framework.observe(self.charm.on.install, self._on_install)
         self.framework.observe(self.charm.on.start, self._on_start)
         self.framework.observe(
@@ -71,20 +74,27 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
-        self.framework.observe(
-            self.charm.on[DATA_STORAGE].storage_detaching, self._on_storage_detaching
-        )
+        for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
+            self.framework.observe(
+                self.charm.on[storage_name].storage_detaching, self._on_storage_detaching
+            )
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
-        """Handle storage attachment."""
-        # we do not need to fix permissions on k8s they are owned by juju 170
+        """Set ownership/permissions on the attached storage dir."""
         if self.charm.state.substrate == Substrate.K8S:
             return
-        # fix the permissions of the directory if re-attaching existing storage
+
+        storage_dirs = {
+            DATA_STORAGE: self.charm.workload.working_dir,
+            LOG_STORAGE: self.charm.workload.log_dir,
+            ARCHIVE_STORAGE: self.charm.workload.archive_dir,
+        }
+        if (target := storage_dirs.get(event.storage.name)) is None:
+            logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
+            return
+
         try:
-            self.charm.workload.exec(
-                ["chmod", "-R", "750", self.charm.workload.working_dir.as_posix()]
-            )
+            self.charm.workload.exec(["chmod", "-R", "750", target.as_posix()])
         except ValkeyWorkloadCommandError as e:
             logger.error("Error when setting storage permissions: %s", e)
             event.defer()
@@ -549,7 +559,14 @@ class BaseEvents(ops.Object):
         )
 
     def _on_storage_detaching(self, event: ops.StorageDetachingEvent) -> None:
-        """Handle removal of the data storage mount, e.g. when removing a unit."""
+        """Handle removal of a storage mount, e.g. when removing a unit.
+
+        Unit teardown detaches every storage; whichever detaches first runs the
+        safe scale-down (which stops the workload), so the later ones are no-ops.
+        """
+        if self.charm.state.unit_server.is_being_removed:
+            return
+
         if self.charm.state.unit_server.is_backup_in_progress:
             # A plain return would let teardown proceed and lose the in-flight
             # RDB. Raise so the hook errors and Juju retries storage-detaching
@@ -558,6 +575,10 @@ class BaseEvents(ops.Object):
                 "Backup in progress on this unit; refusing to scale down until it finishes."
             )
 
+        self._scale_down_unit()
+
+    def _scale_down_unit(self) -> None:
+        """Failover if needed, flush the dataset, and stop the workload."""
         # get scale down lock
         scale_down_lock = ScaleDownLock(self.charm)
 
@@ -601,10 +622,8 @@ class BaseEvents(ops.Object):
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        unit_is_primary = (
-            True
-            if primary_ip == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-            else False
+        unit_is_primary = primary_ip == self.charm.state.unit_server.get_endpoint(
+            self.charm.state.substrate
         )
 
         if unit_is_primary and len(active_sentinels) > 1:
