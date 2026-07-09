@@ -81,9 +81,6 @@ class BaseEvents(ops.Object):
 
     def _on_storage_attached(self, event: ops.StorageAttachedEvent) -> None:
         """Set ownership/permissions on the attached storage dir."""
-        if self.charm.state.substrate == Substrate.K8S:
-            return
-
         storage_dirs = {
             DATA_STORAGE: self.charm.workload.working_dir,
             LOG_STORAGE: self.charm.workload.log_dir,
@@ -91,6 +88,9 @@ class BaseEvents(ops.Object):
         }
         if (target := storage_dirs.get(event.storage.name)) is None:
             logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
+            return
+
+        if self.charm.state.substrate == Substrate.K8S:
             return
 
         try:
