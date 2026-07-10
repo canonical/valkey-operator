@@ -27,6 +27,12 @@ import yaml
 project = "Charmed Valkey"
 author = "Canonical Ltd."
 
+# Project slug; see https://meta.discourse.org/t/what-is-category-slug/87897
+#
+# TODO: If your documentation is hosted on https://docs.ubuntu.com/,
+#       uncomment and update as needed.
+
+slug = 'data/valkey/docs'
 
 # Sidebar documentation title; best kept reasonably short
 #
@@ -70,7 +76,7 @@ copyright = "%s CC-BY-SA, %s" % (datetime.date.today().year, author)
 # NOTE: The Open Graph Protocol (OGP) enhances page display in a social graph
 #       and is used by social media platforms; see https://ogp.me/
 
-ogp_site_url = "https://canonical-charmed-valkey.readthedocs-hosted.com/"
+ogp_site_url = f"https://canonical.com/{slug}/{os.environ.get('READTHEDOCS_VERSION', 'local')}"
 
 
 # Preview name of the documentation website
@@ -171,29 +177,19 @@ if os.getenv("OPENAPI", ""):
 # 'source_edit_link': 'https://github.com/canonical/sphinx-docs-starter-pack',
 # }
 
-# Project slug; see https://meta.discourse.org/t/what-is-category-slug/87897
-#
-# TODO: If your documentation is hosted on https://docs.ubuntu.com/,
-#       uncomment and update as needed.
-
-# slug = ''
-
 #######################
 # Sitemap configuration: https://sphinx-sitemap.readthedocs.io/
 #######################
 
 # Use RTD canonical URL to ensure duplicate pages have a specific canonical URL
 
-html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
+html_baseurl = f"https://canonical.com/{slug}/{os.environ.get('READTHEDOCS_VERSION', 'local')}"
 
-# URL scheme. Add language and version scheme elements.
-# When configured with RTD variables, check for RTD environment so manual runs succeed:
+# sphinx-sitemap uses html_baseurl to generate the full URL for each page:
 
-if 'READTHEDOCS_VERSION' in os.environ:
-    version = os.environ["READTHEDOCS_VERSION"]
-    sitemap_url_scheme = '{version}{link}'
-else:
-    sitemap_url_scheme = 'MANUAL/{link}'
+sitemap_url_scheme = '{link}'
+sitemap_filename = "doc-sitemap.xml"
+
 
 # Include `lastmod` dates in the sitemap:
 
@@ -214,8 +210,8 @@ sitemap_excludes = [
 # Template and asset locations
 #######################
 
-#html_static_path = ["_static"]
-#templates_path = ["_templates"]
+html_static_path = ["_static"]
+templates_path = ["_templates"]
 
 
 #############
@@ -315,7 +311,9 @@ exclude_patterns = [
 
 # Adds custom JavaScript files, located under 'html_static_path'
 
-# html_js_files = []
+html_js_files = [
+    "overwrite_links.js",
+    ]
 
 
 # Specifies a reST snippet to be appended to each .rst file
