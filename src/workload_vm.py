@@ -31,6 +31,9 @@ from common.exceptions import (
 )
 from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
+    ARCHIVE_STORAGE_PATH,
+    DATA_STORAGE_PATH,
+    LOG_STORAGE_PATH,
     SNAP_ACL_FILE,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
@@ -113,9 +116,9 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_config_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_CONFIG_FILE
         self.acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_ACL_FILE
         self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
-        self.working_dir = self.root_dir / SNAP_COMMON_PATH / "var/lib/charmed-valkey"
-        self.log_dir = self.root_dir / SNAP_COMMON_PATH / "var/log/charmed-valkey"
-        self.archive_dir = self.root_dir / SNAP_COMMON_PATH / "var/backups/charmed-valkey"
+        self.working_dir = self.root_dir / SNAP_COMMON_PATH / DATA_STORAGE_PATH
+        self.log_dir = self.root_dir / SNAP_COMMON_PATH / LOG_STORAGE_PATH
+        self.archive_dir = self.root_dir / SNAP_COMMON_PATH / ARCHIVE_STORAGE_PATH
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
         self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
         self.valkey_service = SNAP_SERVICE
