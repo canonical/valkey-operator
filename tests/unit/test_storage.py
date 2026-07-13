@@ -35,9 +35,7 @@ def test_vm_workload_exposes_log_and_archive_dirs():
     with patch("workload_vm.snap.SnapCache"):
         wl = ValkeyVmWorkload()
     assert wl.log_dir.as_posix() == "/var/snap/charmed-valkey/common/var/log/valkey"
-    assert (
-        wl.archive_dir.as_posix() == "/var/snap/charmed-valkey/common/var/backups/valkey"
-    )
+    assert wl.archive_dir.as_posix() == "/var/snap/charmed-valkey/common/var/backups/valkey"
 
 
 def test_storage_attached_logs_chowns_and_chmods_on_k8s(cloud_spec):
