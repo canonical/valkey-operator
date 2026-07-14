@@ -71,16 +71,16 @@ requires:
 storage:
   data:
     type: filesystem
-    location: /var/snap/charmed-valkey/common/var/lib/charmed-valkey
+    location: /var/snap/charmed-valkey/common/var/lib/valkey
     description: storage for valkey data
     minimum-size: 1G
   logs:
     type: filesystem
-    location: /var/snap/charmed-valkey/common/var/log/charmed-valkey
+    location: /var/snap/charmed-valkey/common/var/log/valkey
     description: storage for logfiles of valkey server and sentinel
     minimum-size: 1G
   archive:
     type: filesystem
-    location: /var/snap/charmed-valkey/common/var/backups/charmed-valkey
+    location: /var/snap/charmed-valkey/common/var/backups/valkey
     description: storage for local backup files during transfer to/from remote object storage
     minimum-size: 1G
