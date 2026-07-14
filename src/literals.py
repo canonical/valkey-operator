@@ -10,17 +10,16 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISIONS = {"x86_64": 18, "aarch64": 17}
+SNAP_REVISIONS = {"x86_64": 49, "aarch64": 48}
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
 SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "var/snap/charmed-valkey/current"
-SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
-SNAP_SENTINEL_CONFIG_FILE = "etc/charmed-valkey/sentinel.conf"
-SNAP_ACL_FILE = "etc/charmed-valkey/users.acl"
-SNAP_SENTINEL_ACL_FILE = "etc/charmed-valkey/sentinel-users.acl"
+SNAP_CONFIG_FILE = "etc/valkey/valkey.conf"
+SNAP_SENTINEL_CONFIG_FILE = "etc/valkey/sentinel.conf"
+SNAP_ACL_FILE = "etc/valkey/users.acl"
+SNAP_SENTINEL_ACL_FILE = "etc/valkey/sentinel-users.acl"
 
-# todo: update these paths once directories in the rock are complying with the standard
 CONFIG_FILE = "var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
@@ -53,8 +52,11 @@ INTERNAL_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
+DATA_STORAGE_PATH = "var/lib/valkey"
 LOG_STORAGE = "logs"
+LOG_STORAGE_PATH = "var/log/valkey"
 ARCHIVE_STORAGE = "archive"
+ARCHIVE_STORAGE_PATH = "var/backups/valkey"
 
 VALKEY_LOG_FILE = "valkey.log"
 SENTINEL_LOG_FILE = "sentinel.log"

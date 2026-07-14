@@ -34,10 +34,8 @@ def test_k8s_workload_exposes_log_and_archive_dirs():
 def test_vm_workload_exposes_log_and_archive_dirs():
     with patch("workload_vm.snap.SnapCache"):
         wl = ValkeyVmWorkload()
-    assert wl.log_dir.as_posix() == "/var/snap/charmed-valkey/common/var/log/charmed-valkey"
-    assert (
-        wl.archive_dir.as_posix() == "/var/snap/charmed-valkey/common/var/backups/charmed-valkey"
-    )
+    assert wl.log_dir.as_posix() == "/var/snap/charmed-valkey/common/var/log/valkey"
+    assert wl.archive_dir.as_posix() == "/var/snap/charmed-valkey/common/var/backups/valkey"
 
 
 def test_storage_attached_logs_chowns_and_chmods_on_k8s(cloud_spec):
@@ -136,7 +134,7 @@ def test_storage_attached_logs_chmods_only_on_vm(cloud_spec_vm):
         patch("workload_vm.ValkeyVmWorkload.exec") as mock_exec,
     ):
         ctx.run(ctx.on.storage_attached(logs), state_in)
-    log_path = "/var/snap/charmed-valkey/common/var/log/charmed-valkey"
+    log_path = "/var/snap/charmed-valkey/common/var/log/valkey"
     mock_exec.assert_any_call(["chmod", "-R", "750", log_path])
     chown_calls = [c for c in mock_exec.call_args_list if c.args and c.args[0][0] == "chown"]
     assert chown_calls == [], "VM must not chown — valkey runs as root"
