@@ -44,11 +44,18 @@ def test_build_and_deploy(
     if existing_app(juju):
         return
 
+    # ensure enough storage is available for the dataset we are going to seed
+    if substrate == Substrate.K8S:
+        storage = {"data": "kubernetes,5G"}
+    else:
+        storage = None
+
     juju.deploy(
         charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
         num_units=1,
         trust=True,
+        storage=storage,
     )
     juju.deploy(glide_runner_charm, app=GLIDE_RUNNER_NAME)
     juju.wait(

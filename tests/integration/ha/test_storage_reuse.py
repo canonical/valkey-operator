@@ -44,7 +44,8 @@ def test_build_and_deploy(
         juju.cli("create-storage-pool", "valkey-storage", "lxd")
         storage = {"data": "valkey-storage,2G"}
     else:
-        storage = None
+        # `kubernetes` is the default storage provider for the Canonical K8s cloud
+        storage = {"data": "kubernetes,5G"}
 
     juju.deploy(
         charm,
