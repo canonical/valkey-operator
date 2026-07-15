@@ -78,7 +78,7 @@ class ClusterManager(ManagerStatusProtocol):
         value = "1" if active_units >= 3 else "0"
         try:
             client = self._get_valkey_client()
-            client.load_config_settings(
+            client.config_set(
                 hostname=self.state.endpoint,
                 config_settings={
                     "min-replicas-to-write": value,
@@ -91,7 +91,7 @@ class ClusterManager(ManagerStatusProtocol):
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()
-        client.load_config_settings(
+        client.config_set(
             hostname=self.state.endpoint,
             config_settings={
                 "primaryauth": self.state.cluster.internal_users_credentials.get(
@@ -193,7 +193,7 @@ class ClusterManager(ManagerStatusProtocol):
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()
         try:
-            client.load_config_settings(tls_config, hostname=self.state.endpoint)
+            client.config_set(tls_config, hostname=self.state.endpoint)
         except ValkeyWorkloadCommandError:
             logger.error("Error loading TLS settings")
             raise ValkeyTLSLoadError("Could not load TLS settings")
@@ -202,10 +202,10 @@ class ClusterManager(ManagerStatusProtocol):
         """Update Valkey auth by loading the LDAP settings."""
         if not ldap_config:
             # disable LDAP by unsetting the server connection
-            ldap_config["ldap.servers"] = ""
+            ldap_config = {"ldap.servers": ""}
 
         client = self._get_valkey_client()
-        client.load_config_settings(ldap_config, hostname=self.state.endpoint)
+        client.config_set(ldap_config, hostname=self.state.endpoint)
 
     def save_database_blocking(self) -> None:
         """Run a synchronous save on the dataset and return when done, otherwise raise."""

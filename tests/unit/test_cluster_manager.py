@@ -18,7 +18,7 @@ def _make_cluster_manager(active_units: int, inactive_units: int = 1, config_set
     `active_units` servers report is_active=True; `inactive_units` report
     False so the active count, not the total, is what drives the decision.
     Returns the manager and the mock client so callers can assert on the
-    load_config_settings call.
+    config_set call.
     """
     state = MagicMock()
     state.endpoint = "10.0.0.5"
@@ -29,7 +29,7 @@ def _make_cluster_manager(active_units: int, inactive_units: int = 1, config_set
     cm = ClusterManager(state=state, workload=MagicMock())
     client = MagicMock()
     if not config_set_ok:
-        client.load_config_settings.side_effect = ValkeyWorkloadCommandError("failed")
+        client.config_set.side_effect = ValkeyWorkloadCommandError("failed")
     cm._get_valkey_client = MagicMock(return_value=client)
     return cm, client
 
@@ -44,7 +44,7 @@ def test_reconcile_sets_value_per_topology(active_units, expected):
 
     cm.reconcile_min_replicas_to_write()
 
-    client.load_config_settings.assert_called_once_with(
+    client.config_set.assert_called_once_with(
         hostname="10.0.0.5",
         config_settings={"min-replicas-to-write": expected},
     )
@@ -60,5 +60,5 @@ def test_reconcile_swallows_config_set_failure(caplog):
 
     cm.reconcile_min_replicas_to_write()
 
-    client.load_config_settings.assert_called_once()
+    client.config_set.assert_called_once()
     assert "Failed to reconcile min-replicas-to-write" in caplog.text

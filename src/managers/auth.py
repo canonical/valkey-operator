@@ -78,7 +78,7 @@ class AuthManager(ManagerStatusProtocol):
 
         tls_context = ldap3.Tls(
             ciphers="ALL",
-            version=ssl.PROTOCOL_TLSv1,
+            version=ssl.PROTOCOL_TLS_CLIENT,
             validate=ssl.CERT_REQUIRED,
             ca_certs_data=ldap_ca_cert,
         )
@@ -152,10 +152,10 @@ class AuthManager(ManagerStatusProtocol):
             return acl_content
 
         # get non-LDAP users to avoid adding duplicate usernames to ACL files
-        internal_users = (user.value for user in CharmUsers)
+        internal_users = [user.value for user in CharmUsers]
         client_users = []
         if external_client_users := self.state.cluster.external_users_credentials:
-            client_users = (username for username in external_client_users)
+            client_users = list(external_client_users.keys())
 
         # get configured LDAP groups and generate ACL lines for the LDAP members of these groups
         base_auth_rule = "-@all +info +ping"

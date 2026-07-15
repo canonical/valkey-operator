@@ -277,7 +277,7 @@ class ValkeyClient(CliClient):
         """
         return self.exec_cli_command(["acl", "load"], hostname=hostname) == "OK"
 
-    def load_config_settings(self, config_settings: dict[str, str], hostname: str) -> None:
+    def config_set(self, config_settings: dict[str, str], hostname: str) -> None:
         """Load a dictionary of config settings in a Valkey server."""
         cmd = ["CONFIG", "SET"]
 

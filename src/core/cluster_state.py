@@ -286,7 +286,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             if not (relation_data := repository.get_data()):
                 continue
 
-            if not (requests := relation_data.get("requests", [])):
+            if not (requests := relation_data.get("requests")):
                 # Data integrator supports valkey-client with data-interfaces v1, no need for v0
                 continue
 
