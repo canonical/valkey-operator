@@ -104,7 +104,7 @@ def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: s
             with attempt:
                 try:
                     command_result = subprocess.check_output(
-                        " ".join(["microk8s", "kubectl", "apply", "-f", temp_file.name]),
+                        " ".join(["sudo", "k8s", "kubectl", "apply", "-f", temp_file.name]),
                         shell=True,
                         env=env,
                         stderr=subprocess.STDOUT,
@@ -165,7 +165,7 @@ def restore_network_to_unit(
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
         subprocess.check_output(
-            f"microk8s kubectl -n {model_name} delete networkchaos network-loss-primary",
+            f"sudo k8s kubectl -n {model_name} delete networkchaos network-loss-primary",
             shell=True,
             env=env,
         )
