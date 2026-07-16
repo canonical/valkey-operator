@@ -318,4 +318,7 @@ class AuthManager(ManagerStatusProtocol):
         if not self.state.unit_server.is_ldap_enabled:
             status_list.append(AuthStatuses.LDAP_NOT_ENABLED.value)
 
+        if self.state.unit_server.model.ldap_user_epoch < self.state.cluster.model.ldap_user_epoch:
+            status_list.append(AuthStatuses.LDAP_USER_SYNC_FAILED.value)
+
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

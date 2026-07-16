@@ -812,7 +812,7 @@ def test_not_started_no_config_load(cloud_spec):
             assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
 
 
-def test_sync_ldap_users_unit_not_started(cloud_spec):
+def test_sync_ldap_users_leader_only(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -826,6 +826,26 @@ def test_sync_ldap_users_unit_not_started(cloud_spec):
 
     with raises(testing.ActionFailed) as e:
         ctx.run(ctx.on.action("sync-ldap-users"), state_in)
+    assert "Action can only be run on the leader unit" in e.value.message
+
+
+def test_sync_ldap_users_unit_not_started(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with raises(testing.ActionFailed) as e:
+        state_out = ctx.run(ctx.on.action("sync-ldap-users"), state_in)
+
+        assert state_out.get_relation(1).local_app_data.get("ldap-user-epoch") == "0"
+        assert state_out.get_relation(1).local_unit_data.get("ldap-user-epoch") == "0"
     assert "wait for startup to complete" in e.value.message
 
 
@@ -839,7 +859,7 @@ def test_sync_ldap_users_not_yet_enabled(cloud_spec):
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
-        leader=False,
+        leader=True,
         relations={peer_relation, status_peer_relation},
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -848,6 +868,31 @@ def test_sync_ldap_users_not_yet_enabled(cloud_spec):
     with raises(testing.ActionFailed) as e:
         ctx.run(ctx.on.action("sync-ldap-users"), state_in)
     assert "LDAP not yet enabled on this unit" in e.value.message
+
+
+def test_sync_ldap_users_not_yet_enabled_non_leader(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl:
+        state_out = ctx.run(
+            ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
+        )
+
+        reload_acl.assert_not_called()
+        assert state_out.get_relation(1).local_unit_data.get("ldap-user-epoch") == "0"
 
 
 def test_sync_ldap_users_no_ldap_relation(cloud_spec):
@@ -863,7 +908,7 @@ def test_sync_ldap_users_no_ldap_relation(cloud_spec):
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
-        leader=False,
+        leader=True,
         relations={peer_relation, status_peer_relation},
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
@@ -906,7 +951,7 @@ def test_sync_ldap_users_invalid_config(cloud_spec):
 
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
-        leader=False,
+        leader=True,
         relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
         secrets={ldap_secret},
         containers={container},
@@ -962,7 +1007,7 @@ def test_sync_ldap_users(cloud_spec):
 
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
-        leader=False,
+        leader=True,
         relations={
             peer_relation,
             status_peer_relation,
@@ -989,11 +1034,161 @@ def test_sync_ldap_users(cloud_spec):
             ),
             patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl,
         ):
-            manager.run()
+            state_out = manager.run()
 
             ldap_group_permissions = charm.auth_manager._resolve_ldap_group_permissions()
             assert ldap_group_permissions.get("ldap_group_1") == ["read", "write", "pubsub"]
             assert ldap_group_permissions.get("ldap_group_2") == ["read"]
 
+            assert state_out.get_relation(1).local_app_data.get("ldap-user-epoch") != "0"
+            assert state_out.get_relation(1).local_unit_data.get("ldap-user-epoch") != "0"
+
     assert "Updated ACL configuration" in ctx.action_results.get("result")
     reload_acl.assert_called_once()
+
+
+def test_sync_ldap_users_non_leader(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "ldap-enabled": "true",
+        },
+        local_app_data={"ldap-user-epoch": "1774854243.6019819"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data=ldap_relation_data,
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    client_relation = testing.Relation(
+        id=5,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": """[{"resource": "my-keys", "request-id": "8865631800293def", "salt": "6TNjC2Aid8hlfBpf", \
+                        "entity-permissions": [{"resource_name": "valkey_group_1", "resource_type": "acl", \
+                        "privileges": ["read", "write", "pubsub"]}, {"resource_name": "valkey_group_2", \
+                        "resource_type": "acl", "privileges": ["read"]}]}]""",
+        },
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={
+            peer_relation,
+            status_peer_relation,
+            ldap_relation,
+            ldap_ca_cert_relation,
+            client_relation,
+        },
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group_1:valkey_group_1, ldap_group_2:valkey_group_2"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+
+        with (
+            patch("managers.auth.AuthManager._get_internal_user_acl_line"),
+            patch("managers.auth.AuthManager._get_client_user_acl_lines"),
+            patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+            patch(
+                "managers.auth.AuthManager._get_ldap_users_for_group",
+                return_value=[["user_1"], ["user_2", "user_3"]],
+            ),
+            patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl,
+        ):
+            state_out = manager.run()
+
+            ldap_group_permissions = charm.auth_manager._resolve_ldap_group_permissions()
+            assert ldap_group_permissions.get("ldap_group_1") == ["read", "write", "pubsub"]
+            assert ldap_group_permissions.get("ldap_group_2") == ["read"]
+
+            assert state_out.get_relation(1).local_unit_data.get("ldap-user-epoch") != "0"
+            reload_acl.assert_called_once()
+
+
+def test_sync_ldap_users_up_to_date(cloud_spec):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "ldap-enabled": "true",
+            "ldap-user-epoch": "1774854243.6034567",
+        },
+        local_app_data={"ldap-user-epoch": "1774854243.6019819"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+
+    ldap_relation = testing.Relation(
+        id=3,
+        endpoint=LDAP_RELATION,
+        remote_app_data=ldap_relation_data,
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    client_relation = testing.Relation(
+        id=5,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": """[{"resource": "my-keys", "request-id": "8865631800293def", "salt": "6TNjC2Aid8hlfBpf", \
+                        "entity-permissions": [{"resource_name": "valkey_group_1", "resource_type": "acl", \
+                        "privileges": ["read", "write", "pubsub"]}, {"resource_name": "valkey_group_2", \
+                        "resource_type": "acl", "privileges": ["read"]}]}]""",
+        },
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={
+            peer_relation,
+            status_peer_relation,
+            ldap_relation,
+            ldap_ca_cert_relation,
+            client_relation,
+        },
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group_1:valkey_group_1, ldap_group_2:valkey_group_2"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl:
+        ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
+        reload_acl.assert_not_called()

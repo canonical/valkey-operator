@@ -197,3 +197,7 @@ class AuthStatuses(Enum):
     LDAP_NOT_ENABLED = StatusObject(
         status="blocked", message="LDAP not yet enabled, see `debug-log` for details"
     )
+
+    LDAP_USER_SYNC_FAILED = StatusObject(
+        status="blocked", message="LDAP: User synchronization failed"
+    )

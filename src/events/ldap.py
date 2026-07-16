@@ -5,6 +5,7 @@
 """LDAP related event handlers."""
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import ops
@@ -26,7 +27,7 @@ from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
-from literals import LDAP_CA_CERT_RELATION, LDAP_RELATION
+from literals import LDAP_CA_CERT_RELATION, LDAP_RELATION, PEER_RELATION
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -55,6 +56,9 @@ class LDAPEvents(ops.Object):
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         self.framework.observe(self.charm.on.sync_ldap_users_action, self._on_sync_ldap_users)
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_changed, self._on_peer_relation_changed
+        )
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
@@ -201,6 +205,12 @@ class LDAPEvents(ops.Object):
 
     def _on_sync_ldap_users(self, event: ops.ActionEvent) -> None:
         """Handle the action event for sync-ldap-users."""
+        if not self.charm.unit.is_leader():
+            error = "Action can only be run on the leader unit"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
         if not self.charm.state.unit_server.is_started:
             error = "Unit not fully started yet, wait for startup to complete"
             event.set_results({"error": error})
@@ -221,6 +231,7 @@ class LDAPEvents(ops.Object):
 
         logger.info("Update ACL configuration")
         event.log(f"Querying LDAP and updating Valkey ACL configuration on {self.charm.unit.name}")
+        self.charm.state.cluster.update({"ldap_user_epoch": time.time()})
 
         try:
             self.charm.auth_manager.set_acl_file()
@@ -231,8 +242,34 @@ class LDAPEvents(ops.Object):
             event.fail("Failed to update ACL settings, check `debug-log` for details")
             return
 
+        self.charm.state.unit_server.update({"ldap_user_epoch": time.time()})
         event.set_results(
             {
                 "result": f"Updated ACL configuration on {self.charm.unit.name}, check `debug-log` for errors"
             }
         )
+
+    def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Handle peer relation changes in regard to LDAP.
+
+        This catches updates to the 'ldap-users-epoch' triggered by the 'sync-ldap-users'  action.
+        """
+        if (
+            self.charm.unit.is_leader()
+            or not self.charm.state.unit_server.is_started
+            or not self.charm.state.unit_server.is_ldap_enabled
+            or not self.charm.state.is_ldap_valid
+            or self.charm.state.unit_server.model.ldap_user_epoch
+            >= self.charm.state.cluster.model.ldap_user_epoch
+        ):
+            return
+
+        logger.info("Update ACL configuration")
+        try:
+            self.charm.auth_manager.set_acl_file()
+            self.charm.cluster_manager.reload_acl_file()
+        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to update ACL settings: %s", e)
+            return
+
+        self.charm.state.unit_server.update({"ldap_user_epoch": time.time()})
