@@ -132,7 +132,7 @@ class PeerAppModel(PeerModel):
     tls_client_private_key: ExtraSecretStr = Field(default=None)
     external_client_users: ClientUsersSecret = Field(default="")
     client_user_epoch: float = Field(default=0)
-    ldap_user_epoch: float = Field(default=0)
+    ldap_user_epoch: float | int = Field(default=0)
     s3_credentials: ExtraSecretStr = Field(default=None)
 
 
