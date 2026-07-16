@@ -16,8 +16,8 @@ from core.cluster_state import ClusterState
 from literals import (
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
-    TOPOLOGY_OBSERVER_LOG_FILE,
-    TOPOLOGY_OBSERVER_TLS_CA_FILE,
+    TOPOLOGY_OBSERVER_LOG_FILENAME,
+    TOPOLOGY_OBSERVER_TLS_CA_FILENAME,
     CharmUsers,
 )
 
@@ -33,6 +33,16 @@ class TopologyManager:
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
+
+    @property
+    def _log_file_path(self) -> Path:
+        """Return the path to the topology observer log file."""
+        return self.state.charm.charm_dir / TOPOLOGY_OBSERVER_LOG_FILENAME
+
+    @property
+    def _tls_ca_file_path(self) -> Path:
+        """Return the path to the topology observer TLS CA file."""
+        return self.state.charm.charm_dir / TOPOLOGY_OBSERVER_TLS_CA_FILENAME
 
     def start_observer(self) -> None:
         """Start the topology observer as a subprocess."""
@@ -74,8 +84,7 @@ class TopologyManager:
         if self.state.unit_server.is_tls_enabled:
             # Store current TLS CA cert on operator container
             tls_ca_cert = self.workload.read_file(self.workload.tls_paths.client_ca)
-            path = Path(TOPOLOGY_OBSERVER_TLS_CA_FILE)
-            path.write_text(tls_ca_cert)
+            self._tls_ca_file_path.write_text(tls_ca_cert)
 
         logging.info("Starting topology observer")
         pid = subprocess.Popen(  # noqa: S603
@@ -92,7 +101,7 @@ class TopologyManager:
                 self.state.charm.charm_dir,
             ],
             # File shouldn't close
-            stdout=open(TOPOLOGY_OBSERVER_LOG_FILE, "a"),  # noqa: SIM115
+            stdout=open(self._log_file_path.as_posix(), "a"),  # noqa: SIM115
             stderr=subprocess.STDOUT,
             env=env,
         ).pid

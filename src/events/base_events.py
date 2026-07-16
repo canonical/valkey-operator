@@ -89,21 +89,12 @@ class BaseEvents(ops.Object):
         if (target := storage_dirs.get(event.storage.name)) is None:
             logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
             return
-        path = target.as_posix()
 
-        # chown is K8s-only: VM valkey runs as root and a VM chown would run pre-install.
         if self.charm.state.substrate == Substrate.K8S:
-            try:
-                self.charm.workload.exec(
-                    ["chown", "-R", f"{self.charm.workload.user}:{self.charm.workload.user}", path]
-                )
-            except ValkeyWorkloadCommandError as e:
-                logger.error("Error when ensuring storage ownership: %s", e)
-                event.defer()
-                return
+            return
 
         try:
-            self.charm.workload.exec(["chmod", "-R", "750", path])
+            self.charm.workload.exec(["chmod", "-R", "750", target.as_posix()])
         except ValkeyWorkloadCommandError as e:
             logger.error("Error when setting storage permissions: %s", e)
             event.defer()

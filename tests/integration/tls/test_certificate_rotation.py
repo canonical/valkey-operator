@@ -35,15 +35,16 @@ CERTIFICATE_EXPIRY_TIME = 600
 CA_EXPIRY_TIME = 720
 
 
-def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju) -> None:
+def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Prepare the units for the CA expiration test."""
     for unit_name in juju.status().get_units(APP_NAME):
         logger.info("Updating renewal relative time to 0.6 for unit %s", unit_name)
         search_expression = "\\(refresh_events=\\[self.refresh_tls_certificates_event\\],\\)"
         replace_expression = "\\1renewal_relative_time=0.6,"
         file = f"/var/lib/juju/agents/unit-{unit_name.replace('/', '-')}/charm/src/events/tls.py"
+        sudo = "sudo " if substrate == Substrate.VM else ""
         juju.ssh(
-            command=f"sudo sed -i 's|{search_expression}|{replace_expression}|' {file}",
+            command=f"{sudo}sed -i 's|{search_expression}|{replace_expression}|' {file}",
             target=unit_name,
         )
 
@@ -77,9 +78,9 @@ def test_build_and_deploy(
     )
 
 
-def test_certificate_expiration(juju: jubilant.Juju) -> None:
+def test_certificate_expiration(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Test the TLS certificate expiration and renewal on a running cluster."""
-    _prepare_units_for_ca_expiration_test(juju)
+    _prepare_units_for_ca_expiration_test(juju, substrate)
 
     logger.info("Enabling TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)

@@ -38,37 +38,6 @@ def test_vm_workload_exposes_log_and_archive_dirs():
     assert wl.archive_dir.as_posix() == "/var/snap/charmed-valkey/common/var/backups/valkey"
 
 
-def test_storage_attached_logs_chowns_and_chmods_on_k8s(cloud_spec):
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    logs = testing.Storage(name="logs")
-    state_in = testing.State(
-        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
-        leader=True,
-        containers={testing.Container(name=CONTAINER, can_connect=True)},
-        storages={logs},
-        relations=_base_relations(),
-    )
-    with patch("workload_k8s.ValkeyK8sWorkload.exec") as mock_exec:
-        ctx.run(ctx.on.storage_attached(logs), state_in)
-    mock_exec.assert_any_call(["chown", "-R", "_daemon_:_daemon_", "/var/log/valkey"])
-    mock_exec.assert_any_call(["chmod", "-R", "750", "/var/log/valkey"])
-
-
-def test_storage_attached_archive_targets_archive_dir_on_k8s(cloud_spec):
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    archive = testing.Storage(name="archive")
-    state_in = testing.State(
-        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
-        leader=True,
-        containers={testing.Container(name=CONTAINER, can_connect=True)},
-        storages={archive},
-        relations=_base_relations(),
-    )
-    with patch("workload_k8s.ValkeyK8sWorkload.exec") as mock_exec:
-        ctx.run(ctx.on.storage_attached(archive), state_in)
-    mock_exec.assert_any_call(["chmod", "-R", "750", "/var/backups/valkey"])
-
-
 @pytest.mark.parametrize("storage_name", ["logs", "archive"])
 def test_storage_is_a_readable_writable_mount(cloud_spec, storage_name):
     """A file placed on the volume is visible to the charm and survives the hook."""
