@@ -135,7 +135,7 @@ class ExternalClientsEvents(ops.Object):
                 continue
 
             if not (password := self.charm.client_manager.get_password(username)):
-                password = self.charm.config_manager.generate_password()
+                password = self.charm.auth_manager.generate_password()
             self.charm.client_manager.add_managed_user(username, password, request.resource)
 
             response = next(
@@ -175,9 +175,9 @@ class ExternalClientsEvents(ops.Object):
 
         logger.info("Updating ACL configuration in Valkey")
         try:
-            self.charm.config_manager.set_acl_file()
+            self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-            self.charm.config_manager.set_sentinel_acl_file()
+            self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
@@ -234,9 +234,9 @@ class ExternalClientsEvents(ops.Object):
 
         logger.info("Reconciling ACL configuration in Valkey")
         try:
-            self.charm.config_manager.set_acl_file()
+            self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-            self.charm.config_manager.set_sentinel_acl_file()
+            self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
@@ -261,9 +261,9 @@ class ExternalClientsEvents(ops.Object):
 
         logger.info("Updating ACL configuration in Valkey")
         try:
-            self.charm.config_manager.set_acl_file()
+            self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-            self.charm.config_manager.set_sentinel_acl_file()
+            self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)

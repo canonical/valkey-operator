@@ -6,6 +6,7 @@
 
 import json
 import logging
+from collections.abc import MutableMapping
 from typing import Any, final
 
 import ops
@@ -131,6 +132,7 @@ class PeerAppModel(PeerModel):
     tls_client_private_key: ExtraSecretStr = Field(default=None)
     external_client_users: ClientUsersSecret = Field(default="")
     client_user_epoch: float = Field(default=0)
+    ldap_user_epoch: float | int = Field(default=0)
     s3_credentials: ExtraSecretStr = Field(default=None)
 
 
@@ -153,6 +155,8 @@ class PeerUnitModel(PeerModel):
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
     backup_id: str = Field(default="")
+    ldap_enabled: bool = Field(default=False)
+    ldap_user_epoch: float | int = Field(default=0)
 
 
 class RelationState:
@@ -262,6 +266,14 @@ class ValkeyServer(RelationState):
         """Check if TLS is enabled for client connections."""
         return self.tls_client_state in [TLSState.TLS, TLSState.TO_NO_TLS]
 
+    @property
+    def is_ldap_enabled(self) -> bool:
+        """Check if LDAP is enabled."""
+        if not self.model:
+            return False
+
+        return self.model.ldap_enabled
+
     def get_endpoint(self, substrate: Substrate) -> str:
         """Return the endpoint to be used by other units to connect to this unit.
 
@@ -367,3 +379,56 @@ class ValkeyCluster(RelationState):
             return PrivateKey(raw=private_key)
 
         return None
+
+
+class LDAPState:
+    """Relation data collection for the LDAP integration."""
+
+    def __init__(self, relation: ops.Relation | None):
+        self.relation = relation
+
+    @property
+    def relation_data(self) -> MutableMapping[str, str]:
+        """LDAP relation data object."""
+        if not self.relation or not self.relation.app:
+            return {}
+
+        return self.relation.data[self.relation.app]
+
+    @property
+    def urls(self) -> list:
+        """The URLs to connect to LDAP."""
+        try:
+            return json.loads(self.relation_data.get("urls", ""))
+        except json.JSONDecodeError as e:
+            logger.error("Error loading LDAP urls: %s", e)
+            return []
+
+    @property
+    def ldaps_urls(self) -> list:
+        """The URLs for LDAP over TLS."""
+        try:
+            return json.loads(self.relation_data.get("ldaps_urls", ""))
+        except json.JSONDecodeError as e:
+            logger.error("Error loading LDAP urls: %s", e)
+            return []
+
+    @property
+    def starttls(self) -> str:
+        """The URLs to connect to LDAP."""
+        return self.relation_data.get("starttls", "")
+
+    @property
+    def base_dn(self) -> str:
+        """The base entry for LDAP search."""
+        return self.relation_data.get("base_dn", "")
+
+    @property
+    def bind_dn(self) -> str:
+        """The name of the bind account."""
+        return self.relation_data.get("bind_dn", "")
+
+    @property
+    def bind_password_secret(self) -> str:
+        """The secret including the bind password."""
+        return self.relation_data.get("bind_password_secret", "")

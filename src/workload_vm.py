@@ -119,6 +119,7 @@ class ValkeyVmWorkload(WorkloadBase):
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / DATA_STORAGE_PATH
         self.log_dir = self.root_dir / SNAP_COMMON_PATH / LOG_STORAGE_PATH
         self.archive_dir = self.root_dir / SNAP_COMMON_PATH / ARCHIVE_STORAGE_PATH
+        self.lib_dir = self.root_dir / "snap/charmed-valkey/current/usr/lib"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
         self.tls_paths: TLSPaths = TLSPaths(tls_root=self.tls_dir)
         self.valkey_service = SNAP_SERVICE

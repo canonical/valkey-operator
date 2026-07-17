@@ -15,7 +15,7 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
-    ValkeyConfigSetError,
+    ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
@@ -78,27 +78,27 @@ class ClusterManager(ManagerStatusProtocol):
         value = "1" if active_units >= 3 else "0"
         try:
             client = self._get_valkey_client()
-            if not client.config_set(
+            client.config_set(
                 hostname=self.state.endpoint,
-                parameter="min-replicas-to-write",
-                value=value,
-            ):
-                raise ValkeyConfigSetError("Could not set min-replicas-to-write on Valkey server.")
-        except (ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+                config_settings={
+                    "min-replicas-to-write": value,
+                },
+            )
+        except ValkeyWorkloadCommandError as e:
             # non-critical; reasserted on the next event or restart
             logger.error("Failed to reconcile min-replicas-to-write: %s", e)
 
     def update_primary_auth(self) -> None:
         """Update the primaryauth runtime configuration on the Valkey server."""
         client = self._get_valkey_client()
-        if not client.config_set(
+        client.config_set(
             hostname=self.state.endpoint,
-            parameter="primaryauth",
-            value=self.state.cluster.internal_users_credentials.get(
-                CharmUsers.VALKEY_REPLICA.value, ""
-            ),
-        ):
-            raise ValkeyConfigSetError("Could not set primaryauth on Valkey server.")
+            config_settings={
+                "primaryauth": self.state.cluster.internal_users_credentials.get(
+                    CharmUsers.VALKEY_REPLICA.value, ""
+                )
+            },
+        )
 
     @retry(
         wait=wait_fixed(5),
@@ -192,7 +192,20 @@ class ClusterManager(ManagerStatusProtocol):
     def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
         """Update TLS by loading the TLS settings."""
         client = self._get_valkey_client()
-        client.reload_tls(tls_config, hostname=self.state.endpoint)
+        try:
+            client.config_set(tls_config, hostname=self.state.endpoint)
+        except ValkeyWorkloadCommandError:
+            logger.error("Error loading TLS settings")
+            raise ValkeyTLSLoadError("Could not load TLS settings")
+
+    def reload_ldap_settings(self, ldap_config: dict[str, str]) -> None:
+        """Update Valkey auth by loading the LDAP settings."""
+        if not ldap_config:
+            # disable LDAP by unsetting the server connection
+            ldap_config = {"ldap.servers": ""}
+
+        client = self._get_valkey_client()
+        client.config_set(ldap_config, hostname=self.state.endpoint)
 
     def save_database_blocking(self) -> None:
         """Run a synchronous save on the dataset and return when done, otherwise raise."""
