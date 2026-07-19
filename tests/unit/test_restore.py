@@ -218,6 +218,47 @@ def test_suppress_and_resume_failover_iterate_all_sentinels(mocker):
     client.reset.assert_any_call(hostname="10.0.0.2")
 
 
+def test_suppress_failover_raises_when_set_reports_non_ok(mocker):
+    """A non-OK SENTINEL SET must fail-closed BEFORE the primary is stopped.
+
+    Otherwise that sentinel stays at the normal down-after and could promote a
+    replica while the primary is stopped for the restore.
+    """
+    from common.exceptions import SentinelFailoverError
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    client = mocker.Mock()
+    client.set.return_value = False  # non-OK reply, no exception raised
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    mocker.patch.object(mgr, "all_sentinel_endpoints", return_value=["10.0.0.1"])
+
+    with pytest.raises(SentinelFailoverError):
+        mgr.suppress_failover()
+
+
+def test_resume_failover_best_effort_on_non_ok_set(mocker, caplog):
+    """resume_failover must NOT raise on a non-OK SET (raising would re-wedge teardown).
+
+    It logs the degraded endpoint and still issues SENTINEL RESET.
+    """
+    import logging
+
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    client = mocker.Mock()
+    client.set.return_value = False
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    mocker.patch.object(mgr, "all_sentinel_endpoints", return_value=["10.0.0.1"])
+
+    with caplog.at_level(logging.WARNING):
+        mgr.resume_failover()  # must not raise
+
+    client.reset.assert_called_once_with(hostname="10.0.0.1")  # RESET still runs
+    assert "10.0.0.1" in caplog.text  # the non-OK endpoint was logged
+
+
 def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     """Manager helper reports failover from the primary flags with no retry/blocking."""
     from src.managers.sentinel import SentinelManager

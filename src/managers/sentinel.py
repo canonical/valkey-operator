@@ -376,26 +376,34 @@ class SentinelManager(ManagerStatusProtocol):
         )
 
     def suppress_failover(self) -> None:
-        """Raise down-after-milliseconds on every sentinel so the primary's restart isn't a failure."""
+        """Raise down-after on every sentinel so the primary's restart isn't seen as a failure.
+
+        Fail-closed: raise on a non-OK SET before the primary is stopped, else that
+        sentinel could promote a replica mid-restore.
+        """
         client = self._get_sentinel_client()
         for endpoint in self.all_sentinel_endpoints():
-            client.set(
+            if not client.set(
                 endpoint,
                 PRIMARY_NAME,
                 "down-after-milliseconds",
                 str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS),
-            )
+            ):
+                raise SentinelFailoverError(f"Failed to suppress failover on sentinel {endpoint}")
 
     def resume_failover(self) -> None:
-        """Restore the configured down-after-milliseconds and SENTINEL RESET on every sentinel.
+        """Reset down-after and SENTINEL RESET on every sentinel; idempotent.
 
-        Idempotent — safe to call from every restore abort/teardown path.
+        Best-effort on a non-OK SET (logged, not raised) — raising on a teardown
+        path would re-wedge the restore. A stuck value clears on the next config
+        re-render (Sentinel persists SET to its own conf, so a restart won't).
         """
         client = self._get_sentinel_client()
         for endpoint in self.all_sentinel_endpoints():
-            client.set(
+            if not client.set(
                 endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
-            )
+            ):
+                logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
             client.reset(hostname=endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
