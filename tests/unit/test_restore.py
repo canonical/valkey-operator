@@ -1179,6 +1179,35 @@ def test_non_participant_unit_skips_restore_workflow(cloud_spec, restore_manager
     assert _peer_unit_data(state_out).get("restore-failed", "") == ""
 
 
+def test_non_participant_leader_advances_restore(cloud_spec, restore_managers):
+    """A non-participant LEADER must still advance the barrier, not wedge the restore.
+
+    If leadership drifts to a unit that joined after initiation (a non-participant)
+    without any original participant departing, that leader must still advance the
+    shared instruction once the real participants reach it -- otherwise nobody
+    advances the barrier and the restore wedges in-progress forever.
+    """
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=True,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            # valkey/0 (this leader) joined late: NOT a participant. valkey/1 is the
+            # sole participant and has already reached RESTORE.
+            "restore-participants": "valkey/1",
+        },
+        peers_data={1: {"start-state": "started", "restore-step": RestoreStep.RESTORE.value}},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # Ran no step of its own (non-participant), but advanced the barrier to RESYNC.
+    restore_managers.is_primary.assert_not_called()
+    restore_managers.restore_on_primary.assert_not_called()
+    assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESYNC.value
+
+
 def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_managers):
     """A non-RDB backup fails the pre-stop check: the primary is never stopped or rolled back."""
     from common.exceptions import ValkeyRestoreError

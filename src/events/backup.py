@@ -341,6 +341,10 @@ class BackupEvents(ops.Object):
             # A unit that joined after initiation isn't a participant and must run no
             # step (it would query its own down Valkey and spuriously tear down).
             if self.charm.unit.name not in self.charm.state.cluster.restore_participants:
+                # ...but a non-participant leader must still advance the barrier
+                # (leadership can drift to a late-joiner), or nobody does -> wedge.
+                if self.charm.unit.is_leader():
+                    self._advance_if_leader()
                 return
             # This unit already failed this attempt (token-scoped, so a stale marker
             # won't block a new one): wait for the leader to tear down.
