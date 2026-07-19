@@ -24,6 +24,7 @@ from common.exceptions import (
     ValkeyBackupError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyClusterNotReadyError,
+    ValkeyRestoreError,
     ValkeyWorkloadCommandError,
 )
 from core.models import S3Parameters
@@ -401,6 +402,16 @@ class BackupEvents(ops.Object):
             case (RestoreStep.RESTORE, RestoreStep.NOT_STARTED):
                 # Fused download+restore: primary suppresses failover, downloads
                 # and swaps the RDB in one sweep; replicas just record the step.
+                #
+                # Redelivered mid-swap (valkey down + a rollback copy present): don't
+                # continue the interrupted download -- roll back to the original data
+                # and fail, so the operator re-runs from a known-good baseline.
+                if self.charm.backup_manager.has_pre_restore_copy() and not (
+                    self.charm.workload.service_running(self.charm.workload.valkey_service)
+                ):
+                    self.charm.backup_manager.roll_back()
+                    raise ValkeyRestoreError("primary restore interrupted mid-swap; rolled back")
+
                 is_primary = self.charm.cluster_manager.is_primary()
                 self.charm.state.unit_server.update(
                     {"restore_role": "primary" if is_primary else "replica"}

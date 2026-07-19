@@ -394,15 +394,20 @@ def test_restore_on_primary_orders_stop_backup_download_start(mocker):
     assert calls == ["stop", "move", "download", "start"]
 
 
-def test_restore_on_primary_preserves_existing_pre_restore(mocker):
-    """move-aside (dump → pre-restore) must be skipped when pre-restore already exists (FIX 2)."""
+def test_restore_on_primary_drops_stale_copy(mocker):
+    """A leftover pre-restore copy from a PRIOR restore is dropped before capturing this one.
+
+    restore_on_primary only ever runs for a fresh swap (a redelivered mid-swap is
+    rolled back upstream), so any existing copy is stale: it must be removed so the
+    move-aside captures THIS restore's dump as the rollback, not a prior restore's.
+    """
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
     mgr.workload = mocker.Mock(valkey_service="valkey")
-    # Simulate a redelivered hook: the pre-restore path already holds the original data.
-    mgr.workload.path_exists.return_value = True
+    mgr.workload.service_running.return_value = True  # fresh swap: valkey is up
+    mgr.workload.path_exists.return_value = True  # a stale copy from a prior restore exists
 
     dump = mocker.Mock()
     pre = mocker.Mock()
@@ -416,10 +421,8 @@ def test_restore_on_primary_preserves_existing_pre_restore(mocker):
 
     mgr.restore_on_primary()
 
-    move_calls = [c.args for c in mgr.workload.move_file.call_args_list]
-    # The move-aside (dump → pre-restore) must NOT have run; original data preserved.
-    assert (dump, pre) not in move_calls
-    # The restore RDB is still downloaded onto the (preserved) data partition.
+    mgr.workload.remove_file.assert_any_call(pre)  # stale copy dropped
+    mgr.workload.move_file.assert_called_once_with(dump, pre)  # this dump captured as rollback
     mgr.download_backup.assert_called_once()
 
 
@@ -428,16 +431,70 @@ def test_roll_back_stops_service_before_swap(mocker):
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload.service_running.return_value = True  # server up -> _ensure_stopped stops it
     calls = []
     mgr.workload.stop_service.side_effect = lambda s: calls.append("stop")
     mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")
     mgr.workload.start_service.side_effect = lambda s: calls.append("start")
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
+    tmp = mocker.patch.object(
+        BackupManager, "_dump_tmp_path", new_callable=mocker.PropertyMock
+    ).return_value
     mgr.workload.path_exists.return_value = True
 
     mgr.roll_back()
     assert calls == ["stop", "move", "start"]
+    # A partial download left on the data partition is dropped during rollback.
+    mgr.workload.remove_file.assert_called_once_with(tmp)
+
+
+def test_roll_back_tolerates_already_stopped_service(mocker):
+    """On a rollback after a crash mid-download the server is already down; don't re-stop.
+
+    On K8s stop_service errors on an already-stopped service, so roll_back must
+    skip the stop when the server isn't alive (the leading-stop guard).
+    """
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload.service_running.return_value = False  # already stopped (mid-restore crash)
+    mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_dump_tmp_path", new_callable=mocker.PropertyMock)
+    mgr.workload.path_exists.return_value = True
+
+    mgr.roll_back()
+
+    mgr.workload.stop_service.assert_not_called()  # guarded: server already down
+    mgr.workload.start_service.assert_called_once()  # still restarted on the rollback copy
+
+
+def test_restore_on_primary_stops_running_valkey_even_when_alive_false(mocker):
+    """The stop gate must check the SPECIFIC valkey service, not alive().
+
+    On K8s alive() is False when a sibling (e.g. the metrics exporter) is down; if
+    the gate used alive() it would SKIP stopping a still-running valkey and swap the
+    dump under a live server -> a silent no-op restore. So with valkey running but
+    alive() False, restore_on_primary must still stop valkey before the swap.
+    """
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload.service_running.return_value = True  # valkey IS up...
+    mgr.workload.alive.return_value = False  # ...but a sibling service is down
+    mgr.workload.path_exists.return_value = False  # no stale/existing pre-restore copy
+    mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
+    mocker.patch.object(mgr, "download_backup")
+
+    mgr.restore_on_primary()
+
+    mgr.workload.stop_service.assert_called_once_with("valkey")  # NOT skipped
+    mgr.workload.alive.assert_not_called()  # the gate must not consult alive()
 
 
 def test_get_statuses_reports_restore_in_progress(mocker):
@@ -635,6 +692,9 @@ def restore_managers(mocker):
 
     return SimpleNamespace(
         is_primary=mocker.patch("managers.cluster.ClusterManager.is_primary", return_value=True),
+        has_pre_restore_copy=mocker.patch(
+            "managers.backup.BackupManager.has_pre_restore_copy", return_value=False
+        ),
         wait_until_loaded=mocker.patch("managers.cluster.ClusterManager.wait_until_loaded"),
         wait_until_resynced=mocker.patch("managers.cluster.ClusterManager.wait_until_resynced"),
         verify_backup_is_rdb=mocker.patch("managers.backup.BackupManager.verify_backup_is_rdb"),
@@ -812,6 +872,77 @@ def test_save_failure_aborts_restore_without_rollback(cloud_spec, restore_manage
     restore_managers.restore_on_primary.assert_not_called()
     restore_managers.roll_back.assert_not_called()  # nothing changed → nothing to undo
     assert _peer_app_data(state_out).get("restore-id", "") == ""  # torn down
+
+
+def test_redelivered_restore_rolls_back_and_fails(cloud_spec, restore_managers, mocker):
+    """Crash mid-swap + redelivery must roll back to the pre-restore data and FAIL.
+
+    After a crash inside restore_on_primary, valkey is stopped and Juju never
+    committed restore_role. On redelivery the on-disk rollback copy proves this unit
+    is the mid-swap primary. Rather than probe the dead server or push the
+    interrupted download forward, the workflow restores the original data
+    (roll_back) and fails so the operator re-runs from a known-good baseline.
+    """
+    from src.statuses import RestoreStatuses
+
+    # ROLE against a stopped server would raise; the on-disk signal must be used first.
+    restore_managers.has_pre_restore_copy.return_value = True
+    mocker.patch("workload_k8s.ValkeyK8sWorkload.service_running", return_value=False)
+
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+        unit_data={"restore-step": "", "restore-role": ""},  # nothing committed pre-crash
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    # Rolled back to a known-good baseline and failed; the dead server is never
+    # probed and the interrupted swap is NOT continued.
+    restore_managers.roll_back.assert_called_once()  # restored the original data
+    restore_managers.is_primary.assert_not_called()  # dead server never probed
+    restore_managers.restore_on_primary.assert_not_called()  # did NOT continue the swap
+    assert RestoreStatuses.RESTORE_FAILED.value in statuses
+    assert _peer_app_data(state_out).get("restore-id", "") == ""  # torn down
+
+
+def test_replica_redelivery_does_not_resume_as_primary(cloud_spec, restore_managers):
+    """A participant whose valkey is down but has NO pre-restore copy must not resume-as-primary.
+
+    Only a mid-swap primary leaves a pre-restore copy; a replica whose valkey merely
+    crashed must fall through to a real is_primary() probe, not be assumed primary
+    (which would make it download+swap a full DB and split-brain the cluster).
+    """
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    restore_managers.has_pre_restore_copy.return_value = False  # no copy -> not a mid-swap primary
+    restore_managers.is_primary.side_effect = ValkeyWorkloadCommandError("down")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-r",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # It PROBES is_primary (which raises -> teardown); it never assumes primary.
+    restore_managers.is_primary.assert_called()
+    restore_managers.restore_on_primary.assert_not_called()  # no primary swap
+    restore_managers.suppress_failover.assert_not_called()
+    assert _peer_unit_data(state_out)["restore-failed"] == "failed:tok-r"
 
 
 def test_primary_reconciles_min_replicas_after_restore(cloud_spec, restore_managers):

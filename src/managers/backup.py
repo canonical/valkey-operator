@@ -375,26 +375,46 @@ class BackupManager(ManagerStatusProtocol):
         """Record this unit's completed restore step on its databag."""
         self.state.unit_server.update({"restore_step": step.value})
 
-    def restore_on_primary(self) -> None:
-        """Stop valkey, move the dump aside for rollback, download the restore RDB, restart.
+    def has_pre_restore_copy(self) -> bool:
+        """Whether a rollback copy exists -- an interrupted primary restore.
 
-        Moving the dump to the archive partition keeps peak usage to ~1x the
-        dataset. Bypasses restart_workload/RestartLock (can't bracket a file swap);
-        concurrent restarts are held off by the is_restore_in_progress defer.
+        Only the primary creates it, and it's removed on success or rollback, so
+        (copy present + valkey down) uniquely marks a mid-swap primary on redelivery.
         """
-        self.workload.stop_service(self.workload.valkey_service)
-        # Redelivered hook: _pre_restore_path may already hold the ORIGINAL data;
-        # don't overwrite the only rollback copy.
-        if not self.workload.path_exists(self._pre_restore_path):
-            self.workload.move_file(self._dump_path, self._pre_restore_path)
+        return self.workload.path_exists(self._pre_restore_path)
+
+    def _ensure_stopped(self) -> None:
+        """Stop valkey-server only if it is running.
+
+        K8s errors on stopping a stopped service. Gate on the specific service, not
+        ``alive()`` (False when a sibling is down, which would skip stopping a live
+        valkey and swap the dump under it).
+        """
+        if self.workload.service_running(self.workload.valkey_service):
+            self.workload.stop_service(self.workload.valkey_service)
+
+    def restore_on_primary(self) -> None:
+        """Stop valkey, move the dump aside for rollback, download the RDB, restart.
+
+        Move-aside to the archive partition keeps peak usage ~1x. Bypasses
+        restart_workload (can't bracket a file swap); the is_restore_in_progress
+        defer holds off concurrent restarts. Only runs for a fresh swap (redelivery
+        is handled upstream), so any copy here is stale and dropped first.
+        """
+        self._ensure_stopped()
+        if self.workload.path_exists(self._pre_restore_path):
+            self.cleanup_restore_files()
+        self.workload.move_file(self._dump_path, self._pre_restore_path)
         self.download_backup(self.state.cluster.restore_id)
         self.workload.start_service(self.workload.valkey_service)
 
     def roll_back(self) -> None:
-        """Restore the pre-restore dump and restart (stop_service FIRST to defeat auto-restart)."""
-        self.workload.stop_service(self.workload.valkey_service)
+        """Restore the pre-restore dump and restart (stop FIRST to defeat auto-restart)."""
+        self._ensure_stopped()
         if self.workload.path_exists(self._pre_restore_path):
             self.workload.move_file(self._pre_restore_path, self._dump_path)
+        # Drop any partial download left on the data partition by a failed stream.
+        self.workload.remove_file(self._dump_tmp_path)
         self.workload.start_service(self.workload.valkey_service)
 
     def cleanup_restore_files(self) -> None:
