@@ -329,6 +329,11 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
+    def service_running(self, service: str) -> bool:
+        """Whether the SPECIFIC service is running (unlike ``alive()``, which needs all up)."""
+        pass
+
+    @abstractmethod
     def push_data_file(
         self,
         src: BinaryIO,

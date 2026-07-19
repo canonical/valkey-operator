@@ -229,6 +229,14 @@ class ValkeyK8sWorkload(WorkloadBase):
             ) from e
 
     @override
+    def service_running(self, service: str) -> bool:
+        try:
+            return self.container.get_service(service).is_running()
+        except (pebble.ConnectionError, ops.ModelError) as e:
+            logger.warning("Cannot check service %s state: %s", service, e)
+            return False
+
+    @override
     def push_data_file(
         self,
         src: BinaryIO,

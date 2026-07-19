@@ -216,6 +216,10 @@ class ValkeyVmWorkload(WorkloadBase):
             ) from e
 
     @override
+    def service_running(self, service: str) -> bool:
+        return bool(self.valkey.services.get(service, {}).get("active", False))
+
+    @override
     def push_data_file(
         self,
         src: BinaryIO,

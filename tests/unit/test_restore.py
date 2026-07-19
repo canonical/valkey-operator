@@ -139,7 +139,13 @@ def test_restore_statuses_present():
 def test_workload_has_new_primitives():
     from src.core.base_workload import WorkloadBase
 
-    for name in ("stop_service", "start_service", "push_data_file", "move_file"):
+    for name in (
+        "stop_service",
+        "start_service",
+        "service_running",
+        "push_data_file",
+        "move_file",
+    ):
         assert getattr(WorkloadBase, name).__isabstractmethod__ is True
 
 
