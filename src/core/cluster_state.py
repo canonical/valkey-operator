@@ -233,6 +233,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return True
 
     @property
+    def restore_participant_departed(self) -> bool:
+        """True if a restore participant left the peer relation.
+
+        A departed participant can never satisfy the barrier, so the restore would
+        stall forever. Membership only changes on removal, never a restart, so a
+        present-but-behind unit doesn't trip this.
+        """
+        live = {server.unit_name for server in self.servers}
+        return any(name not in live for name in self.cluster.restore_participants)
+
+    @property
     def is_backup_in_progress_any(self) -> bool:
         """True if ANY peer unit is uploading a backup (backup_id is per-unit)."""
         return any(server.is_backup_in_progress for server in self.servers)

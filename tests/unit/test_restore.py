@@ -893,16 +893,23 @@ def test_reconcile_failure_does_not_fail_a_successful_restore(cloud_spec, restor
 
 
 def test_replica_records_role_and_barrier_holds(cloud_spec, restore_managers):
-    """A replica records role/step but never restores; the barrier stalls on an absent peer."""
+    """A replica records role/step but never restores; the barrier waits on a lagging peer.
+
+    valkey/1 is still a peer-relation member (present) but hasn't recorded RESTORE
+    yet, so the barrier legitimately holds without advancing — distinct from a
+    *departed* participant, which the leader now fails (see the departure test).
+    """
     restore_managers.is_primary.return_value = False
     ctx, state = _restore_context_and_state(
         cloud_spec,
         app_data={
             "restore-id": "2026-05-13T10:00:00Z",
             "restore-instruction": RestoreStep.RESTORE.value,
-            # valkey/1 is a listed participant but absent -> fail-closed barrier.
             "restore-participants": "valkey/0,valkey/1",
         },
+        # valkey/1 is present (still a member) but has not reached RESTORE -> the
+        # barrier waits; it is NOT gone, so no teardown fires.
+        peers_data={1: {"start-state": "started"}},
     )
 
     state_out = ctx.run(ctx.on.update_status(), state)
@@ -914,6 +921,73 @@ def test_replica_records_role_and_barrier_holds(cloud_spec, restore_managers):
     # Barrier not met (valkey/1 never reached RESTORE): still in progress, no advance.
     assert _peer_app_data(state_out)["restore-id"] == "2026-05-13T10:00:00Z"
     assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESTORE.value
+
+
+def test_leader_fails_restore_when_participant_departs(cloud_spec, restore_managers):
+    """A participant that vanished mid-restore must not wedge the cluster forever.
+
+    valkey/1 was snapshotted as a participant at initiation but is no longer a
+    peer-relation member (force-removed / lost machine), so it can never reach the
+    barrier or record a failure. The fail-closed barrier would otherwise stall in
+    "restore in progress" forever, freezing restarts/scaling/TLS/S3 cluster-wide.
+    The leader must FAIL the restore instead: resume failover, flag RESTORE_FAILED,
+    clear the app-level restore state.
+    """
+    from src.statuses import RestoreStatuses
+
+    # This unit (the leader) is a replica that already recorded RESTORE; its only
+    # blocker is the absent valkey/1 -- i.e. the wedge, not a normal lagging wait.
+    restore_managers.is_primary.return_value = False
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=True,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-1",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            # valkey/1 was a participant at initiation but has since departed:
+            # only valkey/0 remains in the peer relation (empty peers_data).
+            "restore-participants": "valkey/0,valkey/1",
+        },
+        unit_data={"restore-step": RestoreStep.RESTORE.value, "restore-role": "replica"},
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    # Torn down, not wedged.
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+    assert RestoreStatuses.RESTORE_FAILED.value in statuses
+    restore_managers.resume_failover.assert_called()
+
+
+def test_non_leader_does_not_teardown_departed_participant(cloud_spec, restore_managers):
+    """Only the leader may tear a restore down when a participant departs.
+
+    A non-leader that observes a departed participant must leave app state alone
+    (it cannot write it anyway) and must not resume failover.
+    """
+    restore_managers.is_primary.return_value = False
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-d",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            # valkey/1 is a participant but absent (departed); valkey/0 is a non-leader.
+            "restore-participants": "valkey/0,valkey/1",
+        },
+        unit_data={"restore-step": RestoreStep.RESTORE.value, "restore-role": "replica"},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    assert _peer_app_data(state_out)["restore-id"] == "2026-05-13T10:00:00Z"  # untouched
+    restore_managers.resume_failover.assert_not_called()
 
 
 def test_step_skipped_when_prior_not_reached(cloud_spec, restore_managers):
@@ -935,6 +1009,43 @@ def test_step_skipped_when_prior_not_reached(cloud_spec, restore_managers):
     assert _peer_unit_data(state_out).get("restore-step", "") == ""
     # An out-of-step unit can never satisfy the barrier, so the instruction holds.
     assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESYNC.value
+
+
+def test_non_participant_unit_skips_restore_workflow(cloud_spec, restore_managers):
+    """A unit that joined AFTER initiation (absent from restore_participants) must no-op.
+
+    Otherwise it matches (RESTORE, NOT_STARTED), queries its own not-yet-started
+    Valkey, and the teardown fans resume_failover (down-after 30s + SENTINEL RESET)
+    across every peer while the real primary is stopped mid-download -- a genuine
+    bad-failover window. The leader ignores its non-participant failure marker
+    anyway, so the restore would proceed with suppression removed.
+    """
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    # StartLock is withheld during a restore, so this newcomer's Valkey is down;
+    # is_primary() would raise -> broad except -> _restore_teardown -> resume_failover.
+    restore_managers.is_primary.side_effect = ValkeyWorkloadCommandError("not up")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,  # a freshly-joined unit is not the leader
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-x",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            # valkey/0 (the unit under test) is NOT a participant: it joined late.
+            "restore-participants": "valkey/1",
+        },
+        peers_data={1: {"start-state": "started"}},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # A non-participant does nothing: no step, no teardown, no failover churn.
+    restore_managers.is_primary.assert_not_called()
+    restore_managers.suppress_failover.assert_not_called()
+    restore_managers.resume_failover.assert_not_called()
+    assert _peer_unit_data(state_out).get("restore-step", "") == ""
+    assert _peer_unit_data(state_out).get("restore-failed", "") == ""
 
 
 def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_managers):

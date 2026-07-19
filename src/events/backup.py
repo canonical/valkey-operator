@@ -76,9 +76,13 @@ class BackupEvents(ops.Object):
         self.framework.observe(self.charm.on.create_backup_action, self._on_create_backup_action)
         self.framework.observe(self.charm.on.list_backups_action, self._on_list_backups_action)
         self.framework.observe(self.charm.on.restore_action, self._on_restore_action)
-        # Drive the async restore state machine on peer data changes and update-status.
+        # Drive the async restore workflow on peer changes + update-status; also
+        # relation_departed, so a departed-participant restore fails promptly.
         self.framework.observe(
             self.charm.on[PEER_RELATION].relation_changed, self._on_restore_workflow
+        )
+        self.framework.observe(
+            self.charm.on[PEER_RELATION].relation_departed, self._on_restore_workflow
         )
         self.framework.observe(self.charm.on.update_status, self._on_restore_workflow)
 
@@ -311,7 +315,9 @@ class BackupEvents(ops.Object):
 
     # ── restore workflow ─────────────────────────────────────────────────
 
-    def _on_restore_workflow(self, _: ops.RelationChangedEvent | ops.UpdateStatusEvent) -> None:
+    def _on_restore_workflow(
+        self, _: ops.RelationChangedEvent | ops.RelationDepartedEvent | ops.UpdateStatusEvent
+    ) -> None:
         """Drive the restore state machine as far as this unit can in one hook.
 
         Each pass runs this unit's matching step and (leader) advances the shared
@@ -323,20 +329,17 @@ class BackupEvents(ops.Object):
         while True:
             # Restore done: each unit clears its own per-unit state once restore_id is gone.
             if not self.charm.state.cluster.is_restore_in_progress:
-                if (
-                    self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED
-                    or self.charm.state.unit_server.restore_failed
-                ):
-                    self.charm.state.unit_server.update(
-                        {"restore_step": "", "restore_role": "", "restore_failed": ""}
-                    )
+                self._clear_local_restore_state()
                 return
 
-            # A participant failed: the leader tears the whole restore down (only
-            # it can clear the app-level restore_id; the failing unit is often not
-            # the leader).
-            if self.charm.unit.is_leader() and self.charm.state.failed_restore_kind:
+            # Leader tears the restore down on a participant failure or departure
+            # (only it can clear the app-level restore_id).
+            if self._leader_restore_teardown_needed():
                 self._clear_failed_restore()
+                return
+            # A unit that joined after initiation isn't a participant and must run no
+            # step (it would query its own down Valkey and spuriously tear down).
+            if self.charm.unit.name not in self.charm.state.cluster.restore_participants:
                 return
             # This unit already failed this attempt (token-scoped, so a stale marker
             # won't block a new one): wait for the leader to tear down.
@@ -370,6 +373,27 @@ class BackupEvents(ops.Object):
                 and self.charm.state.unit_server.restore_step == step
             ):
                 return
+
+    def _clear_local_restore_state(self) -> None:
+        """Clear this unit's per-unit restore fields once a restore has ended."""
+        unit = self.charm.state.unit_server
+        if unit.restore_step != RestoreStep.NOT_STARTED or unit.restore_failed:
+            unit.update({"restore_step": "", "restore_role": "", "restore_failed": ""})
+
+    def _leader_restore_teardown_needed(self) -> bool:
+        """Whether the leader must tear the restore down now.
+
+        True on a participant failure this attempt, or a departed participant (which
+        can never satisfy the barrier, so the restore would otherwise wedge).
+        """
+        if not self.charm.unit.is_leader():
+            return False
+        if self.charm.state.failed_restore_kind:
+            return True
+        if self.charm.state.restore_participant_departed:
+            logger.warning("Restore participant departed mid-restore; failing the restore")
+            return True
+        return False
 
     def _run_restore_step(self, instruction: RestoreStep, step: RestoreStep, role: str) -> None:
         """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""
