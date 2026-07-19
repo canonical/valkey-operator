@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 import tenacity
 
-from common.exceptions import ValkeyClusterNotReadyError
+from common.exceptions import ValkeyClusterNotReadyError, ValkeyWorkloadCommandError
 from managers.cluster import ClusterManager
 
 
@@ -29,7 +29,8 @@ def _make_cluster_manager(active_units: int, inactive_units: int = 1, config_set
 
     cm = ClusterManager(state=state, workload=MagicMock())
     client = MagicMock()
-    client.config_set.return_value = config_set_ok
+    if not config_set_ok:
+        client.config_set.side_effect = ValkeyWorkloadCommandError("failed")
     cm._get_valkey_client = MagicMock(return_value=client)
     return cm, client
 
@@ -46,8 +47,7 @@ def test_reconcile_sets_value_per_topology(active_units, expected):
 
     client.config_set.assert_called_once_with(
         hostname="10.0.0.5",
-        parameter="min-replicas-to-write",
-        value=expected,
+        config_settings={"min-replicas-to-write": expected},
     )
 
 

@@ -10,30 +10,30 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "charmed-valkey"
-SNAP_REVISIONS = {"x86_64": 18, "aarch64": 17}
+SNAP_REVISIONS = {"x86_64": 49, "aarch64": 48}
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
 SNAP_COMMON_PATH = "var/snap/charmed-valkey/common"
 SNAP_CURRENT_PATH = "var/snap/charmed-valkey/current"
-SNAP_CONFIG_FILE = "etc/charmed-valkey/valkey.conf"
-SNAP_SENTINEL_CONFIG_FILE = "etc/charmed-valkey/sentinel.conf"
-SNAP_ACL_FILE = "etc/charmed-valkey/users.acl"
-SNAP_SENTINEL_ACL_FILE = "etc/charmed-valkey/sentinel-users.acl"
+SNAP_CONFIG_FILE = "etc/valkey/valkey.conf"
+SNAP_SENTINEL_CONFIG_FILE = "etc/valkey/sentinel.conf"
+SNAP_ACL_FILE = "etc/valkey/users.acl"
+SNAP_SENTINEL_ACL_FILE = "etc/valkey/sentinel-users.acl"
 
-# todo: update these paths once directories in the rock are complying with the standard
 CONFIG_FILE = "var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
 SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 
-# todo: these paths require root access, should be moved to dedicated user directories
-TOPOLOGY_OBSERVER_LOG_FILE = "/var/log/topology_observer.log"
-TOPOLOGY_OBSERVER_TLS_CA_FILE = "/etc/ssl/certs/valkey_ca.pem"
+TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
+TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
+LDAP_CA_CERT_RELATION = "ldap-ca-cert"
+LDAP_RELATION = "ldap"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
 S3_RELATION_NAME = "s3-credentials"
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -62,8 +62,11 @@ INTERNAL_CERTS_SECRET_LABEL_SUFFIX = "internal_certificates_secret"
 TLS_CLIENT_PRIVATE_KEY_CONFIG = "tls-client-private-key"
 
 DATA_STORAGE = "data"
+DATA_STORAGE_PATH = "var/lib/valkey"
 LOG_STORAGE = "logs"
+LOG_STORAGE_PATH = "var/log/valkey"
 ARCHIVE_STORAGE = "archive"
+ARCHIVE_STORAGE_PATH = "var/backups/valkey"
 
 VALKEY_LOG_FILE = "valkey.log"
 SENTINEL_LOG_FILE = "sentinel.log"

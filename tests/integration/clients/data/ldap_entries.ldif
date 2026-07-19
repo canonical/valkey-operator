@@ -1,0 +1,54 @@
+dn: ou=superheroes,dc=glauth,dc=com
+objectClass: posixGroup
+ou: superheroes
+gidNumber: 5502
+
+dn: ou=normies,dc=glauth,dc=com
+objectClass: posixGroup
+ou: normies
+gidNumber: 5503
+
+dn: ou=others,dc=glauth,dc=com
+objectClass: posixGroup
+ou: others
+gidNumber: 5504
+
+dn: cn=johndoe,ou=superheroes,ou=users,dc=glauth,dc=com
+objectClass: posixAccount
+uidNumber: 5001
+gidNumber: 5502
+cn: johndoe
+sn: doe
+mail: john@glauth.com
+userPassword: {SHA256}6478579e37aff45f013e14eeb30b3cc56c72ccdc310123bcdf53e0333e3f416a
+# password is dogood
+
+dn: cn=janedoe,ou=normies,ou=users,dc=glauth,dc=com
+objectClass: posixAccount
+uidNumber: 5002
+gidNumber: 5503
+cn: janedoe
+sn: doe
+mail: jane@glauth.com
+userPassword: {SHA256}6478579e37aff45f013e14eeb30b3cc56c72ccdc310123bcdf53e0333e3f416a
+# password is dogood
+
+dn: cn=jimmydoe,ou=normies,ou=users,dc=glauth,dc=com
+objectClass: posixAccount
+uidNumber: 5003
+gidNumber: 5503
+cn: jimmydoe
+sn: doe
+mail: jimmy@glauth.com
+userPassword: {SHA256}6478579e37aff45f013e14eeb30b3cc56c72ccdc310123bcdf53e0333e3f416a
+# password is dogood
+
+dn: cn=jennydoe,ou=others,ou=users,dc=glauth,dc=com
+objectClass: posixAccount
+uidNumber: 5004
+gidNumber: 5504
+cn: jennydoe
+sn: doe
+mail: jenny@glauth.com
+userPassword: {SHA256}6478579e37aff45f013e14eeb30b3cc56c72ccdc310123bcdf53e0333e3f416a
+# password is dogood

@@ -16,8 +16,10 @@ from core.cluster_state import ClusterState
 from events.backup import BackupEvents
 from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
+from events.ldap import LDAPEvents
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
+from managers.auth import AuthManager
 from managers.backup import BackupManager
 from managers.cluster import ClusterManager
 from managers.config import ConfigManager
@@ -62,6 +64,7 @@ class ValkeyCharm(ops.CharmBase):
         self.tls_manager = TLSManager(state=self.state, workload=self.workload)
         self.client_manager = ExternalClientsManager(state=self.state, workload=self.workload)
         self.topology_manager = TopologyManager(state=self.state, workload=self.workload)
+        self.auth_manager = AuthManager(state=self.state, workload=self.workload)
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
 
         # --- STATUS HANDLER ---
@@ -69,6 +72,7 @@ class ValkeyCharm(ops.CharmBase):
             self,
             self.cluster_manager,
             self.config_manager,
+            self.auth_manager,
             self.sentinel_manager,
             self.tls_manager,
             self.client_manager,
@@ -80,6 +84,7 @@ class ValkeyCharm(ops.CharmBase):
         self.tls_events = TLSEvents(self)
         self.client_events = ExternalClientsEvents(self)
         self.backup_events = BackupEvents(self)
+        self.ldap_events = LDAPEvents(self)
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 

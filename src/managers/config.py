@@ -4,10 +4,7 @@
 
 """Manager for all config related tasks."""
 
-import hashlib
 import logging
-import secrets
-import string
 from pathlib import Path
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -18,7 +15,6 @@ from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandErr
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
-    CHARM_USERS_ROLE_MAP,
     CLIENT_PORT,
     PRIMARY_NAME,
     SENTINEL_LOG_FILE,
@@ -42,7 +38,7 @@ _REPL_BACKLOG_SIZE = "256mb"
 
 
 class ConfigManager(ManagerStatusProtocol):
-    """Manage cluster members, authorization and other server related tasks."""
+    """Manage configuration for Valkey and Sentinel."""
 
     name: str = "config"
     state: ClusterState
@@ -114,6 +110,14 @@ class ConfigManager(ManagerStatusProtocol):
         tls_config = self.generate_tls_config()
         config_properties.update(tls_config)
 
+        # LDAP related configuration
+        config_properties["loadmodule"] = self.workload.lib_dir.as_posix() + "/libvalkey_ldap.so"
+        # disable the failure detection by default because glauth does not support `WhoAmI` command
+        # https://glauth.github.io/docs/limitations.html
+        config_properties["ldap.failure_detector_interval"] = "9223372036854775807"
+        ldap_config = self.generate_ldap_config()
+        config_properties.update(ldap_config)
+
         return config_properties
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
@@ -184,69 +188,35 @@ class ConfigManager(ManagerStatusProtocol):
 
         return tls_config
 
-    def set_acl_file(self, passwords: dict[str, str] | None = None) -> None:
-        """Write the ACL file with appropriate user permissions.
+    def generate_ldap_config(self) -> dict:
+        """Return the LDAP configuration for Valkey based on the current state."""
+        if not self.state.is_ldap_valid:
+            return {}
 
-        Args:
-            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
-                the passwords from the cluster state will be used.
-        """
-        logger.debug("Writing ACL configuration")
-        acl_content = "user default off\n"
-        for user in CharmUsers:
-            # only process VALKEY users
-            # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" not in user.name:
-                continue
-            acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
-        acl_content += self._get_client_user_acl_lines()
-        self.workload.write_file(
-            acl_content,
-            self.workload.acl_file,
-            user=self.workload.user,
-            group=self.workload.user,
+        # no need for error handling, already present in state validator
+        ldap_bind_password = self.state.get_secret_from_id(
+            self.state.ldap.bind_password_secret
+        ).get("password")
+
+        ldap_urls = (
+            self.state.ldap.ldaps_urls if self.state.ldap.ldaps_urls else self.state.ldap.urls
         )
+        ldap_servers = " ".join(url for url in ldap_urls)
 
-    def _get_internal_user_acl_line(
-        self, user: CharmUsers, passwords: dict[str, str] | None = None
-    ) -> str:
-        """Generate an ACL line for a given internal user.
+        ldap_config = {
+            "ldap.auth_mode": "search+bind",
+            "ldap.servers": ldap_servers,
+            "ldap.use_starttls": "no" if self.state.ldap.ldaps_urls else "yes",
+            "ldap.tls_ca_cert_path": self.workload.tls_paths.ldap_ca.as_posix(),
+            "ldap.search_bind_dn": self.state.ldap.bind_dn,
+            "ldap.search_bind_passwd": ldap_bind_password,
+            "ldap.search_base": self.state.ldap.base_dn,
+            "ldap.search_attribute": self.state.config.get("ldap-search-attribute", ""),
+            "ldap.search_dn_attribute": self.state.config.get("ldap-search-dn-attribute", ""),
+            "ldap.search_filter": self.state.config.get("ldap-search-filter", ""),
+        }
 
-        Args:
-            user (CharmUsers): Internal User for which to generate the ACL line.
-            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
-                the passwords from the cluster state will be used.
-
-        Returns:
-            str: ACL line for the internal user.
-        """
-        passwords = passwords or self.state.cluster.internal_users_credentials
-        if not (password := passwords.get(user.value, "")):
-            raise ValueError(f"No password found for user {user}")
-        password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        return f"user {user.value} on #{password_hash} {CHARM_USERS_ROLE_MAP[user]}\n"
-
-    def _get_client_user_acl_lines(self, for_sentinel: bool = False) -> str:
-        """Generate the ACL lines for all external client users.
-
-        Returns:
-            str: ACL lines for the external client users.
-        """
-        sentinel_base_permissions = "-@all +auth +client +command +hello +ping +role "
-        sentinel_sentinel_permissions = "+sentinel|get-master-addr-by-name +sentinel|master +sentinel|masters +sentinel|replicas +sentinel|sentinels"
-        acl_content = ""
-
-        if not (external_client_users := self.state.cluster.external_users_credentials):
-            return acl_content
-
-        for username, values in external_client_users.items():
-            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info ~{values['resource']} &{values['resource']}"
-            if for_sentinel:
-                permissions = sentinel_base_permissions + sentinel_sentinel_permissions
-            password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
-            acl_content += f"user {username} on #{password_hash} {permissions}\n"
-
-        return acl_content
+        return ldap_config
 
     def get_sentinel_config_properties(
         self, primary_endpoint: str
@@ -356,47 +326,6 @@ class ConfigManager(ManagerStatusProtocol):
             group=self.workload.user,
         )
 
-    def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
-        """Write the Sentinel ACL file with appropriate user permissions.
-
-        Args:
-            passwords (dict[str, str] | None): Optional dictionary of passwords to use. If not provided,
-                the passwords from the cluster state will be used.
-        """
-        logger.debug("Writing Sentinel ACL configuration")
-        acl_content = "user default off\n"
-        for user in CharmUsers:
-            # only process VALKEY users
-            # Sentinel users should be in the sentinel acl file
-            if "VALKEY_" in user.name:
-                continue
-            acl_content += self._get_internal_user_acl_line(user, passwords=passwords)
-        acl_content += self._get_client_user_acl_lines(for_sentinel=True)
-        self.workload.write_file(
-            acl_content,
-            self.workload.sentinel_acl_file,
-            user=self.workload.user,
-            group=self.workload.user,
-        )
-
-    def generate_password(self) -> str:
-        """Create randomized string for use as app passwords.
-
-        Returns:
-            str: String of 32 randomized letter+digit characters
-        """
-        return "".join([secrets.choice(string.ascii_letters + string.digits) for _ in range(32)])
-
-    def update_local_valkey_admin_password(self) -> None:
-        """Update the local unit's valkey admin password in the state."""
-        self.state.unit_server.update(
-            {
-                "charmed_operator_password_local_unit_copy": self.state.cluster.internal_users_credentials.get(
-                    CharmUsers.VALKEY_ADMIN.value
-                )
-            }
-        )
-
     def configure_services(self, primary_endpoint: str) -> None:
         """Start Valkey and Sentinel services.
 
@@ -404,11 +333,8 @@ class ConfigManager(ManagerStatusProtocol):
             ValkeyConfigurationError: If there was an error during configuration.
         """
         try:
-            self.update_local_valkey_admin_password()
             self.set_config_properties(primary_endpoint=primary_endpoint)
-            self.set_acl_file()
             self.set_sentinel_config_properties(primary_endpoint=primary_endpoint)
-            self.set_sentinel_acl_file()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)
             self.state.unit_server.update(

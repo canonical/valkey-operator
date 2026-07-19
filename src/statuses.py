@@ -191,3 +191,33 @@ class RestoreStatuses(Enum):
         message="Cluster unhealthy after restoring backup - check juju debug-log",
         running="async",
     )
+
+
+class AuthStatuses(Enum):
+    """Collection of statuses related to authentication or authorization."""
+
+    LDAP_CA_CERT_MISSING = StatusObject(
+        status="blocked", message="LDAP: Missing CA certificate integration"
+    )
+
+    LDAP_MAP_CONFIG_MISSING = StatusObject(
+        status="blocked", message="LDAP: Missing config for `ldap-map`"
+    )
+
+    LDAP_MAP_INTEGRATION_MISSING = StatusObject(
+        status="blocked",
+        message="LDAP: Missing `entity-permissions`",
+    )
+
+    LDAP_MAP_PERMISSION_REQUEST_MISSING = StatusObject(
+        status="blocked",
+        message="LDAP: Permission request missing for group in `ldap-map`",
+    )
+
+    LDAP_NOT_ENABLED = StatusObject(
+        status="blocked", message="LDAP not yet enabled, see `debug-log` for details"
+    )
+
+    LDAP_USER_SYNC_FAILED = StatusObject(
+        status="blocked", message="LDAP: User synchronization failed"
+    )

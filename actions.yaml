@@ -9,6 +9,9 @@ status-detail:
       default: false
       description: a boolean indicating whether a unit should recompute all statuses.
 
+sync-ldap-users:
+  description: Synchronize users from related LDAP provider to Valkey's ACL file.
+
 create-backup:
   description: |
     Stream a fresh RDB backup of this unit's Valkey instance to S3.

@@ -15,7 +15,6 @@ from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
     ValkeyCannotGetPrimaryIPError,
-    ValkeyConfigSetError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
     ValkeyServicesCouldNotBeStoppedError,
@@ -89,21 +88,12 @@ class BaseEvents(ops.Object):
         if (target := storage_dirs.get(event.storage.name)) is None:
             logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
             return
-        path = target.as_posix()
 
-        # chown is K8s-only: VM valkey runs as root and a VM chown would run pre-install.
         if self.charm.state.substrate == Substrate.K8S:
-            try:
-                self.charm.workload.exec(
-                    ["chown", "-R", f"{self.charm.workload.user}:{self.charm.workload.user}", path]
-                )
-            except ValkeyWorkloadCommandError as e:
-                logger.error("Error when ensuring storage ownership: %s", e)
-                event.defer()
-                return
+            return
 
         try:
-            self.charm.workload.exec(["chmod", "-R", "750", path])
+            self.charm.workload.exec(["chmod", "-R", "750", target.as_posix()])
         except ValkeyWorkloadCommandError as e:
             logger.error("Error when setting storage permissions: %s", e)
             event.defer()
@@ -177,6 +167,7 @@ class BaseEvents(ops.Object):
             return
 
         try:
+            self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(primary_endpoint)
             self.charm.workload.start()
         except ValkeyConfigurationError:
@@ -378,7 +369,7 @@ class BaseEvents(ops.Object):
         # generate passwords for all internal users if not specified in the user secret
         for user in CharmUsers:
             passwords[user.value] = user_specified_passwords.get(
-                user.value, self.charm.config_manager.generate_password()
+                user.value, self.charm.auth_manager.generate_password()
             )
 
         self.charm.state.cluster.update(
@@ -388,7 +379,7 @@ class BaseEvents(ops.Object):
             }
         )
         # update local unit admin password
-        self.charm.config_manager.update_local_valkey_admin_password()
+        self.charm.auth_manager.update_local_valkey_admin_password()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -398,9 +389,15 @@ class BaseEvents(ops.Object):
             and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
             and self.charm.state.substrate == Substrate.VM
         ):
-            self.charm.config_manager.configure_services(
-                self.charm.sentinel_manager.get_primary_ip()
-            )
+            try:
+                self.charm.auth_manager.configure_auth()
+                self.charm.config_manager.configure_services(
+                    self.charm.sentinel_manager.get_primary_ip()
+                )
+            except (ValkeyCannotGetPrimaryIPError, ValkeyConfigurationError) as e:
+                logger.error("Failed to configure auth and services: %s", e)
+                event.defer()
+                return
 
             if self.charm.tls_manager.certificate_sans_require_update():
                 if self.charm.state.client_tls_relation:
@@ -469,16 +466,16 @@ class BaseEvents(ops.Object):
         if event.secret.label and event.secret.label.endswith(INTERNAL_USERS_SECRET_LABEL_SUFFIX):
             # leader unit processed the secret change from user, non-leader units can replicate
             try:
-                self.charm.config_manager.set_acl_file()
-                self.charm.config_manager.set_sentinel_acl_file()
+                self.charm.auth_manager.set_acl_file()
+                self.charm.auth_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
                     self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 # update the local unit admin password to match the leader
-                self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.update_primary_auth()
-            except (ValkeyACLLoadError, ValkeyConfigSetError, ValkeyWorkloadCommandError) as e:
+            except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,
@@ -534,8 +531,8 @@ class BaseEvents(ops.Object):
         if new_passwords != self.charm.state.cluster.internal_users_credentials:
             logger.info("Password(s) for internal users have changed")
             try:
-                self.charm.config_manager.set_acl_file(passwords=new_passwords)
-                self.charm.config_manager.set_sentinel_acl_file(passwords=new_passwords)
+                self.charm.auth_manager.set_acl_file(passwords=new_passwords)
+                self.charm.auth_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
                     self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
@@ -546,13 +543,12 @@ class BaseEvents(ops.Object):
                     }
                 )
                 # update the local unit admin password
-                self.charm.config_manager.update_local_valkey_admin_password()
+                self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.update_primary_auth()
             except (
                 ValkeyACLLoadError,
                 ValueError,
-                ValkeyConfigSetError,
                 ValkeyWorkloadCommandError,
             ) as e:
                 logger.error(e)
