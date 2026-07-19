@@ -271,3 +271,89 @@ def test_corrupt_restore_keeps_cluster_and_failover(
         "Sentinel failover suppression may not have been resumed on "
         "corrupt-restore teardown (suppression-leak regression)."
     )
+
+
+def _force_primary_off_leader(juju: jubilant.Juju, substrate: Substrate) -> tuple[str, str]:
+    """Arrange the valkey primary onto a NON-leader unit; return (leader, primary).
+
+    The valkey primary (Sentinel-elected) is independent of the juju leader, but
+    fresh deployments often land both on unit 0. Kill the primary process to force
+    Sentinel to promote a different unit, so the destructive restore runs on a
+    non-leader -- the case that used to wedge restore_id.
+    """
+    leader = _leader_unit_name(juju)
+    primary = get_primary_unit(juju, substrate)
+    if primary == leader:
+        send_process_control_signal(
+            unit_name=primary,
+            model_full_name=juju.model,
+            signal="SIGKILL",
+            db_process=_VALKEY_PROCESS,
+            substrate=substrate,
+        )
+        time.sleep(_FAILOVER_WAIT_S)
+        _wait_restore_active(juju)  # cluster settles with a new primary
+        primary = get_primary_unit(juju, substrate)
+    assert primary != leader, f"Could not move primary off leader {leader}"
+    return leader, primary
+
+
+@pytest.mark.abort_on_fail
+def test_failed_restore_not_wedged_when_leader_not_primary(
+    charm: str,
+    juju: jubilant.Juju,
+    microceph: dict,
+    s3_bucket,
+    substrate: Substrate,
+) -> None:
+    """A restore that fails on a non-leader primary must not wedge the cluster.
+
+    The unit that runs the destructive restore is the valkey primary, which is
+    frequently NOT the juju leader; only the leader can clear the app-level
+    restore_id. Before the per-unit failure-marker fix, a failure on a non-leader
+    primary left restore_id set forever -- the app stuck in RESTORE_IN_PROGRESS,
+    backups blocked. Here we force primary != leader, fail a restore, and assert
+    the leader tears it down (RESTORE_FAILED) and the cluster is usable again.
+    (PR #79 review, Mehdi-Bendriss r3547362621.)
+    """
+    # Independently runnable (deploy_and_relate_s3 is idempotent).
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
+
+    _write_key(juju, "wedge_key", "wedge-value")
+
+    leader, primary = _force_primary_off_leader(juju, substrate)
+    logger.info("Arranged leader=%s primary=%s for the failed-restore test", leader, primary)
+
+    corrupt_id = upload_corrupt_backup(juju, s3_bucket, microceph)
+
+    # Initiate a restore of the corrupt object. It fails on the (non-leader)
+    # primary's magic-byte check; that unit records a failure marker, and the
+    # leader observes it and clears the app-level restore state.
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": corrupt_id})
+    assert task.success, task.stderr
+
+    # The leader must reach RESTORE_FAILED (only the leader can write it) -- proof
+    # the non-leader failure was propagated and the workflow torn down, not wedged
+    # in RESTORE_IN_PROGRESS.
+    juju.wait(
+        lambda s: (
+            does_status_match(
+                s, expected_app_statuses={APP_NAME: [RestoreStatuses.RESTORE_FAILED.value]}
+            )
+            and jubilant.all_agents_idle(s, APP_NAME)
+        ),
+        timeout=600,
+        delay=5,
+    )
+
+    # Old data survived the failed restore.
+    got = _read_key(juju, leader, "wedge_key")
+    assert got == "wedge-value", f"Old data lost after failed restore; got {got!r}"
+
+    # Not wedged: restore_id was cleared, so create-backup is no longer blocked by
+    # "A restore is in progress" -- the decisive end-to-end proof the fix works.
+    task = juju.run(f"{APP_NAME}/leader", "create-backup")
+    assert task.success, (
+        f"create-backup blocked after a failed non-leader-primary restore "
+        f"(restore_id wedged?): {task.stderr}"
+    )
