@@ -475,6 +475,34 @@ def test_restore_blocked_gracefully_when_sentinel_query_errors(mocker):
     assert reason is not None
 
 
+def test_credentials_rotation_defers_during_restore(mocker):
+    """A real S3 credentials rotation mid-restore is deferred, not applied.
+
+    Swapping the bucket/creds while a restore is downloading from them would break
+    it; the CA is still stored (the in-flight restore needs it), only the
+    bucket/credential update waits until the restore finishes.
+    """
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.s3_requirer = mocker.Mock()
+    ev.s3_requirer.get_storage_connection_info.return_value = {"bucket": "b", "access-key": "k"}
+    mocker.patch("events.backup.S3Parameters.model_validate", return_value=mocker.Mock())
+    ev.charm.unit.is_leader.return_value = True
+    ev.charm.state.peer_relation = True
+    ev.charm.state.cluster.s3_credentials = None  # nothing stored yet → a real change
+    ev.charm.state.is_backup_in_progress_any = False
+    ev.charm.state.cluster.is_restore_in_progress = True
+    event = mocker.Mock()
+
+    ev._on_s3_credentials_changed(event)
+
+    event.defer.assert_called_once()
+    ev.charm.backup_manager.create_bucket.assert_not_called()
+    ev.charm.backup_manager.store_tls_ca_chain.assert_called_once()  # CA still stored
+
+
 def test_blocking_reason_blocks_backup_during_restore(mocker):
     """A restore in progress blocks create-backup but never the read-only list-backups."""
     from src.events.backup import BackupEvents

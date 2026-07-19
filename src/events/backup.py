@@ -102,17 +102,23 @@ class BackupEvents(ops.Object):
             event.defer()
             return
 
-        # S3Parameters trims/validates the envelope and rejects missing/empty fields.
+        # S3Parameters trims/validates the payload and rejects missing/empty fields.
         try:
             params = S3Parameters.model_validate(dict(s3_info))
         except ValidationError as e:
             logger.warning("S3 integrator parameters invalid or incomplete: %s", e)
             return
 
-        # leader_elected re-fires this; skip the create_bucket round trip when the
-        # envelope is unchanged (compare by value). A real rotation still falls through.
+        # leader_elected re-fires this; skip the create_bucket round trip if unchanged.
         stored = self.charm.state.cluster.s3_credentials
         if stored is not None and stored.model_dump() == params.model_dump():
+            return
+
+        # Don't swap the bucket/creds an in-flight backup or restore is using; the
+        # CA is already stored and the current creds stay in the databag meanwhile.
+        if self._backup_or_restore_in_progress():
+            logger.info("Backup or restore in progress; deferring S3 credentials rotation")
+            event.defer()
             return
 
         try:
@@ -123,12 +129,20 @@ class BackupEvents(ops.Object):
 
         self.charm.state.cluster.update({"s3_credentials": params.model_dump_json(by_alias=True)})
 
+    def _backup_or_restore_in_progress(self) -> bool:
+        """Return whether a backup (on any unit) or a restore is running.
+
+        Cluster-wide: a backup runs on any single unit, so the leader must not
+        clobber the shared S3 credentials from under it.
+        """
+        return (
+            self.charm.state.is_backup_in_progress_any
+            or self.charm.state.cluster.is_restore_in_progress
+        )
+
     def _on_s3_credentials_gone(self, event: StorageConnectionInfoGoneEvent) -> None:
         """Handle removal of the S3 credentials relation."""
-        if (
-            self.charm.state.unit_server.is_backup_in_progress
-            or self.charm.state.cluster.is_restore_in_progress
-        ):
+        if self._backup_or_restore_in_progress():
             logger.warning("Backup or restore in progress; deferring credentials_gone")
             event.defer()
             return

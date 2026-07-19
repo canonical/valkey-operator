@@ -598,6 +598,9 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
         "access-key": "AK",
         "secret-key": "SK",
     }
+    # No backup/restore in flight, so the credentials change is applied, not deferred.
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.backup_manager.create_bucket.assert_called_once()
@@ -732,7 +735,7 @@ def test_on_s3_credentials_gone_removes_ca_and_clears_databag(mocker):
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
-    charm.state.unit_server.is_backup_in_progress = False
+    charm.state.is_backup_in_progress_any = False
     charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = True
 
@@ -955,7 +958,7 @@ def test_on_s3_credentials_gone_non_leader_does_not_clear_databag(mocker):
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
-    charm.state.unit_server.is_backup_in_progress = False
+    charm.state.is_backup_in_progress_any = False
     charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = False
 
