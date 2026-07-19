@@ -39,12 +39,12 @@ S3_RELATION_NAME = "s3-credentials"
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
-# Normal down-after (matches ConfigManager, config.py:322); suppression raises
-# it to a day so the primary's restart isn't seen as a failure.
+# Normal down-after (rendered by ConfigManager, reasserted by resume_failover);
+# suppression raises it to a day so the primary's restart isn't seen as a failure.
 SENTINEL_DOWN_AFTER_MS = 30000
 SENTINEL_DOWN_AFTER_SUPPRESSED_MS = 86_400_000
-# Generous bounded waits: a big RDB load / resync can exceed the stock 25s
-# helpers, but an unbounded poll would hang the hook on a crash-loop.
+# Bounded waits: big enough for a large RDB load/resync, small enough that a stuck
+# restore self-terminates (freeing the cluster-wide hold) fast. Raise for bigger data.
 RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 

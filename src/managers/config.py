@@ -17,6 +17,7 @@ from core.cluster_state import ClusterState
 from literals import (
     CLIENT_PORT,
     PRIMARY_NAME,
+    SENTINEL_DOWN_AFTER_MS,
     SENTINEL_LOG_FILE,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
@@ -293,7 +294,7 @@ class ConfigManager(ManagerStatusProtocol):
         sentinel_configs["sentinel-pass"] = (
             f"{self.state.cluster.internal_users_credentials.get(CharmUsers.SENTINEL_ADMIN.value, '')}"
         )
-        sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} 30000"
+        sentinel_configs["down-after-milliseconds"] = f"{PRIMARY_NAME} {SENTINEL_DOWN_AFTER_MS}"
         sentinel_configs["failover-timeout"] = f"{PRIMARY_NAME} 60000"
         sentinel_configs["parallel-syncs"] = f"{PRIMARY_NAME} 1"
         if self.state.substrate == Substrate.K8S:
