@@ -166,12 +166,10 @@ class ClusterManager(ManagerStatusProtocol):
             return
 
     def wait_until_loaded(self, timeout_s: int) -> None:
-        """Bounded poll until the server responds and has finished loading its dataset.
+        """Bounded poll until the server responds and has finished loading.
 
-        Raises ValkeyClusterNotReadyError on timeout (never responds or never
-        finishes loading) rather than hanging, so the caller can react (e.g. roll
-        back a restore). ``timeout_s`` is generous so a large dataset load is not
-        a false failure.
+        Raises ValkeyClusterNotReadyError on timeout rather than hanging, so the
+        caller can react (e.g. roll back a restore).
         """
         client = self._get_valkey_client()
         try:
@@ -192,11 +190,10 @@ class ClusterManager(ManagerStatusProtocol):
             ) from e
 
     def wait_until_resynced(self, timeout_s: int) -> None:
-        """Bounded poll until this replica's link to the primary is in sync.
+        """Bounded poll until this replica is in sync with the primary.
 
         Unlike wait_for_replica_fully_synced (unbounded), raises
-        ValkeyClusterNotReadyError on timeout so the caller can react. Sync is
-        judged by is_replica_synced (ROLE link state).
+        ValkeyClusterNotReadyError on timeout so the caller can react.
         """
         try:
             for attempt in Retrying(

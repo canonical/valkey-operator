@@ -908,7 +908,8 @@ def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_manag
 
     restore_managers.restore_on_primary.assert_not_called()
     restore_managers.roll_back.assert_not_called()
-    # Teardown still resumes the suppression it turned on before validating.
+    # Teardown resumes the suppression it turned on before validating — exactly
+    # once: the leader-self _clear_failed_restore skips the redundant backstop.
     restore_managers.resume_failover.assert_called_once()
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 
@@ -940,7 +941,9 @@ def test_restore_failure_rolls_back_and_resumes_failover(cloud_spec, restore_man
         ).root
 
     restore_managers.roll_back.assert_called_once()
-    restore_managers.resume_failover.assert_called_once()  # the critical invariant
+    # The critical invariant: failover is resumed — exactly once on the
+    # leader-self path (teardown resumes; _clear_failed_restore skips the backstop).
+    restore_managers.resume_failover.assert_called_once()
     assert RestoreStatuses.RESTORE_FAILED.value in statuses
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 

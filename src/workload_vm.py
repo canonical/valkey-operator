@@ -236,9 +236,8 @@ class ValkeyVmWorkload(WorkloadBase):
 
     @override
     def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
-        # shutil.move, not os.replace: restore moves files between the data and
-        # archive partitions (cross-device), which os.replace rejects with EXDEV.
-        # Same-partition moves stay an atomic rename.
+        # shutil.move (not os.replace): restore crosses the data<->archive
+        # partitions (cross-device), which os.replace rejects with EXDEV.
         try:
             shutil.move(src.as_posix(), dest.as_posix())
         except OSError as e:

@@ -260,7 +260,7 @@ class BackupManager(ManagerStatusProtocol):
 
         self.state.unit_server.update({"backup_id": backup_id})
         bucket = self._get_bucket_resource(s3_parameters)
-        # Pass the admin password via VALKEYCLI_AUTH, never on argv (P1-2).
+        # Pass the admin password via VALKEYCLI_AUTH, never on argv (world-visible).
         proc = self.workload.exec_stream(
             self._build_rdb_command(),
             env={"VALKEYCLI_AUTH": self.state.unit_server.valkey_admin_password},
@@ -310,12 +310,10 @@ class BackupManager(ManagerStatusProtocol):
     # ── restore ─────────────────────────────────────────────────────────
 
     def verify_backup_is_rdb(self, backup_id: str) -> None:
-        """Confirm the S3 object starts with the RDB magic, cheaply, before touching valkey.
+        """Cheaply confirm the S3 object is an RDB before touching valkey.
 
-        NOT a full download: a ranged GET of just the first 16 bytes -- a
-        super-small metadata read to validate the magic header. So a missing or
-        non-RDB backup-id fails while valkey is still serving; the primary is
-        stopped only once we know the object is plausibly a real snapshot.
+        A ranged GET of the first 16 bytes (not a full download), so a missing or
+        non-RDB backup-id fails while valkey is still serving.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
@@ -333,17 +331,11 @@ class BackupManager(ManagerStatusProtocol):
             raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
 
     def download_backup(self, backup_id: str) -> None:
-        """Stream the full RDB straight onto the data partition as ``dump.rdb``.
+        """Stream the full RDB from S3 onto the data partition as ``dump.rdb``.
 
-        Streams the S3 object body directly into the workload's data partition:
-        push_data_file copies in bounded chunks, so the full object is never
-        buffered whole in the (small) charm container regardless of RDB size. It
-        lands under ``dump.rdb.part`` and is renamed onto ``dump.rdb`` (same
-        partition -> atomic) so the final file never appears partial. The RDB
-        magic is validated up front by verify_backup_is_rdb (a tiny ranged GET)
-        before the primary is stopped; restore_on_primary has already moved the
-        old dump aside, so the data partition holds only ~1x the dataset with no
-        cross-device copy to install it.
+        push_data_file copies in bounded chunks (never buffering the whole object
+        in the charm container) to ``dump.rdb.part``, then an atomic same-partition
+        rename onto ``dump.rdb`` so it never appears partial.
         """
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
@@ -384,21 +376,17 @@ class BackupManager(ManagerStatusProtocol):
         self.state.unit_server.update({"restore_step": step.value})
 
     def restore_on_primary(self) -> None:
-        """Stop valkey, back up the current dump, download the restore RDB in its place, restart.
+        """Stop valkey, move the dump aside for rollback, download the restore RDB, restart.
 
-        Moves the current dump to the archive partition for rollback, then
-        downloads the restore RDB straight onto the (now-free) data partition, so
-        neither partition ever holds more than ~1x the dataset. Bypasses
-        restart_workload/RestartLock (can't bracket a file swap); concurrent
-        restarts are held off by the is_restore_in_progress defer. The caller
-        confirms the server came up healthy (cluster_manager.wait_until_loaded).
+        Moving the dump to the archive partition keeps peak usage to ~1x the
+        dataset. Bypasses restart_workload/RestartLock (can't bracket a file swap);
+        concurrent restarts are held off by the is_restore_in_progress defer.
         """
         self.workload.stop_service(self.workload.valkey_service)
-        # On a redelivered hook _pre_restore_path already holds the ORIGINAL data;
-        # don't overwrite it (the only rollback copy). Skip the aside if it exists.
+        # Redelivered hook: _pre_restore_path may already hold the ORIGINAL data;
+        # don't overwrite the only rollback copy.
         if not self.workload.path_exists(self._pre_restore_path):
             self.workload.move_file(self._dump_path, self._pre_restore_path)
-        # Data partition is now free; download the restore RDB directly onto it.
         self.download_backup(self.state.cluster.restore_id)
         self.workload.start_service(self.workload.valkey_service)
 

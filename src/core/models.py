@@ -60,9 +60,9 @@ InternalCertificatesSecret = Annotated[
 class S3Parameters(BaseModel):
     """Validated, normalised S3 connection parameters from the s3 relation.
 
-    Parses the s3-integrator envelope (hyphenated keys) into typed
+    Parses the s3-integrator payload (hyphenated keys) into typed
     attributes, trimming whitespace and the separators that would corrupt
-    S3 key paths, and rejecting an envelope missing a required field or
+    S3 key paths, and rejecting a payload missing a required field or
     whose bucket/endpoint/path strip to empty. Unknown integrator fields
     (``storage-class``, ``s3-uri-style``, ...) are ignored.
     """
@@ -89,7 +89,7 @@ class S3Parameters(BaseModel):
     @classmethod
     def _coerce_ca_chain(cls, value: object) -> object:
         # A misconfigured integrator may send a bare string; never let that
-        # reject the whole envelope -- drop to no chain (boto3 uses system
+        # reject the whole payload -- drop to no chain (boto3 uses system
         # CAs). store_tls_ca_chain does the strict PEM check before writing.
         return value if isinstance(value, list) else []
 
@@ -346,12 +346,12 @@ class ValkeyCluster(RelationState):
 
     @property
     def s3_credentials(self) -> "S3Parameters | None":
-        """Return the parsed S3 connection envelope, or None if not set.
+        """Return the parsed S3 connection payload, or None if not set.
 
         The leader writes a JSON-serialised ``S3Parameters`` to
         ``s3_credentials``; this parses it back for BackupManager. Callers
         gate on truthiness (``if s3_credentials``), so None reads as unset.
-        The stored envelope was validated before writing, so a parse failure
+        The stored payload was validated before writing, so a parse failure
         here is defensive and also reads as unset.
         """
         if not self.model or not self.model.s3_credentials:

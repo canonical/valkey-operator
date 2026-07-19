@@ -44,10 +44,10 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_error(exc: ValkeyBackupError) -> str:
-    """Render a backup error safe to return in an action result.
+    """Return an action-safe error string.
 
-    Action results are world-readable, so surface only the structured S3 error
-    code (e.g. "AccessDenied"); the full detail stays in the unit log.
+    Action results are world-readable, so surface only the object-storage error
+    code (e.g. "AccessDenied"); the detail goes to the unit log.
     """
     cause = exc.__cause__ or (exc.args[0] if exc.args else None)
     if isinstance(cause, ClientError):
@@ -92,8 +92,7 @@ class BackupEvents(ops.Object):
             return
         logger.info("S3 credentials changed; refreshing backup configuration")
 
-        # Every unit needs the S3 CA on disk for TLS; a follower may receive it
-        # before full credentials, and store_tls_ca_chain tolerates that.
+        # Every unit needs the S3 CA on disk (store_tls_ca_chain tolerates partial info).
         self.charm.backup_manager.store_tls_ca_chain(dict(s3_info))
 
         if not self.charm.unit.is_leader():
@@ -158,7 +157,7 @@ class BackupEvents(ops.Object):
             event.set_results({"error": reason})
             event.fail(reason)
             return
-        # Audit the action invocation (P1-24): ties an action run to its backup.
+        # Audit log: tie this action invocation to the backup it produces.
         logger.info(
             "audit: create-backup action invoked action_id=%s unit=%s",
             event.id,
@@ -275,8 +274,7 @@ class BackupEvents(ops.Object):
             event.set_results({"error": reason})
             event.fail(reason)
             return
-        backup_id = event.params.get("backup-id", "")
-        if not backup_id:
+        if not (backup_id := event.params.get("backup-id", "")):
             event.set_results({"error": "Must provide backup-id to restore."})
             event.fail("Must provide backup-id to restore.")
             return
@@ -354,10 +352,9 @@ class BackupEvents(ops.Object):
             try:
                 self._run_restore_step(instruction, step, role)
             except Exception as e:
-                # Catch everything: teardown MUST resume_failover() on any failure to
-                # undo the cluster-wide suppression, else Sentinel can never promote
-                # again. Service-control errors sit outside the restore-error hierarchy,
-                # so a narrower except would let them escape.
+                # Catch everything: teardown must record the failure marker and
+                # resume failover on ANY error (service-control errors sit outside
+                # the restore-error hierarchy), or the restore wedges.
                 logger.exception("Restore step failed; tearing down")
                 self._restore_teardown(e)
                 return
@@ -365,10 +362,9 @@ class BackupEvents(ops.Object):
             if self.charm.unit.is_leader():
                 self._advance_if_leader()
 
-            # Stop when this hook can make no further local progress: neither the
-            # shared instruction nor this unit's own step moved. In multi-unit
-            # that fixed point is the cross-unit barrier; the relation_changed
-            # cascade resumes the workflow once peers catch up.
+            # Fixed point: neither the shared instruction nor this unit's step moved.
+            # In multi-unit this is the cross-unit barrier; relation_changed resumes
+            # the workflow once peers catch up.
             if (
                 self.charm.state.cluster.restore_instruction == instruction
                 and self.charm.state.unit_server.restore_step == step
@@ -379,11 +375,8 @@ class BackupEvents(ops.Object):
         """Run exactly the step whose (instruction, prior-step) tuple matches. Else no-op."""
         match (instruction, step):
             case (RestoreStep.RESTORE, RestoreStep.NOT_STARTED):
-                # Fused download+restore: primary suppresses failover then
-                # downloads and swaps the RDB in one sweep; replicas just record
-                # the step. No cross-unit work sits between download and restore
-                # (suppress_failover already hits every sentinel), so a split
-                # barrier buys nothing.
+                # Fused download+restore: primary suppresses failover, downloads
+                # and swaps the RDB in one sweep; replicas just record the step.
                 is_primary = self.charm.cluster_manager.is_primary()
                 self.charm.state.unit_server.update(
                     {"restore_role": "primary" if is_primary else "replica"}
