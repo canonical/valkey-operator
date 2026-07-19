@@ -134,6 +134,7 @@ class PeerAppModel(PeerModel):
     client_user_epoch: float = Field(default=0)
     s3_credentials: ExtraSecretStr = Field(default=None)
     restore_id: str = Field(default="")
+    restore_token: str = Field(default="")
     restore_instruction: str = Field(default="")
     restore_participants: str = Field(default="")
 
@@ -159,6 +160,7 @@ class PeerUnitModel(PeerModel):
     backup_id: str = Field(default="")
     restore_step: str = Field(default="")
     restore_role: str = Field(default="")
+    restore_failed: str = Field(default="")
 
 
 class RelationState:
@@ -261,6 +263,25 @@ class ValkeyServer(RelationState):
         return self.model.restore_role if self.model else ""
 
     @property
+    def restore_failed(self) -> str:
+        """This unit's raw restore-failure marker (``"<kind>:<token>"``), empty if none.
+
+        Use ``restore_failure_kind`` to read the kind scoped to an attempt token.
+        """
+        return self.model.restore_failed if self.model else ""
+
+    def restore_failure_kind(self, restore_token: str) -> str:
+        """Return this unit's failure kind for ``restore_token``, else "".
+
+        Token-scoped so a stale marker from a prior attempt (restore_id is the
+        backup-id and repeats on a re-run) isn't misread against the current one.
+        """
+        if not self.model or not self.model.restore_failed:
+            return ""
+        kind, _, token = self.model.restore_failed.partition(":")
+        return kind if token == restore_token else ""
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -336,6 +357,15 @@ class ValkeyCluster(RelationState):
     def restore_id(self) -> str:
         """The backup id being restored, or '' if no restore is running."""
         return self.model.restore_id if self.model else ""
+
+    @property
+    def restore_token(self) -> str:
+        """Unique per-attempt token that scopes failure markers.
+
+        restore_id is the backup-id and repeats on a re-run, so markers key off
+        this instead, keeping a stale marker from being misread against a new attempt.
+        """
+        return self.model.restore_token if self.model else ""
 
     @property
     def is_restore_in_progress(self) -> bool:

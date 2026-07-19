@@ -128,6 +128,17 @@ class RestoreStep(StrEnum):
     COMPLETED = "completed"
 
 
+class RestoreFailure(StrEnum):
+    """Per-unit restore failure kind, recorded on the failing unit's databag.
+
+    UNHEALTHY marks a cluster that never became ready (surfaces RESTORE_UNHEALTHY);
+    FAILED is any other failure.
+    """
+
+    FAILED = "failed"
+    UNHEALTHY = "unhealthy"
+
+
 class ScaleDownState(StrEnum):
     """Scale down states for the service."""
 

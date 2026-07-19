@@ -429,8 +429,15 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
 # peer-relation data-interface wiring is part of the test, per PR #79 review.
 
 
-def _restore_context_and_state(cloud_spec, *, leader=True, app_data=None, unit_data=None):
-    """Build a Context + single-unit State wired for the restore workflow."""
+def _restore_context_and_state(
+    cloud_spec, *, leader=True, app_data=None, unit_data=None, peers_data=None
+):
+    """Build a Context + State wired for the restore workflow.
+
+    ``peers_data`` (``{unit_id: {hyphen-keyed databag}}``) adds peer units, so a
+    multi-unit restore (e.g. the leader observing a *peer's* failure) can be
+    driven through real events.
+    """
     from ops import testing
 
     from src.charm import ValkeyCharm
@@ -444,6 +451,7 @@ def _restore_context_and_state(cloud_spec, *, leader=True, app_data=None, unit_d
         endpoint=PEER_RELATION,
         local_app_data=app_data or {},
         local_unit_data={"start-state": "started", **(unit_data or {})},
+        peers_data=peers_data or {},
     )
     status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     s3_rel = testing.Relation(
@@ -736,6 +744,207 @@ def test_restore_failure_unhealthy_status(cloud_spec, restore_managers):
     restore_managers.roll_back.assert_called_once()
     assert RestoreStatuses.RESTORE_UNHEALTHY.value in statuses
     assert RestoreStatuses.RESTORE_FAILED.value not in statuses
+
+
+# ── restore failure when the valkey primary is not the juju leader ────────────
+#
+# The valkey primary (which runs the destructive RDB swap) is frequently NOT the
+# juju leader, and only the leader can clear the app-level restore_id. A failing
+# non-leader unit must therefore signal failure on its OWN unit databag so the
+# leader can tear the restore down, instead of silently wedging the whole cluster
+# in "restore in progress" forever. (PR #79 review, Mehdi-Bendriss r3547362621.)
+
+
+def test_non_leader_primary_failure_records_failure_marker(cloud_spec, restore_managers):
+    """A non-leader primary whose restore fails records a per-unit failure marker.
+
+    It cannot clear the app-level restore_id (leader-only), so it must leave a
+    signal the leader can act on — and it must resume failover and NOT crash.
+    """
+    from common.exceptions import ValkeyServicesFailedToStartError
+
+    restore_managers.restore_on_primary.side_effect = ValkeyServicesFailedToStartError("boom")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-1",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)  # must NOT raise
+
+    restore_managers.roll_back.assert_called_once()
+    restore_managers.resume_failover.assert_called_once()
+    # Failure recorded on this unit's own databag, stamped with the attempt token
+    # so it can't be misread against a later restore.
+    assert _peer_unit_data(state_out)["restore-failed"] == "failed:tok-1"
+
+
+def test_leader_tears_down_when_peer_restore_failed(cloud_spec, restore_managers):
+    """The leader clears the app-level restore state when a *peer* reports failure.
+
+    valkey/1 (a non-leader) recorded a failure for this attempt's token; the
+    leader (valkey/0) must abort the whole restore — clear restore_id, resume
+    failover (the failing peer may not have), and flag RESTORE_FAILED — rather
+    than proceeding with its own step.
+    """
+    from src.statuses import RestoreStatuses
+
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=True,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-2",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0,valkey/1",
+        },
+        peers_data={1: {"start-state": "started", "restore-failed": "failed:tok-2"}},
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    # The leader aborts before doing its own restore work.
+    restore_managers.restore_on_primary.assert_not_called()
+    # The leader resumes failover as a backstop: the failing peer's own
+    # best-effort resume may have raised, so the leader must not rely on it.
+    restore_managers.resume_failover.assert_called()
+    assert RestoreStatuses.RESTORE_FAILED.value in statuses
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+
+
+def test_teardown_records_failure_even_if_resume_failover_raises(cloud_spec, restore_managers):
+    """A raising resume_failover must not abort teardown (else restore re-wedges).
+
+    resume_failover hits every sentinel via the CLI and can raise; teardown must
+    still run to completion — failover-resume attempted, failure flagged, and the
+    app-level restore state cleared rather than left wedged.
+    """
+    from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCommandError
+    from src.statuses import RestoreStatuses
+
+    restore_managers.restore_on_primary.side_effect = ValkeyServicesFailedToStartError("boom")
+    restore_managers.resume_failover.side_effect = ValkeyWorkloadCommandError("sentinel down")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=True,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()  # must NOT raise despite the resume_failover error
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    restore_managers.resume_failover.assert_called()  # attempted, even though it raised
+    assert RestoreStatuses.RESTORE_FAILED.value in statuses
+    # Torn down, not wedged: the app-level restore state is cleared.
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
+
+
+def test_clear_failed_restore_unwedges_even_if_status_add_raises(mocker):
+    """The un-wedge must happen before, and independently of, the status write.
+
+    A failing statuses.add (e.g. a status databag left by another revision that
+    fails validation — add doesn't swallow it the way delete does) must not stop
+    _clear_restore_state from clearing restore_id, or the cluster stays wedged
+    in restore-in-progress forever.
+    """
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.backup_manager.name = "backup"
+    ev.charm.state.failed_restore_kind = "failed"
+    ev.charm.state.statuses.add.side_effect = RuntimeError("bad status databag")
+
+    ev._clear_failed_restore(resume=False)  # must NOT raise
+
+    # Restore state cleared despite the status-write failure.
+    ev.charm.state.cluster.update.assert_called_once()
+    assert ev.charm.state.cluster.update.call_args.args[0]["restore_id"] == ""
+
+
+def test_stale_token_marker_ignored_for_new_restore(cloud_spec, restore_managers):
+    """A failure marker from a PRIOR attempt must not abort the current restore.
+
+    restore_id is the backup-id, so a same-backup re-run reuses it; the marker is
+    scoped to a per-attempt token instead. A marker carrying an old token
+    (`failed:tok-old`) must be ignored for the current attempt (`tok-new`) — the
+    leader proceeds with the restore rather than false-aborting it.
+    """
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=True,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-new",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+        # Stale marker left from a previous, torn-down attempt.
+        unit_data={"restore-failed": "failed:tok-old"},
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    # The stale-token marker is ignored: the leader runs the restore, not a teardown.
+    restore_managers.restore_on_primary.assert_called_once()
+    assert _peer_app_data(state_out).get("restore-id", "") == ""  # completed normally
+
+
+def test_restore_action_clears_stale_terminal_statuses(mocker, cloud_spec, restore_managers):
+    """Initiating a restore clears BOTH stale terminal statuses (FAILED and UNHEALTHY)."""
+    from data_platform_helpers.advanced_statuses.components import StatusesState
+
+    from src.statuses import RestoreStatuses
+
+    _pass_restore_preconditions(mocker, ["2026-05-13T10:00:00Z"])
+    delete = mocker.patch.object(StatusesState, "delete")
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    ctx.run(ctx.on.action("restore", params={"backup-id": "2026-05-13T10:00:00Z"}), state)
+
+    deleted = {call.args[0] for call in delete.call_args_list}
+    assert RestoreStatuses.RESTORE_FAILED.value in deleted
+    assert RestoreStatuses.RESTORE_UNHEALTHY.value in deleted
+
+
+def test_completed_restore_clears_terminal_statuses(mocker, cloud_spec, restore_managers):
+    """A restore that reaches COMPLETED clears BOTH terminal statuses (FAILED and UNHEALTHY)."""
+    from data_platform_helpers.advanced_statuses.components import StatusesState
+
+    from src.statuses import RestoreStatuses
+
+    delete = mocker.patch.object(StatusesState, "delete")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-token": "tok-3",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    deleted = {call.args[0] for call in delete.call_args_list}
+    assert RestoreStatuses.RESTORE_FAILED.value in deleted
+    assert RestoreStatuses.RESTORE_UNHEALTHY.value in deleted
 
 
 # ── restore-awareness guards (single early-return clauses) ────────────────────

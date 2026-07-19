@@ -22,6 +22,7 @@ from literals import (
     PEER_RELATION,
     S3_RELATION_NAME,
     STATUS_PEERS_RELATION,
+    RestoreFailure,
     Substrate,
 )
 
@@ -227,3 +228,23 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         every server, not just the local one.
         """
         return any(server.is_backup_in_progress for server in self.servers)
+
+    @property
+    def failed_restore_kind(self) -> str:
+        """Failure kind of any participant that failed the CURRENT attempt, or ``""``.
+
+        Scoped to ``restore_token`` so a stale marker from a prior attempt is
+        ignored. UNHEALTHY wins over FAILED so a not-ready cluster surfaces the
+        more specific status.
+        """
+        token = self.cluster.restore_token
+        participants = set(self.cluster.restore_participants)
+        kinds = {
+            server.restore_failure_kind(token)
+            for server in self.servers
+            if server.unit_name in participants
+        }
+        kinds.discard("")
+        if RestoreFailure.UNHEALTHY.value in kinds:
+            return RestoreFailure.UNHEALTHY.value
+        return RestoreFailure.FAILED.value if kinds else ""

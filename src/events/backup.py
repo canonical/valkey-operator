@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 import ops
@@ -30,6 +31,7 @@ from literals import (
     RESTORE_LOAD_TIMEOUT_S,
     RESTORE_RESYNC_TIMEOUT_S,
     S3_RELATION_NAME,
+    RestoreFailure,
     RestoreStep,
 )
 from statuses import BackupStatuses, RestoreStatuses
@@ -268,16 +270,15 @@ class BackupEvents(ops.Object):
             backup_id,
             self.charm.unit.name,
         )
-        # Clear any stale RESTORE_FAILED from a prior attempt.
-        self.charm.state.statuses.delete(
-            RestoreStatuses.RESTORE_FAILED.value,
-            scope="app",
-            component=self.charm.backup_manager.name,
-        )
+        # Clear any stale terminal status from a prior attempt.
+        self._clear_terminal_restore_statuses()
         participants = ",".join(sorted(s.unit_name for s in self.charm.state.servers))
+        # Per-attempt token: restore_id is the backup-id (repeats on a re-run), so
+        # failure markers are keyed to this fresh token instead.
         self.charm.state.cluster.update(
             {
                 "restore_id": backup_id,
+                "restore_token": uuid.uuid4().hex,
                 "restore_instruction": RestoreStep.RESTORE.value,
                 "restore_participants": participants,
             }
@@ -289,21 +290,35 @@ class BackupEvents(ops.Object):
     def _on_restore_workflow(self, _: ops.RelationChangedEvent | ops.UpdateStatusEvent) -> None:
         """Drive the restore state machine as far as this unit can in one hook.
 
-        Each pass runs this unit's matching step and (leader only) advances the
-        shared instruction once every participant has caught up, then repeats
-        until it can make no further local progress. So a single-unit cluster
-        completes in a single hook instead of crawling one step per
-        ~5-min update_status; a multi-unit cluster runs itself right up to the
-        next cross-unit barrier, where the peer relation_changed cascade (with
-        update_status as a backstop) carries it forward. Bounded: a pass that
-        moves neither the shared instruction nor this unit's own step ends it.
+        Each pass runs this unit's matching step and (leader) advances the shared
+        instruction once all participants catch up, looping until no local
+        progress is made. So a single-unit restore finishes in one hook; a
+        multi-unit one runs to the next cross-unit barrier, where the peer
+        relation_changed cascade (update_status as backstop) resumes it.
         """
         while True:
-            # Restore done: once the leader clears restore_id, each unit clears
-            # its own per-unit state (and only then).
+            # Restore done: each unit clears its own per-unit state once restore_id is gone.
             if not self.charm.state.cluster.is_restore_in_progress:
-                if self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED:
-                    self.charm.state.unit_server.update({"restore_step": "", "restore_role": ""})
+                if (
+                    self.charm.state.unit_server.restore_step != RestoreStep.NOT_STARTED
+                    or self.charm.state.unit_server.restore_failed
+                ):
+                    self.charm.state.unit_server.update(
+                        {"restore_step": "", "restore_role": "", "restore_failed": ""}
+                    )
+                return
+
+            # A participant failed: the leader tears the whole restore down (only
+            # it can clear the app-level restore_id; the failing unit is often not
+            # the leader).
+            if self.charm.unit.is_leader() and self.charm.state.failed_restore_kind:
+                self._clear_failed_restore()
+                return
+            # This unit already failed this attempt (token-scoped, so a stale marker
+            # won't block a new one): wait for the leader to tear down.
+            if self.charm.state.unit_server.restore_failure_kind(
+                self.charm.state.cluster.restore_token
+            ):
                 return
 
             instruction = self.charm.state.cluster.restore_instruction
@@ -394,37 +409,83 @@ class BackupEvents(ops.Object):
             return
         instruction = self.charm.state.cluster.restore_instruction
         if instruction == RestoreStep.COMPLETED:
-            self.charm.state.statuses.delete(
-                RestoreStatuses.RESTORE_FAILED.value,
-                scope="app",
-                component=self.charm.backup_manager.name,
-            )
-            self.charm.state.cluster.update(
-                {"restore_id": "", "restore_instruction": "", "restore_participants": ""}
-            )
+            self._clear_terminal_restore_statuses()
+            self._clear_restore_state()
             return
         self.charm.state.cluster.update(
             {"restore_instruction": self.charm.backup_manager.next_restore_step(instruction).value}
         )
 
     def _restore_teardown(self, exc: Exception | None = None) -> None:
-        """Resume failover, flag failure, and (leader) clear restore state.
+        """Record this unit's restore failure so the leader can tear it down.
 
-        RESTORE_UNHEALTHY when the cluster never became ready
-        (ValkeyClusterNotReadyError), RESTORE_FAILED otherwise.
+        The failing unit is often not the juju leader, and only the leader can
+        clear the app-level restore_id, so the failure is recorded on this unit's
+        own databag; the leader acts on it via _clear_failed_restore (inline here
+        if this unit is the leader). resume_failover runs first but best-effort:
+        a raise must not stop the marker being recorded, or the restore re-wedges.
         """
-        self.charm.sentinel_manager.resume_failover()
+        try:
+            self.charm.sentinel_manager.resume_failover()
+        except Exception:
+            logger.exception("resume_failover during restore teardown failed")
+        kind = (
+            RestoreFailure.UNHEALTHY
+            if isinstance(exc, ValkeyClusterNotReadyError)
+            else RestoreFailure.FAILED
+        )
+        # Stamp with the attempt token so it can't be misread against a later restore.
+        marker = f"{kind.value}:{self.charm.state.cluster.restore_token}"
+        self.charm.state.unit_server.update({"restore_failed": marker})
+        if self.charm.unit.is_leader():
+            # Already resumed failover just above; don't do it twice.
+            self._clear_failed_restore(resume=False)
+
+    def _clear_failed_restore(self, resume: bool = True) -> None:
+        """Leader-only: flag the failure (UNHEALTHY vs FAILED) and clear restore state.
+
+        ``resume`` resumes failover as a backstop, since a failing peer's own
+        best-effort resume may have raised. The leader-self teardown already
+        resumed, so it passes resume=False to avoid a redundant SENTINEL RESET.
+        """
+        if resume:
+            try:
+                self.charm.sentinel_manager.resume_failover()
+            except Exception:
+                logger.exception("resume_failover during leader restore teardown failed")
         status = (
             RestoreStatuses.RESTORE_UNHEALTHY
-            if isinstance(exc, ValkeyClusterNotReadyError)
+            if self.charm.state.failed_restore_kind == RestoreFailure.UNHEALTHY.value
             else RestoreStatuses.RESTORE_FAILED
         )
-        self.charm.state.statuses.add(
-            status.value,
-            scope="app",
-            component=self.charm.backup_manager.name,
-        )
-        if self.charm.unit.is_leader():
-            self.charm.state.cluster.update(
-                {"restore_id": "", "restore_instruction": "", "restore_participants": ""}
+        # Clear restore state FIRST, so a status-write failure (statuses.add,
+        # unlike delete, doesn't swallow one) can't leave the restore wedged.
+        self._clear_restore_state()
+        try:
+            self.charm.state.statuses.add(
+                status.value,
+                scope="app",
+                component=self.charm.backup_manager.name,
             )
+        except Exception:
+            logger.exception("recording the restore-failure status failed")
+
+    def _clear_terminal_restore_statuses(self) -> None:
+        """Delete both terminal restore statuses (delete tolerates an absent one)."""
+        for status in (RestoreStatuses.RESTORE_FAILED, RestoreStatuses.RESTORE_UNHEALTHY):
+            self.charm.state.statuses.delete(
+                status.value,
+                scope="app",
+                component=self.charm.backup_manager.name,
+            )
+
+    def _clear_restore_state(self) -> None:
+        """Clear the app-level restore coordination fields, ending the workflow."""
+        self.charm.state.cluster.update(
+            {
+                "restore_id": "",
+                "restore_token": "",
+                "restore_instruction": "",
+                "restore_participants": "",
+            }
+        )
