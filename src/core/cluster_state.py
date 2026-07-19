@@ -222,12 +222,16 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
     @property
     def is_backup_in_progress_any(self) -> bool:
-        """True if ANY peer unit is uploading a backup (backup_id is per-unit).
-
-        create-backup runs on any unit, so a leader-driven restore must check
-        every server, not just the local one.
-        """
+        """True if ANY peer unit is uploading a backup (backup_id is per-unit)."""
         return any(server.is_backup_in_progress for server in self.servers)
+
+    @property
+    def is_tls_transitioning(self) -> bool:
+        """True while any unit is mid client-TLS enable/disable or a CA rotation.
+
+        A restore restarts the primary, which would collide with the cert swap.
+        """
+        return any(server.is_tls_transitioning for server in self.servers)
 
     @property
     def failed_restore_kind(self) -> str:

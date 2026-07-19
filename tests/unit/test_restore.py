@@ -406,6 +406,75 @@ def test_get_statuses_reports_restore_in_progress(mocker):
     assert RestoreStatuses.RESTORE_IN_PROGRESS.value in mgr.get_statuses(scope="app")
 
 
+def test_valkey_server_is_tls_transitioning(mocker):
+    from src.core.models import ValkeyServer
+    from src.literals import TLSCARotationState, TLSState
+
+    def srv(client_state, rotation):
+        # Real ValkeyServer so the nested tls_client_state/tls_ca_rotation_state
+        # properties actually compute from the model.
+        s = ValkeyServer.__new__(ValkeyServer)
+        s.model = mocker.Mock(tls_client_state=client_state.value, tls_ca_rotation=rotation.value)
+        return s
+
+    assert srv(TLSState.TLS, TLSCARotationState.NO_ROTATION).is_tls_transitioning is False
+    assert srv(TLSState.TO_TLS, TLSCARotationState.NO_ROTATION).is_tls_transitioning is True
+    assert srv(TLSState.TO_NO_TLS, TLSCARotationState.NO_ROTATION).is_tls_transitioning is True
+    assert srv(TLSState.TLS, TLSCARotationState.NEW_CA_DETECTED).is_tls_transitioning is True
+
+
+def test_cluster_is_tls_transitioning_aggregates_servers(mocker):
+    from src.core.cluster_state import ClusterState
+
+    cs = mocker.Mock(spec=ClusterState)
+    cs.servers = {mocker.Mock(is_tls_transitioning=False), mocker.Mock(is_tls_transitioning=True)}
+    assert ClusterState.is_tls_transitioning.fget(cs) is True
+    cs.servers = {mocker.Mock(is_tls_transitioning=False)}
+    assert ClusterState.is_tls_transitioning.fget(cs) is False
+
+
+def _passing_restore_guard(mocker):
+    """Return a BackupEvents whose _restore_blocking_reason returns None (all gates pass)."""
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.unit.is_leader.return_value = True
+    ev.charm.state.s3_relation = True
+    ev.charm.state.cluster.s3_credentials = True
+    ev.charm.state.is_backup_in_progress_any = False
+    ev.charm.state.cluster.is_restore_in_progress = False
+    ev.charm.state.is_tls_transitioning = False
+    ev.charm.state.servers = [mocker.Mock(is_active=True)]
+    ev.charm.sentinel_manager.get_primary_ip.return_value = "10.0.0.1"
+    ev.charm.sentinel_manager.is_failover_in_progress.return_value = False
+    return ev
+
+
+def test_restore_guard_passes_when_all_gates_ok(mocker):
+    assert _passing_restore_guard(mocker)._restore_blocking_reason() is None
+
+
+def test_restore_blocked_during_tls_transition(mocker):
+    """A restore restarts the primary; refuse to start one mid-TLS-transition."""
+    ev = _passing_restore_guard(mocker)
+    ev.charm.state.is_tls_transitioning = True
+    reason = ev._restore_blocking_reason()
+    assert reason is not None and "tls" in reason.lower()
+
+
+def test_restore_blocked_gracefully_when_sentinel_query_errors(mocker):
+    """A Sentinel command error during preflight fails the restore cleanly, not with a crash."""
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    ev = _passing_restore_guard(mocker)
+    ev.charm.sentinel_manager.is_failover_in_progress.side_effect = ValkeyWorkloadCommandError(
+        "sentinel unreachable"
+    )
+    reason = ev._restore_blocking_reason()  # must NOT raise
+    assert reason is not None
+
+
 def test_blocking_reason_blocks_backup_during_restore(mocker):
     """A restore in progress blocks create-backup but never the read-only list-backups."""
     from src.events.backup import BackupEvents
@@ -500,6 +569,12 @@ def restore_managers(mocker):
         roll_back=mocker.patch("managers.backup.BackupManager.roll_back"),
         suppress_failover=mocker.patch("managers.sentinel.SentinelManager.suppress_failover"),
         resume_failover=mocker.patch("managers.sentinel.SentinelManager.resume_failover"),
+        save_database_blocking=mocker.patch(
+            "managers.cluster.ClusterManager.save_database_blocking"
+        ),
+        reconcile_min_replicas_to_write=mocker.patch(
+            "managers.cluster.ClusterManager.reconcile_min_replicas_to_write"
+        ),
     )
 
 
@@ -617,6 +692,129 @@ def test_primary_runs_full_restore_workflow(cloud_spec, restore_managers):
     restore_managers.roll_back.assert_not_called()
     assert _peer_app_data(state_out).get("restore-id", "") == ""
     assert _peer_unit_data(state_out).get("restore-step", "") == ""
+
+
+def test_primary_saves_dataset_before_restore(cloud_spec, restore_managers):
+    """The primary persists in-memory data to disk before restoring.
+
+    restore_on_primary moves the on-disk dump aside as the rollback copy, which is
+    only faithful if it reflects current memory — so save runs first, and outside
+    the rollback try (a save failure leaves the primary untouched, below).
+    """
+    order = []
+    restore_managers.save_database_blocking.side_effect = lambda: order.append("save")
+    restore_managers.restore_on_primary.side_effect = lambda: order.append("restore")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    assert order == ["save", "restore"]  # persisted before the swap
+
+
+def test_save_failure_aborts_restore_without_rollback(cloud_spec, restore_managers):
+    """If the pre-restore save fails, the primary is never stopped and nothing rolls back."""
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    restore_managers.save_database_blocking.side_effect = ValkeyWorkloadCommandError("save failed")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)  # must NOT raise
+
+    restore_managers.restore_on_primary.assert_not_called()
+    restore_managers.roll_back.assert_not_called()  # nothing changed → nothing to undo
+    assert _peer_app_data(state_out).get("restore-id", "") == ""  # torn down
+
+
+def test_primary_reconciles_min_replicas_after_restore(cloud_spec, restore_managers):
+    """After the primary restarts on the restored RDB, min-replicas-to-write is reasserted.
+
+    A raw stop/start bypasses the rolling-restart path, so the topology-correct
+    runtime value must be reconciled explicitly or a small cluster stays write-frozen.
+    """
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.reconcile_min_replicas_to_write.assert_called_once()
+
+
+def test_reconciles_min_replicas_after_rollback(cloud_spec, restore_managers):
+    """A failed restore rolls back (another restart), so min-replicas must be reasserted too.
+
+    roll_back does a raw stop/start that reverts the runtime value; without this a
+    small cluster is left write-frozen after a failed restore.
+    """
+    from common.exceptions import ValkeyServicesFailedToStartError
+
+    restore_managers.restore_on_primary.side_effect = ValkeyServicesFailedToStartError("boom")
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.roll_back.assert_called_once()
+    restore_managers.reconcile_min_replicas_to_write.assert_called_once()
+
+
+def test_reconcile_failure_does_not_fail_a_successful_restore(cloud_spec, restore_managers):
+    """A raise from the post-restart min-replicas reconcile must not fail a good restore.
+
+    reconcile runs in a finally; the manager swallows its expected errors, but an
+    exotic one (e.g. a raw OSError from the VM CLI exec) must not turn a
+    successful restore into a false RESTORE_FAILED via the teardown path.
+    """
+    from src.statuses import RestoreStatuses
+
+    restore_managers.reconcile_min_replicas_to_write.side_effect = RuntimeError(
+        "config set blew up"
+    )
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    with ctx(ctx.on.update_status(), state) as mgr:
+        state_out = mgr.run()  # must NOT raise
+        statuses = mgr.charm.state.statuses.get(
+            scope="app", component="backup", running_status_only=True
+        ).root
+
+    # Full success path still reached, no rollback, not marked failed.
+    restore_managers.cleanup_restore_files.assert_called_once()
+    restore_managers.roll_back.assert_not_called()
+    assert RestoreStatuses.RESTORE_FAILED.value not in statuses
+    assert _peer_app_data(state_out).get("restore-id", "") == ""
 
 
 def test_replica_records_role_and_barrier_holds(cloud_spec, restore_managers):

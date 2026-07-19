@@ -24,6 +24,7 @@ from common.exceptions import (
     ValkeyBackupError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyClusterNotReadyError,
+    ValkeyWorkloadCommandError,
 )
 from core.models import S3Parameters
 from literals import (
@@ -233,15 +234,25 @@ class BackupEvents(ops.Object):
             return "A backup is in progress; cannot restore."
         if self.charm.state.cluster.is_restore_in_progress:
             return "A restore is already in progress."
+        # A restore restarts the primary; don't start one while TLS is changing.
+        if self.charm.state.is_tls_transitioning:
+            return "A TLS transition is in progress; wait for it to settle."
         # Require a stable cluster: all active, a resolvable primary, no failover in flight.
         if not all(s.is_active for s in self.charm.state.servers):
             return "Not all units are active; wait for the cluster to settle."
+        return self._unstable_primary_reason()
+
+    def _unstable_primary_reason(self) -> str | None:
+        """Return why the Sentinel-managed primary isn't restorable, or None if it is."""
         try:
             self.charm.sentinel_manager.get_primary_ip()
+            if self.charm.sentinel_manager.is_failover_in_progress():
+                return "A Sentinel failover is in progress; cannot restore."
         except ValkeyCannotGetPrimaryIPError:
             return "No primary available; cannot restore."
-        if self.charm.sentinel_manager.is_failover_in_progress():
-            return "A Sentinel failover is in progress; cannot restore."
+        except ValkeyWorkloadCommandError:
+            # A sentinel query failed outright; treat as an unsettled cluster.
+            return "Could not query Sentinel; wait for the cluster to settle."
         return None
 
     def _on_restore_action(self, event: ops.ActionEvent) -> None:
@@ -260,6 +271,7 @@ class BackupEvents(ops.Object):
                 event.fail(f"backup-id {backup_id} not found.")
                 return
         except ValkeyBackupError as e:
+            logger.exception("Could not list backups for restore")
             event.set_results({"error": _safe_error(e)})
             event.fail("Could not list backups. Check juju debug-log.")
             return
@@ -384,24 +396,32 @@ class BackupEvents(ops.Object):
                 return
 
     def _do_primary_restore(self) -> None:
-        """Validate the object, then restore in-place, rolling back on any failure.
+        """Validate, restore in-place, and roll back on any failure.
 
-        stop -> back up the current dump -> download the restore RDB onto the
-        data partition -> restart happen inside restore_on_primary; the cluster
-        manager then confirms the server came up and finished loading. Any failure
-        (bad download, unhealthy server) rolls back to the pre-restore copy before
-        propagating to teardown.
+        restore_on_primary does stop -> move dump aside -> download -> restart;
+        the caller then confirms it loaded. Any failure rolls back to the
+        pre-restore copy before propagating to teardown.
         """
-        # Pre-stop gate: reject an object that isn't a real RDB (wrong magic /
-        # missing) while valkey still serves, so a bad backup-id never bounces
-        # the primary. Outside the try: nothing has changed, nothing to roll back.
+        # Pre-stop (outside the try, nothing to roll back yet): reject a non-RDB
+        # object before bouncing the primary, and persist memory to disk so the
+        # rollback copy restore_on_primary moves aside is current, not stale.
         self.charm.backup_manager.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
+        self.charm.cluster_manager.save_database_blocking()
         try:
             self.charm.backup_manager.restore_on_primary()
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
         except Exception:
             self.charm.backup_manager.roll_back()
             raise
+        finally:
+            # A restart (restore or rollback) resets runtime min-replicas-to-write
+            # to the rendered 1, so reassert the topology-correct value or a small
+            # cluster is write-frozen. Best-effort: a raise in a finally must not
+            # mask the failure or false-fail a success.
+            try:
+                self.charm.cluster_manager.reconcile_min_replicas_to_write()
+            except Exception:
+                logger.exception("min-replicas reconcile after restore failed")
 
     def _advance_if_leader(self) -> None:
         """Advance the instruction once every participant has reached it; clear on COMPLETED."""

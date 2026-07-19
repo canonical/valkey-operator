@@ -319,6 +319,14 @@ class ValkeyServer(RelationState):
             self.model.tls_ca_rotation or TLSCARotationState.NO_ROTATION.value
         )
 
+    @property
+    def is_tls_transitioning(self) -> bool:
+        """True while this unit is mid client-TLS enable/disable or a CA rotation."""
+        return (
+            self.tls_client_state in (TLSState.TO_TLS, TLSState.TO_NO_TLS)
+            or self.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION
+        )
+
 
 @final
 class ValkeyCluster(RelationState):
