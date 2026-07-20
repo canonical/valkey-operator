@@ -44,6 +44,13 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
+# Deploy-wait budgets for test_build_and_deploy. The tls_on variant additionally
+# deploys self-signed-certificates, integrates client-certificates, and performs a
+# rolling sentinel restart to apply the client certificate — all within this same
+# wait — so it needs materially longer than the tls_off deploy to reach active/idle
+# on a loaded CI runner (measured ~205s on an idle machine vs ~173s for tls_off).
+DEPLOY_TIMEOUT_S = 600
+DEPLOY_TIMEOUT_TLS_S = 900
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
