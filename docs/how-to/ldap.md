@@ -133,7 +133,7 @@ permissions:
 Configure permissions for Data Integrator:
 
 ```shell
-juju config data-integrator prefix-name="*" entity-permissions='[{"resource_name": "ldap_users_write", "resource_type": "acl", "privileges": ["read", "write", "~*"]}, {"resource_name": "ldap_users_read", "resource_type": "acl", "privileges": ["read", "~*"]}]'
+juju config data-integrator prefix-name="*" entity-permissions='[{"resource_name": "ldap_users_write", "resource_type": "acl", "privileges": ["+@read", "+@write", "~*"]}, {"resource_name": "ldap_users_read", "resource_type": "acl", "privileges": ["+@read", "~*"]}]'
 ```
 
 Now integrate with Valkey to provide the role definition:
