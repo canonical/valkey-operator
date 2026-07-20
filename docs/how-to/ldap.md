@@ -1,4 +1,4 @@
-# How to enable LDAP
+# How to manage LDAP
 
 LDAP (Lightweight Directory Access Protocol) enables centralized authentication for Valkey, 
 reducing the overhead of managing local credentials. LDAP support in Charmed Valkey also enables
@@ -7,30 +7,20 @@ role-based access control.
 This guide goes over the steps to integrate LDAP as an authentication method with the Valkey charm 
 within the Juju ecosystem.
 
-```{caution}
-In this guide, we use [self-signed certificates](https://en.wikipedia.org/wiki/Self-signed_certificate) 
-provided by the [`self-signed-certificates` operator](https://github.com/canonical/self-signed-certificates-operator).
-
-**This is not recommended for a production environment.**
-
-Check the collection of [Charmhub operators](https://charmhub.io/?q=tls-certificates) that implement the 
-`tls-certificate` interface.
-```
-
 ## Prerequisites 
 
-You will need:
-* A deployment of Charmed Valkey, either on VM or Kubernetes
+The following components are required before proceeding:
+
+* Charmed Valkey deployed on either a VM or Kubernetes.
 * A Kubernetes Juju controller to deploy the LDAP provider
 
-## Deploy an LDAP server on Kubernetes
+## Deploy LDAP server charm
 
-If you run Charmed Valkey on a VM deployment, you will need a separate Juju controller with a K8s
+If you run Charmed Valkey on a VM deployment, use a separate Juju controller with a K8s
 model in order to deploy the [`glauth-k8s` charm](https://charmhub.io/glauth-k8s). We will then 
 create a cross-controller relation to the Valkey VM model.
 
-With Charmed Valkey deployed on Kubernetes, you can simply deploy GLAuth alongside without a 
-separate Juju model.
+With Charmed Valkey deployed on Kubernetes, deploy GLAuth alongside without a separate Juju model.
 
 Deploy `glauth-k8s`, `self-signed-certificates`, and `postgresql-k8s`:
 
@@ -38,6 +28,12 @@ Deploy `glauth-k8s`, `self-signed-certificates`, and `postgresql-k8s`:
 juju deploy glauth-k8s --channel latest/edge --trust
 juju deploy self-signed-certificates
 juju deploy postgresql-k8s --channel 14/stable --trust
+```
+
+```{caution}
+**[Self-signed certificates](https://en.wikipedia.org/wiki/Self-signed_certificate) are not recommended for a production environment.**
+
+Check the [Choosing a TLS provider](https://canonical-certificate-management.readthedocs-hosted.com/operator/understanding-tls/#choosing-a-tls-provider) page for an overview of all the TLS certificates charms available. 
 ```
 
 Integrate `glauth-k8s` with `self-signed-certificates` and `postgresql-k8s`:
@@ -134,7 +130,7 @@ permissions:
 ]
 ```
 
-Configure these permissions to Data Integrator:
+Configure permissions for Data Integrator:
 
 ```shell
 juju config data-integrator prefix-name="*" entity-permissions='[{"resource_name": "ldap_users_write", "resource_type": "acl", "privileges": ["read", "write", "~*"]}, {"resource_name": "ldap_users_read", "resource_type": "acl", "privileges": ["read", "~*"]}]'
@@ -164,7 +160,7 @@ juju config valkey ldap-search-dn-attribute="mail"
 
 ## Enable LDAP
 
-Now all required configuration is set up and LDAP can be enabled by integrating Valkey with GLAuth:
+After completing all required configuration, integrate Valkey with GLAuth to enable LDAP::
 
 ```shell
 juju integrate valkey:ldap-ca-cert glauth-k8s:send-ca-cert
@@ -173,6 +169,9 @@ juju integrate valkey:ldap glauth-k8s:ldap
 
 Wait for the deployment to settle and log in to Valkey with the username and password from LDAP.
 The permissions in Valkey are set up according to the defined roles and the configured role mapping.
+
+If something goes wrong or a configuration is missing, Charmed Valkey will display a `blocked` 
+status with more information, for example: `LDAP: Missing config for 'ldap-map'`.
 
 ## Synchronize LDAP users
 
@@ -197,4 +196,4 @@ juju remove-relation valkey:ldap-ca-cert glauth-k8s:send-ca-cert
 juju remove-relation valkey:ldap glauth-k8s:ldap
 ```
 
-This removes all LDAP users that where previously added to Valkey's ACL files.  
+This removes all LDAP users that were previously added to Valkey's ACL files.  
