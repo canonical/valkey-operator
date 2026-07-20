@@ -207,10 +207,31 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.config_set(ldap_config, hostname=self.state.endpoint)
 
-    def save_database_blocking(self) -> None:
+    def _save_database_blocking(self) -> None:
         """Run a synchronous save on the dataset and return when done, otherwise raise."""
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
+
+    def _disable_save_on_shutdown(self) -> None:
+        """Set the configured shutdown option to 'no save' temporarily, will not persist a restart."""
+        client = self._get_valkey_client()
+        client.config_set(
+            hostname=self.state.endpoint,
+            config_settings={
+                "shutdown-on-sigint": "nosave",
+                "shutdown-on-sigterm": "nosave",
+            },
+        )
+
+    def save_dataset_before_shutdown(self) -> None:
+        """Avoid a save-on-shutdown to be killed by Pebble, save and disable saving safely."""
+        logger.info("Save dataset to disk")
+        self._save_database_blocking()
+
+        try:
+            self._disable_save_on_shutdown()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not disable save on shutdown: %s", e)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

@@ -286,7 +286,7 @@ class ValkeyClient(CliClient):
             cmd.append(value)
         logger.debug("Loading config settings for LDAP")
 
-        self.exec_cli_command(command=cmd, hostname=hostname)
+        self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
 
     def save(self, hostname: str) -> None:
         """Run a synchronous (blocking) save for the dataset."""
