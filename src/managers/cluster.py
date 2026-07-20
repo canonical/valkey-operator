@@ -217,10 +217,7 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.config_set(
             hostname=self.state.endpoint,
-            config_settings={
-                "shutdown-on-sigint": "nosave",
-                "shutdown-on-sigterm": "nosave",
-            },
+            config_settings={"shutdown-on-sigterm": "nosave"},
         )
 
     def save_dataset_before_shutdown(self) -> None:
