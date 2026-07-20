@@ -196,6 +196,38 @@ jobs:
         timeout-minutes: 3
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         run: script -q -c 'sudo jhack tail --printer raw --replay --no-watch' /dev/null | tee ~/logs/jhack-tail.txt || true
+      - name: Capture Valkey server logs
+        timeout-minutes: 3
+        # The charm-side juju logs above do not include valkey-server / sentinel
+        # output. The flaky HA failures (slow sentinel restart on TLS enable, slow
+        # promotion after a network cut) live in those server logs, reachable only
+        # on the workload itself: Pebble services on k8s, snap services on VM.
+        # Best-effort — never fail the job (`set +e`, trailing `true`).
+        if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
+        env:
+          SPREAD_JOB: ${{ matrix.job.spread_job }}
+        run: |
+          set +e
+          units=$(sudo juju status --format json 2>/dev/null | python3 -c \
+            "import json,sys; d=json.load(sys.stdin); print('\n'.join((d.get('applications',{}).get('valkey',{}).get('units') or {}).keys()))")
+          if [[ "$SPREAD_JOB" == *:tests/spread/k8s/* ]]; then
+            for unit in $units; do
+              pod=${unit/\//-}  # valkey/0 -> valkey-0
+              { sudo k8s kubectl -n testing exec "$pod" -c valkey -- \
+                pebble logs valkey -n 10000; } > ~/logs/"$pod"-valkey-server.txt 2>&1
+              { sudo k8s kubectl -n testing exec "$pod" -c valkey -- \
+                pebble logs valkey-sentinel -n 10000; } > ~/logs/"$pod"-valkey-sentinel.txt 2>&1
+            done
+          else
+            for unit in $units; do
+              name=${unit/\//-}
+              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.server -n 10000'; } \
+                > ~/logs/"$name"-valkey-server.txt 2>&1
+              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.sentinel -n 10000'; } \
+                > ~/logs/"$name"-valkey-sentinel.txt 2>&1
+            done
+          fi
+          true
       - name: Upload logs
         timeout-minutes: 5
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
