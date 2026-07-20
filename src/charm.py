@@ -108,7 +108,6 @@ class ValkeyCharm(ops.CharmBase):
 
         try:
             if event.restart_valkey:
-                self.cluster_manager.save_dataset_before_shutdown()
                 self.workload.restart(self.workload.valkey_service)
             if event.restart_sentinel:
                 # if primary endpoint is given, write sentinel config

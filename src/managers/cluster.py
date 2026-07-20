@@ -233,6 +233,17 @@ class ClusterManager(ManagerStatusProtocol):
         except ValkeyWorkloadCommandError as e:
             logger.warning("Could not disable save on shutdown: %s", e)
 
+    def clean_up_inconsistent_dump_files(self) -> None:
+        """Find and clean up dump files that where not correctly stored.
+
+        When the database is saved to disk on shutdown and this save is interrupted, the created
+        dump file is inconsistent and must be removed by the operator code, because Valkey will
+        not clean up on its own.
+        """
+        for temp_file in self.workload.working_dir.glob("temp-*.rdb"):
+            logger.info("Removing temporary dump-file %s", temp_file)
+            temp_file.unlink(missing_ok=True)
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(

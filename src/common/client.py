@@ -284,7 +284,7 @@ class ValkeyClient(CliClient):
         for key, value in config_settings.items():
             cmd.append(key)
             cmd.append(value)
-        logger.debug("Loading config settings for LDAP")
+        logger.debug("Loading config settings")
 
         self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
 

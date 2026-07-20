@@ -89,6 +89,9 @@ class BaseEvents(ops.Object):
             logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
             return
 
+        if event.storage.name == DATA_STORAGE:
+            self.charm.cluster_manager.clean_up_inconsistent_dump_files()
+
         if self.charm.state.substrate == Substrate.K8S:
             return
 
