@@ -45,8 +45,9 @@ def test_build_and_deploy(
         return
 
     # ensure enough storage is available for the dataset we are going to seed
+    # 1G for dump.rdb + 1G for transfer from primary + 1G breathing room
     if substrate == Substrate.K8S:
-        storage = {"data": "kubernetes,5G"}
+        storage = {"data": "kubernetes,3G"}
     else:
         storage = None
 

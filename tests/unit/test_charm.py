@@ -577,6 +577,8 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
             "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
         ),
+        patch("managers.cluster.ClusterManager._save_database_blocking") as save_dataset,
+        patch("managers.cluster.ClusterManager._disable_save_on_shutdown") as disable_save_on_stop,
         patch("workload_vm.ValkeyVmWorkload.restart") as mock_workload_restart,
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
         patch(
@@ -593,6 +595,8 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()
         mock_restart_sentinel.assert_called_once()
+        save_dataset.assert_called_once()
+        disable_save_on_stop.assert_called_once()
         mock_workload_restart.assert_called_once()
 
 
