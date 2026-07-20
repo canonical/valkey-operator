@@ -10,6 +10,6 @@ Deploy <deploy>
 Scale horizontally <scale-horizontally>
 Client connections <clients>
 Manage passwords <manage-passwords>
-Manage LDAP <ldap>
+LDAP auth <ldap>
 TLS encryption <tls>
 ```

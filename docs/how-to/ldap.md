@@ -170,6 +170,30 @@ juju integrate valkey:ldap glauth-k8s:ldap
 Wait for the deployment to settle and log in to Valkey with the username and password from LDAP.
 The permissions in Valkey are set up according to the defined roles and the configured role mapping.
 
+Get the endpoint for login from `juju status` and log in using `valkey-cli`:
+
+```shell
+valkey-cli -h <your-ip-address> -p 6379
+```
+
+Authenticate with your username and password from LDAP:
+
+```shell
+<your-ip-address>:6379> AUTH <ldap username> <ldap password>
+```
+
+Now perform a basic health check with this command:
+
+```shell
+<your-ip-addres>:6379> ping
+```
+
+You should receive this response from the Valkey server:
+
+```text
+PONG
+```
+
 If something goes wrong or a configuration is missing, Charmed Valkey will display a `blocked` 
 status with more information, for example: `LDAP: Missing config for 'ldap-map'`.
 
