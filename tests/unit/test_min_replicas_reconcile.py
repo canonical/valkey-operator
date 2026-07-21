@@ -92,6 +92,8 @@ def test_restart_workload_reconciles_min_replicas(cloud_spec):
                 new_callable=PropertyMock,
                 return_value=True,
             ),
+            patch("managers.cluster.ClusterManager._save_database_blocking"),
+            patch("managers.cluster.ClusterManager._disable_save_on_shutdown"),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
             patch("managers.topology.TopologyManager.start_observer"),
             patch(

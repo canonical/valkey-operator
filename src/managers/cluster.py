@@ -207,10 +207,39 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.config_set(ldap_config, hostname=self.state.endpoint)
 
-    def save_database_blocking(self) -> None:
+    def _save_database_blocking(self) -> None:
         """Run a synchronous save on the dataset and return when done, otherwise raise."""
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
+
+    def _disable_save_on_shutdown(self) -> None:
+        """Set the configured shutdown option to 'no save' temporarily, will not persist a restart."""
+        client = self._get_valkey_client()
+        client.config_set(
+            hostname=self.state.endpoint,
+            config_settings={"shutdown-on-sigterm": "nosave"},
+        )
+
+    def save_dataset_before_shutdown(self) -> None:
+        """Avoid a save-on-shutdown to be killed by Pebble, save and disable saving safely."""
+        logger.info("Save dataset to disk")
+        self._save_database_blocking()
+
+        try:
+            self._disable_save_on_shutdown()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not disable save on shutdown: %s", e)
+
+    def clean_up_inconsistent_dump_files(self) -> None:
+        """Find and clean up dump files that where not correctly stored.
+
+        When the database is saved to disk on shutdown and this save is interrupted, the created
+        dump file is inconsistent and must be removed by the operator code, because Valkey will
+        not clean up on its own.
+        """
+        for temp_file in self.workload.working_dir.glob("temp-*.rdb"):
+            logger.info("Removing temporary dump-file %s", temp_file)
+            temp_file.unlink(missing_ok=True)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""

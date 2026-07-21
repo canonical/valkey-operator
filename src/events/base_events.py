@@ -89,6 +89,9 @@ class BaseEvents(ops.Object):
             logger.warning("Unexpected storage %s attached; skipping", event.storage.name)
             return
 
+        if event.storage.name == DATA_STORAGE:
+            self.charm.cluster_manager.clean_up_inconsistent_dump_files()
+
         if self.charm.state.substrate == Substrate.K8S:
             return
 
@@ -647,22 +650,23 @@ class BaseEvents(ops.Object):
             logger.info("Waiting for replica to be fully-synced before saving the dataset")
             self.charm.cluster_manager.wait_for_replica_fully_synced(primary_ip)
 
-        logger.info("Save dataset to disk")
-        self.charm.cluster_manager.save_database_blocking()
+        self.charm.cluster_manager.save_dataset_before_shutdown()
 
         # stop valkey and sentinel processes
         try:
             self.charm.workload.stop()
         except ValkeyServicesCouldNotBeStoppedError as e:
             logger.error("Could not stop Valkey services cleanly: %s", e)
+
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
+
+        # reset sentinel states on other units
         active_sentinels = [
             ip
             for ip in active_sentinels
             if ip != self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
         ]
 
-        # reset sentinel states on other units
-        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
         if active_sentinels:
             logger.debug("Resetting sentinel states on active units: %s", active_sentinels)
             self.charm.sentinel_manager.reset_sentinel_states(active_sentinels)
