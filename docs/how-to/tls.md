@@ -24,7 +24,7 @@ charm as an example for all cases.
 ```{caution}
 **[Self-signed certificates](https://en.wikipedia.org/wiki/Self-signed_certificate) are not recommended for a production environment.**
 
-Check the [Security with X.509 certificates](https://charmhub.io/topics/security-with-x-509-certificates) page for an overview of all the TLS certificates charms available. 
+Check the [Choosing a TLS provider](https://canonical-certificate-management.readthedocs-hosted.com/operator/understanding-tls/#choosing-a-tls-provider) page for an overview of all the TLS certificates charms available. 
 ```
 
 Deploy the `self-signed-certificates` charm:
