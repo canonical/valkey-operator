@@ -187,7 +187,7 @@ html_baseurl = f"https://canonical.com/{slug}/{os.environ.get('READTHEDOCS_VERSI
 
 # sphinx-sitemap uses html_baseurl to generate the full URL for each page:
 
-sitemap_url_scheme = '{link}'
+sitemap_url_scheme = "{link}"
 sitemap_filename = "doc-sitemap.xml"
 
 
