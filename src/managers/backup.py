@@ -458,7 +458,12 @@ class BackupManager(ManagerStatusProtocol):
         if scope == "unit" and self.state.unit_server.is_backup_in_progress:
             status_list.append(BackupStatuses.BACKUP_IN_PROGRESS.value)
 
-        if scope == "app" and self.state.s3_relation and not self.state.cluster.s3_credentials:
+        if (
+            scope == "app"
+            and self.state.unit_server.is_started
+            and self.state.s3_relation
+            and not self.state.cluster.s3_credentials
+        ):
             status_list.append(BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value)
 
         if scope == "app" and self.state.cluster.is_restore_in_progress:

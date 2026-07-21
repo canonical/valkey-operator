@@ -704,8 +704,8 @@ def restore_managers(mocker):
         roll_back=mocker.patch("managers.backup.BackupManager.roll_back"),
         suppress_failover=mocker.patch("managers.sentinel.SentinelManager.suppress_failover"),
         resume_failover=mocker.patch("managers.sentinel.SentinelManager.resume_failover"),
-        save_database_blocking=mocker.patch(
-            "managers.cluster.ClusterManager.save_database_blocking"
+        save_dataset_before_shutdown=mocker.patch(
+            "managers.cluster.ClusterManager.save_dataset_before_shutdown"
         ),
         reconcile_min_replicas_to_write=mocker.patch(
             "managers.cluster.ClusterManager.reconcile_min_replicas_to_write"
@@ -837,7 +837,7 @@ def test_primary_saves_dataset_before_restore(cloud_spec, restore_managers):
     the rollback try (a save failure leaves the primary untouched, below).
     """
     order = []
-    restore_managers.save_database_blocking.side_effect = lambda: order.append("save")
+    restore_managers.save_dataset_before_shutdown.side_effect = lambda: order.append("save")
     restore_managers.restore_on_primary.side_effect = lambda: order.append("restore")
     ctx, state = _restore_context_and_state(
         cloud_spec,
@@ -857,7 +857,9 @@ def test_save_failure_aborts_restore_without_rollback(cloud_spec, restore_manage
     """If the pre-restore save fails, the primary is never stopped and nothing rolls back."""
     from common.exceptions import ValkeyWorkloadCommandError
 
-    restore_managers.save_database_blocking.side_effect = ValkeyWorkloadCommandError("save failed")
+    restore_managers.save_dataset_before_shutdown.side_effect = ValkeyWorkloadCommandError(
+        "save failed"
+    )
     ctx, state = _restore_context_and_state(
         cloud_spec,
         app_data={
@@ -1421,6 +1423,29 @@ def test_clear_failed_restore_unwedges_even_if_status_add_raises(mocker):
     ev._clear_failed_restore(resume=False)  # must NOT raise
 
     # Restore state cleared despite the status-write failure.
+    ev.charm.state.cluster.update.assert_called_once()
+    assert ev.charm.state.cluster.update.call_args.args[0]["restore_id"] == ""
+
+
+def test_clear_failed_restore_clears_state_before_resume_failover(mocker):
+    """State is cleared before resume_failover, so an unexpected resume error can't wedge.
+
+    resume_failover is a best-effort backstop reached outside the workflow's
+    step try/except; if it raises outside the narrow catch, restore_id must
+    already be cleared or the leader re-enters teardown forever.
+    """
+    from src.events.backup import BackupEvents
+
+    ev = BackupEvents.__new__(BackupEvents)
+    ev.charm = mocker.Mock()
+    ev.charm.backup_manager.name = "backup"
+    ev.charm.state.failed_restore_kind = "failed"
+    ev.charm.sentinel_manager.resume_failover.side_effect = RuntimeError("sentinel unreachable")
+
+    with pytest.raises(RuntimeError):
+        ev._clear_failed_restore(resume=True)
+
+    # Cleared BEFORE the resume raised -> not wedged.
     ev.charm.state.cluster.update.assert_called_once()
     assert ev.charm.state.cluster.update.call_args.args[0]["restore_id"] == ""
 

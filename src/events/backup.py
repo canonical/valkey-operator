@@ -452,7 +452,7 @@ class BackupEvents(ops.Object):
         # object before bouncing the primary, and persist memory to disk so the
         # rollback copy restore_on_primary moves aside is current, not stale.
         self.charm.backup_manager.verify_backup_is_rdb(self.charm.state.cluster.restore_id)
-        self.charm.cluster_manager.save_database_blocking()
+        self.charm.cluster_manager.save_dataset_before_shutdown()
         try:
             self.charm.backup_manager.restore_on_primary()
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
@@ -514,19 +514,23 @@ class BackupEvents(ops.Object):
         best-effort resume may have raised. The leader-self teardown already
         resumed, so it passes resume=False to avoid a redundant SENTINEL RESET.
         """
-        if resume:
-            try:
-                self.charm.sentinel_manager.resume_failover()
-            except Exception:
-                logger.exception("resume_failover during leader restore teardown failed")
+        # Read the failure kind while the token still matches the marker.
         status = (
             RestoreStatuses.RESTORE_UNHEALTHY
             if self.charm.state.failed_restore_kind == RestoreFailure.UNHEALTHY.value
             else RestoreStatuses.RESTORE_FAILED
         )
-        # Clear restore state FIRST, so a status-write failure (statuses.add,
-        # unlike delete, doesn't swallow one) can't leave the restore wedged.
+        # Clear restore state before the best-effort resume and status write.
+        # This ordering isn't itself the wedge guard: if resume_failover raises
+        # outside the narrow catch the hook errors and Juju rolls back this write
+        # too, so the leader just retries teardown until resume succeeds. Clearing
+        # first only keeps the intent (unwedge is the priority) explicit.
         self._clear_restore_state()
+        if resume:
+            try:
+                self.charm.sentinel_manager.resume_failover()
+            except ValkeyWorkloadCommandError:
+                logger.exception("resume_failover during leader restore teardown failed")
         try:
             self.charm.state.statuses.add(
                 status.value,
