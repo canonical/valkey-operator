@@ -1406,13 +1406,13 @@ def test_teardown_records_failure_even_if_resume_failover_raises(cloud_spec, res
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 
 
-def test_clear_failed_restore_unwedges_even_if_status_add_raises(mocker):
+def test_clear_failed_restore_unwedges_before_status_add(mocker):
     """The un-wedge must happen before, and independently of, the status write.
 
-    A failing statuses.add (e.g. a status databag left by another revision that
-    fails validation — add doesn't swallow it the way delete does) must not stop
-    _clear_restore_state from clearing restore_id, or the cluster stays wedged
-    in restore-in-progress forever.
+    statuses.add is not wrapped (matching the project convention); a failing add
+    (e.g. a status databag another revision left invalid — add doesn't swallow it
+    the way delete does) propagates, but only AFTER _clear_restore_state has
+    cleared restore_id, so the restore isn't wedged and the hook self-heals on retry.
     """
     from src.events.backup import BackupEvents
 
@@ -1422,9 +1422,10 @@ def test_clear_failed_restore_unwedges_even_if_status_add_raises(mocker):
     ev.charm.state.failed_restore_kind = "failed"
     ev.charm.state.statuses.add.side_effect = RuntimeError("bad status databag")
 
-    ev._clear_failed_restore(resume=False)  # must NOT raise
+    with pytest.raises(RuntimeError):
+        ev._clear_failed_restore(resume=False)
 
-    # Restore state cleared despite the status-write failure.
+    # Restore state was cleared BEFORE the status write raised.
     ev.charm.state.cluster.update.assert_called_once()
     assert ev.charm.state.cluster.update.call_args.args[0]["restore_id"] == ""
 

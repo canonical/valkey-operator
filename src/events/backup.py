@@ -531,14 +531,11 @@ class BackupEvents(ops.Object):
                 self.charm.sentinel_manager.resume_failover()
             except ValkeyWorkloadCommandError:
                 logger.exception("resume_failover during leader restore teardown failed")
-        try:
-            self.charm.state.statuses.add(
-                status.value,
-                scope="app",
-                component=self.charm.backup_manager.name,
-            )
-        except Exception:
-            logger.exception("recording the restore-failure status failed")
+        self.charm.state.statuses.add(
+            status.value,
+            scope="app",
+            component=self.charm.backup_manager.name,
+        )
 
     def _clear_terminal_restore_statuses(self) -> None:
         """Delete both terminal restore statuses (delete tolerates an absent one)."""
