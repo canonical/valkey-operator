@@ -62,6 +62,13 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
+        # A restore restarts the primary; defer LDAP reconfiguration until it
+        # completes rather than colliding with the restart. These events don't
+        # re-fire once the restore clears, so defer (not return) to keep them.
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
+            return
+
         if not self.charm.state.is_ldap_valid:
             return
 
@@ -79,6 +86,10 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
         """Handle the removal of the LDAP relation."""
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
+            return
+
         if not self.charm.state.unit_server.is_ldap_enabled:
             return
 
@@ -96,6 +107,10 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_ca_available(self, event: CertificateAvailableEvent) -> None:
         """Handle the CA certificate available event for LDAP."""
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
+            return
+
         try:
             self.charm.workload.make_dir(self.charm.workload.tls_dir, exist_ok=True)
             self.charm.workload.write_file(
@@ -123,6 +138,10 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_ca_removed(self, event: CertificateRemovedEvent) -> None:
         """Handle the CA certificate removed event for LDAP."""
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
+            return
+
         try:
             self.charm.workload.remove_file(self.charm.workload.tls_paths.ldap_ca)
         except ValkeyWorkloadCommandError as e:
@@ -150,6 +169,12 @@ class LDAPEvents(ops.Object):
         if not self.charm.state.is_ldap_valid:
             return
 
+        # Guard AFTER the is_ldap_valid filter so a non-LDAP cluster isn't
+        # needlessly deferred; defer only a real LDAP reconfigure during a restore.
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
+            return
+
         try:
             self._update_ldap_config()
             self.charm.state.unit_server.update({"ldap_enabled": True})
@@ -168,6 +193,12 @@ class LDAPEvents(ops.Object):
             return
 
         if event.secret.id != self.charm.state.ldap.bind_password_secret:
+            return
+
+        # Guard AFTER the secret-id filter so an unrelated secret change isn't
+        # needlessly deferred; defer only a real LDAP reconfigure during a restore.
+        if self.charm.state.cluster.is_restore_in_progress:
+            event.defer()
             return
 
         try:
@@ -207,6 +238,12 @@ class LDAPEvents(ops.Object):
         """Handle the action event for sync-ldap-users."""
         if not self.charm.unit.is_leader():
             error = "Action can only be run on the leader unit"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        if self.charm.state.cluster.is_restore_in_progress:
+            error = "A restore is in progress; try again after it completes"
             event.set_results({"error": error})
             event.fail(error)
             return
@@ -254,6 +291,12 @@ class LDAPEvents(ops.Object):
 
         This catches updates to the 'ldap-users-epoch' triggered by the 'sync-ldap-users'  action.
         """
+        # Skip during a restore: the restore workflow drives peer relation-changed
+        # itself, and reloading ACLs mid-restart would collide with the RDB swap.
+        # Restore completion re-fires relation-changed, reconciling then.
+        if self.charm.state.cluster.is_restore_in_progress:
+            return
+
         if (
             self.charm.unit.is_leader()
             or not self.charm.state.unit_server.is_started
