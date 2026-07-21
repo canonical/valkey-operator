@@ -45,7 +45,8 @@ def test_build_and_deploy(
         storage = {"data": "valkey-storage,2G"}
     else:
         # `kubernetes` is the default storage provider for the Canonical K8s cloud
-        storage = {"data": "kubernetes,5G"}
+        # 1G for dump.rdb + 1G for transfer from primary + 1G breathing room
+        storage = {"data": "kubernetes,3G"}
 
     juju.deploy(
         charm,

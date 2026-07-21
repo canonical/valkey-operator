@@ -178,7 +178,7 @@ Copy the content displayed for `charmed-operator-password`.
 ### Access the database
 
 The easiest way to interact with Valkey is via [its command line interface `valkey-cli`](https://valkey.io/topics/cli/).
-which can be installed with the [`valkey-tools` package in Ubuntu](https://packages.ubuntu.com/search?suite=noble&section=all&arch=any&keywords=valkey-tools&searchon=names):
+which can be installed with the `valkey-tools` package in Ubuntu:
 
 ```shell
 sudo apt update && sudo apt install valkey-tools
