@@ -386,12 +386,13 @@ class BackupManager(ManagerStatusProtocol):
     def _ensure_stopped(self) -> None:
         """Stop valkey-server only if it is running.
 
-        K8s errors on stopping a stopped service. Gate on the specific service, not
-        ``alive()`` (False when a sibling is down, which would skip stopping a live
-        valkey and swap the dump under it).
+        K8s errors on stopping a stopped service. Gate on the single-service
+        ``alive(valkey_service)``, not the all-services ``alive()`` (False when a
+        sibling is down, which would skip stopping a live valkey and swap the dump
+        under it).
         """
-        if self.workload.service_running(self.workload.valkey_service):
-            self.workload.stop_service(self.workload.valkey_service)
+        if self.workload.alive(self.workload.valkey_service):
+            self.workload.stop(self.workload.valkey_service)
 
     def restore_on_primary(self) -> None:
         """Stop valkey, move the dump aside for rollback, download the RDB, restart.
@@ -406,7 +407,7 @@ class BackupManager(ManagerStatusProtocol):
             self.cleanup_restore_files()
         self.workload.move_file(self._dump_path, self._pre_restore_path)
         self.download_backup(self.state.cluster.restore_id)
-        self.workload.start_service(self.workload.valkey_service)
+        self.workload.start(self.workload.valkey_service)
 
     def roll_back(self) -> None:
         """Restore the pre-restore dump and restart (stop FIRST to defeat auto-restart)."""
@@ -415,7 +416,7 @@ class BackupManager(ManagerStatusProtocol):
             self.workload.move_file(self._pre_restore_path, self._dump_path)
         # Drop any partial download left on the data partition by a failed stream.
         self.workload.remove_file(self._dump_tmp_path)
-        self.workload.start_service(self.workload.valkey_service)
+        self.workload.start(self.workload.valkey_service)
 
     def cleanup_restore_files(self) -> None:
         """Remove the pre-restore rollback copy after a successful restore."""

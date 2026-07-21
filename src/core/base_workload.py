@@ -115,8 +115,11 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def start(self) -> None:
-        """Start the workload service.
+    def start(self, service: str | None = None) -> None:
+        """Start the workload service(s).
+
+        With ``service`` given, start only that single service (no health check);
+        otherwise start all services and verify they are alive.
 
         Raises:
             ValkeyServicesFailedToStartError: If the service fails to start.
@@ -125,8 +128,12 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def stop(self) -> None:
-        """Stop the workload service."""
+    def stop(self, service: str | None = None) -> None:
+        """Stop the workload service(s).
+
+        With ``service`` given, stop only that single service (leaving the others
+        up) and verify it stopped; otherwise stop all services.
+        """
         pass
 
     def restart(self, service: str) -> None:
@@ -159,11 +166,14 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def alive(self) -> bool:
+    def alive(self, service: str | None = None) -> bool:
         """Check if the Valkey services are running.
 
+        With ``service`` given, check only that single service; otherwise require
+        every service to be running (so it is False when any one is down).
+
         Returns:
-            bool: True if the services are active, False otherwise.
+            bool: True if the checked service(s) are active, False otherwise.
         """
         pass
 
@@ -314,24 +324,6 @@ class WorkloadBase(ABC):
             UnicodeError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
-
-    @abstractmethod
-    def stop_service(self, service: str) -> None:
-        """Stop a single workload service (e.g. valkey-server, leaving sentinel up).
-
-        Must verify the SPECIFIC service stopped, not ``alive()`` (which needs all up).
-        """
-        pass
-
-    @abstractmethod
-    def start_service(self, service: str) -> None:
-        """Start a single workload service."""
-        pass
-
-    @abstractmethod
-    def service_running(self, service: str) -> bool:
-        """Whether the SPECIFIC service is running (unlike ``alive()``, which needs all up)."""
-        pass
 
     @abstractmethod
     def push_data_file(

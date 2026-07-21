@@ -167,17 +167,19 @@ class ValkeyVmWorkload(WorkloadBase):
             return False
 
     @override
-    def start(self) -> None:
+    def start(self, service: str | None = None) -> None:
+        services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
-            self.valkey.start(services=[self.valkey_service, self.sentinel_service])
+            self.valkey.start(services=services)
         except snap.SnapError as e:
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
 
-        # The service might start but fail to load and die immediately
+        # The service might start but fail to load and die immediately.
         # On k8s starting the services will wait (poll) for them to be started.
-        # We do the same here to make sure the services are alive after start.
-        if not self.wait_for_services_to_be_alive(duration=3):
+        # We do the same here to make sure the services are alive after a full start
+        # (a single-service start skips the health wait, matching the old behaviour).
+        if not service and not self.wait_for_services_to_be_alive(duration=3):
             logger.error("Valkey service is not alive after start.")
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
@@ -190,34 +192,6 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyServicesFailedToStartError(
                 "Failed to restart service %s: %s", service, e
             ) from e
-
-    @override
-    def stop_service(self, service: str) -> None:
-        try:
-            self.valkey.stop(services=[service])
-        except snap.SnapError as e:
-            logger.error("Failed to stop service %s: %s", service, e)
-            raise ValkeyServicesCouldNotBeStoppedError(
-                f"Failed to stop service {service}: {e}"
-            ) from e
-        if bool(self.valkey.services.get(service, {}).get("active", False)):
-            raise ValkeyServicesCouldNotBeStoppedError(
-                f"Service {service} still active after stop."
-            )
-
-    @override
-    def start_service(self, service: str) -> None:
-        try:
-            self.valkey.start(services=[service])
-        except snap.SnapError as e:
-            logger.exception(str(e))
-            raise ValkeyServicesFailedToStartError(
-                f"Failed to start service {service}: {e}"
-            ) from e
-
-    @override
-    def service_running(self, service: str) -> bool:
-        return bool(self.valkey.services.get(service, {}).get("active", False))
 
     @override
     def push_data_file(
@@ -285,11 +259,10 @@ class ValkeyVmWorkload(WorkloadBase):
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self) -> bool:
+    def alive(self, service: str | None = None) -> bool:
+        services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
-            return bool(self.valkey.services[self.valkey_service]["active"]) and bool(
-                self.valkey.services[self.sentinel_service]["active"]
-            )
+            return all(bool(self.valkey.services[s]["active"]) for s in services)
         except KeyError:
             return False
 
@@ -323,20 +296,20 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self) -> None:
+    def stop(self, service: str | None = None) -> None:
+        services = [service] if service else [SNAP_SERVICE, SNAP_SENTINEL_SERVICE]
         try:
-            self.valkey.stop(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
+            self.valkey.stop(services=services)
         except snap.SnapError as e:
             logger.error("Failed to stop Valkey services: %s", e)
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"
             ) from e
 
-        if self.alive():
-            logger.error("Valkey services are still alive after stop.")
-            raise ValkeyServicesCouldNotBeStoppedError(
-                "Valkey services are still alive after stop."
-            )
+        # Verify the SPECIFIC service (single-service stop) or all of them stopped.
+        if self.alive(service):
+            logger.error("Valkey service(s) still alive after stop.")
+            raise ValkeyServicesCouldNotBeStoppedError("Valkey service(s) still alive after stop.")
 
     @override
     def total_memory_bytes(self) -> int:

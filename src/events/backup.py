@@ -411,7 +411,7 @@ class BackupEvents(ops.Object):
                 # continue the interrupted download -- roll back to the original data
                 # and fail, so the operator re-runs from a known-good baseline.
                 if self.charm.backup_manager.has_pre_restore_copy() and not (
-                    self.charm.workload.service_running(self.charm.workload.valkey_service)
+                    self.charm.workload.alive(self.charm.workload.valkey_service)
                 ):
                     self.charm.backup_manager.roll_back()
                     raise ValkeyRestoreError("primary restore interrupted mid-swap; rolled back")
