@@ -100,7 +100,7 @@ def _read_key(juju: jubilant.Juju, unit_name: str, key: str) -> str | None:
 def _leader_unit_name(juju: jubilant.Juju) -> str:
     """Return the unit name of the current Juju leader for the valkey app."""
     for unit_name, unit in juju.status().apps[APP_NAME].units.items():
-        if unit.is_leader:
+        if unit.leader:
             return unit_name
     raise ValueError(f"No leader found in app {APP_NAME}")
 
