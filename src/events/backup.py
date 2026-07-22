@@ -319,65 +319,57 @@ class BackupEvents(ops.Object):
     def _on_restore_workflow(
         self, _: ops.RelationChangedEvent | ops.RelationDepartedEvent | ops.UpdateStatusEvent
     ) -> None:
-        """Drive the restore state machine as far as this unit can in one hook.
+        """Advance the restore state machine one step for this unit.
 
-        Each pass runs this unit's matching step and (leader) advances the shared
-        instruction once all participants catch up, looping until no local
-        progress is made. So a single-unit restore finishes in one hook; a
-        multi-unit one runs to the next cross-unit barrier, where the peer
-        relation_changed cascade (update_status as backstop) resumes it.
+        Runs this unit's matching step and (leader) advances the shared
+        instruction once every participant catches up. Each app-databag write
+        re-delivers peer relation_changed (update_status backstops), so the
+        machine cascades one step per hook. Single-unit works the same way: the
+        leader receives relation_changed for its own peer *app*-databag writes --
+        Juju's one self-delivery guarantee. No in-hook loop; every guard below is
+        idempotent, so a redelivered hook re-runs and converges.
         """
-        while True:
-            # Restore done: each unit clears its own per-unit state once restore_id is gone.
-            if not self.charm.state.cluster.is_restore_in_progress:
-                self._clear_local_restore_state()
-                return
+        # Restore done: each unit clears its own per-unit state once restore_id is gone.
+        if not self.charm.state.cluster.is_restore_in_progress:
+            self._clear_local_restore_state()
+            return
 
-            # Leader tears the restore down on a participant failure or departure
-            # (only it can clear the app-level restore_id).
-            if self._leader_restore_teardown_needed():
-                self._clear_failed_restore()
-                return
-            # A unit that joined after initiation isn't a participant and must run no
-            # step (it would query its own down Valkey and spuriously tear down).
-            if self.charm.unit.name not in self.charm.state.cluster.restore_participants:
-                # ...but a non-participant leader must still advance the barrier
-                # (leadership can drift to a late-joiner), or nobody does -> wedge.
-                if self.charm.unit.is_leader():
-                    self._advance_if_leader()
-                return
-            # This unit already failed this attempt (token-scoped, so a stale marker
-            # won't block a new one): wait for the leader to tear down.
-            if self.charm.state.unit_server.restore_failure_kind(
-                self.charm.state.cluster.restore_token
-            ):
-                return
-
-            instruction = self.charm.state.cluster.restore_instruction
-            step = self.charm.state.unit_server.restore_step
-            role = self.charm.state.unit_server.restore_role  # "" until RESTORE records it
-
-            try:
-                self._run_restore_step(instruction, step, role)
-            except Exception as e:
-                # Catch everything: teardown must record the failure marker and
-                # resume failover on ANY error (service-control errors sit outside
-                # the restore-error hierarchy), or the restore wedges.
-                logger.exception("Restore step failed; tearing down")
-                self._restore_teardown(e)
-                return
-
+        # Leader tears the restore down on a participant failure or departure
+        # (only it can clear the app-level restore_id).
+        if self._leader_restore_teardown_needed():
+            self._clear_failed_restore()
+            return
+        # A unit that joined after initiation isn't a participant and must run no
+        # step (it would query its own down Valkey and spuriously tear down).
+        if self.charm.unit.name not in self.charm.state.cluster.restore_participants:
+            # ...but a non-participant leader must still advance the barrier
+            # (leadership can drift to a late-joiner), or nobody does -> wedge.
             if self.charm.unit.is_leader():
                 self._advance_if_leader()
+            return
+        # This unit already failed this attempt (token-scoped, so a stale marker
+        # won't block a new one): wait for the leader to tear down.
+        if self.charm.state.unit_server.restore_failure_kind(
+            self.charm.state.cluster.restore_token
+        ):
+            return
 
-            # Fixed point: neither the shared instruction nor this unit's step moved.
-            # In multi-unit this is the cross-unit barrier; relation_changed resumes
-            # the workflow once peers catch up.
-            if (
-                self.charm.state.cluster.restore_instruction == instruction
-                and self.charm.state.unit_server.restore_step == step
-            ):
-                return
+        instruction = self.charm.state.cluster.restore_instruction
+        step = self.charm.state.unit_server.restore_step
+        role = self.charm.state.unit_server.restore_role  # "" until RESTORE records it
+
+        try:
+            self._run_restore_step(instruction, step, role)
+        except Exception as e:
+            # Catch everything: teardown must record the failure marker and
+            # resume failover on ANY error (service-control errors sit outside
+            # the restore-error hierarchy), or the restore wedges.
+            logger.exception("Restore step failed; tearing down")
+            self._restore_teardown(e)
+            return
+
+        if self.charm.unit.is_leader():
+            self._advance_if_leader()
 
     def _clear_local_restore_state(self) -> None:
         """Clear this unit's per-unit restore fields once a restore has ended."""

@@ -732,6 +732,32 @@ def _peer_unit_data(state):
     return next(r for r in state.relations if r.endpoint == PEER_RELATION).local_unit_data
 
 
+def _drive_restore(ctx, state, *, capture_statuses=False):
+    """Drive the restore workflow to a fixed point across hooks.
+
+    The workflow advances one step per hook (no in-hook loop, PR #79 review): in
+    real Juju each leader app-databag write re-delivers relation_changed, with
+    update_status as a backstop. ops.testing emits one event and can't model a
+    peer relation_changed for the leader's own app-data write (no remote unit),
+    so we drive the equivalent update_status backstop until the peer databags
+    settle. ``capture_statuses`` also returns the backup component's running
+    statuses from the final hook.
+    """
+    statuses = None
+    for _ in range(10):  # generous; single-unit convergence is ~4 hooks
+        before = (dict(_peer_app_data(state)), dict(_peer_unit_data(state)))
+        with ctx(ctx.on.update_status(), state) as mgr:
+            state = mgr.run()
+            if capture_statuses:
+                statuses = mgr.charm.state.statuses.get(
+                    scope="app", component="backup", running_status_only=True
+                ).root
+        after = (dict(_peer_app_data(state)), dict(_peer_unit_data(state)))
+        if before == after:
+            break
+    return (state, statuses) if capture_statuses else state
+
+
 @pytest.fixture
 def restore_managers(mocker):
     """Patch every manager op the restore workflow drives, returning the mocks.
@@ -837,12 +863,13 @@ def test_restore_action_rejects_unknown_backup_id(mocker, cloud_spec, restore_ma
 # ── restore workflow state machine ───────────────────────────────────────────
 
 
-def test_single_unit_restore_completes_in_one_hook(cloud_spec, restore_managers):
-    """A single-unit restore must finish (id + per-unit step cleared) in ONE hook.
+def test_single_unit_restore_completes_via_relation_changed_cascade(cloud_spec, restore_managers):
+    """A single-unit restore converges to done (id + per-unit step cleared).
 
-    Without a peer to bounce relation_changed, a single-unit leader would
-    otherwise crawl one step per ~5-min update_status. Driving the state machine
-    to a fixed point inside the hook makes it complete on the first event.
+    A single unit is always the leader, and Juju delivers relation_changed to the
+    leader for its own writes to the peer *app* databag, so the machine cascades
+    forward one step per hook off the restore_id/instruction writes -- no peers
+    and no in-hook loop needed (PR #79 review, reneradoi).
     """
     ctx, state = _restore_context_and_state(
         cloud_spec,
@@ -853,7 +880,7 @@ def test_single_unit_restore_completes_in_one_hook(cloud_spec, restore_managers)
         },
     )
 
-    state_out = ctx.run(ctx.on.update_status(), state)  # exactly ONE hook
+    state_out = _drive_restore(ctx, state)
 
     assert _peer_app_data(state_out).get("restore-id", "") == ""
     assert _peer_unit_data(state_out).get("restore-step", "") == ""
@@ -870,7 +897,7 @@ def test_primary_runs_full_restore_workflow(cloud_spec, restore_managers):
         },
     )
 
-    state_out = ctx.run(ctx.on.update_status(), state)
+    state_out = _drive_restore(ctx, state)
 
     restore_managers.suppress_failover.assert_called_once()  # RESTORE
     restore_managers.restore_on_primary.assert_called_once()  # RESTORE
@@ -1053,9 +1080,13 @@ def test_reconcile_failure_does_not_fail_a_successful_restore(cloud_spec, restor
     """
     from src.statuses import RestoreStatuses
 
-    restore_managers.reconcile_min_replicas_to_write.side_effect = RuntimeError(
-        "config set blew up"
-    )
+    # The restore's own post-restart reconcile (first call) raises an exotic error;
+    # later, unrelated reconciles (e.g. base_events on a post-restore update_status)
+    # behave normally -- the error is in the restore path, not a permanent fault.
+    restore_managers.reconcile_min_replicas_to_write.side_effect = [
+        RuntimeError("config set blew up"),
+        *([None] * 20),
+    ]
     ctx, state = _restore_context_and_state(
         cloud_spec,
         app_data={
@@ -1065,11 +1096,7 @@ def test_reconcile_failure_does_not_fail_a_successful_restore(cloud_spec, restor
         },
     )
 
-    with ctx(ctx.on.update_status(), state) as mgr:
-        state_out = mgr.run()  # must NOT raise
-        statuses = mgr.charm.state.statuses.get(
-            scope="app", component="backup", running_status_only=True
-        ).root
+    state_out, statuses = _drive_restore(ctx, state, capture_statuses=True)  # must NOT raise
 
     # Full success path still reached, no rollback, not marked failed.
     restore_managers.cleanup_restore_files.assert_called_once()
@@ -1525,7 +1552,7 @@ def test_stale_token_marker_ignored_for_new_restore(cloud_spec, restore_managers
         unit_data={"restore-failed": "failed:tok-old"},
     )
 
-    state_out = ctx.run(ctx.on.update_status(), state)
+    state_out = _drive_restore(ctx, state)
 
     # The stale-token marker is ignored: the leader runs the restore, not a teardown.
     restore_managers.restore_on_primary.assert_called_once()
@@ -1566,7 +1593,7 @@ def test_completed_restore_clears_terminal_statuses(mocker, cloud_spec, restore_
         },
     )
 
-    ctx.run(ctx.on.update_status(), state)
+    _drive_restore(ctx, state)
 
     deleted = {call.args[0] for call in delete.call_args_list}
     assert RestoreStatuses.RESTORE_FAILED.value in deleted
