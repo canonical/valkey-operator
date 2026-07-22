@@ -167,7 +167,7 @@ class ValkeyVmWorkload(WorkloadBase):
             return False
 
     @override
-    def start(self, service: str | None = None) -> None:
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
         services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
             self.valkey.start(services=services)
@@ -175,13 +175,15 @@ class ValkeyVmWorkload(WorkloadBase):
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
 
-        # The service might start but fail to load and die immediately.
-        # On k8s starting the services will wait (poll) for them to be started.
-        # We do the same here to make sure the services are alive after a full start
-        # (a single-service start skips the health wait, matching the old behaviour).
-        if not service and not self.wait_for_services_to_be_alive(duration=3):
-            logger.error("Valkey service is not alive after start.")
-            raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
+        # A service can start then die immediately; when check_alive, poll the
+        # whole set (all-services start) or check the one service, matching k8s.
+        if check_alive:
+            alive = (
+                self.alive(service) if service else self.wait_for_services_to_be_alive(duration=3)
+            )
+            if not alive:
+                logger.error("Valkey service is not alive after start.")
+                raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
     def restart(self, service: str) -> None:
@@ -296,7 +298,7 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self, service: str | None = None) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
         services = [service] if service else [SNAP_SERVICE, SNAP_SENTINEL_SERVICE]
         try:
             self.valkey.stop(services=services)
@@ -306,8 +308,8 @@ class ValkeyVmWorkload(WorkloadBase):
                 f"Failed to stop Valkey services: {e}"
             ) from e
 
-        # Verify the SPECIFIC service (single-service stop) or all of them stopped.
-        if self.alive(service):
+        # Opt-in: verify the stopped service(s) went down.
+        if check_alive and self.alive(service):
             logger.error("Valkey service(s) still alive after stop.")
             raise ValkeyServicesCouldNotBeStoppedError("Valkey service(s) still alive after stop.")
 

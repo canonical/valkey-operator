@@ -171,7 +171,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         return pebble.Layer(layer_config)
 
     @override
-    def start(self, service: str | None = None) -> None:
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
         try:
             if service:
                 self.container.start(service)
@@ -186,7 +186,7 @@ class ValkeyK8sWorkload(WorkloadBase):
             pebble.APIError,
         ) as e:
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
-        if not service and not self.alive():
+        if check_alive and not self.alive(service):
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
@@ -292,7 +292,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self, service: str | None = None) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
         targets = (
             (service,)
             if service
@@ -310,11 +310,10 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"
             ) from e
-        # Single-service stop verifies the SPECIFIC service went down (a sibling
-        # staying up is expected); the all-services stop needs no such check.
-        if service and self.alive(service):
+        # Opt-in: verify the stopped service(s) went down.
+        if check_alive and self.alive(service):
             raise ValkeyServicesCouldNotBeStoppedError(
-                f"Service {service} still running after stop."
+                f"Service {service or 'valkey'} still running after stop."
             )
 
     @override

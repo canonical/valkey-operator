@@ -146,6 +146,11 @@ def test_workload_start_stop_alive_take_optional_service():
         param = inspect.signature(getattr(WorkloadBase, name)).parameters.get("service")
         assert param is not None and param.default is None
 
+    # Liveness verification is an explicit opt-in/out, decoupled from `service`
+    # (PR #79 review, reneradoi): start verifies by default, stop does not.
+    assert inspect.signature(WorkloadBase.start).parameters["check_alive"].default is True
+    assert inspect.signature(WorkloadBase.stop).parameters["check_alive"].default is False
+
     for name in ("push_data_file", "move_file"):
         assert getattr(WorkloadBase, name).__isabstractmethod__ is True
 
@@ -153,13 +158,58 @@ def test_workload_start_stop_alive_take_optional_service():
 def test_vm_stop_stops_only_the_named_service(mocker):
     from src.workload_vm import ValkeyVmWorkload
 
-    # The alive() verify is covered elsewhere; here only assert the targeted stop.
+    # The alive() verify is opt-in via check_alive; here only assert the targeted stop.
     mocker.patch.object(ValkeyVmWorkload, "alive", return_value=False)
     wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
     wl.valkey = mocker.Mock()
     wl.valkey_service = "server"
     wl.stop("server")
     wl.valkey.stop.assert_called_once_with(services=["server"])
+
+
+def test_k8s_start_skips_alive_check_when_disabled(mocker):
+    """start(service, check_alive=False) starts the service and runs no liveness check."""
+    from src.workload_k8s import ValkeyK8sWorkload
+
+    wl = ValkeyK8sWorkload.__new__(ValkeyK8sWorkload)
+    wl.container = mocker.Mock()
+    wl.valkey_service = "valkey"
+    alive = mocker.patch.object(ValkeyK8sWorkload, "alive")
+
+    wl.start("valkey", check_alive=False)
+
+    wl.container.start.assert_called_once_with("valkey")
+    alive.assert_not_called()
+
+
+def test_k8s_stop_verifies_down_only_when_check_alive(mocker):
+    """Verify a service's down-check runs only when check_alive is set."""
+    from common.exceptions import ValkeyServicesCouldNotBeStoppedError
+    from src.workload_k8s import ValkeyK8sWorkload
+
+    wl = ValkeyK8sWorkload.__new__(ValkeyK8sWorkload)
+    wl.container = mocker.Mock()
+    wl.valkey_service = "valkey"
+    mocker.patch.object(ValkeyK8sWorkload, "alive", return_value=True)  # still up after stop
+
+    wl.stop("valkey")  # default check_alive=False: no verify, tolerated
+    with pytest.raises(ValkeyServicesCouldNotBeStoppedError):
+        wl.stop("valkey", check_alive=True)  # verify catches the still-running service
+
+
+def test_vm_stop_verifies_down_only_when_check_alive(mocker):
+    """VM stop verifies the service went down only when check_alive is set."""
+    from common.exceptions import ValkeyServicesCouldNotBeStoppedError
+    from src.workload_vm import ValkeyVmWorkload
+
+    wl = ValkeyVmWorkload.__new__(ValkeyVmWorkload)
+    wl.valkey = mocker.Mock()
+    wl.valkey_service = "server"
+    mocker.patch.object(ValkeyVmWorkload, "alive", return_value=True)  # still up after stop
+
+    wl.stop("server")  # default check_alive=False: no verify, tolerated
+    with pytest.raises(ValkeyServicesCouldNotBeStoppedError):
+        wl.stop("server", check_alive=True)
 
 
 def test_k8s_move_file_uses_container_exec(mocker):
@@ -380,9 +430,9 @@ def test_restore_on_primary_orders_stop_backup_download_start(mocker):
     mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=mocker.Mock())
     mgr.workload.path_exists.return_value = False  # no existing pre-restore -> move-aside runs
     calls = []
-    mgr.workload.stop.side_effect = lambda s: calls.append("stop")
+    mgr.workload.stop.side_effect = lambda s, check_alive=False: calls.append("stop")
     mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")  # dump -> pre-restore
-    mgr.workload.start.side_effect = lambda s: calls.append("start")
+    mgr.workload.start.side_effect = lambda s, check_alive=True: calls.append("start")
     mocker.patch.object(mgr, "download_backup", side_effect=lambda bid: calls.append("download"))
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
@@ -434,9 +484,9 @@ def test_roll_back_stops_service_before_swap(mocker):
     mgr.workload = mocker.Mock(valkey_service="valkey")
     mgr.workload.alive.return_value = True  # server up -> _ensure_stopped stops it
     calls = []
-    mgr.workload.stop.side_effect = lambda s: calls.append("stop")
+    mgr.workload.stop.side_effect = lambda s, check_alive=False: calls.append("stop")
     mgr.workload.move_file.side_effect = lambda a, b: calls.append("move")
-    mgr.workload.start.side_effect = lambda s: calls.append("start")
+    mgr.workload.start.side_effect = lambda s, check_alive=True: calls.append("start")
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
     tmp = mocker.patch.object(
@@ -495,7 +545,8 @@ def test_restore_on_primary_stops_running_valkey_via_single_service_check(mocker
 
     mgr.restore_on_primary()
 
-    mgr.workload.stop.assert_called_once_with("valkey")  # NOT skipped
+    # NOT skipped; opts into the confirm-stopped verify before the RDB swap.
+    mgr.workload.stop.assert_called_once_with("valkey", check_alive=True)
     mgr.workload.alive.assert_called_once_with("valkey")  # single-service gate, never alive()
 
 

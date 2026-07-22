@@ -392,7 +392,8 @@ class BackupManager(ManagerStatusProtocol):
         under it).
         """
         if self.workload.alive(self.workload.valkey_service):
-            self.workload.stop(self.workload.valkey_service)
+            # Confirm it stopped before the RDB swap.
+            self.workload.stop(self.workload.valkey_service, check_alive=True)
 
     def restore_on_primary(self) -> None:
         """Stop valkey, move the dump aside for rollback, download the RDB, restart.
@@ -407,7 +408,8 @@ class BackupManager(ManagerStatusProtocol):
             self.cleanup_restore_files()
         self.workload.move_file(self._dump_path, self._pre_restore_path)
         self.download_backup(self.state.cluster.restore_id)
-        self.workload.start(self.workload.valkey_service)
+        # Readiness is gated later by wait_until_loaded.
+        self.workload.start(self.workload.valkey_service, check_alive=False)
 
     def roll_back(self) -> None:
         """Restore the pre-restore dump and restart (stop FIRST to defeat auto-restart)."""
@@ -416,7 +418,7 @@ class BackupManager(ManagerStatusProtocol):
             self.workload.move_file(self._pre_restore_path, self._dump_path)
         # Drop any partial download left on the data partition by a failed stream.
         self.workload.remove_file(self._dump_tmp_path)
-        self.workload.start(self.workload.valkey_service)
+        self.workload.start(self.workload.valkey_service, check_alive=False)
 
     def cleanup_restore_files(self) -> None:
         """Remove the pre-restore rollback copy after a successful restore."""

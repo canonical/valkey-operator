@@ -115,24 +115,30 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def start(self, service: str | None = None) -> None:
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
         """Start the workload service(s).
 
-        With ``service`` given, start only that single service (no health check);
-        otherwise start all services and verify they are alive.
+        With ``service`` given, start only that single service; otherwise start
+        all services. ``check_alive`` verifies they are alive afterwards; pass
+        ``False`` to skip the health wait.
 
         Raises:
             ValkeyServicesFailedToStartError: If the service fails to start.
-            ValkeyServiceNotAliveError: If the service is not alive after start.
+            ValkeyServiceNotAliveError: If check_alive and the service is not alive.
         """
         pass
 
     @abstractmethod
-    def stop(self, service: str | None = None) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
         """Stop the workload service(s).
 
         With ``service`` given, stop only that single service (leaving the others
-        up) and verify it stopped; otherwise stop all services.
+        up); otherwise stop all services. ``check_alive`` verifies they went down;
+        pass ``True`` where a later step depends on it.
+
+        Raises:
+            ValkeyServicesCouldNotBeStoppedError: If the stop fails, or if
+                check_alive and the service is still running afterwards.
         """
         pass
 
