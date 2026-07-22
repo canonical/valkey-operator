@@ -122,7 +122,7 @@ html_context = {
 
 # Use RTD canonical URL to ensure duplicate pages have a specific canonical URL
 html_baseurl = (
-    f"https://canonical.com/{slug}/{os.environ.get('READTHEDOCS_VERSION', 'local')}"
+    f"https://canonical.com/{slug}/{os.environ.get('READTHEDOCS_VERSION', 'local')}/"
 )
 
 # sphinx-sitemap uses html_baseurl to generate the full URL for each page:
