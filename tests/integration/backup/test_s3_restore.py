@@ -16,6 +16,7 @@ Run only with a bootstrapped Juju controller and built charm:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -23,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 import jubilant
 import pytest
 
-from literals import CharmUsers, Substrate
+from literals import SENTINEL_DOWN_AFTER_MS, CharmUsers, Substrate
 from statuses import RestoreStatuses
 from tests.integration.backup.helpers import BACKUP_ID_RE, deploy_and_relate_s3
 from tests.integration.ha.helpers.helpers import (
@@ -103,6 +104,32 @@ def _leader_unit_name(juju: jubilant.Juju) -> str:
         if unit.leader:
             return unit_name
     raise ValueError(f"No leader found in app {APP_NAME}")
+
+
+def _sentinel_down_after_ms(juju: jubilant.Juju) -> dict[str, int]:
+    """Return each unit's sentinel `down-after-milliseconds` for the primary.
+
+    Read straight from every sentinel (SENTINEL primary primary) so a caller can
+    assert whether failover suppression is on or off -- deterministic, unlike
+    killing the primary and waiting for a real failover (which on K8s races
+    Pebble's auto-restart of the process).
+    """
+    status = juju.status()
+    model_info = juju.show_model()
+    password = get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN)
+    result: dict[str, int] = {}
+    for unit_name, unit in status.apps[APP_NAME].units.items():
+        address = unit.address if model_info.type == "kubernetes" else unit.public_address
+        out = exec_valkey_cli(
+            hostname=address,
+            username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+            password=password,
+            command="SENTINEL primary primary",
+            sentinel=True,
+            json=True,
+        )
+        result[unit_name] = int(json.loads(out.stdout)["down-after-milliseconds"])
+    return result
 
 
 def upload_corrupt_backup(juju: jubilant.Juju, s3_bucket, microceph: dict) -> str:  # noqa: ARG001
@@ -210,12 +237,12 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     s3_bucket,
     substrate: Substrate,
 ) -> None:
-    """A failed restore leaves old data intact and Sentinel failover still works.
+    """A failed restore leaves old data intact and failover suppression is resumed.
 
-    Regression guard for the suppression-leak bug: if suppress_failover() is
-    not matched by resume_failover() on the _restore_teardown path, Sentinel
-    will silently refuse to promote a replica after this test kills the primary
-    process.
+    Regression guard for the suppression-leak bug: if suppress_failover() is not
+    matched by resume_failover() on the _restore_teardown path, sentinel's
+    down-after-milliseconds stays at the suppressed value and the cluster
+    silently loses automatic failover.
     """
     # Independently runnable (deploy_and_relate_s3 is idempotent).
     deploy_and_relate_s3(juju, charm, substrate, microceph)
@@ -223,7 +250,6 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     _write_key(juju, "safe_key", "safe-value")
 
     corrupt_id = upload_corrupt_backup(juju, s3_bucket, microceph)
-    primary_before = get_primary_unit(juju, substrate)
 
     # Initiate a restore of the corrupt object.  The action itself succeeds
     # (the backup-id is present in S3 and matches _BACKUP_ID_RE), but the
@@ -252,24 +278,16 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     got = _read_key(juju, _leader_unit_name(juju), "safe_key")
     assert got == "safe-value", f"Old data lost after corrupt restore; got {got!r}"
 
-    # Verify that Sentinel failover suppression was resumed by _restore_teardown:
-    # kill the primary valkey process and expect a replica to take over.
-    send_process_control_signal(
-        unit_name=primary_before,
-        model_full_name=juju.model,
-        signal="SIGKILL",
-        db_process=_VALKEY_PROCESS,
-        substrate=substrate,
-    )
-
-    # Wait for down-after-milliseconds (30 s) + election overhead.
-    time.sleep(_FAILOVER_WAIT_S)
-
-    primary_after = get_primary_unit(juju, substrate)
-    assert primary_after != primary_before, (
-        f"Primary did not change after killing {primary_before}; "
-        "Sentinel failover suppression may not have been resumed on "
-        "corrupt-restore teardown (suppression-leak regression)."
+    # _restore_teardown must have resumed failover: every sentinel's
+    # down-after-milliseconds is back to normal, not the suppressed value. Checked
+    # directly -- a leak leaves it at the suppressed value -- rather than killing
+    # the primary and waiting for a real failover, which on K8s races Pebble's
+    # auto-restart of the process and is not a reliable signal of suppression.
+    down_after = _sentinel_down_after_ms(juju)
+    assert all(ms == SENTINEL_DOWN_AFTER_MS for ms in down_after.values()), (
+        "Failover suppression not resumed on corrupt-restore teardown "
+        f"(suppression-leak regression): down-after-milliseconds={down_after}, "
+        f"expected {SENTINEL_DOWN_AFTER_MS} on every sentinel."
     )
 
 
