@@ -198,11 +198,16 @@ jobs:
         run: script -q -c 'sudo jhack tail --printer raw --replay --no-watch' /dev/null | tee ~/logs/jhack-tail.txt || true
       - name: Capture Valkey server logs
         timeout-minutes: 3
-        # The charm-side juju logs above do not include valkey-server / sentinel
-        # output. The flaky HA failures (slow sentinel restart on TLS enable, slow
-        # promotion after a network cut) live in those server logs, reachable only
-        # on the workload itself: Pebble services on k8s, snap services on VM.
-        # Best-effort — never fail the job (`set +e`, trailing `true`).
+        # The charm-side juju logs above do not include valkey-server / sentinel output.
+        # The flaky HA failures (slow sentinel restart on TLS enable, no promotion after a
+        # network cut) live in the sentinel's own +sdown/+odown/+failover/+switch-master
+        # lines. Valkey and Sentinel log to FILES in the logs volume -- config.py sets
+        # `logfile` to <log_dir>/valkey.log and <log_dir>/sentinel.log -- NOT to
+        # stdout/journald, so `pebble logs` / `snap logs` capture only the service lifecycle
+        # (that is why earlier captures held only `systemd Started ...` lines and stopped
+        # before the network cut). Read the log files directly; also grab the service
+        # lifecycle separately for restart-churn context. log_dir paths mirror
+        # tests/integration/ha/test_storage_reuse.py. Best-effort -- never fail the job.
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         env:
           SPREAD_JOB: ${{ matrix.job.spread_job }}
@@ -211,20 +216,26 @@ jobs:
           units=$(sudo juju status --format json 2>/dev/null | python3 -c \
             "import json,sys; d=json.load(sys.stdin); print('\n'.join((d.get('applications',{}).get('valkey',{}).get('units') or {}).keys()))")
           if [[ "$SPREAD_JOB" == *:tests/spread/k8s/* ]]; then
+            log_dir=/var/log/valkey
             for unit in $units; do
               pod=${unit/\//-}  # valkey/0 -> valkey-0
               { sudo k8s kubectl -n testing exec "$pod" -c valkey -- \
-                pebble logs valkey -n 10000; } > ~/logs/"$pod"-valkey-server.txt 2>&1
+                cat "$log_dir/valkey.log"; } > ~/logs/"$pod"-valkey-server.txt 2>&1
               { sudo k8s kubectl -n testing exec "$pod" -c valkey -- \
-                pebble logs valkey-sentinel -n 10000; } > ~/logs/"$pod"-valkey-sentinel.txt 2>&1
+                cat "$log_dir/sentinel.log"; } > ~/logs/"$pod"-valkey-sentinel.txt 2>&1
+              { sudo k8s kubectl -n testing exec "$pod" -c valkey -- \
+                pebble changes; } > ~/logs/"$pod"-valkey-service.txt 2>&1
             done
           else
+            log_dir=/var/snap/charmed-valkey/common/var/log/valkey
             for unit in $units; do
               name=${unit/\//-}
-              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.server -n 10000'; } \
+              { sudo juju ssh "$unit" "sudo cat $log_dir/valkey.log"; } \
                 > ~/logs/"$name"-valkey-server.txt 2>&1
-              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.sentinel -n 10000'; } \
+              { sudo juju ssh "$unit" "sudo cat $log_dir/sentinel.log"; } \
                 > ~/logs/"$name"-valkey-sentinel.txt 2>&1
+              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.sentinel -n 500'; } \
+                > ~/logs/"$name"-valkey-service.txt 2>&1
             done
           fi
           true
