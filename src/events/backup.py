@@ -312,6 +312,7 @@ class BackupEvents(ops.Object):
                 "restore_participants": participants,
             }
         )
+        # the action is async, the actual restore procedure is triggered by relation-changed events
         event.set_results({"restore": f"initiated for {backup_id}"})
 
     # ── restore workflow ─────────────────────────────────────────────────
