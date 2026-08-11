@@ -44,11 +44,16 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
-# Deploy-wait budgets for test_build_and_deploy. The tls_on variant additionally
-# deploys self-signed-certificates, integrates client-certificates, and performs a
-# rolling sentinel restart to apply the client certificate — all within this same
-# wait — so it needs materially longer than the tls_off deploy to reach active/idle
-# on a loaded CI runner (measured ~205s on an idle machine vs ~173s for tls_off).
+# Wait budgets. DEPLOY_TIMEOUT_S is the plain deploy-to-active/idle budget.
+# DEPLOY_TIMEOUT_TLS_S covers any wait that spans a *client-TLS enable* — whether the
+# client-certificates relation is created during the initial deploy (tls_on variants of
+# test_build_and_deploy) or added to an already-running cluster (test_enable_tls).
+# Applying the client certificate needs a rolling sentinel restart serialized by the
+# leader-arbitrated RestartLock, and each lock handoff costs ~1.5-2.5 min on a loaded CI
+# runner: a waiting unit defers and only re-requests when the peer relation next fires,
+# so three units take ~6-9 min. With the 30s all-idle tail these waits require, 600s
+# leaves no margin — observed misses of ~1s (k8s/test_certificate_options) and ~10s
+# (k8s/test_client_relation) on PR #79 run 31479961639.
 DEPLOY_TIMEOUT_S = 600
 DEPLOY_TIMEOUT_TLS_S = 900
 INTERNAL_USERS_SECRET_LABEL = (
