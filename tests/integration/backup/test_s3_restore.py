@@ -18,19 +18,16 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 
 import jubilant
 import pytest
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
-from literals import SENTINEL_DOWN_AFTER_MS, CharmUsers, Substrate
+from literals import PRIMARY_NAME, SENTINEL_DOWN_AFTER_MS, CharmUsers, Substrate
 from statuses import RestoreStatuses
 from tests.integration.backup.helpers import BACKUP_ID_RE, deploy_and_relate_s3
-from tests.integration.ha.helpers.helpers import (
-    get_unit_name_from_primary_ip,
-    send_process_control_signal,
-)
+from tests.integration.ha.helpers.helpers import get_unit_name_from_primary_ip
 from tests.integration.helpers import (
     APP_NAME,
     are_apps_active_and_agents_idle,
@@ -42,12 +39,8 @@ from tests.integration.helpers import (
 
 logger = logging.getLogger(__name__)
 
-# valkey-server process name -- used with pkill for SIGKILL failover test.
-_VALKEY_PROCESS = "valkey-server"
-
-# Sentinel promotes a replica after down-after-milliseconds (30 000 ms default)
-# plus election overhead.  90 s is a comfortable ceiling for the test host.
-_FAILOVER_WAIT_S = 90
+# Sentinel's own failover-timeout (sentinel.conf) is 180 s; poll to that ceiling.
+_FAILOVER_WAIT_S = 180
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -295,22 +288,37 @@ def _force_primary_off_leader(juju: jubilant.Juju, substrate: Substrate) -> tupl
     """Arrange the valkey primary onto a NON-leader unit; return (leader, primary).
 
     The valkey primary (Sentinel-elected) is independent of the juju leader, but
-    fresh deployments often land both on unit 0. Kill the primary process to force
-    Sentinel to promote a different unit, so the destructive restore runs on a
-    non-leader -- the case that used to wedge restore_id.
+    fresh deployments often land both on unit 0. Ask Sentinel for a coordinated
+    failover -- the same command the charm itself issues in
+    ``SentinelManager.failover`` -- so the destructive restore runs on a non-leader,
+    the case that used to wedge restore_id.
+
+    SIGKILLing the primary does NOT work here: the supervisor restarts it well
+    inside down-after-milliseconds (5 s on K8s, 20 s on VM, vs 30 s), so Sentinel
+    never sees the primary as down and never promotes. The HA failover tests get
+    around that with patch_restart_delay(); this test only needs the primary moved,
+    not a crash simulated, so it asks Sentinel directly.
     """
     leader = _leader_unit_name(juju)
     primary = get_primary_unit(juju, substrate)
     if primary == leader:
-        send_process_control_signal(
-            unit_name=primary,
-            model_full_name=juju.model,
-            signal="SIGKILL",
-            db_process=_VALKEY_PROCESS,
-            substrate=substrate,
+        exec_valkey_cli(
+            hostname=get_primary_ip(juju, APP_NAME),
+            username=CharmUsers.SENTINEL_CHARM_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.SENTINEL_CHARM_ADMIN),
+            command=f"SENTINEL FAILOVER {PRIMARY_NAME} COORDINATED",
+            sentinel=True,
         )
-        time.sleep(_FAILOVER_WAIT_S)
-        _wait_restore_active(juju)  # cluster settles with a new primary
+        # Poll INFO replication for the promotion rather than sleeping blind; mid
+        # failover there is briefly no primary at all, which raises and retries.
+        for attempt in Retrying(
+            stop=stop_after_delay(_FAILOVER_WAIT_S), wait=wait_fixed(5), reraise=True
+        ):
+            with attempt:
+                assert get_primary_unit(juju, substrate) != leader, (
+                    "Sentinel has not promoted a new primary yet"
+                )
+        _wait_restore_active(juju)  # cluster settles with the new primary
         primary = get_primary_unit(juju, substrate)
     assert primary != leader, f"Could not move primary off leader {leader}"
     return leader, primary
