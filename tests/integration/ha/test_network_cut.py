@@ -148,8 +148,14 @@ def test_network_cut_primary(  # noqa: C901
     new_primary_ip = None
     # Sentinel only marks the old primary down after `down-after-milliseconds` (30s,
     # see src/managers/config.py) and then needs time to reach quorum and promote a
-    # replica, so a new primary cannot appear before ~30s. Wait well past that (but
-    # under the 180s `failover-timeout`) to absorb CI scheduling jitter.
+    # replica, so a new primary cannot appear before ~30s. Wait well past that to
+    # absorb CI scheduling jitter.
+    # NOTE: the effective `failover-timeout` is 60s (src/managers/config.py), NOT the
+    # 180s in the sentinel.conf template — DA261 (#56) lowered it and validated the
+    # change on k8s only. This 150s budget therefore spans ~2 failover attempts. The
+    # recurring `[no_ip_change-*]` failures here (no promotion at all within the budget,
+    # on 9/edge as well as on PRs) are an open question against that value; confirming
+    # it needs the sentinel server logs the CI capture step collects.
     for attempt in Retrying(stop=stop_after_attempt(15), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
