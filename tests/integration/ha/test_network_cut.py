@@ -93,6 +93,18 @@ def test_network_cut_primary(  # noqa: C901
     if ip_change and substrate == Substrate.K8S:
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
+    # The parametrized cases share one model and run back to back. The preceding case restores the
+    # network to a unit, and on `ip_change` that unit returns with a new address, which re-issues
+    # its certificate and drives a rolling Sentinel restart. Cutting the network again while that
+    # is still in flight leaves Sentinels reconnecting to a primary that is already gone, so wait
+    # for the cluster to settle before starting.
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
+        timeout=DEPLOY_TIMEOUT_S,
+    )
+
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
 
@@ -149,13 +161,15 @@ def test_network_cut_primary(  # noqa: C901
     # Sentinel only marks the old primary down after `down-after-milliseconds` (30s,
     # see src/managers/config.py) and then needs time to reach quorum and promote a
     # replica, so a new primary cannot appear before ~30s. Wait well past that to
-    # absorb CI scheduling jitter.
-    # NOTE: the effective `failover-timeout` is 60s (src/managers/config.py), NOT the
-    # 180s in the sentinel.conf template — DA261 (#56) lowered it and validated the
-    # change on k8s only. This 150s budget therefore spans ~2 failover attempts. The
-    # recurring `[no_ip_change-*]` failures here (no promotion at all within the budget,
-    # on 9/edge as well as on PRs) are an open question against that value; confirming
-    # it needs the sentinel server logs the CI capture step collects.
+    # absorb CI scheduling jitter. The effective `failover-timeout` is 60s
+    # (src/managers/config.py), NOT the 180s in the sentinel.conf template, so this
+    # 150s budget spans ~2 failover attempts.
+    # Once both survivors agree the primary is down, promotion is fast — measured at
+    # 1.35s from the first `+sdown` to `+switch-master`. A run that exhausts this
+    # budget therefore never reached quorum at all, rather than promoting slowly:
+    # check the captured sentinel.log for `+odown ... #quorum 2/2`. Its absence used to
+    # mean the cut was a bandwidth throttle that one Sentinel could still see through
+    # (fixed in lxd_cut_network_from_unit_without_ip_change).
     for attempt in Retrying(stop=stop_after_attempt(15), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
