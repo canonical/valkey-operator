@@ -23,6 +23,7 @@ from glide import (
     TlsAdvancedConfiguration,
 )
 from ops import SecretNotFoundError, StatusBase
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import (
     CLIENT_PORT,
@@ -416,6 +417,84 @@ def get_primary_ip(
             logger.warning(f"Error executing Valkey CLI on {address}: {e}")
 
     raise ValueError("No primary node found in the cluster")
+
+
+def get_connected_replicas_from_unit(
+    juju: jubilant.Juju, address: str, tls_enabled: bool = False
+) -> int:
+    """Get the number of replicas connected to the Valkey node at `address`.
+
+    Unlike `get_number_connected_replicas`, this talks to the node directly with `valkey-cli`
+    instead of going through the glide-runner, so it is usable in suites that do not deploy it.
+
+    Args:
+        juju: The Juju client instance.
+        address: The address of the node to query.
+        tls_enabled: Whether TLS certificates are needed.
+
+    Returns:
+        The number of replicas connected to that node.
+    """
+    replication_info = exec_valkey_cli(
+        address,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+        command="info replication",
+        tls_enabled=tls_enabled,
+    ).stdout
+    if not (search_result := re.search(r"connected_slaves:(\d+)", replication_info)):
+        raise ValueError("Could not parse number of connected replicas from info output")
+    return int(search_result.group(1))
+
+
+def wait_for_failover(
+    juju: jubilant.Juju,
+    app: str,
+    old_primary_ip: str,
+    unit_count: int,
+    tls_enabled: bool = False,
+    timeout: int = 300,
+) -> str:
+    """Block until Sentinel has finished a failover and every replica is re-attached.
+
+    `sentinel failover` returns `OK` as soon as the failover is *initiated*. Sentinel promotes
+    the new primary first and only then reconfigures the remaining replicas — including the old
+    primary, which keeps answering as a primary until it is demoted. In that window the old
+    primary has no replicas left, so a write routed to it is rejected with `NOREPLICAS`
+    (the charm sets `min-replicas-to-write=1`), and the client endpoints published by the
+    `topology_changed` hook may still point at it.
+
+    Waiting for agents to be idle does not cover any of this: the agents are already idle when
+    the failover is initiated, so an idle check passes immediately without ever observing it.
+
+    Args:
+        juju: The Juju client instance.
+        app: The name of the Valkey application.
+        old_primary_ip: Address of the primary as it was before the failover.
+        unit_count: The number of Valkey units in the cluster.
+        tls_enabled: Whether TLS certificates are needed.
+        timeout: Seconds to wait for the cluster to converge.
+
+    Returns:
+        The address of the new primary.
+    """
+    new_primary_ip = ""
+    for attempt in Retrying(stop=stop_after_delay(timeout), wait=wait_fixed(10), reraise=True):
+        with attempt:
+            new_primary_ip = get_primary_ip(juju, app, tls_enabled=tls_enabled)
+            assert new_primary_ip != old_primary_ip, (
+                f"Primary is still {old_primary_ip}, failover has not completed yet."
+            )
+            connected_replicas = get_connected_replicas_from_unit(
+                juju, new_primary_ip, tls_enabled=tls_enabled
+            )
+            assert connected_replicas == unit_count - 1, (
+                f"Expected {unit_count - 1} replicas connected to the new primary"
+                f" {new_primary_ip}, got {connected_replicas}."
+            )
+
+    logger.info("Failover complete, new primary is %s (was %s)", new_primary_ip, old_primary_ip)
+    return new_primary_ip
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:

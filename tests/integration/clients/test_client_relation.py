@@ -27,6 +27,8 @@ from tests.integration.helpers import (
     exec_valkey_cli,
     get_cluster_addresses,
     get_password,
+    get_primary_ip,
+    wait_for_failover,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,6 +175,7 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
 def test_failover_topology_update(juju: jubilant.Juju) -> None:
     """Trigger a failover and ensure clients can still access Valkey."""
     ip_address = get_cluster_addresses(juju, APP_NAME)[0]
+    old_primary_ip = get_primary_ip(juju, APP_NAME)
     logger.info("Initiate failover through Sentinel %s", ip_address)
 
     failover_result = exec_valkey_cli(
@@ -184,6 +187,12 @@ def test_failover_topology_update(juju: jubilant.Juju) -> None:
         sentinel=True,
     ).stdout
     assert failover_result == "OK", "Failover not successful"
+
+    # `sentinel failover` returns as soon as the failover is initiated, so the cluster has to
+    # be polled until it has actually converged — see `wait_for_failover`. Only then is it
+    # meaningful to wait for the agents, which run `topology_changed` to re-publish the client
+    # endpoints once Sentinel reports the new primary.
+    wait_for_failover(juju, APP_NAME, old_primary_ip=old_primary_ip, unit_count=NUM_UNITS)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS),
         timeout=600,
