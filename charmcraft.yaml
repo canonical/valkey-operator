@@ -28,7 +28,21 @@ parts:
       PIP_BREAK_SYSTEM_PACKAGES=true python3 -m pip install --user --upgrade pip==25.3  # renovate: charmcraft-pip-latest
 
       # Use uv to install poetry so that a newer version of Python can be installed if needed by poetry
-      curl --proto '=https' --tlsv1.2 -LsSf https://github.com/astral-sh/uv/releases/download/0.9.5/uv-installer.sh | sh  # renovate: charmcraft-uv-latest
+      # Retried because the download intermittently drops on connect in CI
+      # ("curl: (56) Connection died, tried 5 times before giving up"). curl's own `--retry` does
+      # not cover error 56, and `--retry-all-errors` would be unsafe here: on a mid-body retry curl
+      # replays the transfer from byte 0, concatenating a partial script onto a whole one in the
+      # pipe. Re-running the whole `curl | sh` gives each attempt a fresh `sh` instead.
+      for attempt in 1 2 3
+      do
+        curl --proto '=https' --tlsv1.2 -LsSf https://github.com/astral-sh/uv/releases/download/0.9.5/uv-installer.sh | sh && break  # renovate: charmcraft-uv-latest
+        if [[ "$attempt" == 3 ]]
+        then
+          echo "uv installer download failed after 3 attempts" >&2
+          exit 1
+        fi
+        sleep 5
+      done
       # poetry 2.0.0 requires Python >=3.9
       if ! "$HOME/.local/bin/uv" python find '>=3.9'
       then

@@ -23,9 +23,21 @@ jobs:
         uses: actions/checkout@v5
       - name: Set up environment
         run: |
+          # snapd intermittently cannot reach the store on a fresh runner
+          # ("error: unable to contact snap store"), which fails the whole job
+          # before any test runs. Retry instead.
+          retry() {
+            for attempt in 1 2 3
+            do
+              "$@" && return 0
+              echo "::warning::'$*' failed (attempt $attempt of 3); retrying in 15s"
+              sleep 15
+            done
+            return 1
+          }
           sudo apt update
-          sudo snap install charmcraft --classic
-          sudo snap install go --classic
+          retry sudo snap install charmcraft --classic
+          retry sudo snap install go --classic
           go install github.com/canonical/spread/cmd/spread@latest
           pipx install tox poetry
           # to build Valkey-glide during tests
@@ -136,11 +148,25 @@ jobs:
         timeout-minutes: 3
         uses: actions/checkout@v5
       - name: Set up environment
-        timeout-minutes: 5
+        # Allows for the `retry` budget below (3 attempts, 15s apart) on top of
+        # the ~3 min this step normally takes
+        timeout-minutes: 8
         run: |
+          # snapd intermittently cannot reach the store on a fresh runner
+          # ("error: unable to contact snap store"), which fails the whole job
+          # before any test runs. Retry instead.
+          retry() {
+            for attempt in 1 2 3
+            do
+              "$@" && return 0
+              echo "::warning::'$*' failed (attempt $attempt of 3); retrying in 15s"
+              sleep 15
+            done
+            return 1
+          }
           sudo apt update
-          sudo snap install charmcraft --classic
-          sudo snap install go --classic
+          retry sudo snap install charmcraft --classic
+          retry sudo snap install go --classic
           go install github.com/canonical/spread/cmd/spread@latest
           # to build Valkey-glide during tests
           sudo apt install libprotobuf-dev protobuf-compiler -y
