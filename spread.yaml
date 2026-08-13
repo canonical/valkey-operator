@@ -125,8 +125,43 @@ prepare: |
 
   if [[ $SPREAD_SUITE == *"k8s"* ]]
   then
+    # Canonical K8s defaults its pod CIDR to 10.1.0.0/16, which is the SAME range the
+    # GitHub-hosted Azure runners use for their own host network (observed node addresses:
+    # 10.1.0.37, 10.1.0.51, 10.1.0.133, 10.1.1.196, ...). Pods are then drawn from the
+    # runner's own subnet, and a deploy fails whenever Cilium hands a pod the subnet
+    # gateway 10.1.0.1: that pod cannot reach the apiserver ClusterIP, so its first hook
+    # dies with `dial tcp 10.152.183.1:443: i/o timeout` and the charm container sits in
+    # CrashLoopBackOff until the test's deploy wait expires.
+    # concierge has no pod-cidr option, but it skips `k8s bootstrap` when the node is
+    # already part of a cluster, so bootstrap here first and let concierge adopt the
+    # cluster (it still enables features and sets up kubectl on every prepare).
+    POD_CIDR="10.42.0.0/16"
+
+    # Fail loudly rather than re-introducing the flake if this ever collides again
+    NODE_IP="$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+    if [[ ${NODE_IP%.*.*} == "${POD_CIDR%%.0.0/*}" ]]
+    then
+      echo "pod CIDR $POD_CIDR contains this runner's own address $NODE_IP; pick another" >&2
+      exit 1
+    fi
+
+    if ! k8s status >/dev/null 2>&1
+    then
+      # Read the channel from concierge-k8s.yaml so the two cannot drift apart
+      K8S_CHANNEL="$(awk '/^ *k8s:/ {f = 1} f && /channel:/ {print $2; exit}' concierge-k8s.yaml)"
+      if [[ -z $K8S_CHANNEL ]]
+      then
+        echo "could not read the k8s channel from concierge-k8s.yaml" >&2
+        exit 1
+      fi
+      snap install k8s --classic --channel="$K8S_CHANNEL"
+      # Every other bootstrap setting keeps its default
+      printf 'pod-cidr: %s\n' "$POD_CIDR" > /tmp/k8s-bootstrap-config.yaml
+      k8s bootstrap --timeout 5m --file /tmp/k8s-bootstrap-config.yaml
+    fi
+
     concierge prepare --trace -c concierge-k8s.yaml
-  
+
     # k8s status --wait-ready returns as soon as 1 node is ready
     # (see https://github.com/canonical/k8s-snap/issues/1789)
     # but Cilium, CoreDNS, and storage may still be initialising
