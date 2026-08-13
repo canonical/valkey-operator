@@ -134,7 +134,9 @@ prepare: |
     # CrashLoopBackOff until the test's deploy wait expires.
     # concierge has no pod-cidr option, but it skips `k8s bootstrap` when the node is
     # already part of a cluster, so bootstrap here first and let concierge adopt the
-    # cluster (it still enables features and sets up kubectl on every prepare).
+    # cluster (it still bootstraps Juju and sets up kubectl on every prepare). Skipping
+    # its bootstrap also skips the feature set that comes with it — concierge runs no
+    # `k8s enable` of its own — so this bootstrap owns the cluster-config in full.
     POD_CIDR="10.42.0.0/16"
 
     # Fail loudly rather than re-introducing the flake if this ever collides again
@@ -163,8 +165,22 @@ prepare: |
       systemctl stop containerd.service || true
       rm -rf /run/containerd
 
-      # Every other bootstrap setting keeps its default
-      printf 'pod-cidr: %s\n' "$POD_CIDR" > /tmp/k8s-bootstrap-config.yaml
+      # A --file bootstrap REPLACES the snap's default cluster-config rather than merging
+      # into it, so the feature set has to be spelled out here. A file carrying only
+      # pod-cidr bootstraps a cluster with network (Cilium), dns, local-storage and gateway
+      # all disabled: with no CNI the node never reaches Ready, concierge's
+      # `k8s status --wait-ready` times out, and the whole prepare fails before Juju is
+      # installed. These are the features a plain `k8s bootstrap` brings up; ingress and
+      # load-balancer stay off, as they are there too.
+      printf '%s\n' \
+        'cluster-config:' \
+        '  network: {enabled: true}' \
+        '  dns: {enabled: true}' \
+        '  local-storage: {enabled: true}' \
+        '  gateway: {enabled: true}' \
+        '  metrics-server: {enabled: true}' \
+        "pod-cidr: $POD_CIDR" \
+        > /tmp/k8s-bootstrap-config.yaml
       k8s bootstrap --timeout 5m --file /tmp/k8s-bootstrap-config.yaml
     fi
 
