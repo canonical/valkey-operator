@@ -412,7 +412,8 @@ def test_leader_elected_leader_password_specified(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
+        remote_grants={1: [APP_NAME]},
     )
     state_in = testing.State(
         leader=True,
@@ -459,7 +460,8 @@ def test_config_changed_non_leader_unit(cloud_spec):
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     container = testing.Container(name=CONTAINER, can_connect=True)
     password_secret = testing.Secret(
-        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
+        remote_grants={1: [APP_NAME]},
     )
 
     state_in = testing.State(
@@ -484,7 +486,7 @@ def test_config_changed_leader_unit(cloud_spec):
 
     password_secret = testing.Secret(
         tracked_content={user.value: "secure-password" for user in CharmUsers},
-        remote_grants=APP_NAME,
+        remote_grants={1: [APP_NAME]},
     )
     state_in = testing.State(
         leader=True,
@@ -523,7 +525,8 @@ def test_config_changed_leader_unit_wrong_username(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={"wrong-username": "secure-password"}, remote_grants=APP_NAME
+        tracked_content={"wrong-username": "secure-password"},
+        remote_grants={1: [APP_NAME]},
     )
     state_in = testing.State(
         leader=True,
@@ -558,7 +561,7 @@ def test_config_changed_ip_change_no_tls_relation(cloud_spec_vm):
 
     password_secret = testing.Secret(
         tracked_content={user.value: "secure-password" for user in CharmUsers},
-        remote_grants=APP_NAME,
+        remote_grants={1: [APP_NAME]},
     )
     state_in = testing.State(
         leader=True,
@@ -608,7 +611,7 @@ def test_change_password_secret_changed_non_leader_unit(cloud_spec):
     password_secret = testing.Secret(
         label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
         tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
-        remote_grants=APP_NAME,
+        remote_grants={1: [APP_NAME]},
     )
 
     state_in = testing.State(
@@ -652,7 +655,7 @@ def test_change_password_secret_changed_non_leader_unit_not_successful(cloud_spe
     password_secret = testing.Secret(
         label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}",
         tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
-        remote_grants=APP_NAME,
+        remote_grants={1: [APP_NAME]},
     )
 
     state_in = testing.State(
@@ -697,7 +700,8 @@ def test_change_password_secret_changed_leader_unit(cloud_spec):
     container = testing.Container(name=CONTAINER, can_connect=True)
 
     password_secret = testing.Secret(
-        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"}, remote_grants=APP_NAME
+        tracked_content={CharmUsers.VALKEY_ADMIN.value: "secure-password"},
+        remote_grants={1: [APP_NAME]},
     )
 
     state_in = testing.State(
