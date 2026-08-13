@@ -155,6 +155,14 @@ prepare: |
         exit 1
       fi
       snap install k8s --classic --channel="$K8S_CHANNEL"
+
+      # The k8s snap's pre-init check refuses to bootstrap while /run/containerd exists,
+      # and the runner image ships Docker, whose containerd owns that path. concierge does
+      # exactly this before its own `k8s bootstrap` (internal/providers/k8s.go,
+      # handleExistingContainerd); bootstrapping ahead of it means doing it here instead.
+      systemctl stop containerd.service || true
+      rm -rf /run/containerd
+
       # Every other bootstrap setting keeps its default
       printf 'pod-cidr: %s\n' "$POD_CIDR" > /tmp/k8s-bootstrap-config.yaml
       k8s bootstrap --timeout 5m --file /tmp/k8s-bootstrap-config.yaml
