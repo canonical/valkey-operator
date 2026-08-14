@@ -10,6 +10,7 @@ from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CERT_FILE,
@@ -102,7 +103,7 @@ def test_valid_private_key(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Downloading TLS certificate from deployed app.")
