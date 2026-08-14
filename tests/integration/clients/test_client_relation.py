@@ -19,6 +19,7 @@ import pytest
 from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_TLS_S,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -248,7 +249,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     juju.integrate(f"{REQUIRER_V1_NAME}:certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Ensure TLS access for v0 client")

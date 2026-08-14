@@ -44,6 +44,11 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
+# DEPLOY_TIMEOUT_TLS_S covers any wait that spans a client-TLS enable: applying the client
+# certificate takes a rolling sentinel restart serialized by RestartLock, whose handoffs
+# alone take ~6-9 min for three units on a loaded runner.
+DEPLOY_TIMEOUT_S = 600
+DEPLOY_TIMEOUT_TLS_S = 900
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
