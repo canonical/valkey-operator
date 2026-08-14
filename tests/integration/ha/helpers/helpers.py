@@ -30,6 +30,10 @@ VM_RESTART_DELAY_DEFAULT = 20
 K8S_RESTART_DELAY_DEFAULT = 5
 RESTART_DELAY_PATCHED = 120
 
+# Budget for a whole `juju ssh` round trip (CLI start-up, controller API, SSH handshake,
+# `sudo -i` on VM); the remote commands themselves are instantaneous, so this is a hang guard.
+SSH_COMMAND_TIMEOUT = 60
+
 
 EXTEND_PEBBLE_RESTART_DELAY_YAML = """services:
   valkey:
@@ -495,9 +499,25 @@ def send_process_control_signal(
 
     try:
         subprocess.check_output(
-            command, stderr=subprocess.PIPE, shell=True, universal_newlines=True, timeout=3
+            command,
+            stderr=subprocess.PIPE,
+            shell=True,
+            universal_newlines=True,
+            timeout=SSH_COMMAND_TIMEOUT,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+    except subprocess.TimeoutExpired as e:
+        # only the local `juju ssh` was killed -- the remote pkill may have run already
+        logger.error(
+            "`juju ssh` did not return within %ss while sending %s to %s on unit %s; "
+            "the signal may or may not have been delivered",
+            SSH_COMMAND_TIMEOUT,
+            signal,
+            db_process,
+            unit_name,
+        )
+        logger.error("Error details: %s", e)
+        raise
+    except subprocess.CalledProcessError as e:
         logger.error(
             "failed to send signal %s to process %s on unit %s", signal, db_process, unit_name
         )
