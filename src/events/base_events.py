@@ -315,6 +315,11 @@ class BaseEvents(ops.Object):
             logger.warning("Service not started")
             return
 
+        # runs before the leader check (any unit's address can change) and is not
+        # deferred: update-status repeats on its own
+        if not self._reconcile_unit_address():
+            return
+
         if not self.charm.unit.is_leader():
             return
 
@@ -376,39 +381,63 @@ class BaseEvents(ops.Object):
         # update local unit admin password
         self.charm.auth_manager.update_local_valkey_admin_password()
 
-    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Handle the config_changed event."""
-        # on k8s we use hostnames so we do not have to reconfigure on ip change
-        if (
+    def _reconcile_unit_address(self) -> bool:
+        """Reconfigure the unit and reissue its certificate after its address changed.
+
+        When a machine changes address, Juju's binding may still report the old one while
+        `config-changed` runs, with no later `config-changed` to correct it — so
+        `update-status` must also converge the unit. The caller owns the retry strategy.
+
+        Returns:
+            bool: True if the address is reconciled (or there was nothing to do), False if
+                the reconcile could not complete and must be retried.
+        """
+        # on k8s we use hostnames, so the address is irrelevant and the binding unread
+        if self.charm.state.substrate != Substrate.VM:
+            return True
+
+        if not (
             self.charm.state.unit_server.model.private_ip
             and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
-            and self.charm.state.substrate == Substrate.VM
         ):
-            try:
-                self.charm.auth_manager.configure_auth()
-                self.charm.config_manager.configure_services(
-                    self.charm.sentinel_manager.get_primary_ip()
-                )
-            except (ValkeyCannotGetPrimaryIPError, ValkeyConfigurationError) as e:
-                logger.error("Failed to configure auth and services: %s", e)
-                event.defer()
-                return
+            return True
+
+        try:
+            self.charm.auth_manager.configure_auth()
+            self.charm.config_manager.configure_services(
+                self.charm.sentinel_manager.get_primary_ip()
+            )
 
             if self.charm.tls_manager.certificate_sans_require_update():
                 if self.charm.state.client_tls_relation:
+                    # the provider owns the certificate; converge once it signs the new one
                     self.charm.tls_events.refresh_tls_certificates_event.emit()
-                    event.defer()
-                    return
+                    return False
 
                 self.charm.tls_manager.create_and_store_self_signed_certificate()
+        except (
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyConfigurationError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Failed to reconcile the unit address: %s", e)
+            return False
 
-            self.charm.state.unit_server.update(
-                {
-                    "hostname": self.charm.state.hostname,
-                    "private_ip": self.charm.state.bind_address,
-                }
-            )
-            self.charm.restart_workload.emit()
+        self.charm.state.unit_server.update(
+            {
+                "hostname": self.charm.state.hostname,
+                "private_ip": self.charm.state.bind_address,
+            }
+        )
+        self.charm.restart_workload.emit()
+        return True
+
+    def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
+        """Handle the config_changed event."""
+        if not self._reconcile_unit_address():
+            # config-changed does not repeat on its own, so the reconcile must be retried
+            event.defer()
+            return
 
         if not self.charm.unit.is_leader():
             return

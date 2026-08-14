@@ -35,6 +35,7 @@ from tests.integration.helpers import (
     TLS_NAME,
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
+    fast_forward,
     get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
@@ -250,19 +251,25 @@ def test_network_cut_primary(  # noqa: C901
 
     # we do not use IPs in certificates for k8s, so no need to check SANs for IP changes
     if substrate == Substrate.VM:
-        # read ip from cert and check if is a different ip than before if ip_change is True
-        # tolerate delays in certificate update by retrying for up to 100 seconds with 10 second intervals
-        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
-            with attempt:
-                download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
-                certificate_sans = get_sans_from_certificate("./client.pem")
-                if ip_change:
-                    assert primary_ip not in certificate_sans["sans_ip"], (
-                        "The old IP should not be in SANs of client certificate after network cut and IP change."
+        # The address reconcile runs from update-status (the binding can still report the old
+        # IP during the post-restore config-changed), so fast-forward the interval to land it
+        # within the 100s of retries below.
+        with fast_forward(juju):
+            for attempt in Retrying(
+                stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True
+            ):
+                with attempt:
+                    download_client_certificate_from_unit(
+                        juju, APP_NAME, unit_name=primary_unit_name
                     )
-                    assert new_unit_ip in certificate_sans["sans_ip"], (
-                        "The new IP should be in SANs of client certificate after network cut and IP change."
-                    )
+                    certificate_sans = get_sans_from_certificate("./client.pem")
+                    if ip_change:
+                        assert primary_ip not in certificate_sans["sans_ip"], (
+                            "The old IP should not be in SANs of client certificate after network cut and IP change."
+                        )
+                        assert new_unit_ip in certificate_sans["sans_ip"], (
+                            "The new IP should be in SANs of client certificate after network cut and IP change."
+                        )
 
     addresses = get_cluster_addresses(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
