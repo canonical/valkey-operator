@@ -10,6 +10,8 @@ from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_S,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CA_FILE,
@@ -74,7 +76,7 @@ def test_build_and_deploy(
                 GLIDE_RUNNER_NAME: 1,
             },
         ),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_S,
     )
 
 
@@ -84,9 +86,11 @@ def test_certificate_expiration(juju: jubilant.Juju, substrate: Substrate) -> No
 
     logger.info("Enabling TLS")
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
+    # The renewal_relative_time=0.6 patch above makes the first renewal (and its rolling
+    # sentinel restart) land ~6 min in, inside this wait — it needs the TLS budget.
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Downloading TLS certificate from deployed app.")
