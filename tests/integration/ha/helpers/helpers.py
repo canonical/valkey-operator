@@ -4,10 +4,10 @@
 
 """High availability helpers."""
 
+import base64
 import os
 import string
 import subprocess
-import tarfile
 import tempfile
 import time
 from datetime import datetime
@@ -539,6 +539,34 @@ def lxd_patch_restart_delay(juju: jubilant.Juju, unit_name: str, delay: int | No
     juju.exec(command="sudo systemctl daemon-reload", unit=unit_name)
 
 
+def _pod_exec(
+    kube_client: client.api.core_v1_api.CoreV1Api,
+    namespace: str,
+    pod_name: str,
+    container_name: str,
+    command: list[str],
+    timeout: int = 30,
+) -> tuple[int | None, str]:
+    """Run a command in a pod container and return (returncode, combined output).
+
+    A returncode of None means the command did not complete within the timeout.
+    """
+    response = stream.stream(
+        kube_client.connect_get_namespaced_pod_exec,
+        pod_name,
+        namespace,
+        container=container_name,
+        command=command,
+        stdin=False,
+        stdout=True,
+        stderr=True,
+        tty=False,
+        _preload_content=False,
+    )
+    response.run_forever(timeout=timeout)
+    return response.returncode, response.read_all()
+
+
 def pebble_patch_restart_delay(
     juju: jubilant.Juju,
     unit_name: str,
@@ -564,117 +592,54 @@ def pebble_patch_restart_delay(
     pod_name = unit_name.replace("/", "-")
     container_name = "valkey"
     service_name = "valkey"
-    now = datetime.now().isoformat()
+    layer_path = f"/tmp/pebble_plan_{datetime.now().isoformat()}.yml"
 
-    with tempfile.NamedTemporaryFile() as pebble_plan_file:
-        pebble_plan_file.write(str.encode(pebble_file_content))
-        pebble_plan_file.flush()
-
-        copy_file_into_pod(
-            kube_client,
-            juju.model,
-            pod_name,
-            container_name,
-            pebble_plan_file.name,
-            f"/tmp/pebble_plan_{now}.yml",
-        )
-
-    add_to_pebble_layer_commands = (
-        f"/charm/bin/pebble add --combine {service_name} /tmp/pebble_plan_{now}.yml"
-    )
-    response = stream.stream(
-        kube_client.connect_get_namespaced_pod_exec,
-        pod_name,
-        juju.model,
-        container=container_name,
-        command=add_to_pebble_layer_commands.split(),
-        stdin=False,
-        stdout=True,
-        stderr=True,
-        tty=False,
-        _preload_content=False,
-    )
-    response.run_forever(timeout=5)
-    assert response.returncode == 0, (
-        f"Failed to add to pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
-    )
-
-    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3)):
+    # A one-shot base64 write avoids the tar-over-stdin websocket dance, whose
+    # close() raced tar's read and could leave a truncated layer file behind.
+    encoded = base64.b64encode(pebble_file_content.encode()).decode()
+    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3), reraise=True):
         with attempt:
-            replan_pebble_layer_commands = "/charm/bin/pebble replan"
-            response = stream.stream(
-                kube_client.connect_get_namespaced_pod_exec,
-                pod_name,
+            returncode, output = _pod_exec(
+                kube_client,
                 juju.model,
-                container=container_name,
-                command=replan_pebble_layer_commands.split(),
-                stdin=False,
-                stdout=True,
-                stderr=True,
-                tty=False,
-                _preload_content=False,
+                pod_name,
+                container_name,
+                ["sh", "-c", f"echo {encoded} | base64 -d > {layer_path}"],
             )
-            response.run_forever(timeout=60)
+            assert returncode == 0, (
+                f"Failed to write pebble layer file, unit={unit_name}, "
+                f"container={container_name}, returncode={returncode}, output={output!r}"
+            )
+
+            returncode, output = _pod_exec(
+                kube_client,
+                juju.model,
+                pod_name,
+                container_name,
+                ["/charm/bin/pebble", "add", "--combine", service_name, layer_path],
+            )
+            assert returncode == 0, (
+                f"Failed to add to pebble layer, unit={unit_name}, "
+                f"container={container_name}, service={service_name}, "
+                f"returncode={returncode}, output={output!r}"
+            )
+
+    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3), reraise=True):
+        with attempt:
+            returncode, output = _pod_exec(
+                kube_client,
+                juju.model,
+                pod_name,
+                container_name,
+                ["/charm/bin/pebble", "replan"],
+                timeout=60,
+            )
             if ensure_replan:
-                assert response.returncode == 0, (
-                    f"Failed to replan pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
+                assert returncode == 0, (
+                    f"Failed to replan pebble layer, unit={unit_name}, "
+                    f"container={container_name}, service={service_name}, "
+                    f"returncode={returncode}, output={output!r}"
                 )
-
-
-def copy_file_into_pod(
-    client: client.api.core_v1_api.CoreV1Api,
-    namespace: str,
-    pod_name: str,
-    container_name: str,
-    source_path: str,
-    destination_path: str,
-) -> None:
-    """Copy file contents into pod.
-
-    Args:
-        client: The kubernetes CoreV1Api client
-        namespace: The namespace of the pod to copy files to
-        pod_name: The name of the pod to copy files to
-        container_name: The name of the pod container to copy files to
-        source_path: The path of the file to copy from the local machine
-        destination_path: The path to copy the file to in the pod
-    """
-    try:
-        exec_command = ["tar", "xvf", "-", "-C", "/"]
-
-        api_response = stream.stream(
-            client.connect_get_namespaced_pod_exec,
-            pod_name,
-            namespace,
-            container=container_name,
-            command=exec_command,
-            stdin=True,
-            stdout=True,
-            stderr=True,
-            tty=False,
-            _preload_content=False,
-        )
-
-        with tempfile.TemporaryFile() as tar_buffer:
-            with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
-                tar.add(source_path, destination_path)
-
-            tar_buffer.seek(0)
-            commands = []
-            commands.append(tar_buffer.read())
-
-            while api_response.is_open():
-                api_response.update(timeout=1)
-
-                if commands:
-                    command = commands.pop(0)
-                    api_response.write_stdin(command.decode())
-                else:
-                    break
-
-            api_response.close()
-    except ApiException:
-        assert False
 
 
 def patch_restart_delay(
