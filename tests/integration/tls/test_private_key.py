@@ -5,6 +5,7 @@ import logging
 
 import jubilant
 from charmlibs.interfaces.tls_certificates import PrivateKey
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import TLS_CLIENT_PRIVATE_KEY_CONFIG, CharmUsers, Substrate
 from statuses import TLSStatuses
@@ -156,9 +157,19 @@ def test_private_key_updated(juju: jubilant.Juju) -> None:
         identifier=TLS_CLIENT_PRIVATE_KEY_CONFIG,
         content={"private-key": new_private_key},
     )
+
+    # An idle wait alone races here: juju delivers secret-changed asynchronously, so the
+    # cluster still looks idle right after update-secret. Wait for the renewal to land first.
+    logger.info("Waiting for the new private key to be applied on the unit")
+    for attempt in Retrying(stop=stop_after_delay(600), wait=wait_fixed(10), reraise=True):
+        with attempt:
+            download_client_certificate_from_unit(juju, APP_NAME)
+            with open(TLS_KEY_FILE, "r") as key_file:
+                assert key_file.read() == new_private_key, "New private key not applied yet"
+
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Downloading TLS certificate from deployed app.")
