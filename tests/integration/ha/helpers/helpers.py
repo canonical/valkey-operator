@@ -45,6 +45,16 @@ RESTORE_PEBBLE_RESTART_DELAY_YAML = """services:
     backoff-limit: 30s
 """
 
+# Cut the network without changing the unit's IP by dropping packets inside the container:
+# masking the NIC (the ip_change path) drops the DHCP lease, and a bandwidth throttle (what
+# this used to do) still lets Sentinel PING/PONG trickle through, so +odown never reaches
+# quorum and no failover starts. Loopback stays open for the charm's own health checks;
+# `lxc exec` rides the LXD socket, so cut and restore work while the container is isolated.
+NETWORK_CUT_RULES = (
+    "INPUT ! --in-interface lo --jump DROP",
+    "OUTPUT ! --out-interface lo --jump DROP",
+)
+
 
 def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     """Cut network from a lxc container in a way the changes the IP."""
@@ -55,21 +65,29 @@ def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     time.sleep(5)
 
 
+def _lxd_delete_iptables_rule(machine_name: str, rule: str) -> bool:
+    """Delete an iptables rule inside an lxc container, reporting whether it was there."""
+    command = f"lxc exec {machine_name} -- iptables --delete {rule}"
+    returncode = subprocess.call(
+        command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    return returncode == 0
+
+
 def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
     """Cut network from a lxc container (without causing the change of the unit IP address)."""
-    override_command = f"lxc config device override {machine_name} eth0"
-    try:
-        subprocess.check_call(override_command.split())
-    except subprocess.CalledProcessError:
-        # Ignore if the interface was already overridden.
-        pass
+    for rule in NETWORK_CUT_RULES:
+        # drop a leftover copy first so re-cutting cannot stack a duplicate rule
+        _lxd_delete_iptables_rule(machine_name, rule)
+        subprocess.check_call(f"lxc exec {machine_name} -- iptables --insert {rule}".split())
 
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress=0kbit"
-    subprocess.check_call(limit_set_command.split())
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress=1kbit"
-    subprocess.check_call(limit_set_command.split())
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority=10"
-    subprocess.check_call(limit_set_command.split())
+
+def lxd_restore_network_to_unit_without_ip_change(machine_name: str) -> None:
+    """Restore the network of a lxc container that was cut without an IP address change."""
+    for rule in NETWORK_CUT_RULES:
+        # tolerate a missing rule so restoring twice is a no-op
+        if not _lxd_delete_iptables_rule(machine_name, rule):
+            logger.warning("iptables rule %r was not present on %s", rule, machine_name)
 
 
 def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: str) -> None:
@@ -155,12 +173,7 @@ def restore_network_to_unit(
             restore_network_command = f"lxc config device remove {machine_name} eth0"
             subprocess.check_call(restore_network_command.split())
             return
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
-        subprocess.check_call(limit_set_command.split())
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
-        subprocess.check_call(limit_set_command.split())
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
-        subprocess.check_call(limit_set_command.split())
+        lxd_restore_network_to_unit_without_ip_change(machine_name)
     else:
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")

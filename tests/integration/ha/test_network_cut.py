@@ -93,6 +93,15 @@ def test_network_cut_primary(  # noqa: C901
     if ip_change and substrate == Substrate.K8S:
         pytest.skip("Changing IP is not applicable for k8s substrate.")
 
+    # The parametrized cases share one model, and the previous case's restore can still be
+    # driving a rolling Sentinel restart — let the cluster settle before cutting again.
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
+        timeout=DEPLOY_TIMEOUT_S,
+    )
+
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
 
@@ -146,10 +155,9 @@ def test_network_cut_primary(  # noqa: C901
     logger.info("Verifying new primary election...")
 
     new_primary_ip = None
-    # Sentinel only marks the old primary down after `down-after-milliseconds` (30s,
-    # see src/managers/config.py) and then needs time to reach quorum and promote a
-    # replica, so a new primary cannot appear before ~30s. Wait well past that (but
-    # under the 180s `failover-timeout`) to absorb CI scheduling jitter.
+    # Sentinel marks the primary down only after `down-after-milliseconds` (30s) and must
+    # then reach quorum and promote; the effective `failover-timeout` is 60s (both set in
+    # src/managers/config.py), so 150s spans ~2 failover attempts plus CI jitter.
     for attempt in Retrying(stop=stop_after_attempt(15), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
