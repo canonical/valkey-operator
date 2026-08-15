@@ -5,6 +5,7 @@
 """High availability helpers."""
 
 import base64
+import json
 import os
 import string
 import subprocess
@@ -137,6 +138,38 @@ def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: s
                     )
                     raise
         logger.info("Result of isolating unit from cluster is '%s'", command_result)
+
+        # `kubectl apply` only means the API server accepted the NetworkChaos; chaos-mesh
+        # programs the netem rule asynchronously (NetworkChaos -> PodNetworkChaos ->
+        # chaos-daemon), which can take longer than the reachability probe's pod start-up.
+        # Wait until chaos-mesh reports the rule injected before returning, so the "cut" is
+        # synchronous like the LXD iptables variant.
+        _k8s_wait_network_chaos_injected(model_name)
+
+
+def _k8s_wait_network_chaos_injected(namespace: str) -> None:
+    """Block until the `network-loss-primary` NetworkChaos is selected and fully injected.
+
+    Chaos-mesh only flips a record to `Injected` after the daemon applied the tc rule
+    (PodNetworkChaos `observedGeneration` catches up), so `AllInjected=True` is the real
+    "packets are being dropped" signal. `Selected=True` is required as well: before any pod
+    is selected the record loop is empty and `AllInjected` is vacuously True.
+    """
+    for attempt in Retrying(stop=stop_after_delay(120), wait=wait_fixed(2), reraise=True):
+        with attempt:
+            output = subprocess.check_output(
+                f"sudo k8s kubectl -n {namespace} get networkchaos network-loss-primary -o json",
+                shell=True,
+                env=os.environ,
+                stderr=subprocess.STDOUT,
+            )
+            conditions = {
+                cond["type"]: cond["status"]
+                for cond in json.loads(output).get("status", {}).get("conditions", [])
+            }
+            if conditions.get("Selected") != "True" or conditions.get("AllInjected") != "True":
+                raise ValueError(f"network chaos not injected yet: {conditions}")
+            logger.info("Network chaos injected: %s", conditions)
 
 
 def cut_network_from_unit(
