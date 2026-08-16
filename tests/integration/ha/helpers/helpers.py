@@ -489,10 +489,15 @@ def is_endpoint_in_sentinels(
     tls_enabled: bool = False,
 ) -> bool:
     """Check if the provided endpoint is present in the sentinels list of any of the provided hostnames."""
+    # Sentinel announces bare IPs on VM and FQDNs on K8s (`<pod>.<app>-endpoints.<ns>.svc...`),
+    # so accept the endpoint itself or the endpoint as a leading DNS label. A plain substring
+    # test is not enough: on VM, "10.70.115.24" is a prefix of a peer at "10.70.115.248", and
+    # `SENTINEL SENTINELS` iterates a hash dict, so the peer can be the first "match" and its
+    # flags get checked instead of the old primary's.
     endpoint_sentinel = [
         sentinel
         for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)
-        if endpoint in sentinel["ip"]
+        if sentinel["ip"] == endpoint or sentinel["ip"].startswith(f"{endpoint}.")
     ]
     if not endpoint_sentinel:
         logger.error(
