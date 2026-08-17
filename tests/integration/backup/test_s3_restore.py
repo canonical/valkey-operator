@@ -4,11 +4,13 @@
 
 """Integration tests for S3 restore against MicroCeph.
 
-Three scenarios:
-  1. rollback      – write → backup → mutate → restore → original value back on all units.
+Scenarios:
+  1. rollback          – write → backup → mutate → restore → original value back on all units.
   2. disaster-recovery – write → backup → remove app → redeploy → restore → data back.
   3. corrupt-restore   – attempt restore of a corrupt S3 object → old data preserved →
                          Sentinel failover still works (suppression-leak regression guard).
+  4. leader ≠ primary  – a failed restore on a non-leader primary must not wedge the cluster.
+  5. single unit       – happy path on a 1-unit app: no replicas, no resync, leader == primary.
 
 Run only with a bootstrapped Juju controller and built charm:
     tox run -e integration -- tests/integration/backup/test_s3_restore.py --substrate k8s
@@ -383,3 +385,54 @@ def test_failed_restore_not_wedged_when_leader_not_primary(
         f"create-backup blocked after a failed non-leader-primary restore "
         f"(restore_id wedged?): {task.stderr}"
     )
+
+
+@pytest.mark.abort_on_fail
+def test_restore_single_unit(
+    charm: str,
+    juju: jubilant.Juju,
+    microceph: dict,
+    s3_bucket,
+    substrate: Substrate,
+) -> None:
+    """Happy path on a single-unit app: write → backup → mutate → restore → original back.
+
+    A one-unit cluster takes a different path from the 3-unit scenarios above: the
+    only participant is both juju leader and valkey primary, there is no replica
+    RESYNC, the barrier has a single member, and the RESTORE → RESYNC → COMPLETED
+    cascade is driven purely by the leader's own app-databag relation-changed
+    self-delivery (with update-status as the backstop). Also checks the unit is
+    writable again afterwards -- the restart resets the rendered
+    min-replicas-to-write=1, which a lone primary can never satisfy, so the
+    post-restore reconcile must relax it (PR #79 review, skourta r3794577942).
+    """
+    # Start from a fresh 1-unit app; the earlier scenarios leave a 3-unit one.
+    if APP_NAME in juju.status().apps:
+        juju.remove_application(APP_NAME)
+        juju.wait(lambda s: APP_NAME not in s.apps, timeout=600, delay=5)
+    deploy_and_relate_s3(juju, charm, substrate, microceph, num_units=1)
+    assert len(juju.status().apps[APP_NAME].units) == 1
+
+    _write_key(juju, "single_unit_key", "original")
+
+    task = juju.run(f"{APP_NAME}/leader", "create-backup")
+    assert task.success, task.stderr
+    backup_id = task.results["backup-id"]
+    assert BACKUP_ID_RE.match(backup_id), f"Unexpected backup-id format: {backup_id!r}"
+
+    _write_key(juju, "single_unit_key", "mutated")
+
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": backup_id})
+    assert task.success, task.stderr
+    assert "restore" in task.results, f"Unexpected action results: {task.results}"
+
+    _wait_restore_active(juju)
+
+    unit_name = _leader_unit_name(juju)
+    got = _read_key(juju, unit_name, "single_unit_key")
+    assert got == "original", f"Expected 'original' on {unit_name}, got {got!r}"
+
+    # Writable after the restore restart (min-replicas-to-write relaxed for a lone primary).
+    _write_key(juju, "single_unit_post_restore", "ok")
+    got = _read_key(juju, unit_name, "single_unit_post_restore")
+    assert got == "ok", f"Single unit not writable after restore; got {got!r}"
