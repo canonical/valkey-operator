@@ -310,6 +310,50 @@ def test_resume_failover_best_effort_on_non_ok_set(mocker, caplog):
     assert "10.0.0.1" in caplog.text  # the non-OK endpoint was logged
 
 
+def test_is_failover_suppressed_reads_local_sentinel_down_after(mocker):
+    """is_failover_suppressed is a local read: this unit's sentinel, suppressed value only."""
+    from src.literals import SENTINEL_DOWN_AFTER_MS, SENTINEL_DOWN_AFTER_SUPPRESSED_MS
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    mgr.state = mocker.Mock(endpoint="10.0.0.1")
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+
+    client.primary.return_value = {
+        "down-after-milliseconds": str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+    }
+    assert mgr.is_failover_suppressed() is True
+    client.primary.assert_called_once_with(hostname="10.0.0.1")
+
+    client.primary.return_value = {"down-after-milliseconds": str(SENTINEL_DOWN_AFTER_MS)}
+    assert mgr.is_failover_suppressed() is False
+    client.primary.return_value = {}  # field missing: not suppressed
+    assert mgr.is_failover_suppressed() is False
+
+
+def test_resume_local_failover_targets_only_this_sentinel(mocker):
+    """resume_local_failover resets + RESETs this unit's sentinel and no other."""
+    from src.literals import PRIMARY_NAME, SENTINEL_DOWN_AFTER_MS
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    mgr.state = mocker.Mock(endpoint="10.0.0.1")
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    all_endpoints = mocker.patch.object(
+        mgr, "all_sentinel_endpoints", return_value=["10.0.0.1", "10.0.0.2"]
+    )
+
+    mgr.resume_local_failover()
+
+    client.set.assert_called_once_with(
+        "10.0.0.1", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+    )
+    client.reset.assert_called_once_with(hostname="10.0.0.1")
+    all_endpoints.assert_not_called()
+
+
 def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     """Manager helper reports failover from the primary flags with no retry/blocking."""
     from src.managers.sentinel import SentinelManager
@@ -783,6 +827,12 @@ def restore_managers(mocker):
         roll_back=mocker.patch("managers.backup.BackupManager.roll_back"),
         suppress_failover=mocker.patch("managers.sentinel.SentinelManager.suppress_failover"),
         resume_failover=mocker.patch("managers.sentinel.SentinelManager.resume_failover"),
+        is_failover_suppressed=mocker.patch(
+            "managers.sentinel.SentinelManager.is_failover_suppressed", return_value=False
+        ),
+        resume_local_failover=mocker.patch(
+            "managers.sentinel.SentinelManager.resume_local_failover"
+        ),
         save_dataset_before_shutdown=mocker.patch(
             "managers.cluster.ClusterManager.save_dataset_before_shutdown"
         ),
@@ -1605,6 +1655,54 @@ def test_completed_restore_clears_terminal_statuses(mocker, cloud_spec, restore_
 # These assert one guard clause on a handler that otherwise has nothing to do
 # with restore; driving them through full events would entangle unrelated
 # handlers (and re-run the restore workflow), so they stay at the unit layer.
+
+
+def test_update_status_resumes_failover_left_suppressed(mocker, cloud_spec, restore_managers):
+    """A sentinel still at the suppressed down-after outside a restore is resumed.
+
+    resume_failover is best-effort on every teardown path and Sentinel persists
+    SENTINEL SET to its own conf, so a sentinel unreachable at teardown would
+    otherwise stay failover-suppressed until the next config re-render (PR #79
+    review, skourta r3621161292). Each unit self-heals its own sentinel on
+    update-status.
+    """
+    restore_managers.is_failover_suppressed.return_value = True
+    ctx, state = _restore_context_and_state(cloud_spec)  # no restore in progress
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.resume_local_failover.assert_called_once()
+
+
+def test_update_status_keeps_suppression_during_restore(mocker, cloud_spec, restore_managers):
+    """Suppression is by design mid-restore: the self-heal must not undo it."""
+    restore_managers.is_failover_suppressed.return_value = True
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.resume_local_failover.assert_not_called()
+
+
+def test_update_status_suppression_check_tolerates_sentinel_error(
+    mocker, cloud_spec, restore_managers
+):
+    """A sentinel that can't be queried is skipped (retried next update-status), not a crash."""
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    restore_managers.is_failover_suppressed.side_effect = ValkeyWorkloadCommandError("down")
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    ctx.run(ctx.on.update_status(), state)  # must not raise
+
+    restore_managers.resume_local_failover.assert_not_called()
 
 
 def test_storage_detaching_refuses_during_restore(mocker):

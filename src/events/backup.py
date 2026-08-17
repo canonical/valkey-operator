@@ -86,6 +86,7 @@ class BackupEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_departed, self._on_restore_workflow
         )
         self.framework.observe(self.charm.on.update_status, self._on_restore_workflow)
+        self.framework.observe(self.charm.on.update_status, self._reconcile_failover_suppression)
 
     # ── event handlers ──────────────────────────────────────────────────
 
@@ -371,6 +372,31 @@ class BackupEvents(ops.Object):
 
         if self.charm.unit.is_leader():
             self._advance_if_leader()
+
+    def _reconcile_failover_suppression(self, _: ops.UpdateStatusEvent) -> None:
+        """Self-heal this unit's sentinel if it was left failover-suppressed.
+
+        resume_failover is best-effort on every restore-failure path, and Sentinel
+        persists SENTINEL SET to its own conf (a restart won't clear it), so a
+        sentinel unreachable at that moment would otherwise stay at the suppressed
+        down-after -- no automatic failover -- until the next config re-render.
+        Every unit re-checks its own sentinel here; outside a restore the value
+        must be the configured one.
+        """
+        if (
+            not self.charm.state.unit_server.is_active
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
+            return
+        try:
+            if self.charm.sentinel_manager.is_failover_suppressed():
+                logger.warning(
+                    "restore.suppression_leak: sentinel still failover-suppressed outside a "
+                    "restore; resuming failover on this unit"
+                )
+                self.charm.sentinel_manager.resume_local_failover()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not check sentinel failover suppression: %s", e)
 
     def _clear_local_restore_state(self) -> None:
         """Clear this unit's per-unit restore fields once a restore has ended."""

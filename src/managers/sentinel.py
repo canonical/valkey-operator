@@ -394,17 +394,31 @@ class SentinelManager(ManagerStatusProtocol):
     def resume_failover(self) -> None:
         """Reset down-after and SENTINEL RESET on every sentinel; idempotent.
 
-        Best-effort on a non-OK SET (logged, not raised) — raising on a teardown
-        path would re-wedge the restore. A stuck value clears on the next config
-        re-render (Sentinel persists SET to its own conf, so a restart won't).
+        Best-effort on a non-OK SET (logged, not raised) — raising on a restore-
+        failure path would re-wedge the restore. A sentinel left stuck (unreachable
+        here; it persists SET to its own conf, so a restart won't clear it) is
+        self-healed by its own unit via is_failover_suppressed/resume_local_failover.
         """
-        client = self._get_sentinel_client()
         for endpoint in self.all_sentinel_endpoints():
-            if not client.set(
-                endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
-            ):
-                logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
-            client.reset(hostname=endpoint)
+            self._resume_failover_on(endpoint)
+
+    def resume_local_failover(self) -> None:
+        """Reset down-after and SENTINEL RESET on this unit's sentinel only."""
+        self._resume_failover_on(self.state.endpoint)
+
+    def is_failover_suppressed(self) -> bool:
+        """Whether this unit's sentinel still has the restore-suppressed down-after."""
+        client = self._get_sentinel_client()
+        down_after = client.primary(hostname=self.state.endpoint).get("down-after-milliseconds")
+        return str(down_after) == str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+
+    def _resume_failover_on(self, endpoint: str) -> None:
+        client = self._get_sentinel_client()
+        if not client.set(
+            endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+        ):
+            logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
+        client.reset(hostname=endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""
