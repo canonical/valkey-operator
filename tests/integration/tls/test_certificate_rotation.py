@@ -2,9 +2,10 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 import logging
-from time import sleep
+from time import monotonic, sleep
 
 import jubilant
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
@@ -34,7 +35,13 @@ NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 CERTIFICATE_EXPIRY_TIME = 600
-CA_EXPIRY_TIME = 720
+# The provider renews a CA `certificate-validity` before it expires, i.e. 15 min after the CA
+# rotation test configures a 25 min CA with 10 min certificates, and the units pick the new CA up
+# at their next certificate renewal (every 0.6 x 10 min = 6 min): +18 min after that config,
+# safely after test_ca_rotation_by_config_change finished (its waits are bounded to +15 min) and
+# 3 min clear of the neighbouring renewals either side of the CA renewal.
+CA_EXPIRY_TIME = 1080
+_ca_rotation_config_time = 0.0
 
 
 def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju, substrate: Substrate) -> None:
@@ -127,16 +134,20 @@ def test_certificate_expiration(juju: jubilant.Juju, substrate: Substrate) -> No
     assert old_client_certificate, "Failed to get current client certificate"
 
     logger.info("Waiting for certificate to expire")
-    sleep(CERTIFICATE_EXPIRY_TIME)
-
-    logger.info("Check access with previous certificate fails after expiration")
-    assert not auth_test(
-        juju=juju,
-        endpoints=endpoints,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-    )
+    # Part of the validity already elapsed while TLS was being enabled: poll for the expiry
+    # instead of sleeping through the whole of it.
+    for attempt in Retrying(
+        stop=stop_after_delay(CERTIFICATE_EXPIRY_TIME), wait=wait_fixed(15), reraise=True
+    ):
+        with attempt:
+            logger.info("Check access with previous certificate fails after expiration")
+            assert not auth_test(
+                juju=juju,
+                endpoints=endpoints,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                tls_enabled=True,
+            ), "Expired certificate is still accepted"
 
     logger.info("Store new certificate after rotation")
     download_client_certificate_from_unit(juju, APP_NAME)
@@ -199,11 +210,19 @@ def test_ca_rotation_by_config_change(juju: jubilant.Juju) -> None:
     assert old_certificate, "Failed to get current certificate"
 
     logger.info("Rotating the CA certificate")
-    tls_config = {"certificate-validity": "10d", "ca-common-name": "new-valkey-ca"}
+    # The short CA validity schedules the provider-side CA renewal test_ca_rotation_by_expiration
+    # waits for, so that test does not need to rotate the CA a second time first.
+    tls_config = {
+        "certificate-validity": "10m",
+        "root-ca-validity": "25m",
+        "ca-common-name": "new-valkey-ca",
+    }
+    global _ca_rotation_config_time
+    _ca_rotation_config_time = monotonic()
     juju.config(app=TLS_NAME, values=tls_config)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Checking if the CA certificates are rotated")
@@ -249,23 +268,8 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     The CA certificate should be rotated and the cluster should still be accessible.
     The rotation is triggered by the expiration of the CA cert on TLS provider side.
     """
-    logger.info("Adjust CA and certificate validity on TLS provider")
-    tls_config = {"certificate-validity": "10m", "root-ca-validity": "20m"}
-    juju.config(app=TLS_NAME, values=tls_config)
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=900,
-    )
-    juju.wait(
-        lambda status: does_status_match(
-            status,
-            expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_EXPIRING.value]},
-            num_units={APP_NAME: NUM_UNITS},
-        ),
-        timeout=600,
-    )
-
-    download_client_certificate_from_unit(juju, APP_NAME)
+    # The CA and certificate validity were configured by test_ca_rotation_by_config_change; the
+    # material it downloaded last is still the current one and predates the CA renewal.
     with open(TLS_CA_FILE, "r") as ca_file:
         old_ca_certificate = ca_file.read()
     assert old_ca_certificate, "Failed to get current ca certificate"
@@ -299,20 +303,26 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
     ), "Failed to read data with TLS enabled"
 
     logger.info("Waiting for CA certificate to expire")
-    sleep(CA_EXPIRY_TIME)
+    sleep(max(0.0, _ca_rotation_config_time + CA_EXPIRY_TIME - monotonic()))
+    # The units pick the renewed CA up at their next certificate renewal, then rotate: poll for
+    # the old material being rejected rather than guessing how long that takes.
+    for attempt in Retrying(
+        stop=stop_after_delay(CERTIFICATE_EXPIRY_TIME), wait=wait_fixed(15), reraise=True
+    ):
+        with attempt:
+            logger.info("Check access with previous certificate fails after expiration")
+            assert not auth_test(
+                juju=juju,
+                endpoints=endpoints,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                tls_enabled=True,
+            ), "Client certificate of the previous CA is still accepted"
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=10, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
-    logger.info("Check access with previous certificate fails after expiration")
-    assert not auth_test(
-        juju=juju,
-        endpoints=endpoints,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-    )
     logger.info("Store new certificate after rotation")
     download_client_certificate_from_unit(juju, APP_NAME)
     with open(TLS_CA_FILE, "r") as ca_file:
