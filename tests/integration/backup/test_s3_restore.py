@@ -233,7 +233,7 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     """A failed restore leaves old data intact and failover suppression is resumed.
 
     Regression guard for the suppression-leak bug: if suppress_failover() is not
-    matched by resume_failover() on the _restore_teardown path, sentinel's
+    matched by resume_failover() on the _fail_restore path, sentinel's
     down-after-milliseconds stays at the suppressed value and the cluster
     silently loses automatic failover.
     """
@@ -247,13 +247,13 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     # Initiate a restore of the corrupt object.  The action itself succeeds
     # (the backup-id is present in S3 and matches _BACKUP_ID_RE), but the
     # async download step raises ValkeyRestoreError on the magic-byte check,
-    # causing _restore_teardown() to call resume_failover() and set RESTORE_FAILED.
+    # causing _fail_restore() to call resume_failover() and set RESTORE_FAILED.
     task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": corrupt_id})
     assert task.success, task.stderr
     assert "restore" in task.results, f"Unexpected action results: {task.results}"
 
     # The corrupt object fails the magic-byte check in the restore step, so the
-    # workflow tears down and the leader records RESTORE_FAILED on the app. Wait
+    # workflow fails and the leader records RESTORE_FAILED on the app. Wait
     # on that status -- a real convergence signal -- rather than a bare sleep,
     # and settle the agents before probing data.
     juju.wait(
@@ -271,14 +271,14 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     got = _read_key(juju, _leader_unit_name(juju), "safe_key")
     assert got == "safe-value", f"Old data lost after corrupt restore; got {got!r}"
 
-    # _restore_teardown must have resumed failover: every sentinel's
+    # _fail_restore must have resumed failover: every sentinel's
     # down-after-milliseconds is back to normal, not the suppressed value. Checked
     # directly -- a leak leaves it at the suppressed value -- rather than killing
     # the primary and waiting for a real failover, which on K8s races Pebble's
     # auto-restart of the process and is not a reliable signal of suppression.
     down_after = _sentinel_down_after_ms(juju)
     assert all(ms == SENTINEL_DOWN_AFTER_MS for ms in down_after.values()), (
-        "Failover suppression not resumed on corrupt-restore teardown "
+        "Failover suppression not resumed after the corrupt restore failed "
         f"(suppression-leak regression): down-after-milliseconds={down_after}, "
         f"expected {SENTINEL_DOWN_AFTER_MS} on every sentinel."
     )

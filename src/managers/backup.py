@@ -329,6 +329,7 @@ class BackupManager(ManagerStatusProtocol):
             raise ValkeyRestoreError(e) from e
         if not head.startswith(_RDB_MAGIC):
             raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
+        logger.info("restore.verified backup_id=%s (RDB header ok)", backup_id)
 
     def download_backup(self, backup_id: str) -> None:
         """Stream the full RDB from S3 onto the data partition as ``dump.rdb``.
@@ -343,20 +344,27 @@ class BackupManager(ManagerStatusProtocol):
         bucket = self._get_bucket_resource(s3_parameters)
 
         try:
-            body = bucket.Object(f"{s3_parameters.path}/{backup_id}").get()["Body"]
+            obj = bucket.Object(f"{s3_parameters.path}/{backup_id}").get()
         except ClientError as e:
             raise ValkeyRestoreError(e) from e
 
+        logger.info(
+            "restore.download.started backup_id=%s bytes=%s -> %s",
+            backup_id,
+            obj.get("ContentLength"),
+            self._dump_tmp_path,
+        )
         # Stream S3 -> data partition; the StreamingBody is a binary read()-able
         # at runtime (cast for the stub), copied in bounded chunks by the workload.
         self.workload.push_data_file(
-            cast(BinaryIO, body),
+            cast(BinaryIO, obj["Body"]),
             self._dump_tmp_path,
             user=self.workload.user,
             group=self.workload.user,
         )
         # Atomic promote: same-partition rename, so dump.rdb only ever appears complete.
         self.workload.move_file(self._dump_tmp_path, self._dump_path)
+        logger.info("restore.download.finished backup_id=%s -> %s", backup_id, self._dump_path)
 
     # ── restore steps ────────────────────────────────────────────────────
 
@@ -403,16 +411,20 @@ class BackupManager(ManagerStatusProtocol):
         defer holds off concurrent restarts. Only runs for a fresh swap (redelivery
         is handled upstream), so any copy here is stale and dropped first.
         """
+        logger.info("restore.primary: stopping valkey-server for the RDB swap")
         self._ensure_stopped()
         if self.workload.path_exists(self._pre_restore_path):
             self.cleanup_restore_files()
+        logger.info("restore.primary: keeping the current dump at %s", self._pre_restore_path)
         self.workload.move_file(self._dump_path, self._pre_restore_path)
         self.download_backup(self.state.cluster.restore_id)
         # Readiness is gated later by wait_until_loaded.
+        logger.info("restore.primary: starting valkey-server on the restored dump")
         self.workload.start(self.workload.valkey_service, check_alive=False)
 
     def roll_back(self) -> None:
         """Restore the pre-restore dump and restart (stop FIRST to defeat auto-restart)."""
+        logger.warning("restore.rollback: reinstating the pre-restore dump and restarting")
         self._ensure_stopped()
         if self.workload.path_exists(self._pre_restore_path):
             self.workload.move_file(self._pre_restore_path, self._dump_path)
@@ -422,6 +434,7 @@ class BackupManager(ManagerStatusProtocol):
 
     def cleanup_restore_files(self) -> None:
         """Remove the pre-restore rollback copy after a successful restore."""
+        logger.info("restore.cleanup: removing the pre-restore copy %s", self._pre_restore_path)
         self.workload.remove_file(self._pre_restore_path)
 
     # ── helpers ─────────────────────────────────────────────────────────

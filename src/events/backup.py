@@ -276,29 +276,29 @@ class BackupEvents(ops.Object):
 
     def _on_restore_action(self, event: ops.ActionEvent) -> None:
         """Validate, then initiate the async restore workflow (leader only)."""
+        backup_id = event.params.get("backup-id", "")
         if reason := self._restore_blocking_reason():
-            event.set_results({"error": reason})
-            event.fail(reason)
+            self._reject_restore(event, backup_id, reason)
             return
-        if not (backup_id := event.params.get("backup-id", "")):
-            event.set_results({"error": "Must provide backup-id to restore."})
-            event.fail("Must provide backup-id to restore.")
+        if not backup_id:
+            self._reject_restore(event, backup_id, "Must provide backup-id to restore.")
             return
         try:
             if backup_id not in self.charm.backup_manager.list_backups():
-                event.fail(f"backup-id {backup_id} not found.")
+                self._reject_restore(event, backup_id, f"backup-id {backup_id} not found.")
                 return
         except ValkeyBackupError as e:
-            logger.exception("Could not list backups for restore")
+            logger.exception("restore.rejected backup_id=%s: could not list backups", backup_id)
             event.set_results({"error": _safe_error(e)})
             event.fail("Could not list backups. Check juju debug-log.")
             return
 
         logger.info(
-            "audit: restore action invoked action_id=%s backup_id=%s unit=%s",
+            "audit: restore action invoked action_id=%s backup_id=%s unit=%s participants=%s",
             event.id,
             backup_id,
             self.charm.unit.name,
+            [s.unit_name for s in self.charm.state.servers],
         )
         # Clear any stale terminal status from a prior attempt.
         self._clear_terminal_restore_statuses()
@@ -315,6 +315,13 @@ class BackupEvents(ops.Object):
         )
         # the action is async, the actual restore procedure is triggered by relation-changed events
         event.set_results({"restore": f"initiated for {backup_id}"})
+
+    @staticmethod
+    def _reject_restore(event: ops.ActionEvent, backup_id: str, reason: str) -> None:
+        """Fail the restore action with ``reason`` and leave a traceable log line."""
+        logger.warning("restore.rejected backup_id=%s reason=%s", backup_id or "<none>", reason)
+        event.set_results({"error": reason})
+        event.fail(reason)
 
     # ── restore workflow ─────────────────────────────────────────────────
 
@@ -336,13 +343,13 @@ class BackupEvents(ops.Object):
             self._clear_local_restore_state()
             return
 
-        # Leader tears the restore down on a participant failure or departure
+        # Leader ends a failed restore on a participant failure or departure
         # (only it can clear the app-level restore_id).
-        if self._leader_restore_teardown_needed():
-            self._clear_failed_restore()
+        if self._leader_must_fail_restore():
+            self._finish_failed_restore()
             return
         # A unit that joined after initiation isn't a participant and must run no
-        # step (it would query its own down Valkey and spuriously tear down).
+        # step (it would query its own down Valkey and spuriously fail the restore).
         if self.charm.unit.name not in self.charm.state.cluster.restore_participants:
             # ...but a non-participant leader must still advance the barrier
             # (leadership can drift to a late-joiner), or nobody does -> wedge.
@@ -350,7 +357,7 @@ class BackupEvents(ops.Object):
                 self._advance_if_leader()
             return
         # This unit already failed this attempt (token-scoped, so a stale marker
-        # won't block a new one): wait for the leader to tear down.
+        # won't block a new one): wait for the leader to end the restore.
         if self.charm.state.unit_server.restore_failure_kind(
             self.charm.state.cluster.restore_token
         ):
@@ -363,11 +370,13 @@ class BackupEvents(ops.Object):
         try:
             self._run_restore_step(instruction, step, role)
         except Exception as e:
-            # Catch everything: teardown must record the failure marker and
-            # resume failover on ANY error (service-control errors sit outside
-            # the restore-error hierarchy), or the restore wedges.
-            logger.exception("Restore step failed; tearing down")
-            self._restore_teardown(e)
+            # Catch everything: the failure marker must be recorded and failover
+            # resumed on ANY error (service-control errors sit outside the
+            # restore-error hierarchy), or the restore wedges.
+            logger.exception(
+                "restore.step_failed instruction=%s step=%s role=%s", instruction, step, role
+            )
+            self._fail_restore(e)
             return
 
         if self.charm.unit.is_leader():
@@ -404,18 +413,19 @@ class BackupEvents(ops.Object):
         if unit.restore_step != RestoreStep.NOT_STARTED or unit.restore_failed:
             unit.update({"restore_step": "", "restore_role": "", "restore_failed": ""})
 
-    def _leader_restore_teardown_needed(self) -> bool:
-        """Whether the leader must tear the restore down now.
+    def _leader_must_fail_restore(self) -> bool:
+        """Whether the leader must end the restore as failed now.
 
         True on a participant failure this attempt, or a departed participant (which
         can never satisfy the barrier, so the restore would otherwise wedge).
         """
         if not self.charm.unit.is_leader():
             return False
-        if self.charm.state.failed_restore_kind:
+        if kind := self.charm.state.failed_restore_kind:
+            logger.warning("restore.participant_failed kind=%s; ending the restore", kind)
             return True
         if self.charm.state.restore_participant_departed:
-            logger.warning("Restore participant departed mid-restore; failing the restore")
+            logger.warning("restore.participant_departed; ending the restore")
             return True
         return False
 
@@ -432,40 +442,55 @@ class BackupEvents(ops.Object):
                 if self.charm.backup_manager.has_pre_restore_copy() and not (
                     self.charm.workload.alive(self.charm.workload.valkey_service)
                 ):
+                    logger.warning("restore.step restore: interrupted mid-swap; rolling back")
                     self.charm.backup_manager.roll_back()
                     raise ValkeyRestoreError("primary restore interrupted mid-swap; rolled back")
 
                 is_primary = self.charm.cluster_manager.is_primary()
-                self.charm.state.unit_server.update(
-                    {"restore_role": "primary" if is_primary else "replica"}
+                role = "primary" if is_primary else "replica"
+                self.charm.state.unit_server.update({"restore_role": role})
+                logger.info(
+                    "restore.step restore role=%s backup_id=%s",
+                    role,
+                    self.charm.state.cluster.restore_id,
                 )
                 if is_primary:
+                    logger.info("restore.step restore: suppressing sentinel failover")
                     self.charm.sentinel_manager.suppress_failover()
                     self._do_primary_restore()
-                self.charm.backup_manager.set_restore_step(RestoreStep.RESTORE)
+                self._record_restore_step(RestoreStep.RESTORE)
 
             case (RestoreStep.RESYNC, RestoreStep.RESTORE):
                 if role == "primary":
+                    logger.info("restore.step resync role=primary: resuming sentinel failover")
                     self.charm.sentinel_manager.resume_failover()
                 else:
+                    logger.info(
+                        "restore.step resync role=replica: waiting up to %ss for resync",
+                        RESTORE_RESYNC_TIMEOUT_S,
+                    )
                     self.charm.cluster_manager.wait_until_resynced(RESTORE_RESYNC_TIMEOUT_S)
-                self.charm.backup_manager.set_restore_step(RestoreStep.RESYNC)
+                self._record_restore_step(RestoreStep.RESYNC)
 
             case (RestoreStep.COMPLETED, RestoreStep.RESYNC):
                 if role == "primary":
                     self.charm.backup_manager.cleanup_restore_files()
-                self.charm.backup_manager.set_restore_step(RestoreStep.COMPLETED)
+                self._record_restore_step(RestoreStep.COMPLETED)
 
             case _:
                 # Not our turn: tuple doesn't match a valid transition.
                 return
+
+    def _record_restore_step(self, step: RestoreStep) -> None:
+        self.charm.backup_manager.set_restore_step(step)
+        logger.info("restore.step_done step=%s unit=%s", step.value, self.charm.unit.name)
 
     def _do_primary_restore(self) -> None:
         """Validate, restore in-place, and roll back on any failure.
 
         restore_on_primary does stop -> move dump aside -> download -> restart;
         the caller then confirms it loaded. Any failure rolls back to the
-        pre-restore copy before propagating to teardown.
+        pre-restore copy before propagating to _fail_restore.
         """
         # Pre-stop (outside the try, nothing to roll back yet): reject a non-RDB
         # object before bouncing the primary, and persist memory to disk so the
@@ -474,15 +499,22 @@ class BackupEvents(ops.Object):
         self.charm.cluster_manager.save_dataset_before_shutdown()
         try:
             self.charm.backup_manager.restore_on_primary()
+            logger.info(
+                "restore.primary: waiting up to %ss for the dataset to load",
+                RESTORE_LOAD_TIMEOUT_S,
+            )
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
+            logger.info("restore.primary: dataset loaded")
         except Exception:
+            logger.warning("restore.primary: failed; rolling back to the pre-restore dataset")
             self.charm.backup_manager.roll_back()
             raise
         finally:
-            # A restart (restore or rollback) resets runtime min-replicas-to-write
-            # to the rendered 1, so reassert the topology-correct value or a small
-            # cluster is write-frozen. Best-effort: a raise in a finally must not
-            # mask the failure or false-fail a success.
+            # valkey.conf ships min-replicas-to-write 1 and the topology-aware
+            # value (0 below 3 active units) is a non-persistent CONFIG SET, so any
+            # restart here (restore or rollback) comes back at 1 -- reassert it or a
+            # 1-2 unit cluster is write-frozen. Best-effort: a raise in a finally
+            # must not mask the failure or false-fail a success.
             try:
                 self.charm.cluster_manager.reconcile_min_replicas_to_write()
             except Exception:
@@ -494,26 +526,29 @@ class BackupEvents(ops.Object):
             return
         instruction = self.charm.state.cluster.restore_instruction
         if instruction == RestoreStep.COMPLETED:
+            logger.info("restore.completed backup_id=%s", self.charm.state.cluster.restore_id)
             self._clear_terminal_restore_statuses()
             self._clear_restore_state()
             return
-        self.charm.state.cluster.update(
-            {"restore_instruction": self.charm.backup_manager.next_restore_step(instruction).value}
+        next_step = self.charm.backup_manager.next_restore_step(instruction)
+        logger.info(
+            "restore.advance %s -> %s (all participants caught up)", instruction, next_step
         )
+        self.charm.state.cluster.update({"restore_instruction": next_step.value})
 
-    def _restore_teardown(self, exc: Exception | None = None) -> None:
-        """Record this unit's restore failure so the leader can tear it down.
+    def _fail_restore(self, exc: Exception | None = None) -> None:
+        """Mark this unit's restore attempt failed; the leader then ends the restore.
 
-        The failing unit is often not the juju leader, and only the leader can
-        clear the app-level restore_id, so the failure is recorded on this unit's
-        own databag; the leader acts on it via _clear_failed_restore (inline here
-        if this unit is the leader). resume_failover runs first but best-effort:
-        a raise must not stop the marker being recorded, or the restore re-wedges.
+        Resumes sentinel failover (best-effort: a raise must not stop the marker
+        being recorded, or the restore re-wedges) and records a failure marker on
+        this unit's own databag. The failing unit is often not the juju leader,
+        and only the leader can clear the app-level restore_id, so the leader
+        acts on the marker via _finish_failed_restore (inline if this unit is it).
         """
         try:
             self.charm.sentinel_manager.resume_failover()
         except Exception:
-            logger.exception("resume_failover during restore teardown failed")
+            logger.exception("resume_failover after a failed restore step raised")
         kind = (
             RestoreFailure.UNHEALTHY
             if isinstance(exc, ValkeyClusterNotReadyError)
@@ -522,16 +557,19 @@ class BackupEvents(ops.Object):
         # Stamp with the attempt token so it can't be misread against a later restore.
         marker = f"{kind.value}:{self.charm.state.cluster.restore_token}"
         self.charm.state.unit_server.update({"restore_failed": marker})
+        logger.warning("restore.failed unit=%s kind=%s", self.charm.unit.name, kind.value)
         if self.charm.unit.is_leader():
             # Already resumed failover just above; don't do it twice.
-            self._clear_failed_restore(resume=False)
+            self._finish_failed_restore(resume=False)
 
-    def _clear_failed_restore(self, resume: bool = True) -> None:
-        """Leader-only: flag the failure (UNHEALTHY vs FAILED) and clear restore state.
+    def _finish_failed_restore(self, resume: bool = True) -> None:
+        """Leader-only: end a failed restore and surface its terminal status.
 
-        ``resume`` resumes failover as a backstop, since a failing peer's own
-        best-effort resume may have raised. The leader-self teardown already
-        resumed, so it passes resume=False to avoid a redundant SENTINEL RESET.
+        Clears the app-level restore state (un-wedging the cluster) and adds
+        RESTORE_FAILED / RESTORE_UNHEALTHY. ``resume`` resumes failover as a
+        backstop, since a failing peer's own best-effort resume may have raised.
+        The leader-self path already resumed, so it passes resume=False to avoid
+        a redundant SENTINEL RESET.
         """
         # Read the failure kind while the token still matches the marker.
         status = (
@@ -539,17 +577,22 @@ class BackupEvents(ops.Object):
             if self.charm.state.failed_restore_kind == RestoreFailure.UNHEALTHY.value
             else RestoreStatuses.RESTORE_FAILED
         )
+        logger.warning(
+            "restore.ended backup_id=%s status=%s",
+            self.charm.state.cluster.restore_id,
+            status.name,
+        )
         # Clear restore state before the best-effort resume and status write.
         # This ordering isn't itself the wedge guard: if resume_failover raises
         # outside the narrow catch the hook errors and Juju rolls back this write
-        # too, so the leader just retries teardown until resume succeeds. Clearing
-        # first only keeps the intent (unwedge is the priority) explicit.
+        # too, so the leader just retries until resume succeeds. Clearing first
+        # only keeps the intent (unwedge is the priority) explicit.
         self._clear_restore_state()
         if resume:
             try:
                 self.charm.sentinel_manager.resume_failover()
             except ValkeyWorkloadCommandError:
-                logger.exception("resume_failover during leader restore teardown failed")
+                logger.exception("resume_failover while ending the failed restore raised")
         self.charm.state.statuses.add(
             status.value,
             scope="app",
