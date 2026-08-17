@@ -318,43 +318,48 @@ def test_ca_rotation_by_expiration(juju: jubilant.Juju) -> None:
                 password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
                 tls_enabled=True,
             ), "Client certificate of the previous CA is still accepted"
+    # The rotation is still rolling through the units at this point: keep re-downloading the
+    # material until it is the new CA's and the cluster accepts it.
+    for attempt in Retrying(
+        stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(15), reraise=True
+    ):
+        with attempt:
+            logger.info("Store new certificate after rotation")
+            download_client_certificate_from_unit(juju, APP_NAME)
+            with open(TLS_CA_FILE, "r") as ca_file:
+                new_ca_certificate = ca_file.read()
+            assert new_ca_certificate, "Failed to get updated ca certificate"
+            with open(TLS_CERT_FILE, "r") as cert_file:
+                new_certificate = cert_file.read()
+            assert new_certificate, "Failed to get updated certificate"
+            assert old_ca_certificate != new_ca_certificate, "CA certificate was not updated"
+            assert old_certificate != new_certificate, "Certificate was not updated"
+
+            logger.info("Check access with updated certificate")
+            result = set_key(
+                juju=juju,
+                endpoints=endpoints,
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                tls_enabled=True,
+                key=TEST_KEY,
+                value=TEST_VALUE,
+            )
+            assert result == "OK", "Failed to write data with updated certificate"
+
+            assert (
+                get_key(
+                    juju=juju,
+                    endpoints=endpoints,
+                    username=CharmUsers.VALKEY_ADMIN.value,
+                    password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+                    tls_enabled=True,
+                    key=TEST_KEY,
+                )
+                == TEST_VALUE
+            ), "Failed to read data with updated certificate"
+
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=10, unit_count=NUM_UNITS),
         timeout=DEPLOY_TIMEOUT_TLS_S,
     )
-
-    logger.info("Store new certificate after rotation")
-    download_client_certificate_from_unit(juju, APP_NAME)
-    with open(TLS_CA_FILE, "r") as ca_file:
-        new_ca_certificate = ca_file.read()
-    assert new_ca_certificate, "Failed to get updated ca certificate"
-    with open(TLS_CERT_FILE, "r") as cert_file:
-        new_certificate = cert_file.read()
-    assert new_certificate, "Failed to get updated certificate"
-    assert old_ca_certificate != new_ca_certificate, "CA certificate was not updated"
-    assert old_certificate != new_certificate, "Certificate was not updated"
-
-    logger.info("Check access with updated certificate")
-    endpoints = get_cluster_endpoints(juju, APP_NAME)
-    result = set_key(
-        juju=juju,
-        endpoints=endpoints,
-        username=CharmUsers.VALKEY_ADMIN.value,
-        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-        tls_enabled=True,
-        key=TEST_KEY,
-        value=TEST_VALUE,
-    )
-    assert result == "OK", "Failed to write data with updated certificate"
-
-    assert (
-        get_key(
-            juju=juju,
-            endpoints=endpoints,
-            username=CharmUsers.VALKEY_ADMIN.value,
-            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
-            tls_enabled=True,
-            key=TEST_KEY,
-        )
-        == TEST_VALUE
-    ), "Failed to read data with updated certificate"
