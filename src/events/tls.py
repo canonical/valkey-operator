@@ -112,6 +112,11 @@ class TLSEvents(ops.Object):
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle TLS related changes to the peer relation."""
+        # Skip during a restore (CA rotation would collide with the primary
+        # restart). Restore completion re-fires relation-changed, reconciling then.
+        if self.charm.state.cluster.is_restore_in_progress:
+            return
+
         if self.charm.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
             try:
                 self._orchestrate_ca_rotation()
@@ -126,10 +131,10 @@ class TLSEvents(ops.Object):
             finally:
                 return
 
-        if not self.charm.tls_manager.will_certificate_expire():
-            return
-
-        if self.charm.state.client_tls_relation:
+        if (
+            not self.charm.tls_manager.will_certificate_expire()
+            or self.charm.state.client_tls_relation
+        ):
             return
 
         logger.info("Renewing certificate for internal peer-TLS because it expires soon")

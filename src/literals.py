@@ -38,6 +38,15 @@ EXTERNAL_CLIENTS_RELATION = "valkey-client"
 S3_RELATION_NAME = "s3-credentials"
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
+PRE_RESTORE_SUFFIX = ".pre-restore"
+# Normal down-after (rendered by ConfigManager, reasserted by resume_failover);
+# suppression raises it to a day so the primary's restart isn't seen as a failure.
+SENTINEL_DOWN_AFTER_MS = 30000
+SENTINEL_DOWN_AFTER_SUPPRESSED_MS = 86_400_000
+# Bounded waits: big enough for a large RDB load/resync, small enough that a stuck
+# restore self-terminates (freeing the cluster-wide hold) fast. Raise for bigger data.
+RESTORE_LOAD_TIMEOUT_S = 600
+RESTORE_RESYNC_TIMEOUT_S = 900
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -107,6 +116,30 @@ class StartState(StrEnum):
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     ERROR_ON_START = "error_on_start"
     STARTED = "started"
+
+
+class RestoreStep(StrEnum):
+    """Steps of the restore coordination workflow (ordered).
+
+    RESTORE is one fused barrier (primary suppresses failover, downloads, swaps
+    in the RDB); download and restore aren't split since no unit has work between.
+    """
+
+    NOT_STARTED = ""
+    RESTORE = "restore"
+    RESYNC = "resync"
+    COMPLETED = "completed"
+
+
+class RestoreFailure(StrEnum):
+    """Per-unit restore failure kind, recorded on the failing unit's databag.
+
+    UNHEALTHY marks a cluster that never became ready (surfaces RESTORE_UNHEALTHY);
+    FAILED is any other failure.
+    """
+
+    FAILED = "failed"
+    UNHEALTHY = "unhealthy"
 
 
 class ScaleDownState(StrEnum):

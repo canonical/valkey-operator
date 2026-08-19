@@ -26,6 +26,7 @@ from literals import (
     PEER_RELATION,
     S3_RELATION_NAME,
     STATUS_PEERS_RELATION,
+    RestoreFailure,
     Substrate,
 )
 
@@ -214,6 +215,66 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def number_units_started(self) -> int:
         """Return the number of units in the cluster that have their Valkey server started."""
         return len([unit for unit in self.servers if unit.model and unit.is_started])
+
+    @property
+    def can_restore_workflow_proceed(self) -> bool:
+        """True only when every restore participant has reached the current step.
+
+        Gates the leader's next advance. Fail-closed: a departed participant is
+        absent from ``servers`` and counts as not reached, so the restore stalls
+        rather than silently skipping it.
+        """
+        instruction = self.cluster.restore_instruction
+        by_name = {server.unit_name: server for server in self.servers}
+        for name in self.cluster.restore_participants:
+            server = by_name.get(name)
+            if server is None or server.restore_step != instruction:
+                return False
+        return True
+
+    @property
+    def restore_participant_departed(self) -> bool:
+        """True if a restore participant left the peer relation.
+
+        A departed participant can never satisfy the barrier, so the restore would
+        stall forever. Membership only changes on removal, never a restart, so a
+        present-but-behind unit doesn't trip this.
+        """
+        live = {server.unit_name for server in self.servers}
+        return any(name not in live for name in self.cluster.restore_participants)
+
+    @property
+    def is_backup_in_progress_any(self) -> bool:
+        """True if ANY peer unit is uploading a backup (backup_id is per-unit)."""
+        return any(server.is_backup_in_progress for server in self.servers)
+
+    @property
+    def is_tls_transitioning(self) -> bool:
+        """True while any unit is mid client-TLS enable/disable or a CA rotation.
+
+        A restore restarts the primary, which would collide with the cert swap.
+        """
+        return any(server.is_tls_transitioning for server in self.servers)
+
+    @property
+    def failed_restore_kind(self) -> str:
+        """Failure kind of any participant that failed the CURRENT attempt, or ``""``.
+
+        Scoped to ``restore_token`` so a stale marker from a prior attempt is
+        ignored. UNHEALTHY wins over FAILED so a not-ready cluster surfaces the
+        more specific status.
+        """
+        token = self.cluster.restore_token
+        participants = set(self.cluster.restore_participants)
+        kinds = {
+            server.restore_failure_kind(token)
+            for server in self.servers
+            if server.unit_name in participants
+        }
+        kinds.discard("")
+        if RestoreFailure.UNHEALTHY.value in kinds:
+            return RestoreFailure.UNHEALTHY.value
+        return RestoreFailure.FAILED.value if kinds else ""
 
     @property
     def ldap(self) -> LDAPState:

@@ -44,6 +44,10 @@ class ValkeyConfigurationError(Exception):
     """Custom Exception if Valkey configuration fails to be set."""
 
 
+class ValkeyClusterNotReadyError(Exception):
+    """Raised when the cluster does not reach a ready state within a bounded wait."""
+
+
 class SentinelFailoverError(Exception):
     """Custom Exception if triggering sentinel failover fails."""
 
@@ -82,3 +86,7 @@ class ValkeyBackupInProgressError(ValkeyBackupError):
     Raising from ``storage-detaching`` errors the hook so Juju retries it
     until the backup finishes; a plain ``return`` would not hold teardown.
     """
+
+
+class ValkeyRestoreError(Exception):
+    """Raised when a restore operation fails."""

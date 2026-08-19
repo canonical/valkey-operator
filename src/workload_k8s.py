@@ -8,7 +8,7 @@ import collections
 import logging
 import signal
 import threading
-from typing import IO, override
+from typing import IO, BinaryIO, override
 
 import ops
 from charmlibs import pathops
@@ -171,17 +171,22 @@ class ValkeyK8sWorkload(WorkloadBase):
         return pebble.Layer(layer_config)
 
     @override
-    def start(self) -> None:
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
         try:
-            self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-            self.container.restart(self.valkey_service, self.sentinel_service, self.metric_service)
+            if service:
+                self.container.start(service)
+            else:
+                self.container.add_layer(CHARM, self.pebble_layer, combine=True)
+                self.container.restart(
+                    self.valkey_service, self.sentinel_service, self.metric_service
+                )
         except (
             pebble.ChangeError,
             pebble.ConnectionError,
             pebble.APIError,
         ) as e:
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
-        if not self.alive():
+        if check_alive and not self.alive(service):
             raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
@@ -198,21 +203,54 @@ class ValkeyK8sWorkload(WorkloadBase):
             ) from e
 
     @override
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        # K8s: separate containers; stream into the workload via Pebble push.
+        try:
+            self.container.push(
+                dest.as_posix(),
+                source=src,
+                make_dirs=True,
+                user=user,
+                group=group or user,
+            )
+        except (pebble.PathError, pebble.ConnectionError, pebble.APIError) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        # No pathops rename inside the container; shell out via Pebble exec.
+        try:
+            self.container.exec(command=["mv", src.as_posix(), dest.as_posix()]).wait()
+        except (
+            pebble.ExecError,
+            pebble.ChangeError,
+            pebble.ConnectionError,
+            pebble.APIError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self) -> bool:
+    def alive(self, service: str | None = None) -> bool:
+        services = (
+            [service]
+            if service
+            else [self.valkey_service, self.sentinel_service, self.metric_service]
+        )
         try:
-            for service_name in [
-                self.valkey_service,
-                self.sentinel_service,
-                self.metric_service,
-            ]:
-                service = self.container.get_service(service_name)
-                if not service.is_running():
+            for service_name in services:
+                if not self.container.get_service(service_name).is_running():
                     return False
         except (pebble.ConnectionError, ops.ModelError) as e:
             logger.warning("Cannot check service health: %s", e)
@@ -254,9 +292,14 @@ class ValkeyK8sWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+        targets = (
+            (service,)
+            if service
+            else (self.valkey_service, self.sentinel_service, self.metric_service)
+        )
         try:
-            self.container.stop(self.valkey_service, self.sentinel_service, self.metric_service)
+            self.container.stop(*targets)
         except (
             pebble.ChangeError,
             pebble.TimeoutError,
@@ -267,6 +310,11 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"
             ) from e
+        # Opt-in: verify the stopped service(s) went down.
+        if check_alive and self.alive(service):
+            raise ValkeyServicesCouldNotBeStoppedError(
+                f"Service {service or 'valkey'} still running after stop."
+            )
 
     @override
     def total_memory_bytes(self) -> int:

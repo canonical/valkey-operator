@@ -10,20 +10,27 @@ import logging
 import pathlib
 import re
 from datetime import datetime, timezone
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import IO, TYPE_CHECKING, Any, BinaryIO, cast
 
 import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from charmlibs import pathops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
-from common.exceptions import ValkeyBackupError
-from literals import BACKUP_CA_FILENAME, BACKUP_ID_FORMAT, CharmUsers
-from statuses import BackupStatuses, CharmStatuses
+from common.exceptions import ValkeyBackupError, ValkeyRestoreError
+from literals import (
+    BACKUP_CA_FILENAME,
+    BACKUP_ID_FORMAT,
+    PRE_RESTORE_SUFFIX,
+    CharmUsers,
+    RestoreStep,
+)
+from statuses import BackupStatuses, CharmStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.literals import BucketLocationConstraintType
@@ -35,19 +42,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# RDB streams begin with a magic header: "REDIS" on upstream Redis, "VALKEY"
-# on Valkey. An upload that does not start with one of these is not a valid
-# snapshot and must not be recorded as a backup.
+# RDB streams start with "REDIS" (Redis) or "VALKEY"; anything else is not a
+# valid snapshot and must not be recorded as a backup.
 _RDB_MAGIC = (b"REDIS", b"VALKEY")
 
-# A backup id is BACKUP_ID_FORMAT == "%Y-%m-%dT%H:%M:%SZ". Anything in the
-# bucket prefix that does not match (stray uploads, lifecycle markers,
-# future PITR/AOF objects) must not appear in list-backups output.
+# Only ISO-8601 backup ids (BACKUP_ID_FORMAT) belong in list-backups; this
+# skips stray uploads, lifecycle markers, and future PITR/AOF objects.
 _BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
-# A CA-chain entry must look like PEM: an item that lacks the armour header
-# (e.g. base64 with no "-----BEGIN ... -----", or a stray non-cert string)
-# would produce a CA bundle boto3 cannot load. Same shape as managers/tls.py.
+# A CA-chain entry must look like PEM (armour header) or boto3 can't load the
+# bundle. Same shape as managers/tls.py.
 _PEM_HEADER_RE = re.compile(r"-+BEGIN [A-Z ]+-+")
 
 
@@ -77,11 +81,8 @@ class BackupManager(ManagerStatusProtocol):
     """Manage S3 backup uploads for the local Valkey instance."""
 
     name: str = "backup"
-    # Narrow the protocol's ``state: StatusesStateProtocol`` to the charm's
-    # concrete state object so attribute access type-checks. ClusterState
-    # structurally satisfies StatusesStateProtocol; the override warning is
-    # pyright being strict about mutable-variable invariance, and the same
-    # narrowing is used by the other managers.
+    # Narrow the protocol's state to ClusterState so attribute access type-checks;
+    # the pyright override warning is invariance strictness (other managers do the same).
     state: "ClusterState"
 
     def __init__(self, state: "ClusterState", workload: "WorkloadBase"):
@@ -92,13 +93,33 @@ class BackupManager(ManagerStatusProtocol):
     def _backup_ca_path(self) -> pathlib.Path:
         """Charm-local path to the S3 endpoint CA bundle used by boto3.
 
-        Deliberately charm-process-local, NOT a workload ``tls_paths`` entry:
-        boto3 runs in the charm process, not the workload container, so on
-        K8s the two do not share a filesystem and the bundle could not live
-        in the workload's (container) TLS dir. Keeping it out of that dir
-        also stops the S3 endpoint CA being trusted as a Valkey client CA.
+        Charm-process-local, not a workload ``tls_paths`` entry: boto3 runs in
+        the charm process (a separate filesystem from the workload on K8s), and
+        this keeps the S3 CA from being trusted as a Valkey client CA.
         """
         return self.state.charm.charm_dir / BACKUP_CA_FILENAME
+
+    @property
+    def _dump_path(self) -> pathops.PathProtocol:
+        """Live Valkey RDB path (``dump.rdb``) inside the workload's data directory."""
+        return self.workload.working_dir / "dump.rdb"
+
+    @property
+    def _dump_tmp_path(self) -> pathops.PathProtocol:
+        """Temp path for a fresh download; renamed atomically onto ``_dump_path``.
+
+        On the data partition next to ``dump.rdb``, so the promote is a
+        same-partition rename (not a cross-device copy).
+        """
+        return self.workload.working_dir / "dump.rdb.part"
+
+    @property
+    def _pre_restore_path(self) -> pathops.PathProtocol:
+        """Pre-restore RDB snapshot kept for rollback, on the archive partition.
+
+        On archive_dir so the rollback copy doesn't double the data partition.
+        """
+        return self.workload.archive_dir / ("dump.rdb" + PRE_RESTORE_SUFFIX)
 
     # ── boto3 client construction ────────────────────────────────────────
 
@@ -108,8 +129,7 @@ class BackupManager(ManagerStatusProtocol):
         if s3_parameters.tls_ca_chain:
             verify = self._backup_ca_path.as_posix()
 
-        # Scope the credentials to a Session so they are not free-floating
-        # kwargs that show up in repr(args) of any boto3 traceback.
+        # Scope creds to a Session so they don't surface in boto3 traceback repr(args).
         session = boto3.Session(
             aws_access_key_id=s3_parameters.access_key,
             aws_secret_access_key=s3_parameters.secret_key,
@@ -136,30 +156,24 @@ class BackupManager(ManagerStatusProtocol):
         bucket = self._get_bucket_resource(s3_parameters)
         region = s3_parameters.region
         try:
-            # us-east-1 is AWS S3's default region and is the one value that
-            # must NOT be sent as a LocationConstraint: CreateBucket rejects
-            # "us-east-1" with InvalidLocationConstraint. Any other region
-            # (and only then) is passed explicitly. See aws-sdk-js#3647.
+            # us-east-1 must NOT be sent as a LocationConstraint (CreateBucket
+            # rejects it); any other region is passed explicitly. See aws-sdk-js#3647.
             if region and region != "us-east-1":
                 bucket.create(
                     CreateBucketConfiguration={
-                        # region is a free-form str; the stub wants its region
-                        # Literal. Any non-default region is a valid constraint.
+                        # stub wants a region Literal; any non-default region is valid.
                         "LocationConstraint": cast("BucketLocationConstraintType", region)
                     }
                 )
             else:
                 bucket.create()
-            # Bound the wait: the boto3 default is 20 * 5s = up to 100s, which
-            # would block leader_elected when the S3 endpoint is slow. The
-            # resource waiter forwards WaiterConfig to the underlying
-            # waiter.wait(); the stub just does not model that kwarg.
+            # Bound the wait (boto3 default is up to 100s) so a slow endpoint can't
+            # block leader_elected. The stub doesn't model WaiterConfig here.
             bucket.wait_until_exists(
                 WaiterConfig={"Delay": 1, "MaxAttempts": 5}  # pyright: ignore[reportCallIssue]
             )
         except ClientError as e:
-            # Match the structured error code, not a substring of the rendered
-            # message: alt-S3 backends localise/recase the message text.
+            # Match the structured code, not the message (alt-S3 backends recase it).
             code = e.response.get("Error", {}).get("Code", "")
             if code in {
                 "BucketAlreadyOwnedByYou",
@@ -177,10 +191,8 @@ class BackupManager(ManagerStatusProtocol):
         chain = s3_parameters.get("tls-ca-chain")
         if not chain:
             return
-        # A misconfigured integrator may send a bare string; "\n".join would
-        # then iterate characters and write a corrupt CA bundle. Require a
-        # list of PEM certificates -- each item must carry a PEM armour
-        # header, mirroring the TLS manager's key check.
+        # Require a list of PEM certs: a bare string would make "\n".join iterate
+        # characters and write a corrupt bundle (mirrors the TLS manager's check).
         if not isinstance(chain, list) or not all(
             isinstance(c, str) and _PEM_HEADER_RE.search(c) for c in chain
         ):
@@ -196,11 +208,7 @@ class BackupManager(ManagerStatusProtocol):
     # ── list ────────────────────────────────────────────────────────────
 
     def list_backups(self) -> list[str]:
-        """Return valid backup ids in the configured bucket, newest first.
-
-        ``bucket.objects.filter`` auto-paginates; results are filtered to the
-        backup-id format so unrelated objects under the prefix are excluded.
-        """
+        """Return valid backup ids in the configured bucket, newest first (auto-paginated)."""
         s3_parameters = self.state.cluster.s3_credentials
         if s3_parameters is None:
             raise ValkeyBackupError("S3 credentials unavailable")
@@ -241,8 +249,7 @@ class BackupManager(ManagerStatusProtocol):
         started = datetime.now(timezone.utc)
         backup_id = started.strftime(BACKUP_ID_FORMAT)
         key = f"{s3_parameters.path}/{backup_id}"
-        # Structured audit trail: who/what/where for forensics on a backup
-        # that lands somewhere unexpected. Endpoint is logged; creds never.
+        # Structured audit trail for forensics; endpoint logged, creds never.
         logger.info(
             "backup.started backup_id=%s unit=%s bucket=%s endpoint=%s",
             backup_id,
@@ -253,7 +260,7 @@ class BackupManager(ManagerStatusProtocol):
 
         self.state.unit_server.update({"backup_id": backup_id})
         bucket = self._get_bucket_resource(s3_parameters)
-        # Pass the admin password via VALKEYCLI_AUTH, never on argv (P1-2).
+        # Pass the admin password via VALKEYCLI_AUTH, never on argv (world-visible).
         proc = self.workload.exec_stream(
             self._build_rdb_command(),
             env={"VALKEYCLI_AUTH": self.state.unit_server.valkey_admin_password},
@@ -261,8 +268,7 @@ class BackupManager(ManagerStatusProtocol):
         reader = _CountingReader(proc.stdout)
 
         try:
-            # Do not retry the whole upload: reader is backed by proc.stdout
-            # and cannot be rewound. boto3 retries individual parts itself.
+            # Don't retry the whole upload: reader can't rewind (boto3 retries parts).
             bucket.upload_fileobj(
                 cast("IO[bytes]", reader),
                 key,
@@ -271,24 +277,20 @@ class BackupManager(ManagerStatusProtocol):
             rc, stderr = proc.wait()
             if rc != 0:
                 raise ValkeyBackupError(f"valkey-cli --rdb exited {rc}: {stderr}")
-            # valkey-cli can exit 0 having written nothing (or an error blob)
-            # to stdout. Refuse to record an object that is not a real RDB.
+            # valkey-cli can exit 0 with no/invalid stdout; refuse a non-RDB object.
             if reader.bytes_read == 0 or not reader.head.startswith(_RDB_MAGIC):
                 raise ValkeyBackupError(
                     f"Uploaded object is not a valid RDB stream "
                     f"({reader.bytes_read} bytes); refusing to record this backup"
                 )
         except ValkeyBackupError:
-            # A complete-but-invalid object (bad exit code / bad RDB magic) is
-            # in the bucket; delete it. (A mid-stream ClientError is handled
-            # below, where boto3 has already aborted the multipart upload.)
+            # A complete-but-invalid object is in the bucket; delete it. (A
+            # mid-stream ClientError is handled below, after boto3 aborts.)
             self._delete_object_best_effort(bucket, key)
             logger.warning("backup.failed backup_id=%s", backup_id)
             raise
         except ClientError as e:
-            # upload_fileobj failed mid-stream; boto3 aborts the multipart
-            # upload itself, so there is no object to delete -- just stop the
-            # producer so valkey-cli does not linger.
+            # boto3 aborts the multipart upload itself; just stop the producer.
             proc.kill()
             logger.warning("backup.failed backup_id=%s", backup_id)
             raise ValkeyBackupError(e) from e
@@ -305,6 +307,123 @@ class BackupManager(ManagerStatusProtocol):
 
         return backup_id
 
+    # ── restore ─────────────────────────────────────────────────────────
+
+    def verify_backup_is_rdb(self, backup_id: str) -> None:
+        """Cheaply confirm the S3 object is an RDB before touching valkey.
+
+        A ranged GET of the first 16 bytes (not a full download), so a missing or
+        non-RDB backup-id fails while valkey is still serving.
+        """
+        s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyRestoreError("S3 credentials unavailable")
+        bucket = self._get_bucket_resource(s3_parameters)
+        try:
+            head = (
+                bucket.Object(f"{s3_parameters.path}/{backup_id}")
+                .get(Range="bytes=0-15")["Body"]
+                .read()
+            )
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
+        if not head.startswith(_RDB_MAGIC):
+            raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
+
+    def download_backup(self, backup_id: str) -> None:
+        """Stream the full RDB from S3 onto the data partition as ``dump.rdb``.
+
+        push_data_file copies in bounded chunks (never buffering the whole object
+        in the charm container) to ``dump.rdb.part``, then an atomic same-partition
+        rename onto ``dump.rdb`` so it never appears partial.
+        """
+        s3_parameters = self.state.cluster.s3_credentials
+        if s3_parameters is None:
+            raise ValkeyRestoreError("S3 credentials unavailable")
+        bucket = self._get_bucket_resource(s3_parameters)
+
+        try:
+            body = bucket.Object(f"{s3_parameters.path}/{backup_id}").get()["Body"]
+        except ClientError as e:
+            raise ValkeyRestoreError(e) from e
+
+        # Stream S3 -> data partition; the StreamingBody is a binary read()-able
+        # at runtime (cast for the stub), copied in bounded chunks by the workload.
+        self.workload.push_data_file(
+            cast(BinaryIO, body),
+            self._dump_tmp_path,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
+        # Atomic promote: same-partition rename, so dump.rdb only ever appears complete.
+        self.workload.move_file(self._dump_tmp_path, self._dump_path)
+
+    # ── restore steps ────────────────────────────────────────────────────
+
+    @staticmethod
+    def next_restore_step(step: RestoreStep) -> RestoreStep:
+        """Return the step following ``step`` in the restore workflow."""
+        order = [
+            RestoreStep.NOT_STARTED,
+            RestoreStep.RESTORE,
+            RestoreStep.RESYNC,
+            RestoreStep.COMPLETED,
+        ]
+        return order[order.index(step) + 1]
+
+    def set_restore_step(self, step: RestoreStep) -> None:
+        """Record this unit's completed restore step on its databag."""
+        self.state.unit_server.update({"restore_step": step.value})
+
+    def has_pre_restore_copy(self) -> bool:
+        """Whether a rollback copy exists -- an interrupted primary restore.
+
+        Only the primary creates it, and it's removed on success or rollback, so
+        (copy present + valkey down) uniquely marks a mid-swap primary on redelivery.
+        """
+        return self.workload.path_exists(self._pre_restore_path)
+
+    def _ensure_stopped(self) -> None:
+        """Stop valkey-server only if it is running.
+
+        K8s errors on stopping a stopped service. Gate on the single-service
+        ``alive(valkey_service)``, not the all-services ``alive()`` (False when a
+        sibling is down, which would skip stopping a live valkey and swap the dump
+        under it).
+        """
+        if self.workload.alive(self.workload.valkey_service):
+            # Confirm it stopped before the RDB swap.
+            self.workload.stop(self.workload.valkey_service, check_alive=True)
+
+    def restore_on_primary(self) -> None:
+        """Stop valkey, move the dump aside for rollback, download the RDB, restart.
+
+        Move-aside to the archive partition keeps peak usage ~1x. Bypasses
+        restart_workload (can't bracket a file swap); the is_restore_in_progress
+        defer holds off concurrent restarts. Only runs for a fresh swap (redelivery
+        is handled upstream), so any copy here is stale and dropped first.
+        """
+        self._ensure_stopped()
+        if self.workload.path_exists(self._pre_restore_path):
+            self.cleanup_restore_files()
+        self.workload.move_file(self._dump_path, self._pre_restore_path)
+        self.download_backup(self.state.cluster.restore_id)
+        # Readiness is gated later by wait_until_loaded.
+        self.workload.start(self.workload.valkey_service, check_alive=False)
+
+    def roll_back(self) -> None:
+        """Restore the pre-restore dump and restart (stop FIRST to defeat auto-restart)."""
+        self._ensure_stopped()
+        if self.workload.path_exists(self._pre_restore_path):
+            self.workload.move_file(self._pre_restore_path, self._dump_path)
+        # Drop any partial download left on the data partition by a failed stream.
+        self.workload.remove_file(self._dump_tmp_path)
+        self.workload.start(self.workload.valkey_service, check_alive=False)
+
+    def cleanup_restore_files(self) -> None:
+        """Remove the pre-restore rollback copy after a successful restore."""
+        self.workload.remove_file(self._pre_restore_path)
+
     # ── helpers ─────────────────────────────────────────────────────────
 
     def _build_rdb_command(self) -> list[str]:
@@ -320,11 +439,7 @@ class BackupManager(ManagerStatusProtocol):
 
     @staticmethod
     def _delete_object_best_effort(bucket: "Bucket", key: str) -> None:
-        """Delete an S3 object, swallowing any error.
-
-        Used on backup-failure cleanup paths where a delete that itself
-        fails must not mask the original error; broadest catch on purpose.
-        """
+        """Delete an S3 object, swallowing any error (best-effort cleanup)."""
         try:
             bucket.Object(key).delete()
         except Exception as e:
@@ -333,9 +448,8 @@ class BackupManager(ManagerStatusProtocol):
     # ── advanced statuses ───────────────────────────────────────────────
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
-        """Contribute backup-related statuses to the StatusHandler."""
-        # Copy: ``.root`` is the live list inside the StatusObjectList model,
-        # and the appends below would otherwise mutate persisted state.
+        """Contribute backup- and restore-related statuses to the StatusHandler."""
+        # Copy: .root is the live list; the appends below must not mutate persisted state.
         status_list: list[StatusObject] = list(
             self.state.statuses.get(
                 scope=scope,
@@ -347,7 +461,15 @@ class BackupManager(ManagerStatusProtocol):
         if scope == "unit" and self.state.unit_server.is_backup_in_progress:
             status_list.append(BackupStatuses.BACKUP_IN_PROGRESS.value)
 
-        if scope == "app" and self.state.s3_relation and not self.state.cluster.s3_credentials:
+        if (
+            scope == "app"
+            and self.state.unit_server.is_started
+            and self.state.s3_relation
+            and not self.state.cluster.s3_credentials
+        ):
             status_list.append(BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value)
+
+        if scope == "app" and self.state.cluster.is_restore_in_progress:
+            status_list.append(RestoreStatuses.RESTORE_IN_PROGRESS.value)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]

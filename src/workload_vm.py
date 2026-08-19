@@ -8,10 +8,11 @@ import collections
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
-from typing import override
+from typing import BinaryIO, override
 
 from charmlibs import pathops, snap
 from tenacity import (
@@ -166,19 +167,23 @@ class ValkeyVmWorkload(WorkloadBase):
             return False
 
     @override
-    def start(self) -> None:
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
+        services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
-            self.valkey.start(services=[self.valkey_service, self.sentinel_service])
+            self.valkey.start(services=services)
         except snap.SnapError as e:
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
 
-        # The service might start but fail to load and die immediately
-        # On k8s starting the services will wait (poll) for them to be started.
-        # We do the same here to make sure the services are alive after start.
-        if not self.wait_for_services_to_be_alive(duration=3):
-            logger.error("Valkey service is not alive after start.")
-            raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
+        # A service can start then die immediately; when check_alive, poll the
+        # whole set (all-services start) or check the one service, matching k8s.
+        if check_alive:
+            alive = (
+                self.alive(service) if service else self.wait_for_services_to_be_alive(duration=3)
+            )
+            if not alive:
+                logger.error("Valkey service is not alive after start.")
+                raise ValkeyServiceNotAliveError("Valkey service is not alive after start.")
 
     @override
     def restart(self, service: str) -> None:
@@ -189,6 +194,32 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyServicesFailedToStartError(
                 "Failed to restart service %s: %s", service, e
             ) from e
+
+    @override
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        # VM: charm and snap share the filesystem; stream straight to disk, then chown.
+        try:
+            with open(dest.as_posix(), "wb") as fh:
+                shutil.copyfileobj(src, fh)
+            if user:
+                shutil.chown(dest.as_posix(), user=user, group=group or user)
+        except OSError as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        # shutil.move (not os.replace): restore crosses the data<->archive
+        # partitions (cross-device), which os.replace rejects with EXDEV.
+        try:
+            shutil.move(src.as_posix(), dest.as_posix())
+        except OSError as e:
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     def exec(
@@ -230,11 +261,10 @@ class ValkeyVmWorkload(WorkloadBase):
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self) -> bool:
+    def alive(self, service: str | None = None) -> bool:
+        services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
-            return bool(self.valkey.services[self.valkey_service]["active"]) and bool(
-                self.valkey.services[self.sentinel_service]["active"]
-            )
+            return all(bool(self.valkey.services[s]["active"]) for s in services)
         except KeyError:
             return False
 
@@ -268,20 +298,20 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+        services = [service] if service else [SNAP_SERVICE, SNAP_SENTINEL_SERVICE]
         try:
-            self.valkey.stop(services=[SNAP_SERVICE, SNAP_SENTINEL_SERVICE])
+            self.valkey.stop(services=services)
         except snap.SnapError as e:
             logger.error("Failed to stop Valkey services: %s", e)
             raise ValkeyServicesCouldNotBeStoppedError(
                 f"Failed to stop Valkey services: {e}"
             ) from e
 
-        if self.alive():
-            logger.error("Valkey services are still alive after stop.")
-            raise ValkeyServicesCouldNotBeStoppedError(
-                "Valkey services are still alive after stop."
-            )
+        # Opt-in: verify the stopped service(s) went down.
+        if check_alive and self.alive(service):
+            logger.error("Valkey service(s) still alive after stop.")
+            raise ValkeyServicesCouldNotBeStoppedError("Valkey service(s) still alive after stop.")
 
     @override
     def total_memory_bytes(self) -> int:

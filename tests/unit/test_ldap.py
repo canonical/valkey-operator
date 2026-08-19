@@ -1129,6 +1129,320 @@ def test_sync_ldap_users_non_leader(cloud_spec):
             reload_acl.assert_called_once()
 
 
+def test_ldap_peer_relation_changed_skipped_during_restore(cloud_spec):
+    """During a restore the LDAP peer-relation handler must not reload ACLs.
+
+    The restore workflow itself drives peer relation-changed events; reloading
+    ACLs on the primary mid-restart would collide with the RDB swap. Restore
+    completion re-fires relation-changed, reconciling from current state then.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "ldap-enabled": "true",
+        },
+        local_app_data={
+            "ldap-user-epoch": "1774854243.6019819",
+            "restore-id": "2026-05-13T10:00:00Z",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+    ldap_relation = testing.Relation(
+        id=3, endpoint=LDAP_RELATION, remote_app_data=ldap_relation_data
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+    client_relation = testing.Relation(
+        id=5,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": """[{"resource": "my-keys", "request-id": "8865631800293def", "salt": "6TNjC2Aid8hlfBpf", \
+                        "entity-permissions": [{"resource_name": "valkey_group", "resource_type": "acl", \
+                         "privileges": ["read", "write", "pubsub"]}]}]""",
+        },
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={
+            peer_relation,
+            status_peer_relation,
+            ldap_relation,
+            ldap_ca_cert_relation,
+            client_relation,
+        },
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("managers.auth.AuthManager._get_internal_user_acl_line"),
+        patch("managers.auth.AuthManager._get_client_user_acl_lines"),
+        patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+        patch("managers.auth.AuthManager._get_ldap_users_for_group", return_value=[["u"]]),
+        patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl,
+    ):
+        ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
+        reload_acl.assert_not_called()
+
+
+def test_ldap_config_changed_deferred_during_restore(cloud_spec):
+    """A config change arriving during a restore is deferred, not applied to the primary."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+    ldap_relation = testing.Relation(
+        id=3, endpoint=LDAP_RELATION, remote_app_data=ldap_relation_data
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+    client_relation = testing.Relation(
+        id=5,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": """[{"resource": "my-keys", "request-id": "8865631800293def", "salt": "6TNjC2Aid8hlfBpf", \
+                        "entity-permissions": [{"resource_name": "valkey_group", "resource_type": "acl", \
+                         "privileges": ["read", "write", "pubsub"]}]}]""",
+        },
+    )
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={
+            peer_relation,
+            status_peer_relation,
+            ldap_relation,
+            ldap_ca_cert_relation,
+            client_relation,
+        },
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with (
+        patch("managers.sentinel.SentinelManager.get_primary_ip"),
+        patch("managers.config.ConfigManager.set_config_properties") as set_config,
+        patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        set_config.assert_not_called()
+        reload_ldap.assert_not_called()
+        # Valid LDAP + restore in progress -> the reconfigure is deferred.
+        assert "config_changed" in [e.name for e in state_out.deferred]
+
+
+def test_ldap_config_changed_not_deferred_when_ldap_invalid_during_restore(cloud_spec):
+    """A config change on a non-LDAP cluster must not defer during a restore.
+
+    The restore guard sits below the is_ldap_valid filter, so a cluster without
+    LDAP configured returns early instead of needlessly deferring and replaying.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation},  # no LDAP relation -> is_ldap_valid False
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        assert not charm.state.is_ldap_valid
+        event = MagicMock()
+        charm.ldap_events._on_config_changed(event)
+        event.defer.assert_not_called()
+
+
+def test_ldap_ready_deferred_during_restore(cloud_spec):
+    """An ldap-ready event during a restore is deferred, not applied to the primary."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+    ldap_relation = testing.Relation(
+        id=3, endpoint=LDAP_RELATION, remote_app_data=ldap_relation_data
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=LdapReadyEvent)
+
+        with (
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.config.ConfigManager.set_config_properties") as set_config,
+            patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
+        ):
+            charm.ldap_events._on_ldap_ready(event)
+            manager.run()
+            set_config.assert_not_called()
+            reload_ldap.assert_not_called()
+            event.defer.assert_called_once()
+
+
+def test_ldap_secret_changed_guard_only_defers_the_ldap_secret_during_restore(cloud_spec):
+    """Only the LDAP bind-password secret defers during a restore.
+
+    An unrelated secret must return early, since the restore guard now sits
+    below the secret-id filter rather than above it.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "ldap-enabled": "true"},
+        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    ldap_secret = testing.Secret({"password": "dummy"})
+    ldap_relation_data = {
+        "auth_method": "simple",
+        "base_dn": "dc=glauth,dc=com",
+        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
+        "bind_password_secret": ldap_secret.id,
+        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
+        "starttls": "True",
+        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
+    }
+    ldap_relation = testing.Relation(
+        id=3, endpoint=LDAP_RELATION, remote_app_data=ldap_relation_data
+    )
+    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
+    client_relation = testing.Relation(
+        id=5,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": """[{"resource": "my-keys", "request-id": "8865631800293def", "salt": "6TNjC2Aid8hlfBpf", \
+                        "entity-permissions": [{"resource_name": "valkey_group", "resource_type": "acl", \
+                         "privileges": ["read", "write", "pubsub"]}]}]""",
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=False,
+        relations={
+            peer_relation,
+            status_peer_relation,
+            ldap_relation,
+            ldap_ca_cert_relation,
+            client_relation,
+        },
+        secrets={ldap_secret},
+        config={"ldap-map": "ldap_group:valkey_group"},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        assert charm.state.is_ldap_valid  # the guard-below-filter path is what we're testing
+
+        # An unrelated secret must NOT be deferred by the LDAP handler.
+        other = MagicMock()
+        other.secret.id = "unrelated-secret-id"
+        charm.ldap_events._on_secret_changed(other)
+        other.defer.assert_not_called()
+
+        # The LDAP bind-password secret is still deferred during a restore.
+        ldap_evt = MagicMock()
+        ldap_evt.secret.id = charm.state.ldap.bind_password_secret
+        charm.ldap_events._on_secret_changed(ldap_evt)
+        ldap_evt.defer.assert_called_once()
+
+
+def test_sync_ldap_users_rejected_during_restore(cloud_spec):
+    """The sync-ldap-users action is rejected while a restore is in progress."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "ldap-enabled": "true",
+        },
+        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with raises(testing.ActionFailed) as e:
+        ctx.run(ctx.on.action("sync-ldap-users"), state_in)
+    assert "restore" in e.value.message.lower()
+
+
 def test_sync_ldap_users_up_to_date(cloud_spec):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(

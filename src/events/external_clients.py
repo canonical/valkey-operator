@@ -193,7 +193,12 @@ class ExternalClientsEvents(ops.Object):
         This handler catches all changes from scaling operations, TLS switchover, TLS CA rotation,
         IP changes, etc.
         """
-        if not self.charm.state.unit_server.is_started:
+        # Skip during a restore; not dropped — restore completion clears restore_id,
+        # firing another relation-changed that reconciles from current state.
+        if (
+            not self.charm.state.unit_server.is_started
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
             return
 
         # return early during TLS switchover to avoid unnecessary operation during rolling restart for sentinel

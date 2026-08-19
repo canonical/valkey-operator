@@ -1,0 +1,7 @@
+summary: test_s3_restore.py
+environment:
+  TEST_MODULE: test_s3_restore.py
+execute: |
+  tox run -e integration -- "tests/integration/backup/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results

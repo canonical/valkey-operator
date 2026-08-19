@@ -37,6 +37,7 @@ from literals import (
     INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     CharmUsers,
+    RestoreStep,
     ScaleDownState,
     StartState,
     Substrate,
@@ -60,9 +61,9 @@ InternalCertificatesSecret = Annotated[
 class S3Parameters(BaseModel):
     """Validated, normalised S3 connection parameters from the s3 relation.
 
-    Parses the s3-integrator envelope (hyphenated keys) into typed
+    Parses the s3-integrator payload (hyphenated keys) into typed
     attributes, trimming whitespace and the separators that would corrupt
-    S3 key paths, and rejecting an envelope missing a required field or
+    S3 key paths, and rejecting a payload missing a required field or
     whose bucket/endpoint/path strip to empty. Unknown integrator fields
     (``storage-class``, ``s3-uri-style``, ...) are ignored.
     """
@@ -89,7 +90,7 @@ class S3Parameters(BaseModel):
     @classmethod
     def _coerce_ca_chain(cls, value: object) -> object:
         # A misconfigured integrator may send a bare string; never let that
-        # reject the whole envelope -- drop to no chain (boto3 uses system
+        # reject the whole payload -- drop to no chain (boto3 uses system
         # CAs). store_tls_ca_chain does the strict PEM check before writing.
         return value if isinstance(value, list) else []
 
@@ -134,6 +135,10 @@ class PeerAppModel(PeerModel):
     client_user_epoch: float = Field(default=0)
     ldap_user_epoch: float | int = Field(default=0)
     s3_credentials: ExtraSecretStr = Field(default=None)
+    restore_id: str = Field(default="")
+    restore_token: str = Field(default="")
+    restore_instruction: str = Field(default="")
+    restore_participants: str = Field(default="")
 
 
 class PeerUnitModel(PeerModel):
@@ -155,6 +160,9 @@ class PeerUnitModel(PeerModel):
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
     backup_id: str = Field(default="")
+    restore_step: str = Field(default="")
+    restore_role: str = Field(default="")
+    restore_failed: str = Field(default="")
     ldap_enabled: bool = Field(default=False)
     ldap_user_epoch: float | int = Field(default=0)
 
@@ -247,6 +255,37 @@ class ValkeyServer(RelationState):
         return bool(self.model.backup_id) if self.model else False
 
     @property
+    def restore_step(self) -> RestoreStep:
+        """This unit's most recently completed restore step."""
+        if not self.model:
+            return RestoreStep.NOT_STARTED
+        return RestoreStep(self.model.restore_step or RestoreStep.NOT_STARTED.value)
+
+    @property
+    def restore_role(self) -> str:
+        """`primary` or `replica`, captured at the RESTORE step; empty if not in a restore."""
+        return self.model.restore_role if self.model else ""
+
+    @property
+    def restore_failed(self) -> str:
+        """This unit's raw restore-failure marker (``"<kind>:<token>"``), empty if none.
+
+        Use ``restore_failure_kind`` to read the kind scoped to an attempt token.
+        """
+        return self.model.restore_failed if self.model else ""
+
+    def restore_failure_kind(self, restore_token: str) -> str:
+        """Return this unit's failure kind for ``restore_token``, else "".
+
+        Token-scoped so a stale marker from a prior attempt (restore_id is the
+        backup-id and repeats on a re-run) isn't misread against the current one.
+        """
+        if not self.model or not self.model.restore_failed:
+            return ""
+        kind, _, token = self.model.restore_failed.partition(":")
+        return kind if token == restore_token else ""
+
+    @property
     def valkey_admin_password(self) -> str:
         """Retrieve the password for the valkey admin user."""
         if not self.model:
@@ -292,6 +331,14 @@ class ValkeyServer(RelationState):
             self.model.tls_ca_rotation or TLSCARotationState.NO_ROTATION.value
         )
 
+    @property
+    def is_tls_transitioning(self) -> bool:
+        """True while this unit is mid client-TLS enable/disable or a CA rotation."""
+        return (
+            self.tls_client_state in (TLSState.TO_TLS, TLSState.TO_NO_TLS)
+            or self.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION
+        )
+
 
 @final
 class ValkeyCluster(RelationState):
@@ -311,12 +358,12 @@ class ValkeyCluster(RelationState):
 
     @property
     def s3_credentials(self) -> "S3Parameters | None":
-        """Return the parsed S3 connection envelope, or None if not set.
+        """Return the parsed S3 connection payload, or None if not set.
 
         The leader writes a JSON-serialised ``S3Parameters`` to
         ``s3_credentials``; this parses it back for BackupManager. Callers
         gate on truthiness (``if s3_credentials``), so None reads as unset.
-        The stored envelope was validated before writing, so a parse failure
+        The stored payload was validated before writing, so a parse failure
         here is defensive and also reads as unset.
         """
         if not self.model or not self.model.s3_credentials:
@@ -325,6 +372,39 @@ class ValkeyCluster(RelationState):
             return S3Parameters.model_validate_json(self.model.s3_credentials)
         except ValidationError:
             return None
+
+    @property
+    def restore_id(self) -> str:
+        """The backup id being restored, or '' if no restore is running."""
+        return self.model.restore_id if self.model else ""
+
+    @property
+    def restore_token(self) -> str:
+        """Unique per-attempt token that scopes failure markers.
+
+        restore_id is the backup-id and repeats on a re-run, so markers key off
+        this instead, keeping a stale marker from being misread against a new attempt.
+        """
+        return self.model.restore_token if self.model else ""
+
+    @property
+    def is_restore_in_progress(self) -> bool:
+        """True while a restore is coordinating (restore_id is the flag)."""
+        return bool(self.model.restore_id) if self.model else False
+
+    @property
+    def restore_instruction(self) -> RestoreStep:
+        """Current target step every participant should advance to."""
+        if not self.model or not self.model.restore_instruction:
+            return RestoreStep.NOT_STARTED
+        return RestoreStep(self.model.restore_instruction)
+
+    @property
+    def restore_participants(self) -> list[str]:
+        """Unit names snapshotted at initiation; the fixed barrier set."""
+        if not self.model or not self.model.restore_participants:
+            return []
+        return self.model.restore_participants.split(",")
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:

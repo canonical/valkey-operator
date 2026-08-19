@@ -523,6 +523,7 @@ def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True):
     charm.state.cluster.s3_credentials = {"bucket": "b"} if credentials else None
     charm.workload.alive.return_value = alive
     charm.state.unit_server.is_backup_in_progress = False
+    charm.state.cluster.is_restore_in_progress = False
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
     return evt
@@ -597,6 +598,9 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
         "access-key": "AK",
         "secret-key": "SK",
     }
+    # No backup/restore in flight, so the credentials change is applied, not deferred.
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.backup_manager.create_bucket.assert_called_once()
@@ -731,7 +735,8 @@ def test_on_s3_credentials_gone_removes_ca_and_clears_databag(mocker):
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
-    charm.state.unit_server.is_backup_in_progress = False
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = True
 
     evt = BackupEvents.__new__(BackupEvents)
@@ -953,7 +958,8 @@ def test_on_s3_credentials_gone_non_leader_does_not_clear_databag(mocker):
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
-    charm.state.unit_server.is_backup_in_progress = False
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
     charm.unit.is_leader.return_value = False
 
     evt = BackupEvents.__new__(BackupEvents)
@@ -1012,11 +1018,32 @@ def test_get_statuses_credentials_missing(mocker):
     state = mocker.MagicMock()
     state.statuses.get.return_value.root = []
     state.unit_server.is_backup_in_progress = False
+    state.unit_server.is_started = True
     state.s3_relation = mocker.MagicMock()
     state.cluster.s3_credentials = None
 
     statuses = BackupManager(state=state, workload=mocker.MagicMock()).get_statuses(scope="app")
     assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value in statuses
+
+
+def test_get_statuses_credentials_missing_hidden_before_started(mocker):
+    """The missing-parameters status stays hidden until the unit is started.
+
+    A relation present from deploy time (e.g. Terraform) but with credentials not
+    yet applied must not surface the status while the unit is still starting up.
+    """
+    from src.managers.backup import BackupManager
+    from src.statuses import BackupStatuses
+
+    state = mocker.MagicMock()
+    state.statuses.get.return_value.root = []
+    state.unit_server.is_backup_in_progress = False
+    state.unit_server.is_started = False
+    state.s3_relation = mocker.MagicMock()
+    state.cluster.s3_credentials = None
+
+    statuses = BackupManager(state=state, workload=mocker.MagicMock()).get_statuses(scope="app")
+    assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value not in statuses
 
 
 def test_create_backup_kills_producer_on_upload_failure(mocker):

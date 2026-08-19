@@ -6,7 +6,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import IO, Protocol, runtime_checkable
+from typing import IO, BinaryIO, Protocol, runtime_checkable
 
 from charmlibs import pathops
 
@@ -115,18 +115,31 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def start(self) -> None:
-        """Start the workload service.
+    def start(self, service: str | None = None, check_alive: bool = True) -> None:
+        """Start the workload service(s).
+
+        With ``service`` given, start only that single service; otherwise start
+        all services. ``check_alive`` verifies they are alive afterwards; pass
+        ``False`` to skip the health wait.
 
         Raises:
             ValkeyServicesFailedToStartError: If the service fails to start.
-            ValkeyServiceNotAliveError: If the service is not alive after start.
+            ValkeyServiceNotAliveError: If check_alive and the service is not alive.
         """
         pass
 
     @abstractmethod
-    def stop(self) -> None:
-        """Stop the workload service."""
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+        """Stop the workload service(s).
+
+        With ``service`` given, stop only that single service (leaving the others
+        up); otherwise stop all services. ``check_alive`` verifies they went down;
+        pass ``True`` where a later step depends on it.
+
+        Raises:
+            ValkeyServicesCouldNotBeStoppedError: If the stop fails, or if
+                check_alive and the service is still running afterwards.
+        """
         pass
 
     def restart(self, service: str) -> None:
@@ -159,11 +172,14 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def alive(self) -> bool:
+    def alive(self, service: str | None = None) -> bool:
         """Check if the Valkey services are running.
 
+        With ``service`` given, check only that single service; otherwise require
+        every service to be running (so it is False when any one is down).
+
         Returns:
-            bool: True if the services are active, False otherwise.
+            bool: True if the checked service(s) are active, False otherwise.
         """
         pass
 
@@ -314,3 +330,19 @@ class WorkloadBase(ABC):
             UnicodeError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
+
+    @abstractmethod
+    def push_data_file(
+        self,
+        src: BinaryIO,
+        dest: pathops.PathProtocol,
+        user: str | None = None,
+        group: str | None = None,
+    ) -> None:
+        """Stream a binary file object into the data dir without buffering it whole in memory."""
+        pass
+
+    @abstractmethod
+    def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        """Rename a file within the data dir."""
+        pass
