@@ -2,7 +2,7 @@
 
 Guidance for AI coding agents (Codex, Cursor, Copilot, Claude Code, Gemini CLI, …) working in this
 repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file; `tests/AGENTS.md` adds
-integration/spread-test specifics.
+integration/spread-test specifics; `docs/AGENTS.md` adds documentation specifics.
 
 ## What this is
 
