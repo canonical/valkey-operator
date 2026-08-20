@@ -309,6 +309,9 @@ exclude_patterns = [
     ".venv",
     ".sphinx",
     "_build",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
 ]
 
 # Adds custom CSS files, located under 'html_static_path'
