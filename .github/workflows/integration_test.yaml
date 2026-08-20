@@ -248,7 +248,7 @@ jobs:
                 > ~/logs/"$name"-valkey-server.txt 2>&1
               { sudo juju ssh "$unit" "sudo cat $log_dir/sentinel.log"; } \
                 > ~/logs/"$name"-valkey-sentinel.txt 2>&1
-              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey.sentinel -n 500'; } \
+              { sudo juju ssh "$unit" 'sudo snap logs charmed-valkey -n 500'; } \
                 > ~/logs/"$name"-valkey-service.txt 2>&1
             done
           fi
