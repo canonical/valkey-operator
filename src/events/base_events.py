@@ -396,10 +396,12 @@ class BaseEvents(ops.Object):
         if self.charm.state.substrate != Substrate.VM:
             return True
 
-        if not (
-            self.charm.state.unit_server.model.private_ip
-            and self.charm.state.bind_address != self.charm.state.unit_server.model.private_ip
-        ):
+        recorded_ip = self.charm.state.unit_server.model.private_ip
+        if not recorded_ip:
+            # the address is first recorded on start; there is nothing to reconcile before that
+            return True
+
+        if self.charm.state.bind_address == recorded_ip:
             return True
 
         try:

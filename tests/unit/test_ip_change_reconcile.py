@@ -131,6 +131,30 @@ def test_update_status_does_not_reconcile_when_ip_unchanged(cloud_spec_vm):
     assert not any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
 
 
+def test_update_status_does_not_reconcile_before_an_address_is_recorded(cloud_spec_vm):
+    """A unit that has not recorded an address yet has nothing to reconcile.
+
+    `private-ip` is first written on start, so a config-changed/update-status arriving
+    before that must not be read as "the address changed" and drive a reconfigure and
+    restart of a unit that has not started.
+    """
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(cloud_spec_vm, relations={_peer_relation(private_ip="")})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "managers.tls.TLSManager.create_and_store_self_signed_certificate"
+        ) as mock_create_certificate,
+        patch("managers.auth.AuthManager.configure_auth") as mock_configure_auth,
+    ):
+        ctx.run(ctx.on.update_status(), state_in)
+
+    mock_create_certificate.assert_not_called()
+    mock_configure_auth.assert_not_called()
+    assert not any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
+
+
 def test_update_status_reconciles_on_non_leader_unit(cloud_spec_vm):
     """Any unit can be the one whose address changed, so the reconcile precedes the leader check."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
