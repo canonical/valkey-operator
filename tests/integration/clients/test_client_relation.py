@@ -36,6 +36,10 @@ TEST_VALUE = "test_value"
 REQUIRER_V1_NAME = "req-v1"
 REQUIRER_V0_NAME = "req-v0"
 REQUIRER_TLS_PROVIDER = "ssc-req"
+# Valkey replies `NOPERM No permissions to access a key`, but valkey-glide rewrites the error code
+# when it wraps the reply in a RequestError: >=2.4 reports `PermissionDenied`, older builds passed
+# `NOPERM` through. Accept either so the assertion tracks the denial, not the client's wording.
+PERMISSION_DENIED_CODES = ("NOPERM", "PermissionDenied")
 
 
 @pytest.fixture
@@ -91,7 +95,9 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
         juju.run(
             requirer_unit, "set", params={"key": TEST_KEY, "value": TEST_VALUE, "user": username}
         )
-    assert "NOPERM" in str(task_error), "Action expected to fail because of permission denied"
+    assert any(code in str(task_error) for code in PERMISSION_DENIED_CODES), (
+        "Action expected to fail because of permission denied"
+    )
 
     logger.info("Trying to access granted keyspace")
     set_action = juju.run(
@@ -130,7 +136,9 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
             "set",
             params={"key": TEST_KEY, "value": TEST_VALUE, "user": user_restricted_keyspace},
         )
-    assert "NOPERM" in str(task_error), "Action expected to fail because of permission denied"
+    assert any(code in str(task_error) for code in PERMISSION_DENIED_CODES), (
+        "Action expected to fail because of permission denied"
+    )
 
     logger.info("Trying to access granted keyspace with restricted permissions")
     set_action = juju.run(
