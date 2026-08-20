@@ -667,6 +667,7 @@ def _passing_restore_guard(mocker):
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
+    ev.charm.backup_manager.list_backups.return_value = ["b1"]
     ev.charm.unit.is_leader.return_value = True
     ev.charm.state.s3_relation = True
     ev.charm.state.cluster.s3_credentials = True
@@ -680,14 +681,14 @@ def _passing_restore_guard(mocker):
 
 
 def test_restore_guard_passes_when_all_gates_ok(mocker):
-    assert _passing_restore_guard(mocker)._restore_blocking_reason() is None
+    assert _passing_restore_guard(mocker)._restore_blocking_reason("b1") is None
 
 
 def test_restore_blocked_during_tls_transition(mocker):
     """A restore restarts the primary; refuse to start one mid-TLS-transition."""
     ev = _passing_restore_guard(mocker)
     ev.charm.state.is_tls_transitioning = True
-    reason = ev._restore_blocking_reason()
+    reason = ev._restore_blocking_reason("b1")
     assert reason is not None and "tls" in reason.lower()
 
 
@@ -699,8 +700,32 @@ def test_restore_blocked_gracefully_when_sentinel_query_errors(mocker):
     ev.charm.sentinel_manager.is_failover_in_progress.side_effect = ValkeyWorkloadCommandError(
         "sentinel unreachable"
     )
-    reason = ev._restore_blocking_reason()  # must NOT raise
+    reason = ev._restore_blocking_reason("b1")  # must NOT raise
     assert reason is not None
+
+
+def test_restore_guard_covers_the_backup_id_checks(mocker):
+    """The backup-id checks are gates like any other (PR #96 review, skourta r3813059183)."""
+    ev = _passing_restore_guard(mocker)
+
+    assert "backup-id" in (ev._restore_blocking_reason("") or "")
+    ev.charm.backup_manager.list_backups.assert_not_called()  # cheap gates first
+
+    reason = ev._restore_blocking_reason("nope")
+    assert reason is not None and "not found" in reason
+
+
+def test_restore_guard_blocks_gracefully_when_listing_fails(mocker):
+    """An S3 listing error blocks the restore with a safe reason, not a traceback at the user."""
+    from common.exceptions import ValkeyBackupError
+
+    ev = _passing_restore_guard(mocker)
+    ev.charm.backup_manager.list_backups.side_effect = ValkeyBackupError("bucket on fire")
+
+    reason = ev._restore_blocking_reason("b1")  # must NOT raise
+
+    assert reason is not None and "list backups" in reason
+    assert "bucket on fire" not in reason  # detail goes to the unit log only
 
 
 def test_credentials_rotation_defers_during_restore(mocker):

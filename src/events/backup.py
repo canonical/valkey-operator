@@ -241,8 +241,8 @@ class BackupEvents(ops.Object):
             return "A restore is in progress; backups are paused."
         return None
 
-    def _restore_blocking_reason(self) -> str | None:
-        """Return why a restore cannot start, or None if it can."""
+    def _restore_blocking_reason(self, backup_id: str) -> str | None:
+        """Return why a restore of ``backup_id`` cannot start, or None if it can."""
         if not self.charm.unit.is_leader():
             return "Restore must be run on the leader unit."
         if not self.charm.state.s3_relation:
@@ -259,7 +259,22 @@ class BackupEvents(ops.Object):
         # Require a stable cluster: all active, a resolvable primary, no failover in flight.
         if not all(s.is_active for s in self.charm.state.servers):
             return "Not all units are active; wait for the cluster to settle."
-        return self._unstable_primary_reason()
+        if reason := self._unstable_primary_reason():
+            return reason
+        # Last, since it is the only gate that costs an S3 round-trip.
+        return self._unusable_backup_reason(backup_id)
+
+    def _unusable_backup_reason(self, backup_id: str) -> str | None:
+        """Return why ``backup_id`` can't be restored from, or None if it can."""
+        if not backup_id:
+            return "Must provide backup-id to restore."
+        try:
+            if backup_id not in self.charm.backup_manager.list_backups():
+                return f"backup-id {backup_id} not found."
+        except ValkeyBackupError as e:
+            logger.exception("restore.list_backups_failed backup_id=%s", backup_id)
+            return f"Could not list backups: {_safe_error(e)}"
+        return None
 
     def _unstable_primary_reason(self) -> str | None:
         """Return why the Sentinel-managed primary isn't restorable, or None if it is."""
@@ -277,20 +292,8 @@ class BackupEvents(ops.Object):
     def _on_restore_action(self, event: ops.ActionEvent) -> None:
         """Validate, then initiate the async restore workflow (leader only)."""
         backup_id = event.params.get("backup-id", "")
-        if reason := self._restore_blocking_reason():
+        if reason := self._restore_blocking_reason(backup_id):
             self._reject_restore(event, backup_id, reason)
-            return
-        if not backup_id:
-            self._reject_restore(event, backup_id, "Must provide backup-id to restore.")
-            return
-        try:
-            if backup_id not in self.charm.backup_manager.list_backups():
-                self._reject_restore(event, backup_id, f"backup-id {backup_id} not found.")
-                return
-        except ValkeyBackupError as e:
-            logger.exception("restore.rejected backup_id=%s: could not list backups", backup_id)
-            event.set_results({"error": _safe_error(e)})
-            event.fail("Could not list backups. Check juju debug-log.")
             return
 
         logger.info(
