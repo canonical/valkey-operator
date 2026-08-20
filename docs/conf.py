@@ -306,6 +306,9 @@ extensions = [
 
 exclude_patterns = [
     "doc-cheat-sheet*",
+    ".venv",
+    ".sphinx",
+    "_build",
 ]
 
 # Adds custom CSS files, located under 'html_static_path'
