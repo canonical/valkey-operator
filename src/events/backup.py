@@ -383,29 +383,17 @@ class BackupEvents(ops.Object):
             self._advance_if_leader()
 
     def _reconcile_failover_suppression(self, _: ops.UpdateStatusEvent) -> None:
-        """Self-heal this unit's sentinel if it was left failover-suppressed.
+        """Self-heal this unit's sentinel if a failed restore left failover suppressed.
 
-        resume_failover is best-effort on every restore-failure path, and Sentinel
-        persists SENTINEL SET to its own conf (a restart won't clear it), so a
-        sentinel unreachable at that moment would otherwise stay at the suppressed
-        down-after -- no automatic failover -- until the next config re-render.
-        Every unit re-checks its own sentinel here; outside a restore the value
-        must be the configured one.
+        Suppression is only legitimate while a restore runs, so this unit's
+        sentinel is re-checked on every update-status outside one.
         """
         if (
             not self.charm.state.unit_server.is_active
             or self.charm.state.cluster.is_restore_in_progress
         ):
             return
-        try:
-            if self.charm.sentinel_manager.is_failover_suppressed():
-                logger.warning(
-                    "restore.suppression_leak: sentinel still failover-suppressed outside a "
-                    "restore; resuming failover on this unit"
-                )
-                self.charm.sentinel_manager.resume_local_failover()
-        except ValkeyWorkloadCommandError as e:
-            logger.warning("Could not check sentinel failover suppression: %s", e)
+        self.charm.sentinel_manager.reconcile_failover_suppression()
 
     def _clear_local_restore_state(self) -> None:
         """Clear this unit's per-unit restore fields once a restore has ended."""

@@ -354,6 +354,33 @@ def test_resume_local_failover_targets_only_this_sentinel(mocker):
     all_endpoints.assert_not_called()
 
 
+def test_reconcile_failover_suppression_is_a_manager_op(mocker, caplog):
+    """The self-heal lives in the sentinel manager: resume only a still-suppressed sentinel."""
+    import logging
+
+    from common.exceptions import ValkeyWorkloadCommandError
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    suppressed = mocker.patch.object(mgr, "is_failover_suppressed", return_value=False)
+    resume = mocker.patch.object(mgr, "resume_local_failover")
+
+    mgr.reconcile_failover_suppression()
+    resume.assert_not_called()
+
+    suppressed.return_value = True
+    with caplog.at_level(logging.WARNING):
+        mgr.reconcile_failover_suppression()
+    resume.assert_called_once()
+    assert "suppression_leak" in caplog.text
+
+    # An unreachable sentinel is skipped (retried next update-status), never a crash.
+    resume.reset_mock()
+    suppressed.side_effect = ValkeyWorkloadCommandError("down")
+    mgr.reconcile_failover_suppression()  # must not raise
+    resume.assert_not_called()
+
+
 def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     """Manager helper reports failover from the primary flags with no retry/blocking."""
     from src.managers.sentinel import SentinelManager
