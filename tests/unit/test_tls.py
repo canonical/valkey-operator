@@ -1506,3 +1506,35 @@ def test_peer_relation_changed_ca_rotation_workload_error_defers(cloud_spec):
             ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
         )
     assert "valkey_peers_relation_changed" in [e.name for e in state_out.deferred]
+
+
+def test_certificate_already_applied_without_peer_relation(cloud_spec):
+    # A certificate-available can arrive before the peer relation exists, so the
+    # idempotency guard must degrade to "not applied" instead of dereferencing the
+    # unbuilt unit databag model.
+    ca = MagicMock("my_ca")
+    ca.raw = "my_ca"
+    csr = MagicMock("my_csr")
+    csr.raw = "my_csr"
+    cert = MagicMock("my_cert")
+    cert.raw = "my_cert"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    certificate = ProviderCertificate(
+        relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={status_peer_relation, client_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+
+        assert charm.state.unit_server.model is None
+        assert charm.tls_manager.certificate_already_applied(certificate) is False
