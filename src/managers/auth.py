@@ -122,6 +122,11 @@ class AuthManager(ManagerStatusProtocol):
         Returns:
             str: ACL lines for the external client users.
         """
+        valkey_base_permissions = (
+            "-@all +@read +@write +@keyspace +@pubsub +@transaction +info +ping +role "
+        )
+        valkey_scripting_permissions = ""
+        valkey_client_caching_permissions = "+client|id +client|tracking "
         sentinel_base_permissions = "-@all +auth +client +command +hello +ping +role "
         sentinel_sentinel_permissions = "+sentinel|get-master-addr-by-name +sentinel|master +sentinel|masters +sentinel|replicas +sentinel|sentinels"
         acl_content = ""
@@ -130,7 +135,13 @@ class AuthManager(ManagerStatusProtocol):
             return acl_content
 
         for username, values in external_client_users.items():
-            permissions = f"-@all +@read +@write +@keyspace +@pubsub +@transaction +info +ping +role ~{values['resource']} &{values['resource']}"
+            user_specific_permissions = f"~{values['resource']} &{values['resource']}"
+            permissions = (
+                valkey_base_permissions
+                + valkey_client_caching_permissions
+                + valkey_scripting_permissions
+                + user_specific_permissions
+            )
             if for_sentinel:
                 permissions = sentinel_base_permissions + sentinel_sentinel_permissions
             password_hash = hashlib.sha256(values["password"].encode("utf-8")).hexdigest()
