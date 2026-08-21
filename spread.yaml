@@ -125,8 +125,53 @@ prepare: |
 
   if [[ $SPREAD_SUITE == *"k8s"* ]]
   then
+    # Canonical K8s defaults its pod CIDR to 10.1.0.0/16 — the same range the GitHub-hosted
+    # Azure runners use for their host network, so a pod handed the subnet gateway address
+    # cannot reach the apiserver and its first hook dies. concierge has no pod-cidr option,
+    # but it adopts an already-clustered node, so bootstrap here first with a safe CIDR.
+    POD_CIDR="10.42.0.0/16"
+
+    # Fail loudly rather than re-introducing the flake if this ever collides again
+    NODE_IP="$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}')"
+    if [[ ${NODE_IP%.*.*} == "${POD_CIDR%%.0.0/*}" ]]
+    then
+      echo "pod CIDR $POD_CIDR contains this runner's own address $NODE_IP; pick another" >&2
+      exit 1
+    fi
+
+    if ! k8s status >/dev/null 2>&1
+    then
+      # Read the channel from concierge-k8s.yaml so the two cannot drift apart
+      K8S_CHANNEL="$(awk '/^ *k8s:/ {f = 1} f && /channel:/ {print $2; exit}' concierge-k8s.yaml)"
+      if [[ -z $K8S_CHANNEL ]]
+      then
+        echo "could not read the k8s channel from concierge-k8s.yaml" >&2
+        exit 1
+      fi
+      snap install k8s --classic --channel="$K8S_CHANNEL"
+
+      # The pre-init check refuses to bootstrap while Docker's /run/containerd exists;
+      # concierge does the same cleanup before its own bootstrap
+      systemctl stop containerd.service || true
+      rm -rf /run/containerd
+
+      # `k8s bootstrap --file` REPLACES the default cluster-config rather than merging, so
+      # the features a plain bootstrap enables must be spelled out; printf because a heredoc
+      # would carry the block scalar's indentation into the file
+      printf '%s\n' \
+        'cluster-config:' \
+        '  network: {enabled: true}' \
+        '  dns: {enabled: true}' \
+        '  local-storage: {enabled: true}' \
+        '  gateway: {enabled: true}' \
+        '  metrics-server: {enabled: true}' \
+        "pod-cidr: $POD_CIDR" \
+        > /tmp/k8s-bootstrap-config.yaml
+      k8s bootstrap --timeout 5m --file /tmp/k8s-bootstrap-config.yaml
+    fi
+
     concierge prepare --trace -c concierge-k8s.yaml
-  
+
     # k8s status --wait-ready returns as soon as 1 node is ready
     # (see https://github.com/canonical/k8s-snap/issues/1789)
     # but Cilium, CoreDNS, and storage may still be initialising

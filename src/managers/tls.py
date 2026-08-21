@@ -9,6 +9,7 @@ import binascii
 import logging
 import re
 from datetime import timedelta
+from hashlib import sha256
 from ipaddress import ip_address
 
 from charmlibs.interfaces.tls_certificates import (
@@ -72,6 +73,38 @@ class TLSManager(ManagerStatusProtocol):
         """
         logger.debug(f"Setting TLS CA rotation state to {state}")
         self.state.unit_server.update({"tls_ca_rotation": state.value})
+
+    def client_cert_fingerprint(self, certificate: ProviderCertificate) -> str:
+        """Return a stable fingerprint for a client certificate + CA pair."""
+        return sha256((certificate.certificate.raw + certificate.ca.raw).encode()).hexdigest()
+
+    def certificate_already_applied(self, certificate: ProviderCertificate) -> bool:
+        """Return whether this exact certificate is stored AND fully activated on this unit.
+
+        The tls-certificates lib re-emits ``certificate_available`` for an
+        unchanged certificate on every relation-changed of the (app-shared)
+        client-certificates relation, so requirers must be idempotent.
+
+        The fingerprint is recorded only once an apply has been handed off
+        (restart emitted, or CA rotation started — the rotation state machine
+        owns activation from there), so a deferred/failed apply is still
+        retried instead of being skipped.
+        """
+        if self.state.unit_server.tls_client_state != TLSState.TLS:
+            return False
+        if self.state.unit_server.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION:
+            return False
+        if not self.state.unit_server.model.client_cert_ready:
+            return False
+        return self.state.unit_server.model.applied_client_cert_fingerprint == (
+            self.client_cert_fingerprint(certificate)
+        )
+
+    def record_applied_certificate(self, certificate: ProviderCertificate) -> None:
+        """Record the certificate as applied, enabling the skip on re-emission."""
+        self.state.unit_server.update(
+            {"applied_client_cert_fingerprint": self.client_cert_fingerprint(certificate)}
+        )
 
     def write_certificate(self, certificate: ProviderCertificate, private_key: PrivateKey) -> None:
         """Store the certificate on the unit.

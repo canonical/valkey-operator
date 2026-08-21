@@ -30,6 +30,8 @@ from tests.integration.ha.helpers.helpers import (
 
 from ..helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_S,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
@@ -85,7 +87,7 @@ def test_build_and_deploy(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
         ),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S if tls_enabled else DEPLOY_TIMEOUT_S,
     )
 
     assert len(juju.status().apps[APP_NAME].units) == NUM_UNITS, (
