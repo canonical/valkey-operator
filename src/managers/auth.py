@@ -125,7 +125,7 @@ class AuthManager(ManagerStatusProtocol):
         valkey_base_permissions = (
             "-@all +@read +@write +@keyspace +@pubsub +@transaction +info +ping +role "
         )
-        valkey_scripting_permissions = ""
+        valkey_scripting_permissions = "+eval +evalsha +@scripting "
         valkey_client_caching_permissions = "+client|id +client|tracking "
         sentinel_base_permissions = "-@all +auth +client +command +hello +ping +role "
         sentinel_sentinel_permissions = "+sentinel|get-master-addr-by-name +sentinel|master +sentinel|masters +sentinel|replicas +sentinel|sentinels"
