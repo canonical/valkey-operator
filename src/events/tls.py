@@ -182,6 +182,10 @@ class TLSEvents(ops.Object):
             logger.error("Received certificate does not match provided certificates: %s", cert)
             return
 
+        if self.charm.tls_manager.certificate_already_applied(cert):
+            logger.debug("Client certificate unchanged and already active, nothing to do")
+            return
+
         logger.info("Storing client certificate")
         try:
             if rotate_ca := self.charm.tls_manager.start_ca_rotation_if_required(cert):
@@ -198,12 +202,16 @@ class TLSEvents(ops.Object):
             try:
                 if rotate_ca:
                     self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_ADDED)
+                    # safe before orchestration: the skip guard is inert while
+                    # tls_ca_rotation is not NO_ROTATION
+                    self.charm.tls_manager.record_applied_certificate(cert)
                     self._orchestrate_ca_rotation()
                     return
 
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
                 self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.tls_manager.record_applied_certificate(cert)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
             except (ValkeyTLSLoadError, ValkeyWorkloadCommandError):
@@ -245,6 +253,7 @@ class TLSEvents(ops.Object):
             self.charm.restart_workload.emit(
                 restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
             )
+        self.charm.tls_manager.record_applied_certificate(cert)
         self._trigger_relation_change_if_required()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:

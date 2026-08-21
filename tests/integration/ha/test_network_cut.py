@@ -27,12 +27,15 @@ from tests.integration.ha.helpers.helpers import (
 )
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_S,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
     are_apps_active_and_agents_idle,
     download_client_certificate_from_unit,
+    fast_forward,
     get_cluster_addresses,
     get_ip_from_unit,
     get_number_connected_replicas,
@@ -69,7 +72,7 @@ def test_build_and_deploy(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
         ),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S if tls_enabled else DEPLOY_TIMEOUT_S,
     )
 
     assert len(juju.status().apps[APP_NAME].units) == NUM_UNITS, (
@@ -90,6 +93,15 @@ def test_network_cut_primary(  # noqa: C901
     """Cut the network to the primary unit and verify that a new primary is elected."""
     if ip_change and substrate == Substrate.K8S:
         pytest.skip("Changing IP is not applicable for k8s substrate.")
+
+    # The parametrized cases share one model, and the previous case's restore can still be
+    # driving a rolling Sentinel restart — let the cluster settle before cutting again.
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GLIDE_RUNNER_NAME, idle_period=30
+        ),
+        timeout=DEPLOY_TIMEOUT_S,
+    )
 
     download_client_certificate_from_unit(juju, APP_NAME)
     addresses = get_cluster_addresses(juju, APP_NAME)
@@ -144,10 +156,9 @@ def test_network_cut_primary(  # noqa: C901
     logger.info("Verifying new primary election...")
 
     new_primary_ip = None
-    # Sentinel only marks the old primary down after `down-after-milliseconds` (30s,
-    # see src/managers/config.py) and then needs time to reach quorum and promote a
-    # replica, so a new primary cannot appear before ~30s. Wait well past that (but
-    # under the 180s `failover-timeout`) to absorb CI scheduling jitter.
+    # Sentinel marks the primary down only after `down-after-milliseconds` (30s) and must
+    # then reach quorum and promote; the effective `failover-timeout` is 60s (both set in
+    # src/managers/config.py), so 150s spans ~2 failover attempts plus CI jitter.
     for attempt in Retrying(stop=stop_after_attempt(15), wait=wait_fixed(10), reraise=True):
         with attempt:
             try:
@@ -240,19 +251,25 @@ def test_network_cut_primary(  # noqa: C901
 
     # we do not use IPs in certificates for k8s, so no need to check SANs for IP changes
     if substrate == Substrate.VM:
-        # read ip from cert and check if is a different ip than before if ip_change is True
-        # tolerate delays in certificate update by retrying for up to 100 seconds with 10 second intervals
-        for attempt in Retrying(stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True):
-            with attempt:
-                download_client_certificate_from_unit(juju, APP_NAME, unit_name=primary_unit_name)
-                certificate_sans = get_sans_from_certificate("./client.pem")
-                if ip_change:
-                    assert primary_ip not in certificate_sans["sans_ip"], (
-                        "The old IP should not be in SANs of client certificate after network cut and IP change."
+        # The address reconcile runs from update-status (the binding can still report the old
+        # IP during the post-restore config-changed), so fast-forward the interval to land it
+        # within the 100s of retries below.
+        with fast_forward(juju):
+            for attempt in Retrying(
+                stop=stop_after_attempt(10), wait=wait_fixed(10), reraise=True
+            ):
+                with attempt:
+                    download_client_certificate_from_unit(
+                        juju, APP_NAME, unit_name=primary_unit_name
                     )
-                    assert new_unit_ip in certificate_sans["sans_ip"], (
-                        "The new IP should be in SANs of client certificate after network cut and IP change."
-                    )
+                    certificate_sans = get_sans_from_certificate("./client.pem")
+                    if ip_change:
+                        assert primary_ip not in certificate_sans["sans_ip"], (
+                            "The old IP should not be in SANs of client certificate after network cut and IP change."
+                        )
+                        assert new_unit_ip in certificate_sans["sans_ip"], (
+                            "The new IP should be in SANs of client certificate after network cut and IP change."
+                        )
 
     addresses = get_cluster_addresses(juju, APP_NAME)
     # check replica number that it is back to NUM_UNITS - 1
