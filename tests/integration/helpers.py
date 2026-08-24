@@ -23,6 +23,7 @@ from glide import (
     TlsAdvancedConfiguration,
 )
 from ops import SecretNotFoundError, StatusBase
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import (
     CLIENT_PORT,
@@ -44,6 +45,11 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME: str = METADATA["name"]
 GLIDE_RUNNER_NAME = "glide-runner"
 IMAGE_RESOURCE = {"valkey-image": METADATA["resources"]["valkey-image"]["upstream-source"]}
+# DEPLOY_TIMEOUT_TLS_S covers any wait that spans a client-TLS enable: applying the client
+# certificate takes a rolling sentinel restart serialized by RestartLock, whose handoffs
+# alone take ~6-9 min for three units on a loaded runner.
+DEPLOY_TIMEOUT_S = 600
+DEPLOY_TIMEOUT_TLS_S = 900
 INTERNAL_USERS_SECRET_LABEL = (
     f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
 )
@@ -404,6 +410,79 @@ def get_primary_ip(
             logger.warning(f"Error executing Valkey CLI on {address}: {e}")
 
     raise ValueError("No primary node found in the cluster")
+
+
+def get_connected_replicas_from_unit(
+    juju: jubilant.Juju, address: str, tls_enabled: bool = False
+) -> int:
+    """Get the number of replicas connected to the Valkey node at `address`.
+
+    Unlike `get_number_connected_replicas`, this queries the node directly with `valkey-cli`,
+    so it is usable in suites that do not deploy the glide-runner.
+
+    Args:
+        juju: The Juju client instance.
+        address: The address of the node to query.
+        tls_enabled: Whether TLS certificates are needed.
+
+    Returns:
+        The number of replicas connected to that node.
+    """
+    replication_info = exec_valkey_cli(
+        address,
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+        command="info replication",
+        tls_enabled=tls_enabled,
+    ).stdout
+    if not (search_result := re.search(r"connected_slaves:(\d+)", replication_info)):
+        raise ValueError("Could not parse number of connected replicas from info output")
+    return int(search_result.group(1))
+
+
+def wait_for_failover(
+    juju: jubilant.Juju,
+    app: str,
+    old_primary_ip: str,
+    unit_count: int,
+    tls_enabled: bool = False,
+    timeout: int = 300,
+) -> str:
+    """Block until Sentinel has finished a failover and every replica is re-attached.
+
+    `sentinel failover` returns `OK` as soon as the failover is *initiated*: until the old
+    primary is demoted and re-attached, writes routed to it fail with `NOREPLICAS` and the
+    published client endpoints may still point at it. Idle agents indicate none of this,
+    so poll the cluster itself.
+
+    Args:
+        juju: The Juju client instance.
+        app: The name of the Valkey application.
+        old_primary_ip: Address of the primary as it was before the failover.
+        unit_count: The number of Valkey units in the cluster.
+        tls_enabled: Whether TLS certificates are needed.
+        timeout: Seconds to wait for the cluster to converge.
+
+    Returns:
+        The address of the new primary.
+    """
+    new_primary_ip = ""
+    for attempt in Retrying(stop=stop_after_delay(timeout), wait=wait_fixed(10), reraise=True):
+        with attempt:
+            new_primary_ip = get_primary_ip(juju, app, tls_enabled=tls_enabled)
+            assert new_primary_ip != old_primary_ip, (
+                f"Primary is still {old_primary_ip}, failover has not completed yet."
+            )
+            connected_replicas = get_connected_replicas_from_unit(
+                juju, new_primary_ip, tls_enabled=tls_enabled
+            )
+            assert connected_replicas == unit_count - 1, (
+                f"Expected {unit_count - 1} replicas connected to the new primary"
+                f" {new_primary_ip}, got {connected_replicas}."
+            )
+
+    logger.info("Failover complete, new primary is %s (was %s)", new_primary_ip, old_primary_ip)
+    return new_primary_ip
 
 
 def get_password(juju: jubilant.Juju, user: CharmUsers = CharmUsers.VALKEY_ADMIN) -> str:
