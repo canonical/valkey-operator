@@ -342,7 +342,6 @@ def test_failed_restore_not_wedged_when_leader_not_primary(
     primary left restore_id set forever -- the app stuck in RESTORE_IN_PROGRESS,
     backups blocked. Here we force primary != leader, fail a restore, and assert
     the leader tears it down (RESTORE_FAILED) and the cluster is usable again.
-    (PR #79 review, Mehdi-Bendriss r3547362621.)
     """
     # Independently runnable (deploy_and_relate_s3 is idempotent).
     deploy_and_relate_s3(juju, charm, substrate, microceph)
@@ -404,7 +403,7 @@ def test_restore_single_unit(
     self-delivery (with update-status as the backstop). Also checks the unit is
     writable again afterwards -- the restart resets the rendered
     min-replicas-to-write=1, which a lone primary can never satisfy, so the
-    post-restore reconcile must relax it (PR #79 review, skourta r3794577942).
+    post-restore reconcile must relax it.
     """
     # Start from a fresh 1-unit app; the earlier scenarios leave a 3-unit one.
     if APP_NAME in juju.status().apps:

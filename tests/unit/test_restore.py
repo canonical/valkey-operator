@@ -4,7 +4,7 @@
 
 """Unit tests for the S3 restore feature.
 
-Two layers, on purpose (PR #79 review, reneradoi):
+Two layers, on purpose:
 
 * The restore **state machine** and the **restore action** are exercised through
   real Juju events (``ctx.on.action`` / ``ctx.on.update_status``) via
@@ -146,8 +146,8 @@ def test_workload_start_stop_alive_take_optional_service():
         param = inspect.signature(getattr(WorkloadBase, name)).parameters.get("service")
         assert param is not None and param.default is None
 
-    # Liveness verification is an explicit opt-in/out, decoupled from `service`
-    # (PR #79 review, reneradoi): start verifies by default, stop does not.
+    # Liveness verification is an explicit opt-in/out, decoupled from `service`:
+    # start verifies by default, stop does not.
     assert inspect.signature(WorkloadBase.start).parameters["check_alive"].default is True
     assert inspect.signature(WorkloadBase.stop).parameters["check_alive"].default is False
 
@@ -705,7 +705,7 @@ def test_restore_blocked_gracefully_when_sentinel_query_errors(mocker):
 
 
 def test_restore_guard_covers_the_backup_id_checks(mocker):
-    """The backup-id checks are gates like any other (PR #96 review, skourta r3813059183)."""
+    """The backup-id checks are gates like any other, ordered after the cheap ones."""
     ev = _passing_restore_guard(mocker)
 
     assert "backup-id" in (ev._restore_blocking_reason("") or "")
@@ -776,7 +776,7 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
 # ── event-driven (ops.testing / Scenario) ────────────────────────────────────
 #
 # The restore action + state machine are driven through real Juju events so the
-# peer-relation data-interface wiring is part of the test, per PR #79 review.
+# peer-relation data-interface wiring is part of the test.
 
 
 def _restore_context_and_state(
@@ -831,7 +831,7 @@ def _peer_unit_data(state):
 def _drive_restore(ctx, state, *, capture_statuses=False):
     """Drive the restore workflow to a fixed point across hooks.
 
-    The workflow advances one step per hook (no in-hook loop, PR #79 review): in
+    The workflow advances one step per hook (no in-hook loop): in
     real Juju each leader app-databag write re-delivers relation_changed, with
     update_status as a backstop. ops.testing emits one event and can't model a
     peer relation_changed for the leader's own app-data write (no remote unit),
@@ -939,8 +939,8 @@ def test_restore_action_initiates_workflow(mocker, cloud_spec, restore_managers)
 def test_restore_action_logs_every_rejection(mocker, cloud_spec, restore_managers, caplog):
     """Every rejected restore action leaves a traceable log line, not just a failed task.
 
-    PR #79 review (skourta r3794362707): the action result is transient; the
-    unit log must show why a restore didn't start.
+    The action result is transient; the unit log must show why a restore
+    didn't start.
     """
     import logging
 
@@ -1022,7 +1022,7 @@ def test_single_unit_restore_completes_via_relation_changed_cascade(cloud_spec, 
     A single unit is always the leader, and Juju delivers relation_changed to the
     leader for its own writes to the peer *app* databag, so the machine cascades
     forward one step per hook off the restore_id/instruction writes -- no peers
-    and no in-hook loop needed (PR #79 review, reneradoi).
+    and no in-hook loop needed.
     """
     ctx, state = _restore_context_and_state(
         cloud_spec,
@@ -1534,7 +1534,7 @@ def test_restore_failure_unhealthy_status(cloud_spec, restore_managers):
 # juju leader, and only the leader can clear the app-level restore_id. A failing
 # non-leader unit must therefore signal failure on its OWN unit databag so the
 # leader can tear the restore down, instead of silently wedging the whole cluster
-# in "restore in progress" forever. (PR #79 review, Mehdi-Bendriss r3547362621.)
+# in "restore in progress" forever.
 
 
 def test_non_leader_primary_failure_records_failure_marker(cloud_spec, restore_managers):
@@ -1765,9 +1765,8 @@ def test_update_status_resumes_failover_left_suppressed(mocker, cloud_spec, rest
 
     resume_failover is best-effort on every teardown path and Sentinel persists
     SENTINEL SET to its own conf, so a sentinel unreachable at teardown would
-    otherwise stay failover-suppressed until the next config re-render (PR #79
-    review, skourta r3621161292). Each unit self-heals its own sentinel on
-    update-status.
+    otherwise stay failover-suppressed until the next config re-render. Each
+    unit self-heals its own sentinel on update-status.
     """
     restore_managers.is_failover_suppressed.return_value = True
     ctx, state = _restore_context_and_state(cloud_spec)  # no restore in progress
