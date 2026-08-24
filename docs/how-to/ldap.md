@@ -136,6 +136,7 @@ cross-model relation is required. Proceed to the next section:
 `````
 
 (define-roles)=
+
 ## Define roles and permissions
 
 Charmed Valkey supports a role-based access control model to allow permissions based on LDAP groups.

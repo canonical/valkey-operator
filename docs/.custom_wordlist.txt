@@ -73,3 +73,7 @@ Valkey
 failover
 mTLS
 GLAuth
+linkcheck
+unmanaged
+venv
+
