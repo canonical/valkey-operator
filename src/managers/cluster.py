@@ -180,7 +180,9 @@ class ClusterManager(ManagerStatusProtocol):
         Raises ValkeyClusterNotReadyError on timeout rather than hanging, so the
         caller can react (e.g. roll back a restore).
         """
+        logger.info("restore.wait: dataset to load (up to %ss)", timeout_s)
         self._wait_until(self.is_loaded, timeout_s, "server did not become ready")
+        logger.info("restore.wait: dataset loaded")
 
     def wait_until_resynced(self, timeout_s: int) -> None:
         """Bounded poll until this replica is in sync with the primary.
@@ -188,7 +190,9 @@ class ClusterManager(ManagerStatusProtocol):
         Unlike wait_for_replica_fully_synced (unbounded), raises
         ValkeyClusterNotReadyError on timeout so the caller can react.
         """
+        logger.info("restore.wait: replica resync (up to %ss)", timeout_s)
         self._wait_until(self.is_replica_synced, timeout_s, "replica did not resync")
+        logger.info("restore.wait: replica resynced")
 
     def _wait_until(self, condition: Callable[[], bool], timeout_s: int, failure: str) -> None:
         """Poll ``condition`` every 5s for up to ``timeout_s``; raise NotReady on timeout.

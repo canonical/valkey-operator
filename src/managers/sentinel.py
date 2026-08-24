@@ -390,6 +390,7 @@ class SentinelManager(ManagerStatusProtocol):
                 str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS),
             ):
                 raise SentinelFailoverError(f"Failed to suppress failover on sentinel {endpoint}")
+        logger.info("restore.failover_suppressed: down-after raised on every sentinel")
 
     def resume_failover(self) -> None:
         """Reset down-after and SENTINEL RESET on every sentinel; idempotent.
@@ -401,6 +402,7 @@ class SentinelManager(ManagerStatusProtocol):
         """
         for endpoint in self.all_sentinel_endpoints():
             self._resume_failover_on(endpoint)
+        logger.info("restore.failover_resumed: down-after reset on every sentinel")
 
     def resume_local_failover(self) -> None:
         """Reset down-after and SENTINEL RESET on this unit's sentinel only."""

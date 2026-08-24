@@ -382,6 +382,7 @@ class BackupManager(ManagerStatusProtocol):
     def set_restore_step(self, step: RestoreStep) -> None:
         """Record this unit's completed restore step on its databag."""
         self.state.unit_server.update({"restore_step": step.value})
+        logger.info("restore.step_done step=%s", step.value)
 
     def has_pre_restore_copy(self) -> bool:
         """Whether a rollback copy exists -- an interrupted primary restore.

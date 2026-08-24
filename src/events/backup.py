@@ -165,9 +165,8 @@ class BackupEvents(ops.Object):
             return
         # Audit log: tie this action invocation to the backup it produces.
         logger.info(
-            "audit: create-backup action invoked action_id=%s unit=%s",
+            "audit: create-backup action invoked action_id=%s",
             event.id,
-            self.charm.unit.name,
         )
         event.log("Streaming backup to S3 ...")
         # Surface the running backup in juju status; is_action beats lower-priority statuses.
@@ -204,9 +203,8 @@ class BackupEvents(ops.Object):
             event.fail(reason)
             return
         logger.info(
-            "audit: list-backups action invoked action_id=%s unit=%s",
+            "audit: list-backups action invoked action_id=%s",
             event.id,
-            self.charm.unit.name,
         )
         try:
             ids = self.charm.backup_manager.list_backups()
@@ -293,14 +291,17 @@ class BackupEvents(ops.Object):
         """Validate, then initiate the async restore workflow (leader only)."""
         backup_id = event.params.get("backup-id", "")
         if reason := self._restore_blocking_reason(backup_id):
-            self._reject_restore(event, backup_id, reason)
+            logger.warning(
+                "restore.rejected backup_id=%s reason=%s", backup_id or "<none>", reason
+            )
+            event.set_results({"error": reason})
+            event.fail(reason)
             return
 
         logger.info(
-            "audit: restore action invoked action_id=%s backup_id=%s unit=%s participants=%s",
+            "audit: restore action invoked action_id=%s backup_id=%s participants=%s",
             event.id,
             backup_id,
-            self.charm.unit.name,
             [s.unit_name for s in self.charm.state.servers],
         )
         # Clear any stale terminal status from a prior attempt.
@@ -318,13 +319,6 @@ class BackupEvents(ops.Object):
         )
         # the action is async, the actual restore procedure is triggered by relation-changed events
         event.set_results({"restore": f"initiated for {backup_id}"})
-
-    @staticmethod
-    def _reject_restore(event: ops.ActionEvent, backup_id: str, reason: str) -> None:
-        """Fail the restore action with ``reason`` and leave a traceable log line."""
-        logger.warning("restore.rejected backup_id=%s reason=%s", backup_id or "<none>", reason)
-        event.set_results({"error": reason})
-        event.fail(reason)
 
     # ── restore workflow ─────────────────────────────────────────────────
 
@@ -433,7 +427,6 @@ class BackupEvents(ops.Object):
                 if self.charm.backup_manager.has_pre_restore_copy() and not (
                     self.charm.workload.alive(self.charm.workload.valkey_service)
                 ):
-                    logger.warning("restore.step restore: interrupted mid-swap; rolling back")
                     self.charm.backup_manager.roll_back()
                     raise ValkeyRestoreError("primary restore interrupted mid-swap; rolled back")
 
@@ -446,35 +439,25 @@ class BackupEvents(ops.Object):
                     self.charm.state.cluster.restore_id,
                 )
                 if is_primary:
-                    logger.info("restore.step restore: suppressing sentinel failover")
                     self.charm.sentinel_manager.suppress_failover()
                     self._do_primary_restore()
-                self._record_restore_step(RestoreStep.RESTORE)
+                self.charm.backup_manager.set_restore_step(RestoreStep.RESTORE)
 
             case (RestoreStep.RESYNC, RestoreStep.RESTORE):
                 if role == "primary":
-                    logger.info("restore.step resync role=primary: resuming sentinel failover")
                     self.charm.sentinel_manager.resume_failover()
                 else:
-                    logger.info(
-                        "restore.step resync role=replica: waiting up to %ss for resync",
-                        RESTORE_RESYNC_TIMEOUT_S,
-                    )
                     self.charm.cluster_manager.wait_until_resynced(RESTORE_RESYNC_TIMEOUT_S)
-                self._record_restore_step(RestoreStep.RESYNC)
+                self.charm.backup_manager.set_restore_step(RestoreStep.RESYNC)
 
             case (RestoreStep.COMPLETED, RestoreStep.RESYNC):
                 if role == "primary":
                     self.charm.backup_manager.cleanup_restore_files()
-                self._record_restore_step(RestoreStep.COMPLETED)
+                self.charm.backup_manager.set_restore_step(RestoreStep.COMPLETED)
 
             case _:
                 # Not our turn: tuple doesn't match a valid transition.
                 return
-
-    def _record_restore_step(self, step: RestoreStep) -> None:
-        self.charm.backup_manager.set_restore_step(step)
-        logger.info("restore.step_done step=%s unit=%s", step.value, self.charm.unit.name)
 
     def _do_primary_restore(self) -> None:
         """Validate, restore in-place, and roll back on any failure.
@@ -490,14 +473,8 @@ class BackupEvents(ops.Object):
         self.charm.cluster_manager.save_dataset_before_shutdown()
         try:
             self.charm.backup_manager.restore_on_primary()
-            logger.info(
-                "restore.primary: waiting up to %ss for the dataset to load",
-                RESTORE_LOAD_TIMEOUT_S,
-            )
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
-            logger.info("restore.primary: dataset loaded")
         except Exception:
-            logger.warning("restore.primary: failed; rolling back to the pre-restore dataset")
             self.charm.backup_manager.roll_back()
             raise
         finally:
@@ -548,7 +525,7 @@ class BackupEvents(ops.Object):
         # Stamp with the attempt token so it can't be misread against a later restore.
         marker = f"{kind.value}:{self.charm.state.cluster.restore_token}"
         self.charm.state.unit_server.update({"restore_failed": marker})
-        logger.warning("restore.failed unit=%s kind=%s", self.charm.unit.name, kind.value)
+        logger.warning("restore.failed kind=%s", kind.value)
         if self.charm.unit.is_leader():
             # Already resumed failover just above; don't do it twice.
             self._finish_failed_restore(resume=False)

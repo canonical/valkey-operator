@@ -397,6 +397,29 @@ def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     assert mgr.is_failover_in_progress() is False
 
 
+def test_failover_suppression_logs_in_the_manager(mocker, caplog):
+    """suppress/resume log their own effect, so the event handler doesn't have to.
+
+    The log line belongs next to the work it describes.
+    """
+    import logging
+
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    client = mocker.Mock()
+    client.set.return_value = True
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    mocker.patch.object(mgr, "all_sentinel_endpoints", return_value=["10.0.0.1"])
+
+    with caplog.at_level(logging.INFO):
+        mgr.suppress_failover()
+        mgr.resume_failover()
+
+    assert "restore.failover_suppressed" in caplog.text
+    assert "restore.failover_resumed" in caplog.text
+
+
 # ── backup manager: download / verify / restore primitives ───────────────────
 
 
@@ -491,6 +514,28 @@ def test_next_restore_step():
     assert BackupManager.next_restore_step(RestoreStep.NOT_STARTED) == RestoreStep.RESTORE
     assert BackupManager.next_restore_step(RestoreStep.RESTORE) == RestoreStep.RESYNC
     assert BackupManager.next_restore_step(RestoreStep.RESYNC) == RestoreStep.COMPLETED
+
+
+def test_set_restore_step_logs_the_completed_step(mocker, caplog):
+    """The step-completed line lives in the manager that writes the databag.
+
+    The log belongs next to the work, and the unit name is dropped -- Juju
+    already prefixes every log line with it.
+    """
+    import logging
+
+    from src.literals import RestoreStep
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+
+    with caplog.at_level(logging.INFO):
+        mgr.set_restore_step(RestoreStep.RESYNC)
+
+    mgr.state.unit_server.update.assert_called_once_with({"restore_step": "resync"})
+    assert "restore.step_done step=resync" in caplog.text
+    assert "unit=" not in caplog.text
 
 
 def test_restore_on_primary_orders_stop_backup_download_start(mocker):
@@ -985,6 +1030,10 @@ def test_restore_workflow_logs_each_transition(cloud_spec, restore_managers, cap
         "restore.completed",
     ):
         assert marker in caplog.text, f"missing log marker {marker!r}"
+    # The event handler keeps only the state-machine trail -- per-step work
+    # logs itself in its manager (mocked out here) -- and never repeats the unit
+    # name Juju already prefixes onto every line.
+    assert "unit=" not in caplog.text
 
 
 def test_restore_action_rejected_on_non_leader(cloud_spec):

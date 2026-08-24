@@ -763,7 +763,11 @@ def test_on_create_backup_action_happy(mocker):
 
 
 def test_on_create_backup_action_audit_logs_invocation(mocker, caplog):
-    """Each create-backup invocation is audit-logged with its action id and unit."""
+    """Each create-backup invocation is audit-logged with its action id.
+
+    No unit name in the message -- Juju already prefixes every log line with
+    the unit that emitted it.
+    """
     import logging
 
     from src.events.backup import BackupEvents
@@ -784,7 +788,7 @@ def test_on_create_backup_action_audit_logs_invocation(mocker, caplog):
     audit = [r.message for r in caplog.records if "audit: create-backup" in r.message]
     assert audit, "expected an audit log line for the action invocation"
     assert "action_id=42" in audit[0]
-    assert "unit=valkey/2" in audit[0]
+    assert "unit=" not in audit[0]
 
 
 def test_on_create_backup_action_fails_when_guard_blocks(mocker):
