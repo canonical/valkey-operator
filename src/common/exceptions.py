@@ -76,6 +76,19 @@ class KubernetesClientError(Exception):
     """Custom Exception if a connection to the Kubernetes Cluster API fails."""
 
 
+class StorageBackendError(Exception):
+    """Backend-neutral remote-object-store failure.
+
+    Raised by every ``StorageBackend`` implementation so callers never have to
+    catch an SDK-specific exception; ``safe_code`` is the backend's structured
+    error code, forwarded onto the backup/restore error the manager raises.
+    """
+
+    def __init__(self, message: str, *, safe_code: str | None = None):
+        super().__init__(message)
+        self.safe_code = safe_code
+
+
 class ValkeyBackupError(Exception):
     """Raised when a backup operation fails.
 

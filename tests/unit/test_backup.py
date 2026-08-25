@@ -100,6 +100,53 @@ def test_cluster_state_exposes_s3_relation(cloud_spec):
         assert manager.charm.state.s3_relation.name == S3_RELATION_NAME
 
 
+def test_active_backup_credentials_follows_the_relation(cloud_spec, mocker):
+    """Credentials are only "active" while the backend they belong to is related.
+
+    The leader clears the stored envelope on relation-broken; until it does, the
+    stored value must not keep a peer talking to a backend nobody is related to.
+    ``s3_credentials`` is an ``ExtraSecretStr`` routed through a Juju secret, so
+    it's patched at the property rather than forged into the databag.
+    """
+    from unittest.mock import PropertyMock
+
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import PEER_RELATION, S3_RELATION_NAME, STATUS_PEERS_RELATION
+
+    stored = _s3_params()
+    mocker.patch(
+        "core.models.ValkeyCluster.s3_credentials",
+        new_callable=PropertyMock,
+        return_value=stored,
+    )
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    s3_rel = testing.Relation(
+        id=3,
+        endpoint=S3_RELATION_NAME,
+        interface="s3",
+        remote_app_name="s3-integrator",
+    )
+    common = {
+        "model": testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        "leader": True,
+        "containers": {testing.Container(name="valkey", can_connect=True)},
+    }
+
+    related = testing.State(relations={peer, status_peer, s3_rel}, **common)
+    with ctx(ctx.on.update_status(), related) as manager:
+        assert manager.charm.state.active_backup_credentials is stored
+
+    # Same stored envelope, relation gone -> nothing active.
+    unrelated = testing.State(relations={peer, status_peer}, **common)
+    with ctx(ctx.on.update_status(), unrelated) as manager:
+        assert manager.charm.state.active_backup_credentials is None
+
+
 def test_backup_ca_path_is_charm_local_not_workload_tls_dir(mocker, tmp_path):
     """The S3 CA path is charm-process-local, never a workload TLS path.
 
@@ -120,59 +167,6 @@ def test_backup_ca_path_is_charm_local_not_workload_tls_dir(mocker, tmp_path):
     state.charm.charm_dir = tmp_path
     mgr = BackupManager(state=state, workload=mocker.MagicMock())
     assert mgr._backup_ca_path == tmp_path / BACKUP_CA_FILENAME
-
-
-def test_backup_manager_bucket_resource_built_with_checksum_workaround(mocker, tmp_path):
-    import boto3
-
-    from src.managers.backup import BackupManager
-
-    state = mocker.MagicMock()
-    state.charm.charm_dir = tmp_path
-    workload = mocker.MagicMock()
-
-    fake_session = mocker.MagicMock()
-    fake_resource = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    fake_resource.Bucket.return_value = fake_bucket
-    fake_session.resource.return_value = fake_resource
-    mocker.patch("boto3.Session", return_value=fake_session)
-
-    mgr = BackupManager(state=state, workload=workload)
-    bucket = mgr._get_bucket_resource(
-        _s3_params(endpoint="https://s3.example.com", region="us-west-2")
-    )
-
-    _, session_kwargs = boto3.Session.call_args
-    assert session_kwargs["aws_access_key_id"] == "AK"
-    assert session_kwargs["aws_secret_access_key"] == "SK"
-    assert session_kwargs["region_name"] == "us-west-2"
-    args, kwargs = fake_session.resource.call_args
-    assert args[0] == "s3"
-    assert kwargs["endpoint_url"] == "https://s3.example.com"
-    cfg = kwargs["config"]
-    assert cfg.request_checksum_calculation == "when_required"
-    assert cfg.response_checksum_validation == "when_required"
-    assert kwargs["verify"] is True  # no tls-ca-chain provided
-    fake_resource.Bucket.assert_called_once_with("b")
-    assert bucket is fake_bucket
-
-
-def test_backup_manager_bucket_resource_uses_ca_chain_when_provided(mocker, tmp_path):
-    import boto3
-
-    from src.literals import BACKUP_CA_FILENAME
-    from src.managers.backup import BackupManager
-
-    state = mocker.MagicMock()
-    state.charm.charm_dir = tmp_path
-    workload = mocker.MagicMock()
-    mocker.patch("boto3.Session")
-
-    mgr = BackupManager(state=state, workload=workload)
-    mgr._get_bucket_resource(_s3_params(tls_ca_chain=["-----BEGIN CERTIFICATE-----\n..."]))
-    _, kwargs = boto3.Session.return_value.resource.call_args
-    assert kwargs["verify"] == str(tmp_path / BACKUP_CA_FILENAME)
 
 
 def test_backup_manager_store_tls_ca_chain_writes_charm_local_file(mocker, tmp_path):
@@ -231,119 +225,88 @@ def test_backup_manager_store_tls_ca_chain_rejects_non_pem_items(mocker, tmp_pat
     assert not (tmp_path / BACKUP_CA_FILENAME).exists()
 
 
-def test_create_bucket_us_east_1_omits_location_constraint(mocker):
+def test_ensure_container_delegates_to_the_backend(mocker):
+    """The manager just asks the backend; the create semantics are the backend's."""
     from src.managers.backup import BackupManager
 
-    state = mocker.MagicMock()
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    backend = _fake_backend(mocker)
 
-    BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
-    fake_bucket.create.assert_called_once_with()
-    fake_bucket.wait_until_exists.assert_called_once()
-
-
-def test_create_bucket_non_default_region_sets_location_constraint(mocker):
-    from src.managers.backup import BackupManager
-
-    state = mocker.MagicMock()
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
-
-    BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="eu-west-1"))
-    fake_bucket.create.assert_called_once_with(
-        CreateBucketConfiguration={"LocationConstraint": "eu-west-1"}
+    BackupManager(state=mocker.MagicMock(), workload=mocker.MagicMock()).ensure_container(
+        _s3_params()
     )
+    backend.ensure_container.assert_called_once_with()
 
 
-def test_create_bucket_tolerates_existing_buckets(mocker):
-    from botocore.exceptions import ClientError
-
-    from src.managers.backup import BackupManager
-
-    state = mocker.MagicMock()
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
-
-    for token in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists", "BucketNameUnavailable"):
-        fake_bucket.reset_mock()
-        fake_bucket.create.side_effect = ClientError(
-            {"Error": {"Code": token, "Message": token}}, "CreateBucket"
-        )
-        # Must not raise
-        BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
-
-
-def test_create_bucket_raises_for_other_client_errors(mocker):
+def test_ensure_container_wraps_backend_error_and_keeps_the_code(mocker):
+    """Bucket setup failures reach the credentials handler as a backup error."""
     import pytest
-    from botocore.exceptions import ClientError
 
-    from common.exceptions import ValkeyBackupError
+    from common.exceptions import StorageBackendError, ValkeyBackupError
     from src.managers.backup import BackupManager
 
-    state = mocker.MagicMock()
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    fake_bucket.create.side_effect = ClientError(
-        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "CreateBucket"
-    )
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    backend = _fake_backend(mocker)
+    backend.ensure_container.side_effect = StorageBackendError("x", safe_code="AccessDenied")
 
-    with pytest.raises(ValkeyBackupError):
-        BackupManager(state=state, workload=workload).create_bucket(_s3_params(region="us-east-1"))
-
-
-def test_list_backups_filters_by_prefix_and_sorts_descending(mocker):
-    from src.managers.backup import BackupManager
-
-    state = mocker.MagicMock()
-    state.cluster.s3_credentials = _s3_params(path="valkey")
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    fake_objects = [
-        mocker.MagicMock(key=k)
-        for k in (
-            "valkey/2026-05-13T10:00:00Z",
-            "valkey/2026-05-12T10:00:00Z",
-            "valkey/2026-05-14T10:00:00Z",
-            # Non-backup objects under the prefix must be excluded.
-            "valkey/.s3-lifecycle-marker",
-            "valkey/subdir/something",
+    with pytest.raises(ValkeyBackupError) as excinfo:
+        BackupManager(state=mocker.MagicMock(), workload=mocker.MagicMock()).ensure_container(
+            _s3_params()
         )
-    ]
-    fake_bucket.objects.filter.return_value = fake_objects
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    assert excinfo.value.safe_code == "AccessDenied"
 
-    result = BackupManager(state=state, workload=workload).list_backups()
+
+def test_list_backups_keeps_only_backup_ids_newest_first(mocker):
+    """The manager filters the backend's object ids and orders them, newest first."""
+    from src.managers.backup import BackupManager
+
+    state = mocker.MagicMock()
+    state.active_backup_credentials = _s3_params(path="valkey")
+    backend = _fake_backend(mocker)
+    backend.list_object_ids.return_value = [
+        "2026-05-13T10:00:00Z",
+        "2026-05-12T10:00:00Z",
+        "2026-05-14T10:00:00Z",
+        # Non-backup objects under the prefix must be excluded.
+        ".s3-lifecycle-marker",
+        "subdir/something",
+    ]
+
+    result = BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
     assert result == [
         "2026-05-14T10:00:00Z",
         "2026-05-13T10:00:00Z",
         "2026-05-12T10:00:00Z",
     ]
-    fake_bucket.objects.filter.assert_called_once_with(Prefix="valkey/")
 
 
-def test_list_backups_wraps_client_error(mocker):
+def test_list_backups_wraps_backend_error_and_keeps_the_code(mocker):
+    """A backend failure surfaces as ValkeyBackupError, code intact for the action."""
     import pytest
-    from botocore.exceptions import ClientError
+
+    from common.exceptions import StorageBackendError, ValkeyBackupError
+    from src.managers.backup import BackupManager
+
+    state = mocker.MagicMock()
+    state.active_backup_credentials = _s3_params(path="p")
+    backend = _fake_backend(mocker)
+    backend.list_object_ids.side_effect = StorageBackendError("x", safe_code="NoSuchBucket")
+
+    with pytest.raises(ValkeyBackupError) as excinfo:
+        BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
+    assert excinfo.value.safe_code == "NoSuchBucket"
+
+
+def test_list_backups_without_credentials_raises(mocker):
+    """No related backend (or nothing stored yet) is an error, not an empty list."""
+    import pytest
 
     from common.exceptions import ValkeyBackupError
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.cluster.s3_credentials = _s3_params(path="p")
-    workload = mocker.MagicMock()
-    fake_bucket = mocker.MagicMock()
-    fake_bucket.objects.filter.side_effect = ClientError(
-        {"Error": {"Code": "NoSuchBucket", "Message": "x"}}, "ListObjectsV2"
-    )
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    state.active_backup_credentials = None
 
     with pytest.raises(ValkeyBackupError):
-        BackupManager(state=state, workload=workload).list_backups()
+        BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
 
 
 def test_format_backup_list_renders_table():
@@ -377,9 +340,22 @@ def _s3_params(**overrides):
     return S3Parameters.model_validate(base)
 
 
+def _fake_backend(mocker):
+    """Patch BackupManager onto a fake StorageBackend and hand it back.
+
+    Manager tests assert what the manager asks of the backend; the SDK wiring
+    behind the Protocol is covered in test_backup_backend.py.
+    """
+    from src.managers.backup import BackupManager
+
+    backend = mocker.MagicMock()
+    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    return backend
+
+
 def _make_state(mocker, *, backup_id="", admin_pw="pw", tls=False):
     state = mocker.MagicMock()
-    state.cluster.s3_credentials = _s3_params()
+    state.active_backup_credentials = _s3_params()
     state.unit_server.model.backup_id = backup_id
     state.unit_server.valkey_admin_password = admin_pw
     state.unit_server.is_tls_enabled = tls
@@ -388,7 +364,7 @@ def _make_state(mocker, *, backup_id="", admin_pw="pw", tls=False):
 
 
 def _drain(reader) -> None:
-    """Mimic boto3.upload_fileobj draining the stream to completion."""
+    """Mimic a backend upload draining the stream to completion."""
     while reader.read(8192):
         pass
 
@@ -406,9 +382,8 @@ def test_create_backup_success_sets_lock_streams_and_clears(mocker):
     proc.wait.return_value = (0, "")
     workload.exec_stream.return_value = proc
 
-    fake_bucket = mocker.MagicMock()
-    fake_bucket.upload_fileobj.side_effect = lambda reader, key, **kw: _drain(reader)
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    backend = _fake_backend(mocker)
+    backend.upload.side_effect = lambda backup_id, reader: _drain(reader)
     fixed_now = mocker.patch("src.managers.backup.datetime")
     fixed_now.now.return_value.strftime.return_value = "2026-05-13T10:00:00Z"
 
@@ -419,12 +394,11 @@ def test_create_backup_success_sets_lock_streams_and_clears(mocker):
     update_calls = state.unit_server.update.call_args_list
     assert update_calls[0].args[0] == {"backup_id": "2026-05-13T10:00:00Z"}
     assert update_calls[-1].args[0] == {"backup_id": ""}
-    fake_bucket.upload_fileobj.assert_called_once()
-    pos_args, _kwargs = fake_bucket.upload_fileobj.call_args
-    assert pos_args[1] == "valkey/2026-05-13T10:00:00Z"
+    backend.upload.assert_called_once()
+    assert backend.upload.call_args.args[0] == "2026-05-13T10:00:00Z"
     proc.wait.assert_called_once()
     # A valid RDB was streamed, so no cleanup delete happened.
-    fake_bucket.Object.assert_not_called()
+    backend.delete.assert_not_called()
 
 
 def test_create_backup_rejects_empty_or_non_rdb_stream(mocker):
@@ -447,16 +421,14 @@ def test_create_backup_rejects_empty_or_non_rdb_stream(mocker):
         proc.wait.return_value = (0, "")
         workload.exec_stream.return_value = proc
 
-        fake_bucket = mocker.MagicMock()
-        fake_bucket.upload_fileobj.side_effect = lambda reader, key, **kw: _drain(reader)
-        mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+        backend = _fake_backend(mocker)
+        backend.upload.side_effect = lambda backup_id, reader: _drain(reader)
 
         with pytest.raises(ValkeyBackupError):
             BackupManager(state=state, workload=workload).create_backup()
 
         # The bogus object is deleted and the lock is released.
-        fake_bucket.Object.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
-        fake_bucket.Object.return_value.delete.assert_called_once()
+        backend.delete.assert_called_once_with("2026-05-13T10:00:00Z")
         assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
 
 
@@ -473,18 +445,33 @@ def test_create_backup_deletes_object_and_raises_when_cli_fails(mocker):
     proc.wait.return_value = (1, "WRONGPASS")
     workload.exec_stream.return_value = proc
 
-    fake_bucket = mocker.MagicMock()
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    backend = _fake_backend(mocker)
     fixed_now = mocker.patch("src.managers.backup.datetime")
     fixed_now.now.return_value.strftime.return_value = "2026-05-13T10:00:00Z"
 
     with pytest.raises(ValkeyBackupError):
         BackupManager(state=state, workload=workload).create_backup()
 
-    fake_bucket.Object.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
-    fake_bucket.Object.return_value.delete.assert_called_once()
+    backend.delete.assert_called_once_with("2026-05-13T10:00:00Z")
     last_update = state.unit_server.update.call_args_list[-1]
     assert last_update.args[0] == {"backup_id": ""}
+
+
+def test_create_backup_refuses_to_run_without_credentials(mocker):
+    """No related backup backend: fail before touching valkey or the databag lock."""
+    import pytest
+
+    from common.exceptions import ValkeyBackupError
+    from src.managers.backup import BackupManager
+
+    state = mocker.MagicMock()
+    state.active_backup_credentials = None
+    workload = mocker.MagicMock()
+
+    with pytest.raises(ValkeyBackupError):
+        BackupManager(state=state, workload=workload).create_backup()
+    workload.exec_stream.assert_not_called()
+    state.unit_server.update.assert_not_called()
 
 
 def test_get_statuses_idle(mocker):
@@ -603,7 +590,7 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
     charm.state.cluster.is_restore_in_progress = False
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
-    charm.backup_manager.create_bucket.assert_called_once()
+    charm.backup_manager.ensure_container.assert_called_once()
     args, _ = charm.state.cluster.update.call_args
     payload = args[0]
     creds = json.loads(payload["s3_credentials"])
@@ -615,9 +602,10 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
 def test_safe_error_surfaces_s3_code_only(mocker):
     """Only the structured S3 error code reaches the action result.
 
-    Raised through the manager rather than hand-wired: the action surface has to
-    survive however the manager wraps the SDK error, so a test that builds the
-    chain itself would keep passing after the wrapping changes underneath it.
+    Raised through the whole stack -- SDK error, backend, manager, action -- not
+    hand-wired: every layer in between rewraps the error, and a test that builds
+    the chain itself would keep passing after one of them stopped forwarding the
+    code.
     """
     import pytest
     from botocore.exceptions import ClientError
@@ -625,12 +613,15 @@ def test_safe_error_surfaces_s3_code_only(mocker):
     # Flat import: the manager raises `common.exceptions.ValkeyBackupError`, a
     # different class object from the `src.`-prefixed one, so pytest.raises must
     # be given the flat one to catch it.
+    # ...and flat for S3Backend too: src/ imports are flat, so the class the
+    # manager actually instantiates is `managers.backup_backend.S3Backend`.
     from common.exceptions import ValkeyBackupError
+    from managers.backup_backend import S3Backend
     from src.events.backup import _safe_error
     from src.managers.backup import BackupManager
 
     state = mocker.MagicMock()
-    state.cluster.s3_credentials = _s3_params(path="p")
+    state.active_backup_credentials = _s3_params(path="p")
     fake_bucket = mocker.MagicMock()
     fake_bucket.objects.filter.side_effect = ClientError(
         {
@@ -641,7 +632,7 @@ def test_safe_error_surfaces_s3_code_only(mocker):
         },
         "ListObjectsV2",
     )
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    mocker.patch.object(S3Backend, "_bucket", return_value=fake_bucket)
 
     with pytest.raises(ValkeyBackupError) as excinfo:
         BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
@@ -683,12 +674,12 @@ def test_on_s3_credentials_changed_rejects_path_that_strips_to_empty(mocker):
     }
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
-    charm.backup_manager.create_bucket.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
     charm.state.cluster.update.assert_not_called()
 
 
 def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
-    """An unchanged envelope must not trigger another create_bucket call."""
+    """An unchanged envelope must not trigger another ensure_container call."""
     from src.core.models import S3Parameters
     from src.events.backup import BackupEvents
 
@@ -711,7 +702,7 @@ def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
     evt.s3_requirer.get_storage_connection_info.return_value = dict(envelope)
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
-    charm.backup_manager.create_bucket.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
     charm.state.cluster.update.assert_not_called()
 
 
@@ -729,7 +720,7 @@ def test_on_s3_credentials_changed_missing_params_skips_databag(mocker):
 
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.state.cluster.update.assert_not_called()
-    charm.backup_manager.create_bucket.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
 
 
 def test_on_s3_credentials_gone_defers_during_backup(mocker):
@@ -1066,15 +1057,14 @@ def test_get_statuses_credentials_missing_hidden_before_started(mocker):
 
 
 def test_create_backup_kills_producer_on_upload_failure(mocker):
-    """A mid-stream upload failure stops valkey-cli; boto3 aborts the MPU itself.
+    """A mid-stream upload failure stops valkey-cli; the SDK aborts its transfer.
 
     No explicit object delete is issued -- a failed multipart/PutObject leaves
-    no object to delete, and boto3's managed transfer aborts the upload.
+    no complete object to clean up, and the SDK aborts the upload itself.
     """
     import pytest
-    from botocore.exceptions import ClientError
 
-    from common.exceptions import ValkeyBackupError
+    from common.exceptions import StorageBackendError, ValkeyBackupError
     from src.managers.backup import BackupManager
 
     state = _make_state(mocker)
@@ -1083,18 +1073,16 @@ def test_create_backup_kills_producer_on_upload_failure(mocker):
     proc = mocker.MagicMock()
     workload.exec_stream.return_value = proc
 
-    fake_bucket = mocker.MagicMock()
-    fake_bucket.upload_fileobj.side_effect = ClientError(
-        {"Error": {"Code": "NoSuchBucket", "Message": "x"}}, "PutObject"
-    )
-    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
+    backend = _fake_backend(mocker)
+    backend.upload.side_effect = StorageBackendError("x", safe_code="NoSuchBucket")
     fixed_now = mocker.patch("src.managers.backup.datetime")
     fixed_now.now.return_value.strftime.return_value = "2026-05-13T10:00:00Z"
 
-    with pytest.raises(ValkeyBackupError):
+    with pytest.raises(ValkeyBackupError) as excinfo:
         BackupManager(state=state, workload=workload).create_backup()
 
+    assert excinfo.value.safe_code == "NoSuchBucket"
     proc.kill.assert_called_once()
-    fake_bucket.Object.assert_not_called()
+    backend.delete.assert_not_called()
     # The lock is still released on the way out.
     assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}

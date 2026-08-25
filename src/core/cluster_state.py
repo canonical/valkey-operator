@@ -17,7 +17,14 @@ from dpcharmlibs.interfaces import (
     OpsRelationRepository,
 )
 
-from core.models import LDAPState, PeerAppModel, PeerUnitModel, ValkeyCluster, ValkeyServer
+from core.models import (
+    LDAPState,
+    PeerAppModel,
+    PeerUnitModel,
+    S3Parameters,
+    ValkeyCluster,
+    ValkeyServer,
+)
 from literals import (
     CLIENT_TLS_RELATION_NAME,
     EXTERNAL_CLIENTS_RELATION,
@@ -59,6 +66,18 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def s3_relation(self) -> ops.model.Relation | None:
         """Get the S3 credentials relation, if any."""
         return self.model.get_relation(S3_RELATION_NAME)
+
+    @property
+    def active_backup_credentials(self) -> S3Parameters | None:
+        """Stored credentials for the related backup backend, else None.
+
+        Gated on the relation, not just the databag: the leader clears the stored
+        envelope on relation-broken, and until it does, a peer must not keep using
+        credentials for a backend nobody is related to any more.
+        """
+        if self.s3_relation is not None:
+            return self.cluster.s3_credentials
+        return None
 
     @property
     def peer_units_data_interfaces(

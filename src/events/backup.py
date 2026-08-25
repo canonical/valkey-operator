@@ -110,7 +110,7 @@ class BackupEvents(ops.Object):
             logger.warning("S3 integrator parameters invalid or incomplete: %s", e)
             return
 
-        # leader_elected re-fires this; skip the create_bucket round trip if unchanged.
+        # leader_elected re-fires this; skip the ensure_container round trip if unchanged.
         stored = self.charm.state.cluster.s3_credentials
         if stored is not None and stored.model_dump() == params.model_dump():
             return
@@ -123,7 +123,7 @@ class BackupEvents(ops.Object):
             return
 
         try:
-            self.charm.backup_manager.create_bucket(params)
+            self.charm.backup_manager.ensure_container(params)
         except ValkeyBackupError as e:
             logger.error("Bucket setup failed: %s", e)
             return
