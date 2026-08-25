@@ -1391,6 +1391,190 @@ def test_cluster_azure_credentials_parses_envelope_and_defaults_none(mocker):
     assert cluster.azure_credentials is None
 
 
+def test_credentials_changed_handlers_cover_every_registered_backend(mocker, cloud_spec):
+    """Every registry entry has a changed handler, or its integrator is inert.
+
+    ``_reconcile_other_backends`` and the leader_elected recovery observers are
+    both generated from this table, so a missing entry silently loses a backend.
+    """
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import BACKUP_CREDENTIAL_FIELDS, PEER_RELATION, STATUS_PEERS_RELATION
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={
+            testing.PeerRelation(id=1, endpoint=PEER_RELATION),
+            testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+        },
+        containers={testing.Container(name="valkey", can_connect=True)},
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        handlers = manager.charm.backup_events._credentials_changed_handlers
+    assert set(handlers) == set(BACKUP_CREDENTIAL_FIELDS)
+
+
+def test_on_azure_credentials_changed_leader_writes_databag(mocker):
+    """The Azure handler delegates the leader/conflict/validate/store half."""
+    import json
+
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = True
+    charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.azure_requirer = mocker.MagicMock()
+    evt.azure_requirer.get_storage_connection_info.return_value = {
+        "container": " c ",
+        "storage-account": "acct",
+        "secret-key": "SK",
+        "connection-protocol": "https",
+        "path": "/valkey/",
+    }
+
+    evt._on_azure_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.ensure_container.assert_called_once()
+    args, _ = charm.state.cluster.update.call_args
+    creds = json.loads(args[0]["azure_credentials"])
+    assert creds["container"] == "c"
+    assert creds["path"] == "valkey"
+    assert creds["storage-account"] == "acct"
+
+
+def test_on_azure_credentials_changed_without_info_is_a_noop(mocker):
+    """Fired on leader_elected with no Azure relation: nothing to store."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.azure_requirer = mocker.MagicMock()
+    evt.azure_requirer.get_storage_connection_info.return_value = {}
+
+    evt._on_azure_credentials_changed(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
+
+
+def test_on_azure_credentials_changed_never_touches_the_s3_ca(mocker):
+    """The endpoint CA is an S3-only concept; Azure must not clobber the file."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.azure_requirer = mocker.MagicMock()
+    evt.azure_requirer.get_storage_connection_info.return_value = {
+        "container": "c",
+        "storage-account": "acct",
+        "secret-key": "SK",
+        "connection-protocol": "https",
+        "path": "valkey",
+    }
+
+    evt._on_azure_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.store_tls_ca_chain.assert_not_called()
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+
+
+def test_on_azure_credentials_gone_defers_during_backup(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = True
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    event = mocker.MagicMock()
+
+    evt._on_azure_credentials_gone(event)
+
+    event.defer.assert_called_once()
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_azure_credentials_gone_clears_databag_and_converges_s3(mocker):
+    """Removing the Azure integrator clears the conflict, so S3 gets another go."""
+    from src.events.backup import BackupEvents
+    from src.literals import AZURE_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    s3_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: s3_handler,
+        AZURE_RELATION_NAME: mocker.Mock(),
+    }
+
+    evt._on_azure_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"azure_credentials": ""})
+    # Azure carries no charm-local CA, so nothing on disk is touched.
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+    s3_handler.assert_called_once()
+    evt._credentials_changed_handlers[AZURE_RELATION_NAME].assert_not_called()
+
+
+def test_on_azure_credentials_gone_non_leader_does_not_clear_databag(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {}
+
+    evt._on_azure_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_s3_credentials_gone_converges_the_surviving_azure_backend(mocker):
+    """The mirror case: dropping S3 must re-drive the still-related Azure backend."""
+    from src.events.backup import BackupEvents
+    from src.literals import AZURE_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    azure_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: mocker.Mock(),
+        AZURE_RELATION_NAME: azure_handler,
+    }
+
+    evt._on_s3_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"s3_credentials": ""})
+    azure_handler.assert_called_once()
+
+
 def test_azure_parameters_rejects_an_unknown_connection_protocol():
     """Only the six documented integrator values are accepted.
 
