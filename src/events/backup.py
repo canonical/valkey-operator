@@ -86,7 +86,6 @@ class BackupEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_departed, self._on_restore_workflow
         )
         self.framework.observe(self.charm.on.update_status, self._on_restore_workflow)
-        self.framework.observe(self.charm.on.update_status, self._reconcile_failover_suppression)
 
     # ── event handlers ──────────────────────────────────────────────────
 
@@ -335,9 +334,13 @@ class BackupEvents(ops.Object):
         Juju's one self-delivery guarantee. No in-hook loop; every guard below is
         idempotent, so a redelivered hook re-runs and converges.
         """
-        # Restore done: each unit clears its own per-unit state once restore_id is gone.
+        # Restore done: each unit clears its own per-unit state once restore_id is gone,
+        # and self-heals a sentinel a failed restore left failover-suppressed --
+        # suppression is only legitimate while a restore runs.
         if not self.charm.state.cluster.is_restore_in_progress:
             self._clear_local_restore_state()
+            if self.charm.state.unit_server.is_active:
+                self.charm.sentinel_manager.reconcile_failover_suppression()
             return
 
         # Leader ends a failed restore on a participant failure or departure
@@ -378,19 +381,6 @@ class BackupEvents(ops.Object):
 
         if self.charm.unit.is_leader():
             self._advance_if_leader()
-
-    def _reconcile_failover_suppression(self, _: ops.UpdateStatusEvent) -> None:
-        """Self-heal this unit's sentinel if a failed restore left failover suppressed.
-
-        Suppression is only legitimate while a restore runs, so this unit's
-        sentinel is re-checked on every update-status outside one.
-        """
-        if (
-            not self.charm.state.unit_server.is_active
-            or self.charm.state.cluster.is_restore_in_progress
-        ):
-            return
-        self.charm.sentinel_manager.reconcile_failover_suppression()
 
     def _clear_local_restore_state(self) -> None:
         """Clear this unit's per-unit restore fields once a restore has ended."""

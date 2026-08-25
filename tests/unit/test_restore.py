@@ -1802,11 +1802,10 @@ def test_completed_restore_clears_terminal_statuses(mocker, cloud_spec, restore_
     assert RestoreStatuses.RESTORE_UNHEALTHY.value in deleted
 
 
-# ── restore-awareness guards (single early-return clauses) ────────────────────
+# ── failover-suppression self-heal ───────────────────────────────────────────
 #
-# These assert one guard clause on a handler that otherwise has nothing to do
-# with restore; driving them through full events would entangle unrelated
-# handlers (and re-run the restore workflow), so they stay at the unit layer.
+# The workflow's "no restore in progress" branch also resumes a sentinel a failed
+# restore left suppressed, so it runs on every hook the workflow observes.
 
 
 def test_update_status_resumes_failover_left_suppressed(mocker, cloud_spec, restore_managers):
@@ -1815,12 +1814,40 @@ def test_update_status_resumes_failover_left_suppressed(mocker, cloud_spec, rest
     resume_failover is best-effort on every teardown path and Sentinel persists
     SENTINEL SET to its own conf, so a sentinel unreachable at teardown would
     otherwise stay failover-suppressed until the next config re-render. Each
-    unit self-heals its own sentinel on update-status.
+    unit self-heals its own sentinel, with update-status as the periodic backstop.
     """
     restore_managers.is_failover_suppressed.return_value = True
+    # A resume clears the suppression, so a hook that re-enters the workflow (a
+    # single-unit deployment re-emits peer relation-changed from the TLS handler)
+    # heals once and then reads the configured value.
+    restore_managers.resume_local_failover.side_effect = lambda: setattr(
+        restore_managers.is_failover_suppressed, "return_value", False
+    )
     ctx, state = _restore_context_and_state(cloud_spec)  # no restore in progress
 
     ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.resume_local_failover.assert_called_once()
+
+
+def test_peer_relation_changed_resumes_failover_left_suppressed(
+    mocker, cloud_spec, restore_managers
+):
+    """The self-heal also runs on the peer hook, not only on the 5-minute backstop.
+
+    A restore ends by clearing the app-level restore-id, which re-delivers peer
+    relation-changed to every unit -- exactly when a sentinel left suppressed by a
+    best-effort teardown should be caught, rather than up to an update-status later.
+    """
+    restore_managers.is_failover_suppressed.return_value = True
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,  # no restore in progress
+        peers_data={1: {"start-state": "started"}},
+    )
+    peer = next(r for r in state.relations if r.id == 1)
+
+    ctx.run(ctx.on.relation_changed(peer, remote_unit=1), state)
 
     restore_managers.resume_local_failover.assert_called_once()
 
@@ -1854,6 +1881,13 @@ def test_update_status_suppression_check_tolerates_sentinel_error(
     ctx.run(ctx.on.update_status(), state)  # must not raise
 
     restore_managers.resume_local_failover.assert_not_called()
+
+
+# ── restore-awareness guards (single early-return clauses) ────────────────────
+#
+# These assert one guard clause on a handler that otherwise has nothing to do
+# with restore; driving them through full events would entangle unrelated
+# handlers (and re-run the restore workflow), so they stay at the unit layer.
 
 
 def test_storage_detaching_refuses_during_restore(mocker):
