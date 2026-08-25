@@ -2,7 +2,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Fixtures for S3 backup integration tests, backed by MicroCeph.
+"""Fixtures for object-storage backup tests: S3 (MicroCeph) and Azure (Azurite).
 
 MicroCeph's RGW is fronted with a self-signed TLS certificate generated here,
 so the suite exercises the charm's full S3-over-TLS path (CA-chain
@@ -27,6 +27,8 @@ from pathlib import Path
 
 import boto3
 import pytest
+from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import BlobServiceClient
 from botocore.config import Config
 
 RGW_SSL_PORT = 445
@@ -155,3 +157,169 @@ def s3_bucket(microceph):
     bucket.create()
     bucket.wait_until_exists()
     return bucket
+
+
+# ── Azurite (Azure Blob emulator) ─────────────────────────────────────────────
+# Unlike MicroCeph (a snap, installed above), Azurite ships only as an OCI image,
+# so it needs a container runtime. Two are tried in order -- a host `docker`
+# daemon (what the CI runners have) and microk8s behind a NodePort (what a local
+# k8s dev box has) -- and the suite skips when neither is available.
+AZURITE_PORT = 10000
+AZURITE_NODE_PORT = 30000
+AZURITE_CONTAINER = "valkey-azurite"
+AZURITE_NAMESPACE = "valkey-azurite"
+_AZURITE_IMAGE = "mcr.microsoft.com/azure-storage/azurite:latest"
+# Azurite's well-known development account name + key. Published in Microsoft's
+# emulator docs and hardcoded in Azurite itself -- public test material, not a
+# secret, and it only ever authenticates against the local emulator.
+_AZURITE_ACCOUNT = "devstoreaccount1"
+_AZURITE_KEY = (
+    "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+)
+
+_AZURITE_MANIFEST = f"""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {AZURITE_NAMESPACE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: azurite
+  namespace: {AZURITE_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{app: azurite}}
+  template:
+    metadata:
+      labels: {{app: azurite}}
+    spec:
+      containers:
+        - name: azurite
+          image: {_AZURITE_IMAGE}
+          args: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "{AZURITE_PORT}"]
+          ports:
+            - containerPort: {AZURITE_PORT}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: azurite
+  namespace: {AZURITE_NAMESPACE}
+spec:
+  type: NodePort
+  selector: {{app: azurite}}
+  ports:
+    - port: {AZURITE_PORT}
+      targetPort: {AZURITE_PORT}
+      nodePort: {AZURITE_NODE_PORT}
+"""
+
+
+def _wait_for_port(host: str, port: int, timeout: int = 60) -> bool:
+    for _ in range(timeout):
+        if _port_open(host, port):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _start_azurite_docker() -> None:
+    """Run Azurite's blob endpoint on a host docker daemon; idempotent.
+
+    Reuses a live container, restarts a stopped one, creates it otherwise.
+    """
+    try:
+        running = _run("docker", "inspect", "-f", "{{.State.Running}}", AZURITE_CONTAINER)
+    except subprocess.CalledProcessError:
+        _run(
+            "docker", "run", "-d", "--name", AZURITE_CONTAINER,
+            "-p", f"{AZURITE_PORT}:{AZURITE_PORT}",
+            _AZURITE_IMAGE,
+            "azurite-blob", "--blobHost", "0.0.0.0",
+        )  # fmt: skip
+    else:
+        # A container left stopped by an earlier run never opens the port.
+        if running != "true":
+            _run("docker", "start", AZURITE_CONTAINER)
+
+
+def _start_azurite_microk8s() -> None:
+    """Run Azurite as a microk8s Deployment behind a NodePort; idempotent.
+
+    The manifest goes in on stdin rather than as a path: microk8s is a strict
+    snap with a private /tmp, so it cannot read a file the test process wrote
+    to a temp directory.
+    """
+    _run("microk8s", "kubectl", "apply", "-f", "-", input=_AZURITE_MANIFEST)
+    _run(
+        "microk8s", "kubectl", "-n", AZURITE_NAMESPACE,
+        "rollout", "status", "deploy/azurite", "--timeout=180s",
+    )  # fmt: skip
+
+
+def _ensure_azurite(host_ip: str) -> int:
+    """Start Azurite on whichever runtime is available; return its host port.
+
+    Returns 0 when no runtime could serve it, which the fixture turns into a skip.
+    """
+    for start, port in (
+        (_start_azurite_docker, AZURITE_PORT),
+        (_start_azurite_microk8s, AZURITE_NODE_PORT),
+    ):
+        try:
+            start()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue  # runtime missing or refused; try the next one
+        if _wait_for_port(host_ip, port):
+            return port
+    return 0
+
+
+@pytest.fixture(scope="module")
+def azurite() -> dict:
+    """Start Azurite and return the azure_storage envelope pointing at it.
+
+    Reachable from charm units at the host's routable IP -- never loopback,
+    which from a unit resolves to the unit itself (same rationale as the
+    MicroCeph fixture). `endpoint` embeds the dev account in the path and
+    `connection-protocol` is plain `http`, which azure-storage-integrator
+    accepts for Blob REST access, so it talks to the emulator, not real Azure.
+    """
+    host_ip = _host_ip()
+    if not (port := _ensure_azurite(host_ip)):
+        pytest.skip("Azurite needs a host docker daemon or a running microk8s")
+
+    return {
+        "container": f"valkey-backup-{secrets.token_hex(4)}",
+        "storage-account": _AZURITE_ACCOUNT,
+        "secret-key": _AZURITE_KEY,
+        "connection-protocol": "http",
+        "endpoint": f"http://{host_ip}:{port}/{_AZURITE_ACCOUNT}",
+        "path": "valkey",
+    }
+
+
+@pytest.fixture(scope="module")
+def azure_container(azurite: dict):
+    """Return an Azure ContainerClient for the test container, creating it eagerly.
+
+    Mirrors `s3_bucket`, and built exactly the way the charm's AzureBackend builds
+    its client (account_url = endpoint, account named explicitly), so the test
+    inspects the very store the charm writes to.
+    """
+    service = BlobServiceClient(
+        account_url=azurite["endpoint"],
+        credential={
+            "account_name": azurite["storage-account"],
+            "account_key": azurite["secret-key"],
+        },
+    )
+    container = service.get_container_client(azurite["container"])
+    try:
+        container.create_container()
+    except ResourceExistsError:
+        pass  # re-run against an already-created container
+    return container
