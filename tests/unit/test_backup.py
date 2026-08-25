@@ -151,45 +151,37 @@ def test_active_backup_credentials_follows_the_relation(cloud_spec, mocker):
 def test_backup_credential_registry_maps_relations_to_databag_fields():
     """Adding a backend is one registry entry: its relation and where creds land."""
     from src.core.models import PeerAppModel
-    from src.literals import BACKUP_CREDENTIAL_FIELDS, S3_RELATION_NAME
+    from src.literals import AZURE_RELATION_NAME, BACKUP_CREDENTIAL_FIELDS, S3_RELATION_NAME
 
     assert BACKUP_CREDENTIAL_FIELDS[S3_RELATION_NAME] == "s3_credentials"
+    assert BACKUP_CREDENTIAL_FIELDS[AZURE_RELATION_NAME] == "azure_credentials"
     # Every registered field must exist on the app databag model, or the leader
     # would silently write credentials nothing reads back.
     for field in BACKUP_CREDENTIAL_FIELDS.values():
         assert field in PeerAppModel.model_fields
 
 
-def test_backup_relations_and_conflict_follow_the_registry(cloud_spec, mocker):
+def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     """Relation discovery and the conflict check are driven by the registry alone.
 
-    Exercised with a second entry patched in (there is only one backend today),
-    which is what a future backend's entry will look like.
+    Exercised with the two registered backends, so it also pins the mutual
+    exclusion the charm enforces: relate exactly one storage integrator.
     """
     from ops import testing
 
     from src.charm import ValkeyCharm
     from src.literals import (
-        CLIENT_TLS_RELATION_NAME,
+        AZURE_RELATION_NAME,
         PEER_RELATION,
         S3_RELATION_NAME,
         STATUS_PEERS_RELATION,
-    )
-
-    # CLIENT_TLS stands in for a second backup integrator until one exists.
-    mocker.patch.dict(
-        "core.cluster_state.BACKUP_CREDENTIAL_FIELDS",
-        {S3_RELATION_NAME: "s3_credentials", CLIENT_TLS_RELATION_NAME: "s3_credentials"},
-        clear=True,
     )
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     s3_rel = testing.Relation(id=3, endpoint=S3_RELATION_NAME, interface="s3")
-    second = testing.Relation(
-        id=4, endpoint=CLIENT_TLS_RELATION_NAME, interface="tls-certificates"
-    )
+    azure_rel = testing.Relation(id=4, endpoint=AZURE_RELATION_NAME, interface="azure_storage")
     common = {
         "model": testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
         "leader": True,
@@ -201,7 +193,12 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec, mocker):
         assert len(manager.charm.state.backup_relations) == 1
         assert manager.charm.state.backup_backends_conflict is False
 
-    both = testing.State(relations={peer, status_peer, s3_rel, second}, **common)
+    other = testing.State(relations={peer, status_peer, azure_rel}, **common)
+    with ctx(ctx.on.update_status(), other) as manager:
+        assert len(manager.charm.state.backup_relations) == 1
+        assert manager.charm.state.backup_backends_conflict is False
+
+    both = testing.State(relations={peer, status_peer, s3_rel, azure_rel}, **common)
     with ctx(ctx.on.update_status(), both) as manager:
         assert len(manager.charm.state.backup_relations) == 2
         assert manager.charm.state.backup_backends_conflict is True
@@ -1259,6 +1256,10 @@ def test_create_backup_kills_producer_on_upload_failure(mocker):
     # The lock is still released on the way out.
     assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
 
+
+# ── Azure Blob backend ──────────────────────────────────────────────────
+
+
 def test_metadata_declares_azure_relation():
     """The Azure integrator relation is declared and mutually exclusive-friendly."""
     import pathlib
@@ -1270,3 +1271,161 @@ def test_metadata_declares_azure_relation():
     assert az["interface"] == "azure_storage"
     assert az["limit"] == 1
     assert az["optional"] is True
+
+
+def test_azure_parameters_valid_and_normalised():
+    """Trims whitespace, strips the separators that would corrupt blob keys."""
+    from src.core.models import AzureStorageParameters
+
+    p = AzureStorageParameters.model_validate(
+        {
+            "container": " c ",
+            "storage-account": "acct",
+            "secret-key": " KEY ",
+            "connection-protocol": "https",
+            "endpoint": "https://acct.blob.core.windows.net/",
+            "path": "/valkey/",
+        }
+    )
+    assert p.container == "c"
+    assert p.storage_account == "acct"
+    assert p.secret_key == "KEY"
+    assert p.path == "valkey"
+    assert p.endpoint == "https://acct.blob.core.windows.net"
+    assert p.resource_group is None
+
+
+def test_azure_parameters_lowercases_the_connection_protocol():
+    """The protocol is matched against the scheme sets, which are lowercase.
+
+    An integrator sending "HTTPS" must not fall through to the http branch of
+    the account URL.
+    """
+    from src.core.models import AzureStorageParameters
+
+    p = AzureStorageParameters.model_validate(
+        {
+            "container": "c",
+            "storage-account": "a",
+            "secret-key": "k",
+            "connection-protocol": "HTTPS",
+            "path": "valkey",
+        }
+    )
+    assert p.connection_protocol == "https"
+
+
+def test_azure_parameters_rejects_empty_required():
+    """An empty path would make list_backups enumerate the whole container."""
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import AzureStorageParameters
+
+    base = {
+        "container": "c",
+        "storage-account": "a",
+        "secret-key": "k",
+        "connection-protocol": "https",
+        "path": "valkey",
+    }
+    for field in ("container", "storage-account", "secret-key", "connection-protocol", "path"):
+        with pytest.raises(ValidationError):
+            AzureStorageParameters.model_validate({**base, field: ""})
+
+
+def test_azure_parameters_rejects_adls_protocols():
+    """abfs/abfss are ADLS-Gen2, served by the datalake SDK -- not BlobServiceClient."""
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import AzureStorageParameters
+
+    for proto in ("abfs", "abfss", "ABFSS"):
+        with pytest.raises(ValidationError):
+            AzureStorageParameters.model_validate(
+                {
+                    "container": "c",
+                    "storage-account": "a",
+                    "secret-key": "k",
+                    "connection-protocol": proto,
+                    "path": "valkey",
+                }
+            )
+
+
+def test_peer_app_model_has_azure_credentials_field():
+    from src.core.models import PeerAppModel
+
+    fields = PeerAppModel.model_fields
+    assert "azure_credentials" in fields
+    assert fields["azure_credentials"].default is None
+
+
+def test_cluster_azure_credentials_parses_envelope_and_defaults_none(mocker):
+    """The stored envelope parses back to AzureStorageParameters; unset reads as None."""
+    from src.core.models import AzureStorageParameters, ValkeyCluster
+
+    cluster = ValkeyCluster.__new__(ValkeyCluster)
+    cluster.model = mocker.MagicMock()
+
+    params = AzureStorageParameters.model_validate(
+        {
+            "container": "c",
+            "storage-account": "a",
+            "secret-key": "k",
+            "connection-protocol": "https",
+            "path": "valkey",
+        }
+    )
+    cluster.model.azure_credentials = params.model_dump_json(by_alias=True)
+    got = cluster.azure_credentials
+    assert isinstance(got, AzureStorageParameters)
+    assert got.container == "c"
+    assert got.secret_key == "k"
+
+    cluster.model.azure_credentials = None
+    assert cluster.azure_credentials is None
+
+    cluster.model = None
+    assert cluster.azure_credentials is None
+
+
+def test_azure_parameters_rejects_an_unknown_connection_protocol():
+    """Only the six documented integrator values are accepted.
+
+    Anything else would fall through to the plaintext branch of the account URL
+    and fail obscurely at request time instead of at the relation boundary.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import AzureStorageParameters
+
+    with pytest.raises(ValidationError):
+        AzureStorageParameters.model_validate(
+            {
+                "container": "c",
+                "storage-account": "a",
+                "secret-key": "k",
+                "connection-protocol": "ftp",
+                "path": "valkey",
+            }
+        )
+
+
+def test_azure_parameters_accepts_every_blob_connection_protocol():
+    from src.core.models import AzureStorageParameters
+    from src.literals import AZURE_HTTP_PROTOCOLS, AZURE_HTTPS_PROTOCOLS
+
+    for proto in AZURE_HTTPS_PROTOCOLS | AZURE_HTTP_PROTOCOLS:
+        params = AzureStorageParameters.model_validate(
+            {
+                "container": "c",
+                "storage-account": "a",
+                "secret-key": "k",
+                "connection-protocol": proto,
+                "path": "valkey",
+            }
+        )
+        assert params.connection_protocol == proto
