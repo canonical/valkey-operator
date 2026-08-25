@@ -5,6 +5,7 @@
 """Manager for all cluster related tasks."""
 
 import logging
+from collections.abc import Callable
 from time import sleep
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -165,29 +166,23 @@ class ClusterManager(ManagerStatusProtocol):
             logger.error("Could not query replication offset")
             return
 
+    def is_loaded(self) -> bool:
+        """Whether the local server responds and has finished loading its dataset."""
+        client = self._get_valkey_client()
+        return (
+            client.ping(hostname=self.state.endpoint)
+            and client.info_persistence(hostname=self.state.endpoint).get("loading", "1") == "0"
+        )
+
     def wait_until_loaded(self, timeout_s: int) -> None:
         """Bounded poll until the server responds and has finished loading.
 
         Raises ValkeyClusterNotReadyError on timeout rather than hanging, so the
         caller can react (e.g. roll back a restore).
         """
-        client = self._get_valkey_client()
-        try:
-            for attempt in Retrying(
-                stop=stop_after_delay(timeout_s), wait=wait_fixed(5), reraise=True
-            ):
-                with attempt:
-                    if not client.ping(hostname=self.state.endpoint):
-                        raise ValkeyClusterNotReadyError("server not responding yet")
-                    if (
-                        client.info_persistence(hostname=self.state.endpoint).get("loading", "1")
-                        != "0"
-                    ):
-                        raise ValkeyClusterNotReadyError("still loading dataset")
-        except Exception as e:  # tenacity reraises the last attempt's error
-            raise ValkeyClusterNotReadyError(
-                f"Server did not become ready within {timeout_s}s"
-            ) from e
+        logger.info("restore.wait: dataset to load (up to %ss)", timeout_s)
+        self._wait_until(self.is_loaded, timeout_s, "server did not become ready")
+        logger.info("restore.wait: dataset loaded")
 
     def wait_until_resynced(self, timeout_s: int) -> None:
         """Bounded poll until this replica is in sync with the primary.
@@ -195,15 +190,25 @@ class ClusterManager(ManagerStatusProtocol):
         Unlike wait_for_replica_fully_synced (unbounded), raises
         ValkeyClusterNotReadyError on timeout so the caller can react.
         """
+        logger.info("restore.wait: replica resync (up to %ss)", timeout_s)
+        self._wait_until(self.is_replica_synced, timeout_s, "replica did not resync")
+        logger.info("restore.wait: replica resynced")
+
+    def _wait_until(self, condition: Callable[[], bool], timeout_s: int, failure: str) -> None:
+        """Poll ``condition`` every 5s for up to ``timeout_s``; raise NotReady on timeout.
+
+        A raising ``condition`` (e.g. the CLI can't connect yet) is retried like
+        a False one; the last error is chained onto the timeout exception.
+        """
         try:
             for attempt in Retrying(
                 stop=stop_after_delay(timeout_s), wait=wait_fixed(5), reraise=True
             ):
                 with attempt:
-                    if not self.is_replica_synced():
-                        raise ValkeyClusterNotReadyError("replica not yet synced")
-        except Exception as e:
-            raise ValkeyClusterNotReadyError(f"Replica did not resync within {timeout_s}s") from e
+                    if not condition():
+                        raise ValkeyClusterNotReadyError("condition not met yet")
+        except Exception as e:  # tenacity reraises the last attempt's error
+            raise ValkeyClusterNotReadyError(f"{failure} within {timeout_s}s") from e
 
     @retry(
         wait=wait_fixed(5),

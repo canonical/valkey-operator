@@ -390,21 +390,59 @@ class SentinelManager(ManagerStatusProtocol):
                 str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS),
             ):
                 raise SentinelFailoverError(f"Failed to suppress failover on sentinel {endpoint}")
+        logger.info("restore.failover_suppressed: down-after raised on every sentinel")
 
     def resume_failover(self) -> None:
         """Reset down-after and SENTINEL RESET on every sentinel; idempotent.
 
-        Best-effort on a non-OK SET (logged, not raised) — raising on a teardown
-        path would re-wedge the restore. A stuck value clears on the next config
-        re-render (Sentinel persists SET to its own conf, so a restart won't).
+        Best-effort on a non-OK SET (logged, not raised) — raising on a restore-
+        failure path would re-wedge the restore. A sentinel left stuck (unreachable
+        here; it persists SET to its own conf, so a restart won't clear it) is
+        self-healed by its own unit via is_failover_suppressed/resume_local_failover.
         """
-        client = self._get_sentinel_client()
         for endpoint in self.all_sentinel_endpoints():
-            if not client.set(
-                endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
-            ):
-                logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
-            client.reset(hostname=endpoint)
+            self._resume_failover_on(endpoint)
+        logger.info("restore.failover_resumed: down-after reset on every sentinel")
+
+    def resume_local_failover(self) -> None:
+        """Reset down-after and SENTINEL RESET on this unit's sentinel only."""
+        self._resume_failover_on(self.state.endpoint)
+
+    def is_failover_suppressed(self) -> bool:
+        """Whether this unit's sentinel still has the restore-suppressed down-after."""
+        client = self._get_sentinel_client()
+        down_after = client.primary(hostname=self.state.endpoint).get("down-after-milliseconds")
+        return str(down_after) == str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+
+    def reconcile_failover_suppression(self) -> None:
+        """Reset this unit's sentinel if a restore left it failover-suppressed.
+
+        resume_failover is best-effort on every restore-failure path, and Sentinel
+        persists SENTINEL SET to its own conf (a restart won't clear it), so a
+        sentinel unreachable at that moment would otherwise stay at the suppressed
+        down-after -- no automatic failover -- until the next config re-render.
+        Callers invoke this outside a restore, where the value must be the
+        configured one. An unreachable sentinel is skipped, not an error: the next
+        call retries it.
+        """
+        try:
+            if not self.is_failover_suppressed():
+                return
+            logger.warning(
+                "restore.suppression_leak: sentinel still failover-suppressed outside a "
+                "restore; resuming failover on this unit"
+            )
+            self.resume_local_failover()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not check sentinel failover suppression: %s", e)
+
+    def _resume_failover_on(self, endpoint: str) -> None:
+        client = self._get_sentinel_client()
+        if not client.set(
+            endpoint, PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+        ):
+            logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
+        client.reset(hostname=endpoint)
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

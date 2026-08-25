@@ -24,6 +24,7 @@ def deploy_and_relate_s3(
     charm: str,
     substrate: Substrate,
     microceph: dict,
+    num_units: int = 3,
 ) -> None:
     """Deploy the local valkey charm + s3-integrator, wire S3 creds/TLS, and relate them.
 
@@ -32,6 +33,8 @@ def deploy_and_relate_s3(
     scenario removes only the valkey app -- s3-integrator, its credentials secret,
     and its config persist -- so the whole s3-integrator setup is guarded on its
     presence and the valkey app is (re)deployed and (re)related on its own.
+    ``num_units`` only applies to a fresh valkey deploy (an existing app is left
+    at its current size).
     """
     status = juju.status()
 
@@ -70,7 +73,7 @@ def deploy_and_relate_s3(
         juju.deploy(
             charm,
             resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
-            num_units=3,
+            num_units=num_units,
             trust=True,
         )
 
