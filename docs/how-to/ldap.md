@@ -16,13 +16,32 @@ The following components are required before proceeding:
 
 ## Deploy LDAP server charm
 
-If you run Charmed Valkey on a VM deployment, use a separate Juju controller with a K8s
-model in order to deploy the [`glauth-k8s` charm](https://charmhub.io/glauth-k8s). We will then 
-create a cross-controller relation to the Valkey VM model.
+The exact way we deploy the [`glauth-k8s` charm](https://charmhub.io/glauth-k8s) depends
+on the substrate Charmed Valkey runs on:
 
-With Charmed Valkey deployed on Kubernetes, deploy GLAuth alongside without a separate Juju model.
+`````{tab-set}
+:sync-group: substrate
 
-Deploy `glauth-k8s`, `self-signed-certificates`, and `postgresql-k8s`:
+````{tab-item} VM
+:sync: vm
+
+Use a separate Juju controller with a Kubernetes model to deploy `glauth-k8s`
+(see the [GLAuth tutorial](https://canonical-identity.readthedocs-hosted.com/tutorial/charms/glauth/)
+for a walkthrough). You will create a
+[cross-model relation](https://documentation.ubuntu.com/juju/3.6/howto/manage-relations/index.html#add-a-cross-model-relation)
+to the Valkey VM model later in this guide.
+````
+
+````{tab-item} K8s
+:sync: k8s
+
+No separate Juju model is required -- run `glauth-k8s` alongside Charmed
+Valkey in the same model.
+````
+
+`````
+
+Now deploy `glauth-k8s`, `self-signed-certificates`, and `postgresql-k8s`:
 
 ```shell
 juju deploy glauth-k8s --channel latest/edge --trust
@@ -53,14 +72,23 @@ juju integrate glauth-k8s glauth-utils
 
 Users and groups can now be created using [glauth-utils](https://github.com/canonical/glauth-utils/blob/main/SAMPLES.md).
 
-## Create a cross-model relation (VM only)
+## Create a cross-model relation
 
-This step is not needed with Valkey on Kubernetes. Proceed to the next section: {ref}`define-roles`.
+Whether this step is needed depends on the substrate Charmed Valkey runs on:
 
-### Expose LDAP
+`````{tab-set}
+:sync-group: substrate
 
-Deploy the [Traefik charm](https://charmhub.io/traefik-k8s) in order to expose LDAP endpoints
-from the K8s cluster:
+````{tab-item} VM
+:sync: vm
+
+GLAuth runs on a separate Kubernetes controller and model, so Valkey needs a
+cross-model relation to reach it.
+
+**Expose LDAP**
+
+Deploy the [Traefik charm](https://charmhub.io/traefik-k8s) to expose LDAP
+endpoints from the Kubernetes cluster:
 
 ```shell
 juju deploy traefik-k8s --trust
@@ -72,7 +100,7 @@ Integrate Traefik with the LDAP server:
 juju integrate traefik-k8s:ingress glauth-k8s:ingress-per-unit
 ```
 
-### Expose cross-model relations
+**Expose cross-model relations**
 
 To offer the GLAuth interfaces, run:
 
@@ -81,7 +109,7 @@ juju offer glauth-k8s:ldap ldap
 juju offer glauth-k8s:send-ca-cert send-ca-cert
 ```
 
-### Consume offers
+**Consume offers**
 
 Switch to the VM controller:
 
@@ -95,8 +123,20 @@ Consume the LDAP offers:
 juju consume <k8s_controller>:admin/<k8s-model-name>.ldap
 juju consume <k8s_controller>:admin/<k8s-model-name>.send-ca-cert
 ```
+````
+
+````{tab-item} K8s
+:sync: k8s
+
+GLAuth already shares the same Juju model as Charmed Valkey, so no
+cross-model relation is required. Proceed to the next section:
+{ref}`define-roles`.
+````
+
+`````
 
 (define-roles)=
+
 ## Define roles and permissions
 
 Charmed Valkey supports a role-based access control model to allow permissions based on LDAP groups.
