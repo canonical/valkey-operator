@@ -33,16 +33,10 @@ jobs:
             done
             return 1
           }
-          sudo apt update
           retry sudo snap install charmcraft --classic
           retry sudo snap install go --classic
           go install github.com/canonical/spread/cmd/spread@latest
           pipx install tox poetry
-          # to build Valkey-glide during tests
-          sudo apt install libprotobuf-dev protobuf-compiler -y
-          sudo apt install rustup -y
-          rustup set profile minimal
-          rustup default 1.90.0
       - name: Collect spread jobs
         id: collect-jobs
         shell: python
@@ -159,15 +153,9 @@ jobs:
             done
             return 1
           }
-          sudo apt update
           retry sudo snap install charmcraft --classic
           retry sudo snap install go --classic
           go install github.com/canonical/spread/cmd/spread@latest
-          # to build Valkey-glide during tests
-          sudo apt install libprotobuf-dev protobuf-compiler -y
-          sudo apt install rustup -y
-          rustup set profile minimal
-          rustup default 1.90.0
       - name: Download packed charm(s)
         timeout-minutes: 5
         uses: actions/download-artifact@v6
