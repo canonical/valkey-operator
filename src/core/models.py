@@ -117,6 +117,12 @@ class S3Parameters(BaseModel):
         return value
 
 
+# Every backend's validated credentials envelope. A backend widens this union,
+# and the layers above (ClusterState, BackupManager, build_backend) follow
+# without a signature change of their own.
+BackupCredentials = S3Parameters
+
+
 class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 

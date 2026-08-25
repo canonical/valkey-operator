@@ -26,13 +26,13 @@ from literals import (
     CharmUsers,
     RestoreStep,
 )
-from managers.backup_backend import S3Backend, StorageBackend
+from managers.backup_backend import StorageBackend, build_backend
 from statuses import BackupStatuses, CharmStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
     from core.base_workload import WorkloadBase
     from core.cluster_state import ClusterState
-    from core.models import S3Parameters
+    from core.models import BackupCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +117,13 @@ class BackupManager(ManagerStatusProtocol):
 
     # ── backend selection ────────────────────────────────────────────────
 
-    def _backend_for(self, params: "S3Parameters") -> StorageBackend:
-        """Build the storage backend for a given credentials object."""
-        return S3Backend(params, self._backup_ca_path)
+    def _backend_for(self, params: "BackupCredentials") -> StorageBackend:
+        """Build the storage backend that handles these credentials."""
+        return build_backend(params, self._backup_ca_path)
 
     # ── container lifecycle ──────────────────────────────────────────────
 
-    def ensure_container(self, params: "S3Parameters") -> None:
+    def ensure_container(self, params: "BackupCredentials") -> None:
         """Idempotently create the bucket/container for just-validated params."""
         try:
             self._backend_for(params).ensure_container()
@@ -392,13 +392,16 @@ class BackupManager(ManagerStatusProtocol):
         if scope == "unit" and self.state.unit_server.is_backup_in_progress:
             status_list.append(BackupStatuses.BACKUP_IN_PROGRESS.value)
 
-        if (
+        if scope == "app" and self.state.backup_backends_conflict:
+            # Nothing can pick a backend, so this beats the credentials status.
+            status_list.append(BackupStatuses.BACKUP_BACKENDS_CONFLICT.value)
+        elif (
             scope == "app"
             and self.state.unit_server.is_started
-            and self.state.s3_relation
-            and not self.state.cluster.s3_credentials
+            and self.state.backup_relations
+            and not self.state.active_backup_credentials
         ):
-            status_list.append(BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value)
+            status_list.append(BackupStatuses.BACKUP_CREDENTIALS_MISSING.value)
 
         if scope == "app" and self.state.cluster.is_restore_in_progress:
             status_list.append(RestoreStatuses.RESTORE_IN_PROGRESS.value)

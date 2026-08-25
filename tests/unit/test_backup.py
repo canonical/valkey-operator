@@ -9,7 +9,8 @@ from src.statuses import BackupStatuses
 
 def test_backup_statuses_present():
     assert BackupStatuses.BACKUP_IN_PROGRESS.value.status == "maintenance"
-    assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value.status == "blocked"
+    assert BackupStatuses.BACKUP_CREDENTIALS_MISSING.value.status == "blocked"
+    assert BackupStatuses.BACKUP_BACKENDS_CONFLICT.value.status == "blocked"
     assert BackupStatuses.BACKUP_FAILED.value.status == "blocked"
 
 
@@ -144,6 +145,67 @@ def test_active_backup_credentials_follows_the_relation(cloud_spec, mocker):
     # Same stored envelope, relation gone -> nothing active.
     unrelated = testing.State(relations={peer, status_peer}, **common)
     with ctx(ctx.on.update_status(), unrelated) as manager:
+        assert manager.charm.state.active_backup_credentials is None
+
+
+def test_backup_credential_registry_maps_relations_to_databag_fields():
+    """Adding a backend is one registry entry: its relation and where creds land."""
+    from src.core.models import PeerAppModel
+    from src.literals import BACKUP_CREDENTIAL_FIELDS, S3_RELATION_NAME
+
+    assert BACKUP_CREDENTIAL_FIELDS[S3_RELATION_NAME] == "s3_credentials"
+    # Every registered field must exist on the app databag model, or the leader
+    # would silently write credentials nothing reads back.
+    for field in BACKUP_CREDENTIAL_FIELDS.values():
+        assert field in PeerAppModel.model_fields
+
+
+def test_backup_relations_and_conflict_follow_the_registry(cloud_spec, mocker):
+    """Relation discovery and the conflict check are driven by the registry alone.
+
+    Exercised with a second entry patched in (there is only one backend today),
+    which is what a future backend's entry will look like.
+    """
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import (
+        CLIENT_TLS_RELATION_NAME,
+        PEER_RELATION,
+        S3_RELATION_NAME,
+        STATUS_PEERS_RELATION,
+    )
+
+    # CLIENT_TLS stands in for a second backup integrator until one exists.
+    mocker.patch.dict(
+        "core.cluster_state.BACKUP_CREDENTIAL_FIELDS",
+        {S3_RELATION_NAME: "s3_credentials", CLIENT_TLS_RELATION_NAME: "s3_credentials"},
+        clear=True,
+    )
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    s3_rel = testing.Relation(id=3, endpoint=S3_RELATION_NAME, interface="s3")
+    second = testing.Relation(
+        id=4, endpoint=CLIENT_TLS_RELATION_NAME, interface="tls-certificates"
+    )
+    common = {
+        "model": testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        "leader": True,
+        "containers": {testing.Container(name="valkey", can_connect=True)},
+    }
+
+    one = testing.State(relations={peer, status_peer, s3_rel}, **common)
+    with ctx(ctx.on.update_status(), one) as manager:
+        assert len(manager.charm.state.backup_relations) == 1
+        assert manager.charm.state.backup_backends_conflict is False
+
+    both = testing.State(relations={peer, status_peer, s3_rel, second}, **common)
+    with ctx(ctx.on.update_status(), both) as manager:
+        assert len(manager.charm.state.backup_relations) == 2
+        assert manager.charm.state.backup_backends_conflict is True
+        # Nothing can pick a backend, so no credentials are active.
         assert manager.charm.state.active_backup_credentials is None
 
 
@@ -326,8 +388,13 @@ def test_format_backup_list_empty():
 
 
 def _s3_params(**overrides):
-    """Build a valid S3Parameters, overriding individual fields by name."""
-    from src.core.models import S3Parameters
+    """Build a valid S3Parameters, overriding individual fields by name.
+
+    Flat import: src/ imports are flat, so `core.models.S3Parameters` is the class
+    production builds and isinstance-checks against -- the `src.`-prefixed copy is
+    a different class object and would miss every isinstance dispatch.
+    """
+    from core.models import S3Parameters
 
     base = {
         "bucket": "b",
@@ -1029,11 +1096,12 @@ def test_get_statuses_credentials_missing(mocker):
     state.statuses.get.return_value.root = []
     state.unit_server.is_backup_in_progress = False
     state.unit_server.is_started = True
-    state.s3_relation = mocker.MagicMock()
-    state.cluster.s3_credentials = None
+    state.backup_backends_conflict = False
+    state.backup_relations = [mocker.MagicMock()]
+    state.active_backup_credentials = None
 
     statuses = BackupManager(state=state, workload=mocker.MagicMock()).get_statuses(scope="app")
-    assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value in statuses
+    assert BackupStatuses.BACKUP_CREDENTIALS_MISSING.value in statuses
 
 
 def test_get_statuses_credentials_missing_hidden_before_started(mocker):
@@ -1049,11 +1117,32 @@ def test_get_statuses_credentials_missing_hidden_before_started(mocker):
     state.statuses.get.return_value.root = []
     state.unit_server.is_backup_in_progress = False
     state.unit_server.is_started = False
-    state.s3_relation = mocker.MagicMock()
-    state.cluster.s3_credentials = None
+    state.backup_backends_conflict = False
+    state.backup_relations = [mocker.MagicMock()]
+    state.active_backup_credentials = None
 
     statuses = BackupManager(state=state, workload=mocker.MagicMock()).get_statuses(scope="app")
-    assert BackupStatuses.BACKUP_S3_PARAMETERS_MISSING.value not in statuses
+    assert BackupStatuses.BACKUP_CREDENTIALS_MISSING.value not in statuses
+
+
+def test_get_statuses_flags_a_backend_conflict(mocker):
+    """Two related backup integrators is a config error the app must surface.
+
+    Nothing can pick a backend, so this beats the credentials-missing status.
+    """
+    from src.managers.backup import BackupManager
+    from src.statuses import BackupStatuses
+
+    state = mocker.MagicMock()
+    state.statuses.get.return_value.root = []
+    state.unit_server.is_backup_in_progress = False
+    state.unit_server.is_started = True
+    state.backup_backends_conflict = True
+    state.active_backup_credentials = None
+
+    statuses = BackupManager(state=state, workload=mocker.MagicMock()).get_statuses(scope="app")
+    assert BackupStatuses.BACKUP_BACKENDS_CONFLICT.value in statuses
+    assert BackupStatuses.BACKUP_CREDENTIALS_MISSING.value not in statuses
 
 
 def test_create_backup_kills_producer_on_upload_failure(mocker):

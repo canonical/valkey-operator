@@ -15,8 +15,13 @@ from botocore.exceptions import ClientError
 
 
 def _s3_params(**overrides):
-    """Build a valid S3Parameters, overriding individual fields by name."""
-    from src.core.models import S3Parameters
+    """Build a valid S3Parameters, overriding individual fields by name.
+
+    Flat import: src/ imports are flat, so `core.models.S3Parameters` is the class
+    production builds and isinstance-checks against -- the `src.`-prefixed copy is
+    a different class object and would miss every isinstance dispatch.
+    """
+    from core.models import S3Parameters
 
     base = {
         "bucket": "b",
@@ -270,3 +275,22 @@ def test_s3backend_delete_swallows_errors(mocker):
     )
 
     backend.delete("2026-05-13T10:00:00Z")  # must not raise
+
+
+# ── dispatch ────────────────────────────────────────────────────────────
+
+
+def test_build_backend_selects_by_credentials_type(mocker):
+    """The one place a credentials type maps to a backend; BackupManager never sees it."""
+    from managers.backup_backend import S3Backend, build_backend
+
+    assert isinstance(build_backend(_s3_params(), mocker.MagicMock()), S3Backend)
+
+
+def test_build_backend_rejects_unknown_credentials(mocker):
+    """An unregistered credentials type fails loudly rather than silently doing nothing."""
+    from common.exceptions import StorageBackendError
+    from managers.backup_backend import build_backend
+
+    with pytest.raises(StorageBackendError):
+        build_backend(object(), mocker.MagicMock())  # pyright: ignore[reportArgumentType]

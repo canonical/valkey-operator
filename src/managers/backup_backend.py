@@ -17,12 +17,11 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from common.exceptions import StorageBackendError
+from core.models import BackupCredentials, S3Parameters
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.literals import BucketLocationConstraintType
     from mypy_boto3_s3.service_resource import Bucket, S3ServiceResource
-
-    from core.models import S3Parameters
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +74,18 @@ class StorageBackend(Protocol):
     def delete(self, backup_id: str) -> None:
         """Best-effort delete of the object for ``backup_id``."""
         ...
+
+
+def build_backend(params: BackupCredentials, ca_path: pathlib.Path) -> StorageBackend:
+    """Return the backend that handles ``params``.
+
+    The single place a credentials type maps to a backend: a new backend is added
+    here and nowhere above, so BackupManager never learns which stores exist.
+    ``ca_path`` is the charm-local CA bundle, used only by backends that need one.
+    """
+    if isinstance(params, S3Parameters):
+        return S3Backend(params, ca_path)
+    raise StorageBackendError(f"No storage backend for {type(params).__name__} credentials")
 
 
 def _s3_error_code(exc: ClientError) -> str:

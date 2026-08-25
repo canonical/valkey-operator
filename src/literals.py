@@ -36,6 +36,7 @@ LDAP_CA_CERT_RELATION = "ldap-ca-cert"
 LDAP_RELATION = "ldap"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
 S3_RELATION_NAME = "s3-credentials"
+BACKUP_CREDENTIAL_FIELDS: dict[str, str] = {S3_RELATION_NAME: "s3_credentials"}
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"

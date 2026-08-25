@@ -18,14 +18,15 @@ from dpcharmlibs.interfaces import (
 )
 
 from core.models import (
+    BackupCredentials,
     LDAPState,
     PeerAppModel,
     PeerUnitModel,
-    S3Parameters,
     ValkeyCluster,
     ValkeyServer,
 )
 from literals import (
+    BACKUP_CREDENTIAL_FIELDS,
     CLIENT_TLS_RELATION_NAME,
     EXTERNAL_CLIENTS_RELATION,
     LDAP_CA_CERT_RELATION,
@@ -68,15 +69,37 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return self.model.get_relation(S3_RELATION_NAME)
 
     @property
-    def active_backup_credentials(self) -> S3Parameters | None:
-        """Stored credentials for the related backup backend, else None.
+    def backup_relations(self) -> list[ops.model.Relation]:
+        """Every related backup-storage integrator relation, per the registry."""
+        return [
+            relation
+            for name in BACKUP_CREDENTIAL_FIELDS
+            if (relation := self.model.get_relation(name)) is not None
+        ]
+
+    @property
+    def backup_backends_conflict(self) -> bool:
+        """True when more than one backup backend is related.
+
+        They are mutually exclusive: with two related there is no single answer
+        to "where do backups go", so the charm refuses rather than guessing.
+        """
+        return len(self.backup_relations) > 1
+
+    @property
+    def active_backup_credentials(self) -> BackupCredentials | None:
+        """Stored credentials for the single related backup backend, else None.
 
         Gated on the relation, not just the databag: the leader clears the stored
         envelope on relation-broken, and until it does, a peer must not keep using
-        credentials for a backend nobody is related to any more.
+        credentials for a backend nobody is related to any more. None, too, when
+        the related backend has nothing stored yet or when several are related.
         """
-        if self.s3_relation is not None:
-            return self.cluster.s3_credentials
+        if self.backup_backends_conflict:
+            return None
+        for name, field in BACKUP_CREDENTIAL_FIELDS.items():
+            if self.model.get_relation(name) is not None:
+                return getattr(self.cluster, field)
         return None
 
     @property
