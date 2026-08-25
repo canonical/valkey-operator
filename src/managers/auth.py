@@ -123,7 +123,7 @@ class AuthManager(ManagerStatusProtocol):
             str: ACL lines for the external client users.
         """
         valkey_base_permissions = (
-            "-@all +@read +@write +@keyspace +@pubsub +@transaction +info +ping +role "
+            "-@all +@read +@write +@keyspace -migrate +@pubsub +@transaction +info +ping +role "
         )
         valkey_scripting_permissions = "+eval +evalsha +@scripting "
         valkey_client_caching_permissions = "+client|id +client|tracking "
