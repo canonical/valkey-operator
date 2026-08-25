@@ -569,12 +569,16 @@ def test_get_statuses_backup_in_progress_unit_scope(mocker):
     assert BackupStatuses.BACKUP_IN_PROGRESS.value in statuses
 
 
-def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True):
+def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True, conflict=False):
     from src.events.backup import BackupEvents
 
     charm = mocker.MagicMock()
     charm.state.s3_relation = mocker.MagicMock() if relation else None
-    charm.state.cluster.s3_credentials = {"bucket": "b"} if credentials else None
+    charm.state.backup_relations = [mocker.MagicMock()] if relation else []
+    charm.state.backup_backends_conflict = conflict
+    charm.state.active_backup_credentials = (
+        None if conflict else ({"bucket": "b"} if credentials else None)
+    )
     charm.workload.alive.return_value = alive
     charm.state.unit_server.is_backup_in_progress = False
     charm.state.cluster.is_restore_in_progress = False
@@ -584,11 +588,32 @@ def _blocking_evt(mocker, *, relation=True, credentials=True, alive=True):
 
 
 def test_blocking_reason_no_relation(mocker):
-    assert "No S3 relation" in _blocking_evt(mocker, relation=False)._blocking_reason()
+    assert "No backup storage relation" in _blocking_evt(mocker, relation=False)._blocking_reason()
 
 
 def test_blocking_reason_no_credentials(mocker):
     assert "credentials" in _blocking_evt(mocker, credentials=False)._blocking_reason().lower()
+
+
+def test_blocking_reason_rejects_a_backend_conflict(mocker):
+    """Two related integrators: refuse rather than pick one."""
+    reason = _blocking_evt(mocker, conflict=True)._blocking_reason()
+    assert "exactly one" in reason
+
+
+def test_blocking_reason_names_the_registered_relations(mocker):
+    """The no-relation hint is generated, so a new backend appears in it for free."""
+    from src.literals import S3_RELATION_NAME
+
+    reason = _blocking_evt(mocker, relation=False)._blocking_reason()
+    assert S3_RELATION_NAME in reason
+
+
+def test_restore_and_backup_guards_share_the_storage_checks(mocker):
+    """Both actions gate on backup storage the same way, from one implementation."""
+    evt = _blocking_evt(mocker, conflict=True)
+    evt.charm.unit.is_leader.return_value = True
+    assert evt._blocking_reason() == evt._restore_blocking_reason("2026-05-13T10:00:00Z")
 
 
 def test_blocking_reason_workload_down(mocker):
@@ -641,6 +666,7 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
     charm = mocker.MagicMock()
     charm.unit.is_leader.return_value = True
     charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
@@ -667,7 +693,7 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
 
 
 def test_safe_error_surfaces_s3_code_only(mocker):
-    """Only the structured S3 error code reaches the action result.
+    """Only the structured, backend-neutral error code reaches the action result.
 
     Raised through the whole stack -- SDK error, backend, manager, action -- not
     hand-wired: every layer in between rewraps the error, and a test that builds
@@ -705,7 +731,7 @@ def test_safe_error_surfaces_s3_code_only(mocker):
         BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
 
     msg = _safe_error(excinfo.value)
-    assert msg == "S3 request failed: AccessDenied"
+    assert msg == "Object storage request failed: AccessDenied"
     assert "s3.internal" not in msg
     assert "RequestId" not in msg
 
@@ -728,6 +754,7 @@ def test_on_s3_credentials_changed_rejects_path_that_strips_to_empty(mocker):
     charm = mocker.MagicMock()
     charm.unit.is_leader.return_value = True
     charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
@@ -760,6 +787,7 @@ def test_on_s3_credentials_changed_skips_when_envelope_unchanged(mocker):
     charm = mocker.MagicMock()
     charm.unit.is_leader.return_value = True
     charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
     # already stored: the parsed envelope the handler will compare against
     charm.state.cluster.s3_credentials = S3Parameters.model_validate(dict(envelope))
 
@@ -779,6 +807,7 @@ def test_on_s3_credentials_changed_missing_params_skips_databag(mocker):
     charm = mocker.MagicMock()
     charm.unit.is_leader.return_value = True
     charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
@@ -788,6 +817,40 @@ def test_on_s3_credentials_changed_missing_params_skips_databag(mocker):
     evt._on_s3_credentials_changed(mocker.MagicMock())
     charm.state.cluster.update.assert_not_called()
     charm.backup_manager.ensure_container.assert_not_called()
+
+
+def test_credentials_are_not_stored_while_backends_conflict(mocker):
+    """With two integrators related there is no answer to "which backend"; store nothing."""
+    from src.events.backup import BackupEvents
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = mocker.MagicMock()
+    evt.charm.unit.is_leader.return_value = True
+    evt.charm.state.backup_backends_conflict = True
+
+    evt._store_credentials({"bucket": "b"}, mocker.MagicMock(), "s3_credentials", mocker.Mock())
+
+    evt.charm.state.cluster.update.assert_not_called()
+    evt.charm.backup_manager.ensure_container.assert_not_called()
+
+
+def test_credentials_gone_re_drives_the_other_backends(mocker):
+    """Removing one integrator clears the conflict, so the others get another go.
+
+    Otherwise a still-related backend would sit unconfigured until some unrelated
+    event happened to re-fire its handler.
+    """
+    from src.events.backup import BackupEvents
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = mocker.MagicMock()
+    other = mocker.Mock()
+    evt._credentials_changed_handlers = {"s3-credentials": mocker.Mock(), "other": other}
+
+    evt._reconcile_other_backends(mocker.Mock(), exclude="s3-credentials")
+
+    other.assert_called_once()
+    evt._credentials_changed_handlers["s3-credentials"].assert_not_called()
 
 
 def test_on_s3_credentials_gone_defers_during_backup(mocker):
@@ -814,6 +877,7 @@ def test_on_s3_credentials_gone_removes_ca_and_clears_databag(mocker):
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
+    evt._credentials_changed_handlers = {}
     evt._on_s3_credentials_gone(mocker.MagicMock())
     charm.backup_manager.remove_tls_ca_chain.assert_called_once_with()
     charm.state.cluster.update.assert_called_once_with({"s3_credentials": ""})
@@ -1016,7 +1080,9 @@ def test_on_list_backups_action_runs_while_a_backup_is_in_progress(mocker):
 
     charm = mocker.MagicMock()
     charm.state.s3_relation = mocker.MagicMock()
-    charm.state.cluster.s3_credentials = {"bucket": "b"}
+    charm.state.backup_relations = [mocker.MagicMock()]
+    charm.state.backup_backends_conflict = False
+    charm.state.active_backup_credentials = {"bucket": "b"}
     charm.workload.alive.return_value = True
     charm.state.unit_server.is_backup_in_progress = True  # backup running here
     charm.backup_manager.list_backups.return_value = []
@@ -1041,6 +1107,7 @@ def test_on_s3_credentials_gone_non_leader_does_not_clear_databag(mocker):
 
     evt = BackupEvents.__new__(BackupEvents)
     evt.charm = charm
+    evt._credentials_changed_handlers = {}
     evt._on_s3_credentials_gone(mocker.MagicMock())
     charm.backup_manager.remove_tls_ca_chain.assert_called_once()
     charm.state.cluster.update.assert_not_called()
@@ -1075,7 +1142,9 @@ def test_on_create_backup_action_rejected_when_backup_already_running(mocker):
 
     charm = mocker.MagicMock()
     charm.state.s3_relation = mocker.MagicMock()
-    charm.state.cluster.s3_credentials = {"bucket": "b"}
+    charm.state.backup_relations = [mocker.MagicMock()]
+    charm.state.backup_backends_conflict = False
+    charm.state.active_backup_credentials = {"bucket": "b"}
     charm.workload.alive.return_value = True
     charm.state.unit_server.is_backup_in_progress = True
     evt = BackupEvents.__new__(BackupEvents)

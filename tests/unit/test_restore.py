@@ -758,7 +758,9 @@ def _passing_restore_guard(mocker):
     ev.charm.backup_manager.list_backups.return_value = ["b1"]
     ev.charm.unit.is_leader.return_value = True
     ev.charm.state.s3_relation = True
-    ev.charm.state.cluster.s3_credentials = True
+    ev.charm.state.backup_relations = [True]
+    ev.charm.state.backup_backends_conflict = False
+    ev.charm.state.active_backup_credentials = True
     ev.charm.state.is_backup_in_progress_any = False
     ev.charm.state.cluster.is_restore_in_progress = False
     ev.charm.state.is_tls_transitioning = False
@@ -832,6 +834,7 @@ def test_credentials_rotation_defers_during_restore(mocker):
     mocker.patch("events.backup.S3Parameters.model_validate", return_value=mocker.Mock())
     ev.charm.unit.is_leader.return_value = True
     ev.charm.state.peer_relation = True
+    ev.charm.state.backup_backends_conflict = False
     ev.charm.state.cluster.s3_credentials = None  # nothing stored yet → a real change
     ev.charm.state.is_backup_in_progress_any = False
     ev.charm.state.cluster.is_restore_in_progress = True
@@ -851,7 +854,9 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
     ev.charm.state.s3_relation = True
-    ev.charm.state.cluster.s3_credentials = True
+    ev.charm.state.backup_relations = [True]
+    ev.charm.state.backup_backends_conflict = False
+    ev.charm.state.active_backup_credentials = True
     ev.charm.workload.alive.return_value = True
     ev.charm.state.unit_server.is_backup_in_progress = False
     ev.charm.state.cluster.is_restore_in_progress = True
