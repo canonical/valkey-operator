@@ -75,6 +75,7 @@ markers = {main = "sys_platform != \"emscripten\""}
 
 [package.dependencies]
 idna = ">=2.8"
+trio = {version = ">=0.32.0", optional = true, markers = "extra == \"trio\""}
 typing_extensions = {version = ">=4.5", markers = "python_version < \"3.13\""}
 
 [package.extras]
@@ -151,7 +152,6 @@ description = "Foreign Function Interface for Python calling C code."
 optional = false
 python-versions = ">=3.10"
 groups = ["main", "integration"]
-markers = "platform_python_implementation != \"PyPy\""
 files = [
     {file = "cffi-2.1.1-cp310-cp310-macosx_10_15_x86_64.whl", hash = "sha256:baed1e86cc735622097354b9d1281406caf42ff42a886d29faa8e8d1630333be"},
     {file = "cffi-2.1.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ca82be1a1d406ecfe1d25dc16cb33488e5a16bf4438c9fb590484ea29d92478b"},
@@ -254,6 +254,7 @@ files = [
     {file = "cffi-2.1.1-cp315-cp315t-win_arm64.whl", hash = "sha256:d18e5ac0f2f03f4f518d3e23db0f0cad7faa1da8620e9c09461d443bbf6e6692"},
     {file = "cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be"},
 ]
+markers = {main = "platform_python_implementation != \"PyPy\""}
 
 [package.dependencies]
 pycparser = {version = "*", markers = "implementation_name != \"PyPy\""}
@@ -1271,6 +1272,21 @@ PyYAML = ">=6.0.1"
 typing_extensions = ">=4.9.0"
 
 [[package]]
+name = "outcome"
+version = "1.3.0.post0"
+description = "Capture the outcome of Python function calls."
+optional = false
+python-versions = ">=3.7"
+groups = ["integration"]
+files = [
+    {file = "outcome-1.3.0.post0-py2.py3-none-any.whl", hash = "sha256:e771c5ce06d1415e356078d3bdd68523f284b4ce5419828922b6871e65eda82b"},
+    {file = "outcome-1.3.0.post0.tar.gz", hash = "sha256:9dcf02e65f2971b80047b377468e72a268e15c0af3cf1238e6ff14f7f91143b8"},
+]
+
+[package.dependencies]
+attrs = ">=19.2.0"
+
+[[package]]
 name = "packaging"
 version = "26.3"
 description = "Core utilities for Python packages"
@@ -1350,11 +1366,11 @@ description = "C parser in Python"
 optional = false
 python-versions = ">=3.10"
 groups = ["main", "integration"]
-markers = "platform_python_implementation != \"PyPy\" and implementation_name != \"PyPy\""
 files = [
     {file = "pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"},
     {file = "pycparser-3.0.tar.gz", hash = "sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"},
 ]
+markers = {main = "platform_python_implementation != \"PyPy\" and implementation_name != \"PyPy\"", integration = "implementation_name != \"PyPy\""}
 
 [[package]]
 name = "pydantic"
@@ -1994,6 +2010,18 @@ files = [
 ]
 
 [[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+description = "Sorted Containers -- Sorted List, Sorted Dict, Sorted Set"
+optional = false
+python-versions = "*"
+groups = ["integration"]
+files = [
+    {file = "sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0"},
+    {file = "sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"},
+]
+
+[[package]]
 name = "tenacity"
 version = "9.1.4"
 description = "Retry code until it succeeds"
@@ -2008,6 +2036,26 @@ files = [
 [package.extras]
 doc = ["reno", "sphinx"]
 test = ["pytest", "tornado (>=4.5)", "typeguard"]
+
+[[package]]
+name = "trio"
+version = "0.34.0"
+description = "A friendly Python library for async concurrency and I/O"
+optional = false
+python-versions = ">=3.10"
+groups = ["integration"]
+files = [
+    {file = "trio-0.34.0-py3-none-any.whl", hash = "sha256:6c7c9f49917694dcdcd5f67abd168df5599eca480d61f29854d17a61a75c2f05"},
+    {file = "trio-0.34.0.tar.gz", hash = "sha256:63b9485408bdfdde544fced107045a8c0086cdc4bd0ef2f797b9e0dd111b964b"},
+]
+
+[package.dependencies]
+attrs = ">=23.2.0"
+cffi = {version = ">=1.14", markers = "os_name == \"nt\" and implementation_name != \"pypy\""}
+idna = "*"
+outcome = "*"
+sniffio = ">=1.3.0"
+sortedcontainers = "*"
 
 [[package]]
 name = "truststore"
@@ -2100,25 +2148,48 @@ ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==23.2.1)", "requests (>=2.31.0)"
 
 [[package]]
 name = "valkey-glide"
-version = "0.0.0"
+version = "2.5.1"
 description = "Valkey GLIDE Async client. Supports Valkey and Redis OSS."
 optional = false
 python-versions = ">=3.9"
 groups = ["integration"]
-files = []
-develop = false
+files = [
+    {file = "valkey_glide-2.5.1-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:d66f47bbc5cea7155b0b3ca002043bfd950c09a9ac08e10923a6bcb0a3aa0a1c"},
+    {file = "valkey_glide-2.5.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:47a666862faa47766d4c4814203c3b9f9a8cb466200fd5f71e330eef6ed0d8f1"},
+    {file = "valkey_glide-2.5.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4cecd82dab35f30d96785b1405ebe3a6931dd858c8f26a0b7a12b46609e75212"},
+    {file = "valkey_glide-2.5.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:44435ed9fdb6322a4b167c9f56fdc0145a1fab4736dd2659165bbb5358d3a68f"},
+    {file = "valkey_glide-2.5.1-cp311-cp311-macosx_10_7_x86_64.whl", hash = "sha256:d9bbf26f9ea2b72ef0b8541dfefa479a82a69bdec77fce917192a262893edfda"},
+    {file = "valkey_glide-2.5.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:94256d3335f4c31f19ad1ff02447d9eecd94b8c9e8d51c7b77811277c957e807"},
+    {file = "valkey_glide-2.5.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d46a9903acb1204deefad88162ac77404f052c7d51ab9d5851d2335ed2fda1e8"},
+    {file = "valkey_glide-2.5.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0e5c17169d07564f0cc23b78c4904c8e03063c8750d8ccf413d229ce9a3092d5"},
+    {file = "valkey_glide-2.5.1-cp312-cp312-macosx_10_7_x86_64.whl", hash = "sha256:75da4cb54fe6a0e03a78681237545aa0638dd5a6dd0ff51af6ff4cacf9f99443"},
+    {file = "valkey_glide-2.5.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:787010bbce1b8f270ae5d74ca8af15bca3bbc625e1a5467fb01025864bc4e792"},
+    {file = "valkey_glide-2.5.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:de2e202a8376c6b67735bd589ce0e46683f8a782fcb1745b0b44cce768e13856"},
+    {file = "valkey_glide-2.5.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9ab1c7ce52b098fcb0ee6223136a024fc90a8ae1c600db298c30c044d1b47ee2"},
+    {file = "valkey_glide-2.5.1-cp313-cp313-macosx_10_7_x86_64.whl", hash = "sha256:55c87ecc3146480adaddf42d659b688089ca417596208ca9df5c2249c8f9e6fe"},
+    {file = "valkey_glide-2.5.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:ae6b0cedd3d2aafdc53c460bdfe4d0319d10301fd2128a56d41486e49de88dfe"},
+    {file = "valkey_glide-2.5.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e8a3c5298899ea18fc7e40438643e2f8ee15955fe9bba66ce5daf3dfd29462f2"},
+    {file = "valkey_glide-2.5.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bb5e0094d576ce99a2453c9fdd923f70732db6f4b59a722c27c420343d96b75d"},
+    {file = "valkey_glide-2.5.1-cp314-cp314-macosx_10_7_x86_64.whl", hash = "sha256:1bc5d0e0241aa5b78c398b981fe19801e36c09572c1dac69286a9a3c817e0b35"},
+    {file = "valkey_glide-2.5.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:ec658ed7770c05f3ea431ca1301e47d0a24cf27c4c23ca30eb030f7e0ac7488d"},
+    {file = "valkey_glide-2.5.1-cp314-cp314-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e2cdb26952b650e25af4a14360f65364b8015e49e2967779ba850c9e62c1f237"},
+    {file = "valkey_glide-2.5.1-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:696635581f0692f640b94021b4cfbc2ec01108f6ae02f25dfea3cfdaa98331de"},
+    {file = "valkey_glide-2.5.1-cp39-cp39-macosx_10_7_x86_64.whl", hash = "sha256:f5e733adc4718b93c5b228de7e543a6641e231d5839202ce7b22487e079059e7"},
+    {file = "valkey_glide-2.5.1-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:3ffd8f0fdb6ef982161a2350ad1562e5e345bea263b81304c7282f3385deac20"},
+    {file = "valkey_glide-2.5.1-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d6b81727c4d7a3b49f10172787296c87d6ef8d729fb958de358b278d5a6c563f"},
+    {file = "valkey_glide-2.5.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:12fff287f02caa9302d7c64d0520c3cee86e0f952ec55a537a4f9378889265d7"},
+    {file = "valkey_glide-2.5.1-pp311-pypy311_pp73-macosx_10_7_x86_64.whl", hash = "sha256:f656ef6e722d6ab4a28bc66e36ef616dff28622bc712c41f4172ac1e7c4826d8"},
+    {file = "valkey_glide-2.5.1-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:65b2add9f19a2e48080130ee968af45dc14e8457b5db20262703a4604afc478b"},
+    {file = "valkey_glide-2.5.1-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0c9b725afe94f0515e296003942d6c96c5090a956f2217f6305dc87fa14dfa51"},
+    {file = "valkey_glide-2.5.1-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a131c08951b865f753f1bd42f7db19c6a96e7c4faf9dc78718f8909fc95eb8b4"},
+    {file = "valkey_glide-2.5.1.tar.gz", hash = "sha256:b2efb23c987a995ad6ce2a72616996638137dd2504ac262bdd6c045378394090"},
+]
 
 [package.dependencies]
-anyio = ">=4.9.0"
-protobuf = ">=6.20"
+anyio = {version = ">=4.9.0", extras = ["trio"]}
+cffi = ">=1.0.0"
+protobuf = ">=3.20"
 sniffio = "*"
-
-[package.source]
-type = "git"
-url = "https://github.com/skourta/valkey-glide"
-reference = "add-build-rs-to-async-client"
-resolved_reference = "a15d4c35b0b89fd5a31ef287e00f067f0ada8253"
-subdirectory = "python/glide-async"
 
 [[package]]
 name = "websocket-client"
@@ -2155,4 +2226,4 @@ h11 = ">=0.16.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "2f360f54728212a0358a5593174c76c01108d03f8c94e5440a005cebd432b096"
+content-hash = "fd4aec1845c5f77a904745083f9db7cf53651ce055f27df26d29ae30ba0fa6e8"

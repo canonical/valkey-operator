@@ -2,7 +2,7 @@
 
 Guidance for AI coding agents (Codex, Cursor, Copilot, Claude Code, Gemini CLI, …) working in this
 repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file; `tests/AGENTS.md` adds
-integration/spread-test specifics.
+integration/spread-test specifics; `docs/AGENTS.md` adds documentation specifics.
 
 ## What this is
 
@@ -221,12 +221,13 @@ Any code touching addresses, file paths, services, or networking must handle bot
   tests are still a TODO. Channel is `9/edge`.
 - Always invoke a specific env (`tox run -e <env>`); bare `tox` errors on an undefined `static` env
   reference (legacy `env_list` entry).
-- `valkey-glide` is a git dependency on a fork (pending upstream PR 5124): `poetry lock` (run by
-  `format`) needs network and may bump the fork commit. Building the integration group locally
-  also needs protobuf dev packages (`libprotobuf-dev protobuf-compiler`) and a Rust toolchain.
+- `valkey-glide` is a released PyPI dependency (`^2.5`), pinned in both `poetry.lock` and
+  `tests/integration/clients/requirer-charm/poetry.lock` — keep the two in step. It used to be a
+  git fork (for upstream PR 5124, mTLS support, now released); the wheel installs in seconds where
+  the fork cost ~4.5 min of Rust build per job. `poetry lock` (run by `format`) still needs network.
 - The integration env sudo-installs `valkey-cli` to `/usr/local/bin` and, when `$CI` is unset,
   creates Juju model `testing` — delete that model between local runs or the re-run fails.
-- Build requires the Rust toolchain (native deps: valkey-glide, rpds-py). `# renovate:` comments in
+- Build requires the Rust toolchain (native dep: rpds-py). `# renovate:` comments in
   `charmcraft.yaml` pin pip/uv/poetry/python/rust for the build — keep that comment format if you
   bump them.
 - Repo/dir is `valkey-operator`; the charm `name` is `valkey`; `metadata.yaml`/`config.yaml`/

@@ -69,8 +69,7 @@ data-platform-helpers = ">=0.1.7"
 jubilant = "^1.6.0"
 python-dateutil = "*"
 tenacity = "^9.1.2"
-# https://github.com/valkey-io/valkey-glide/pull/5124 not yet released
-valkey-glide = { git = "https://github.com/skourta/valkey-glide", subdirectory = "python/glide-async", branch = "add-build-rs-to-async-client" }
+valkey-glide = "^2.5"
 kubernetes = "^35.0.0"
 boto3 = "^1.40"
 mypy-boto3-s3 = "^1.40"
@@ -85,6 +84,8 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
 [tool.pytest.ini_options]
 minversion = "6.0"
 log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
+log_cli_date_format = "%Y-%m-%dT%H:%M:%SZ"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

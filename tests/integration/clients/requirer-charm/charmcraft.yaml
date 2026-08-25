@@ -46,6 +46,11 @@ parts:
     after:
       - poetry-deps
     poetry-export-extra-args: ["--without-hashes"]
+    # charmcraft's poetry plugin installs with `--no-binary=:all:`, but valkey-glide's sdist ships
+    # only the `glide` package — `glide_shared` (which `glide/_ffi_instance.py` imports) exists
+    # solely in the published wheels. A source build therefore yields a broken import. This is
+    # appended after `--no-binary=:all:`, and pip's per-package `only_binary` wins over `:all:`.
+    poetry-pip-extra-args: ["--only-binary=valkey-glide"]
     build-packages:
       - libffi-dev # Needed to build Python dependencies with Rust from source
       - libssl-dev # Needed to build Python dependencies with Rust from source

@@ -4,10 +4,11 @@
 
 """High availability helpers."""
 
+import base64
+import json
 import os
 import string
 import subprocess
-import tarfile
 import tempfile
 import time
 from datetime import datetime
@@ -30,6 +31,10 @@ VM_RESTART_DELAY_DEFAULT = 20
 K8S_RESTART_DELAY_DEFAULT = 5
 RESTART_DELAY_PATCHED = 120
 
+# Budget for a whole `juju ssh` round trip (CLI start-up, controller API, SSH handshake,
+# `sudo -i` on VM); the remote commands themselves are instantaneous, so this is a hang guard.
+SSH_COMMAND_TIMEOUT = 60
+
 
 EXTEND_PEBBLE_RESTART_DELAY_YAML = """services:
   valkey:
@@ -45,6 +50,16 @@ RESTORE_PEBBLE_RESTART_DELAY_YAML = """services:
     backoff-limit: 30s
 """
 
+# Cut the network without changing the unit's IP by dropping packets inside the container:
+# masking the NIC (the ip_change path) drops the DHCP lease, and a bandwidth throttle (what
+# this used to do) still lets Sentinel PING/PONG trickle through, so +odown never reaches
+# quorum and no failover starts. Loopback stays open for the charm's own health checks;
+# `lxc exec` rides the LXD socket, so cut and restore work while the container is isolated.
+NETWORK_CUT_RULES = (
+    "INPUT ! --in-interface lo --jump DROP",
+    "OUTPUT ! --out-interface lo --jump DROP",
+)
+
 
 def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     """Cut network from a lxc container in a way the changes the IP."""
@@ -55,21 +70,29 @@ def lxd_cut_network_from_unit_with_ip_change(machine_name: str) -> None:
     time.sleep(5)
 
 
+def _lxd_delete_iptables_rule(machine_name: str, rule: str) -> bool:
+    """Delete an iptables rule inside an lxc container, reporting whether it was there."""
+    command = f"lxc exec {machine_name} -- iptables --delete {rule}"
+    returncode = subprocess.call(
+        command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    return returncode == 0
+
+
 def lxd_cut_network_from_unit_without_ip_change(machine_name: str) -> None:
     """Cut network from a lxc container (without causing the change of the unit IP address)."""
-    override_command = f"lxc config device override {machine_name} eth0"
-    try:
-        subprocess.check_call(override_command.split())
-    except subprocess.CalledProcessError:
-        # Ignore if the interface was already overridden.
-        pass
+    for rule in NETWORK_CUT_RULES:
+        # drop a leftover copy first so re-cutting cannot stack a duplicate rule
+        _lxd_delete_iptables_rule(machine_name, rule)
+        subprocess.check_call(f"lxc exec {machine_name} -- iptables --insert {rule}".split())
 
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress=0kbit"
-    subprocess.check_call(limit_set_command.split())
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress=1kbit"
-    subprocess.check_call(limit_set_command.split())
-    limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority=10"
-    subprocess.check_call(limit_set_command.split())
+
+def lxd_restore_network_to_unit_without_ip_change(machine_name: str) -> None:
+    """Restore the network of a lxc container that was cut without an IP address change."""
+    for rule in NETWORK_CUT_RULES:
+        # tolerate a missing rule so restoring twice is a no-op
+        if not _lxd_delete_iptables_rule(machine_name, rule):
+            logger.warning("iptables rule %r was not present on %s", rule, machine_name)
 
 
 def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: str) -> None:
@@ -116,6 +139,38 @@ def k8s_cut_network_from_unit_without_ip_change(model_name: str, machine_name: s
                     raise
         logger.info("Result of isolating unit from cluster is '%s'", command_result)
 
+        # `kubectl apply` only means the API server accepted the NetworkChaos; chaos-mesh
+        # programs the netem rule asynchronously (NetworkChaos -> PodNetworkChaos ->
+        # chaos-daemon), which can take longer than the reachability probe's pod start-up.
+        # Wait until chaos-mesh reports the rule injected before returning, so the "cut" is
+        # synchronous like the LXD iptables variant.
+        _k8s_wait_network_chaos_injected(model_name)
+
+
+def _k8s_wait_network_chaos_injected(namespace: str) -> None:
+    """Block until the `network-loss-primary` NetworkChaos is selected and fully injected.
+
+    Chaos-mesh only flips a record to `Injected` after the daemon applied the tc rule
+    (PodNetworkChaos `observedGeneration` catches up), so `AllInjected=True` is the real
+    "packets are being dropped" signal. `Selected=True` is required as well: before any pod
+    is selected the record loop is empty and `AllInjected` is vacuously True.
+    """
+    for attempt in Retrying(stop=stop_after_delay(120), wait=wait_fixed(2), reraise=True):
+        with attempt:
+            output = subprocess.check_output(
+                f"sudo k8s kubectl -n {namespace} get networkchaos network-loss-primary -o json",
+                shell=True,
+                env=os.environ,
+                stderr=subprocess.STDOUT,
+            )
+            conditions = {
+                cond["type"]: cond["status"]
+                for cond in json.loads(output).get("status", {}).get("conditions", [])
+            }
+            if conditions.get("Selected") != "True" or conditions.get("AllInjected") != "True":
+                raise ValueError(f"network chaos not injected yet: {conditions}")
+            logger.info("Network chaos injected: %s", conditions)
+
 
 def cut_network_from_unit(
     substrate: Substrate, model_name: str, machine_name: str, ip_change: bool = False
@@ -155,12 +210,7 @@ def restore_network_to_unit(
             restore_network_command = f"lxc config device remove {machine_name} eth0"
             subprocess.check_call(restore_network_command.split())
             return
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.egress="
-        subprocess.check_call(limit_set_command.split())
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.ingress="
-        subprocess.check_call(limit_set_command.split())
-        limit_set_command = f"lxc config device set {machine_name} eth0 limits.priority="
-        subprocess.check_call(limit_set_command.split())
+        lxd_restore_network_to_unit_without_ip_change(machine_name)
     else:
         env = os.environ
         env["KUBECONFIG"] = os.path.expanduser("~/.kube/config")
@@ -439,10 +489,15 @@ def is_endpoint_in_sentinels(
     tls_enabled: bool = False,
 ) -> bool:
     """Check if the provided endpoint is present in the sentinels list of any of the provided hostnames."""
+    # Sentinel announces bare IPs on VM and FQDNs on K8s (`<pod>.<app>-endpoints.<ns>.svc...`),
+    # so accept the endpoint itself or the endpoint as a leading DNS label. A plain substring
+    # test is not enough: on VM, "10.70.115.24" is a prefix of a peer at "10.70.115.248", and
+    # `SENTINEL SENTINELS` iterates a hash dict, so the peer can be the first "match" and its
+    # flags get checked instead of the old primary's.
     endpoint_sentinel = [
         sentinel
         for sentinel in get_sentinels(juju, primary_ip=hostname, tls_enabled=tls_enabled)
-        if endpoint in sentinel["ip"]
+        if sentinel["ip"] == endpoint or sentinel["ip"].startswith(f"{endpoint}.")
     ]
     if not endpoint_sentinel:
         logger.error(
@@ -482,9 +537,25 @@ def send_process_control_signal(
 
     try:
         subprocess.check_output(
-            command, stderr=subprocess.PIPE, shell=True, universal_newlines=True, timeout=3
+            command,
+            stderr=subprocess.PIPE,
+            shell=True,
+            universal_newlines=True,
+            timeout=SSH_COMMAND_TIMEOUT,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+    except subprocess.TimeoutExpired as e:
+        # only the local `juju ssh` was killed -- the remote pkill may have run already
+        logger.error(
+            "`juju ssh` did not return within %ss while sending %s to %s on unit %s; "
+            "the signal may or may not have been delivered",
+            SSH_COMMAND_TIMEOUT,
+            signal,
+            db_process,
+            unit_name,
+        )
+        logger.error("Error details: %s", e)
+        raise
+    except subprocess.CalledProcessError as e:
         logger.error(
             "failed to send signal %s to process %s on unit %s", signal, db_process, unit_name
         )
@@ -504,6 +575,34 @@ def lxd_patch_restart_delay(juju: jubilant.Juju, unit_name: str, delay: int | No
 
     # reload the daemon for systemd to reflect changes
     juju.exec(command="sudo systemctl daemon-reload", unit=unit_name)
+
+
+def _pod_exec(
+    kube_client: client.api.core_v1_api.CoreV1Api,
+    namespace: str,
+    pod_name: str,
+    container_name: str,
+    command: list[str],
+    timeout: int = 30,
+) -> tuple[int | None, str]:
+    """Run a command in a pod container and return (returncode, combined output).
+
+    A returncode of None means the command did not complete within the timeout.
+    """
+    response = stream.stream(
+        kube_client.connect_get_namespaced_pod_exec,
+        pod_name,
+        namespace,
+        container=container_name,
+        command=command,
+        stdin=False,
+        stdout=True,
+        stderr=True,
+        tty=False,
+        _preload_content=False,
+    )
+    response.run_forever(timeout=timeout)
+    return response.returncode, response.read_all()
 
 
 def pebble_patch_restart_delay(
@@ -531,117 +630,54 @@ def pebble_patch_restart_delay(
     pod_name = unit_name.replace("/", "-")
     container_name = "valkey"
     service_name = "valkey"
-    now = datetime.now().isoformat()
+    layer_path = f"/tmp/pebble_plan_{datetime.now().isoformat()}.yml"
 
-    with tempfile.NamedTemporaryFile() as pebble_plan_file:
-        pebble_plan_file.write(str.encode(pebble_file_content))
-        pebble_plan_file.flush()
-
-        copy_file_into_pod(
-            kube_client,
-            juju.model,
-            pod_name,
-            container_name,
-            pebble_plan_file.name,
-            f"/tmp/pebble_plan_{now}.yml",
-        )
-
-    add_to_pebble_layer_commands = (
-        f"/charm/bin/pebble add --combine {service_name} /tmp/pebble_plan_{now}.yml"
-    )
-    response = stream.stream(
-        kube_client.connect_get_namespaced_pod_exec,
-        pod_name,
-        juju.model,
-        container=container_name,
-        command=add_to_pebble_layer_commands.split(),
-        stdin=False,
-        stdout=True,
-        stderr=True,
-        tty=False,
-        _preload_content=False,
-    )
-    response.run_forever(timeout=5)
-    assert response.returncode == 0, (
-        f"Failed to add to pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
-    )
-
-    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3)):
+    # A one-shot base64 write avoids the tar-over-stdin websocket dance, whose
+    # close() raced tar's read and could leave a truncated layer file behind.
+    encoded = base64.b64encode(pebble_file_content.encode()).decode()
+    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3), reraise=True):
         with attempt:
-            replan_pebble_layer_commands = "/charm/bin/pebble replan"
-            response = stream.stream(
-                kube_client.connect_get_namespaced_pod_exec,
-                pod_name,
+            returncode, output = _pod_exec(
+                kube_client,
                 juju.model,
-                container=container_name,
-                command=replan_pebble_layer_commands.split(),
-                stdin=False,
-                stdout=True,
-                stderr=True,
-                tty=False,
-                _preload_content=False,
+                pod_name,
+                container_name,
+                ["sh", "-c", f"echo {encoded} | base64 -d > {layer_path}"],
             )
-            response.run_forever(timeout=60)
+            assert returncode == 0, (
+                f"Failed to write pebble layer file, unit={unit_name}, "
+                f"container={container_name}, returncode={returncode}, output={output!r}"
+            )
+
+            returncode, output = _pod_exec(
+                kube_client,
+                juju.model,
+                pod_name,
+                container_name,
+                ["/charm/bin/pebble", "add", "--combine", service_name, layer_path],
+            )
+            assert returncode == 0, (
+                f"Failed to add to pebble layer, unit={unit_name}, "
+                f"container={container_name}, service={service_name}, "
+                f"returncode={returncode}, output={output!r}"
+            )
+
+    for attempt in Retrying(stop=stop_after_delay(60), wait=wait_fixed(3), reraise=True):
+        with attempt:
+            returncode, output = _pod_exec(
+                kube_client,
+                juju.model,
+                pod_name,
+                container_name,
+                ["/charm/bin/pebble", "replan"],
+                timeout=60,
+            )
             if ensure_replan:
-                assert response.returncode == 0, (
-                    f"Failed to replan pebble layer, unit={unit_name}, container={container_name}, service={service_name}"
+                assert returncode == 0, (
+                    f"Failed to replan pebble layer, unit={unit_name}, "
+                    f"container={container_name}, service={service_name}, "
+                    f"returncode={returncode}, output={output!r}"
                 )
-
-
-def copy_file_into_pod(
-    client: client.api.core_v1_api.CoreV1Api,
-    namespace: str,
-    pod_name: str,
-    container_name: str,
-    source_path: str,
-    destination_path: str,
-) -> None:
-    """Copy file contents into pod.
-
-    Args:
-        client: The kubernetes CoreV1Api client
-        namespace: The namespace of the pod to copy files to
-        pod_name: The name of the pod to copy files to
-        container_name: The name of the pod container to copy files to
-        source_path: The path of the file to copy from the local machine
-        destination_path: The path to copy the file to in the pod
-    """
-    try:
-        exec_command = ["tar", "xvf", "-", "-C", "/"]
-
-        api_response = stream.stream(
-            client.connect_get_namespaced_pod_exec,
-            pod_name,
-            namespace,
-            container=container_name,
-            command=exec_command,
-            stdin=True,
-            stdout=True,
-            stderr=True,
-            tty=False,
-            _preload_content=False,
-        )
-
-        with tempfile.TemporaryFile() as tar_buffer:
-            with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
-                tar.add(source_path, destination_path)
-
-            tar_buffer.seek(0)
-            commands = []
-            commands.append(tar_buffer.read())
-
-            while api_response.is_open():
-                api_response.update(timeout=1)
-
-                if commands:
-                    command = commands.pop(0)
-                    api_response.write_stdin(command.decode())
-                else:
-                    break
-
-            api_response.close()
-    except ApiException:
-        assert False
 
 
 def patch_restart_delay(

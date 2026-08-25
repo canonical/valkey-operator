@@ -28,7 +28,7 @@ When filing an issue, please include:
 
 More resources:
 
-- [Canonical Data Fabric](https://ubuntu.com/data/)
+- [Canonical Data Fabric](https://canonical.com/data/)
 - [Git sources](https://github.com/canonical/valkey-operator/)
 - [Canonical Data on Matrix](https://matrix.to/#/#charmhub-data-platform:ubuntu.com)
 - [Valkey in Charmhub](https://charmhub.io/valkey)

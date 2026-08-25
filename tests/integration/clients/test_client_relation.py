@@ -19,6 +19,7 @@ import pytest
 from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_TLS_S,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -26,6 +27,8 @@ from tests.integration.helpers import (
     exec_valkey_cli,
     get_cluster_addresses,
     get_password,
+    get_primary_ip,
+    wait_for_failover,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,10 @@ TEST_VALUE = "test_value"
 REQUIRER_V1_NAME = "req-v1"
 REQUIRER_V0_NAME = "req-v0"
 REQUIRER_TLS_PROVIDER = "ssc-req"
+# Valkey replies `NOPERM No permissions to access a key`, but valkey-glide rewrites the error code
+# when it wraps the reply in a RequestError: >=2.4 reports `PermissionDenied`, older builds passed
+# `NOPERM` through. Accept either so the assertion tracks the denial, not the client's wording.
+PERMISSION_DENIED_CODES = ("NOPERM", "PermissionDenied")
 
 
 @pytest.fixture
@@ -91,7 +98,9 @@ def test_integrate_client_interface_v0(juju: jubilant.Juju) -> None:
         juju.run(
             requirer_unit, "set", params={"key": TEST_KEY, "value": TEST_VALUE, "user": username}
         )
-    assert "NOPERM" in str(task_error), "Action expected to fail because of permission denied"
+    assert any(code in str(task_error) for code in PERMISSION_DENIED_CODES), (
+        "Action expected to fail because of permission denied"
+    )
 
     logger.info("Trying to access granted keyspace")
     set_action = juju.run(
@@ -130,7 +139,9 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
             "set",
             params={"key": TEST_KEY, "value": TEST_VALUE, "user": user_restricted_keyspace},
         )
-    assert "NOPERM" in str(task_error), "Action expected to fail because of permission denied"
+    assert any(code in str(task_error) for code in PERMISSION_DENIED_CODES), (
+        "Action expected to fail because of permission denied"
+    )
 
     logger.info("Trying to access granted keyspace with restricted permissions")
     set_action = juju.run(
@@ -172,6 +183,7 @@ def test_integrate_client_interface_v1(juju: jubilant.Juju) -> None:
 def test_failover_topology_update(juju: jubilant.Juju) -> None:
     """Trigger a failover and ensure clients can still access Valkey."""
     ip_address = get_cluster_addresses(juju, APP_NAME)[0]
+    old_primary_ip = get_primary_ip(juju, APP_NAME)
     logger.info("Initiate failover through Sentinel %s", ip_address)
 
     failover_result = exec_valkey_cli(
@@ -183,6 +195,8 @@ def test_failover_topology_update(juju: jubilant.Juju) -> None:
         sentinel=True,
     ).stdout
     assert failover_result == "OK", "Failover not successful"
+
+    wait_for_failover(juju, APP_NAME, old_primary_ip=old_primary_ip, unit_count=NUM_UNITS)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS),
         timeout=600,
@@ -248,7 +262,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     juju.integrate(f"{REQUIRER_V1_NAME}:certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Ensure TLS access for v0 client")

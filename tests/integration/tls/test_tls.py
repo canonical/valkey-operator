@@ -8,6 +8,7 @@ import jubilant
 from literals import CharmUsers, Substrate
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
@@ -53,7 +54,7 @@ def test_build_and_deploy(
                 GLIDE_RUNNER_NAME: 1,
             },
         ),
-        timeout=900,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
 
@@ -111,7 +112,7 @@ def test_disable_tls(juju: jubilant.Juju) -> None:
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     endpoints = get_cluster_endpoints(juju, APP_NAME)
@@ -146,7 +147,7 @@ def test_enable_tls(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS + 1),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
     logger.info("Downloading TLS certificates from deployed app.")
