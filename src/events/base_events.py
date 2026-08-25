@@ -708,7 +708,7 @@ class BaseEvents(ops.Object):
             if ip != self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
         ]
 
-        if active_sentinels:
+        if active_sentinels and self.charm.app.planned_units() != 0:
             logger.debug("Resetting sentinel states on active units: %s", active_sentinels)
             self.charm.sentinel_manager.reset_sentinel_states(active_sentinels)
 

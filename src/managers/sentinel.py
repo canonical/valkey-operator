@@ -14,7 +14,9 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.client import SentinelClient
 from common.exceptions import (
+    CannotSeeAllActiveSentinelsError,
     SentinelFailoverError,
+    SentinelIncorrectReplicaCountError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyWorkloadCommandError,
 )
@@ -236,6 +238,9 @@ class SentinelManager(ManagerStatusProtocol):
                 logger.warning(
                     "Sentinel at %s does not see all other sentinels after reset.", sentinel_ip
                 )
+                raise CannotSeeAllActiveSentinelsError(
+                    "Sentinel at %s does not see all other sentinels after reset." % sentinel_ip
+                )
 
     @retry(
         wait=wait_fixed(5),
@@ -315,6 +320,12 @@ class SentinelManager(ManagerStatusProtocol):
                 number_replicas := len(client.replicas_primary(hostname=sentinel_ip))
             ):
                 logger.warning(
+                    "Sentinel at %s sees %d replicas, expected %d.",
+                    sentinel_ip,
+                    number_replicas,
+                    expected_replicas,
+                )
+                raise SentinelIncorrectReplicaCountError(
                     "Sentinel at %s sees %d replicas, expected %d.",
                     sentinel_ip,
                     number_replicas,
