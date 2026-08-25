@@ -492,7 +492,10 @@ def test_check_certificate_expiration(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    with patch("workload_k8s.ValkeyK8sWorkload.exec", return_value="0"):
+    # exec returns (stdout, stderr); the openssl -checkend path only cares that it
+    # doesn't raise, and the sentinel down-after self-heal on update-status parses
+    # stdout as JSON.
+    with patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=("{}", None)):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert not state_out.get_relation(1).local_unit_data.get("tls-certificate-expiring")
         assert not status_is(state_out, TLSStatuses.CERTIFICATE_EXPIRING.value)

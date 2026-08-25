@@ -266,12 +266,12 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         """
         token = self.cluster.restore_token
         participants = set(self.cluster.restore_participants)
+        # restore_failure_kind is "" for a participant that didn't fail this attempt.
         kinds = {
-            server.restore_failure_kind(token)
+            kind
             for server in self.servers
-            if server.unit_name in participants
+            if server.unit_name in participants and (kind := server.restore_failure_kind(token))
         }
-        kinds.discard("")
         if RestoreFailure.UNHEALTHY.value in kinds:
             return RestoreFailure.UNHEALTHY.value
         return RestoreFailure.FAILED.value if kinds else ""

@@ -4,7 +4,7 @@
 
 """Unit tests for the S3 restore feature.
 
-Two layers, on purpose (PR #79 review, reneradoi):
+Two layers, on purpose:
 
 * The restore **state machine** and the **restore action** are exercised through
   real Juju events (``ctx.on.action`` / ``ctx.on.update_status``) via
@@ -146,8 +146,8 @@ def test_workload_start_stop_alive_take_optional_service():
         param = inspect.signature(getattr(WorkloadBase, name)).parameters.get("service")
         assert param is not None and param.default is None
 
-    # Liveness verification is an explicit opt-in/out, decoupled from `service`
-    # (PR #79 review, reneradoi): start verifies by default, stop does not.
+    # Liveness verification is an explicit opt-in/out, decoupled from `service`:
+    # start verifies by default, stop does not.
     assert inspect.signature(WorkloadBase.start).parameters["check_alive"].default is True
     assert inspect.signature(WorkloadBase.stop).parameters["check_alive"].default is False
 
@@ -310,6 +310,77 @@ def test_resume_failover_best_effort_on_non_ok_set(mocker, caplog):
     assert "10.0.0.1" in caplog.text  # the non-OK endpoint was logged
 
 
+def test_is_failover_suppressed_reads_local_sentinel_down_after(mocker):
+    """is_failover_suppressed is a local read: this unit's sentinel, suppressed value only."""
+    from src.literals import SENTINEL_DOWN_AFTER_MS, SENTINEL_DOWN_AFTER_SUPPRESSED_MS
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    mgr.state = mocker.Mock(endpoint="10.0.0.1")
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+
+    client.primary.return_value = {
+        "down-after-milliseconds": str(SENTINEL_DOWN_AFTER_SUPPRESSED_MS)
+    }
+    assert mgr.is_failover_suppressed() is True
+    client.primary.assert_called_once_with(hostname="10.0.0.1")
+
+    client.primary.return_value = {"down-after-milliseconds": str(SENTINEL_DOWN_AFTER_MS)}
+    assert mgr.is_failover_suppressed() is False
+    client.primary.return_value = {}  # field missing: not suppressed
+    assert mgr.is_failover_suppressed() is False
+
+
+def test_resume_local_failover_targets_only_this_sentinel(mocker):
+    """resume_local_failover resets + RESETs this unit's sentinel and no other."""
+    from src.literals import PRIMARY_NAME, SENTINEL_DOWN_AFTER_MS
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    mgr.state = mocker.Mock(endpoint="10.0.0.1")
+    client = mocker.Mock()
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    all_endpoints = mocker.patch.object(
+        mgr, "all_sentinel_endpoints", return_value=["10.0.0.1", "10.0.0.2"]
+    )
+
+    mgr.resume_local_failover()
+
+    client.set.assert_called_once_with(
+        "10.0.0.1", PRIMARY_NAME, "down-after-milliseconds", str(SENTINEL_DOWN_AFTER_MS)
+    )
+    client.reset.assert_called_once_with(hostname="10.0.0.1")
+    all_endpoints.assert_not_called()
+
+
+def test_reconcile_failover_suppression_is_a_manager_op(mocker, caplog):
+    """The self-heal lives in the sentinel manager: resume only a still-suppressed sentinel."""
+    import logging
+
+    from common.exceptions import ValkeyWorkloadCommandError
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    suppressed = mocker.patch.object(mgr, "is_failover_suppressed", return_value=False)
+    resume = mocker.patch.object(mgr, "resume_local_failover")
+
+    mgr.reconcile_failover_suppression()
+    resume.assert_not_called()
+
+    suppressed.return_value = True
+    with caplog.at_level(logging.WARNING):
+        mgr.reconcile_failover_suppression()
+    resume.assert_called_once()
+    assert "suppression_leak" in caplog.text
+
+    # An unreachable sentinel is skipped (retried next update-status), never a crash.
+    resume.reset_mock()
+    suppressed.side_effect = ValkeyWorkloadCommandError("down")
+    mgr.reconcile_failover_suppression()  # must not raise
+    resume.assert_not_called()
+
+
 def test_sentinel_is_failover_in_progress_reads_flags(mocker):
     """Manager helper reports failover from the primary flags with no retry/blocking."""
     from src.managers.sentinel import SentinelManager
@@ -324,6 +395,29 @@ def test_sentinel_is_failover_in_progress_reads_flags(mocker):
 
     client.primary.return_value = {"flags": "master"}
     assert mgr.is_failover_in_progress() is False
+
+
+def test_failover_suppression_logs_in_the_manager(mocker, caplog):
+    """suppress/resume log their own effect, so the event handler doesn't have to.
+
+    The log line belongs next to the work it describes.
+    """
+    import logging
+
+    from src.managers.sentinel import SentinelManager
+
+    mgr = SentinelManager.__new__(SentinelManager)
+    client = mocker.Mock()
+    client.set.return_value = True
+    mocker.patch.object(mgr, "_get_sentinel_client", return_value=client)
+    mocker.patch.object(mgr, "all_sentinel_endpoints", return_value=["10.0.0.1"])
+
+    with caplog.at_level(logging.INFO):
+        mgr.suppress_failover()
+        mgr.resume_failover()
+
+    assert "restore.failover_suppressed" in caplog.text
+    assert "restore.failover_resumed" in caplog.text
 
 
 # ── backup manager: download / verify / restore primitives ───────────────────
@@ -420,6 +514,28 @@ def test_next_restore_step():
     assert BackupManager.next_restore_step(RestoreStep.NOT_STARTED) == RestoreStep.RESTORE
     assert BackupManager.next_restore_step(RestoreStep.RESTORE) == RestoreStep.RESYNC
     assert BackupManager.next_restore_step(RestoreStep.RESYNC) == RestoreStep.COMPLETED
+
+
+def test_set_restore_step_logs_the_completed_step(mocker, caplog):
+    """The step-completed line lives in the manager that writes the databag.
+
+    The log belongs next to the work, and the unit name is dropped -- Juju
+    already prefixes every log line with it.
+    """
+    import logging
+
+    from src.literals import RestoreStep
+    from src.managers.backup import BackupManager
+
+    mgr = BackupManager.__new__(BackupManager)
+    mgr.state = mocker.Mock()
+
+    with caplog.at_level(logging.INFO):
+        mgr.set_restore_step(RestoreStep.RESYNC)
+
+    mgr.state.unit_server.update.assert_called_once_with({"restore_step": "resync"})
+    assert "restore.step_done step=resync" in caplog.text
+    assert "unit=" not in caplog.text
 
 
 def test_restore_on_primary_orders_stop_backup_download_start(mocker):
@@ -596,6 +712,7 @@ def _passing_restore_guard(mocker):
 
     ev = BackupEvents.__new__(BackupEvents)
     ev.charm = mocker.Mock()
+    ev.charm.backup_manager.list_backups.return_value = ["b1"]
     ev.charm.unit.is_leader.return_value = True
     ev.charm.state.s3_relation = True
     ev.charm.state.cluster.s3_credentials = True
@@ -609,14 +726,14 @@ def _passing_restore_guard(mocker):
 
 
 def test_restore_guard_passes_when_all_gates_ok(mocker):
-    assert _passing_restore_guard(mocker)._restore_blocking_reason() is None
+    assert _passing_restore_guard(mocker)._restore_blocking_reason("b1") is None
 
 
 def test_restore_blocked_during_tls_transition(mocker):
     """A restore restarts the primary; refuse to start one mid-TLS-transition."""
     ev = _passing_restore_guard(mocker)
     ev.charm.state.is_tls_transitioning = True
-    reason = ev._restore_blocking_reason()
+    reason = ev._restore_blocking_reason("b1")
     assert reason is not None and "tls" in reason.lower()
 
 
@@ -628,8 +745,32 @@ def test_restore_blocked_gracefully_when_sentinel_query_errors(mocker):
     ev.charm.sentinel_manager.is_failover_in_progress.side_effect = ValkeyWorkloadCommandError(
         "sentinel unreachable"
     )
-    reason = ev._restore_blocking_reason()  # must NOT raise
+    reason = ev._restore_blocking_reason("b1")  # must NOT raise
     assert reason is not None
+
+
+def test_restore_guard_covers_the_backup_id_checks(mocker):
+    """The backup-id checks are gates like any other, ordered after the cheap ones."""
+    ev = _passing_restore_guard(mocker)
+
+    assert "backup-id" in (ev._restore_blocking_reason("") or "")
+    ev.charm.backup_manager.list_backups.assert_not_called()  # cheap gates first
+
+    reason = ev._restore_blocking_reason("nope")
+    assert reason is not None and "not found" in reason
+
+
+def test_restore_guard_blocks_gracefully_when_listing_fails(mocker):
+    """An S3 listing error blocks the restore with a safe reason, not a traceback at the user."""
+    from common.exceptions import ValkeyBackupError
+
+    ev = _passing_restore_guard(mocker)
+    ev.charm.backup_manager.list_backups.side_effect = ValkeyBackupError("bucket on fire")
+
+    reason = ev._restore_blocking_reason("b1")  # must NOT raise
+
+    assert reason is not None and "list backups" in reason
+    assert "bucket on fire" not in reason  # detail goes to the unit log only
 
 
 def test_credentials_rotation_defers_during_restore(mocker):
@@ -680,7 +821,7 @@ def test_blocking_reason_blocks_backup_during_restore(mocker):
 # ── event-driven (ops.testing / Scenario) ────────────────────────────────────
 #
 # The restore action + state machine are driven through real Juju events so the
-# peer-relation data-interface wiring is part of the test, per PR #79 review.
+# peer-relation data-interface wiring is part of the test.
 
 
 def _restore_context_and_state(
@@ -735,7 +876,7 @@ def _peer_unit_data(state):
 def _drive_restore(ctx, state, *, capture_statuses=False):
     """Drive the restore workflow to a fixed point across hooks.
 
-    The workflow advances one step per hook (no in-hook loop, PR #79 review): in
+    The workflow advances one step per hook (no in-hook loop): in
     real Juju each leader app-databag write re-delivers relation_changed, with
     update_status as a backstop. ops.testing emits one event and can't model a
     peer relation_changed for the leader's own app-data write (no remote unit),
@@ -783,6 +924,12 @@ def restore_managers(mocker):
         roll_back=mocker.patch("managers.backup.BackupManager.roll_back"),
         suppress_failover=mocker.patch("managers.sentinel.SentinelManager.suppress_failover"),
         resume_failover=mocker.patch("managers.sentinel.SentinelManager.resume_failover"),
+        is_failover_suppressed=mocker.patch(
+            "managers.sentinel.SentinelManager.is_failover_suppressed", return_value=False
+        ),
+        resume_local_failover=mocker.patch(
+            "managers.sentinel.SentinelManager.resume_local_failover"
+        ),
         save_dataset_before_shutdown=mocker.patch(
             "managers.cluster.ClusterManager.save_dataset_before_shutdown"
         ),
@@ -834,6 +981,61 @@ def test_restore_action_initiates_workflow(mocker, cloud_spec, restore_managers)
     restore_managers.restore_on_primary.assert_not_called()
 
 
+def test_restore_action_logs_every_rejection(mocker, cloud_spec, restore_managers, caplog):
+    """Every rejected restore action leaves a traceable log line, not just a failed task.
+
+    The action result is transient; the unit log must show why a restore
+    didn't start.
+    """
+    import logging
+
+    from ops.testing import ActionFailed
+
+    _pass_restore_preconditions(mocker, ["2026-05-13T10:00:00Z"])
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(ActionFailed):
+        ctx.run(ctx.on.action("restore", params={"backup-id": "2026-01-01T00:00:00Z"}), state)
+    assert "restore.rejected" in caplog.text
+    assert "2026-01-01T00:00:00Z" in caplog.text  # the unknown backup-id is in the log
+
+    caplog.clear()
+    ctx, state = _restore_context_and_state(cloud_spec, leader=False)
+    with caplog.at_level(logging.WARNING), pytest.raises(ActionFailed):
+        ctx.run(ctx.on.action("restore", params={"backup-id": "2026-05-13T10:00:00Z"}), state)
+    assert "restore.rejected" in caplog.text
+    assert "leader" in caplog.text
+
+
+def test_restore_workflow_logs_each_transition(cloud_spec, restore_managers, caplog):
+    """A full restore leaves a step-by-step trail in the unit log (review: hard to follow)."""
+    import logging
+
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        _drive_restore(ctx, state)
+
+    for marker in (
+        "restore.step",  # a step ran on this unit
+        "role=primary",
+        "restore.advance",  # the leader moved the barrier
+        "restore.completed",
+    ):
+        assert marker in caplog.text, f"missing log marker {marker!r}"
+    # The event handler keeps only the state-machine trail -- per-step work
+    # logs itself in its manager (mocked out here) -- and never repeats the unit
+    # name Juju already prefixes onto every line.
+    assert "unit=" not in caplog.text
+
+
 def test_restore_action_rejected_on_non_leader(cloud_spec):
     """A follower must refuse restore and write nothing to the app databag."""
     from ops import testing
@@ -869,7 +1071,7 @@ def test_single_unit_restore_completes_via_relation_changed_cascade(cloud_spec, 
     A single unit is always the leader, and Juju delivers relation_changed to the
     leader for its own writes to the peer *app* databag, so the machine cascades
     forward one step per hook off the restore_id/instruction writes -- no peers
-    and no in-hook loop needed (PR #79 review, reneradoi).
+    and no in-hook loop needed.
     """
     ctx, state = _restore_context_and_state(
         cloud_spec,
@@ -1177,7 +1379,7 @@ def test_leader_fails_restore_when_participant_departs(cloud_spec, restore_manag
     restore_managers.resume_failover.assert_called()
 
 
-def test_non_leader_does_not_teardown_departed_participant(cloud_spec, restore_managers):
+def test_non_leader_does_not_fail_restore_on_departed_participant(cloud_spec, restore_managers):
     """Only the leader may tear a restore down when a participant departs.
 
     A non-leader that observes a departed participant must leave app state alone
@@ -1236,7 +1438,7 @@ def test_non_participant_unit_skips_restore_workflow(cloud_spec, restore_manager
     from common.exceptions import ValkeyWorkloadCommandError
 
     # StartLock is withheld during a restore, so this newcomer's Valkey is down;
-    # is_primary() would raise -> broad except -> _restore_teardown -> resume_failover.
+    # is_primary() would raise -> broad except -> _fail_restore -> resume_failover.
     restore_managers.is_primary.side_effect = ValkeyWorkloadCommandError("not up")
     ctx, state = _restore_context_and_state(
         cloud_spec,
@@ -1290,7 +1492,7 @@ def test_non_participant_leader_advances_restore(cloud_spec, restore_managers):
     assert _peer_app_data(state_out)["restore-instruction"] == RestoreStep.RESYNC.value
 
 
-def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_managers):
+def test_bad_backup_fails_restore_before_stopping_primary(cloud_spec, restore_managers):
     """A non-RDB backup fails the pre-stop check: the primary is never stopped or rolled back."""
     from common.exceptions import ValkeyRestoreError
 
@@ -1309,7 +1511,7 @@ def test_bad_backup_tears_down_before_stopping_primary(cloud_spec, restore_manag
     restore_managers.restore_on_primary.assert_not_called()
     restore_managers.roll_back.assert_not_called()
     # Teardown resumes the suppression it turned on before validating — exactly
-    # once: the leader-self _clear_failed_restore skips the redundant backstop.
+    # once: the leader-self _finish_failed_restore skips the redundant backstop.
     restore_managers.resume_failover.assert_called_once()
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 
@@ -1342,7 +1544,7 @@ def test_restore_failure_rolls_back_and_resumes_failover(cloud_spec, restore_man
 
     restore_managers.roll_back.assert_called_once()
     # The critical invariant: failover is resumed — exactly once on the
-    # leader-self path (teardown resumes; _clear_failed_restore skips the backstop).
+    # leader-self path (teardown resumes; _finish_failed_restore skips the backstop).
     restore_managers.resume_failover.assert_called_once()
     assert RestoreStatuses.RESTORE_FAILED.value in statuses
     assert _peer_app_data(state_out).get("restore-id", "") == ""
@@ -1381,7 +1583,7 @@ def test_restore_failure_unhealthy_status(cloud_spec, restore_managers):
 # juju leader, and only the leader can clear the app-level restore_id. A failing
 # non-leader unit must therefore signal failure on its OWN unit databag so the
 # leader can tear the restore down, instead of silently wedging the whole cluster
-# in "restore in progress" forever. (PR #79 review, Mehdi-Bendriss r3547362621.)
+# in "restore in progress" forever.
 
 
 def test_non_leader_primary_failure_records_failure_marker(cloud_spec, restore_managers):
@@ -1413,7 +1615,7 @@ def test_non_leader_primary_failure_records_failure_marker(cloud_spec, restore_m
     assert _peer_unit_data(state_out)["restore-failed"] == "failed:tok-1"
 
 
-def test_leader_tears_down_when_peer_restore_failed(cloud_spec, restore_managers):
+def test_leader_ends_restore_when_peer_restore_failed(cloud_spec, restore_managers):
     """The leader clears the app-level restore state when a *peer* reports failure.
 
     valkey/1 (a non-leader) recorded a failure for this attempt's token; the
@@ -1450,7 +1652,7 @@ def test_leader_tears_down_when_peer_restore_failed(cloud_spec, restore_managers
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 
 
-def test_teardown_records_failure_even_if_resume_failover_raises(cloud_spec, restore_managers):
+def test_fail_restore_records_failure_even_if_resume_failover_raises(cloud_spec, restore_managers):
     """A raising resume_failover must not abort teardown (else restore re-wedges).
 
     resume_failover hits every sentinel via the CLI and can raise; teardown must
@@ -1484,7 +1686,7 @@ def test_teardown_records_failure_even_if_resume_failover_raises(cloud_spec, res
     assert _peer_app_data(state_out).get("restore-id", "") == ""
 
 
-def test_clear_failed_restore_unwedges_before_status_add(mocker):
+def test_finish_failed_restore_unwedges_before_status_add(mocker):
     """The un-wedge must happen before, and independently of, the status write.
 
     statuses.add is not wrapped (matching the project convention); a failing add
@@ -1501,14 +1703,14 @@ def test_clear_failed_restore_unwedges_before_status_add(mocker):
     ev.charm.state.statuses.add.side_effect = RuntimeError("bad status databag")
 
     with pytest.raises(RuntimeError):
-        ev._clear_failed_restore(resume=False)
+        ev._finish_failed_restore(resume=False)
 
     # Restore state was cleared BEFORE the status write raised.
     ev.charm.state.cluster.update.assert_called_once()
     assert ev.charm.state.cluster.update.call_args.args[0]["restore_id"] == ""
 
 
-def test_clear_failed_restore_clears_state_before_resume_failover(mocker):
+def test_finish_failed_restore_clears_state_before_resume_failover(mocker):
     """State is cleared before resume_failover, so an unexpected resume error can't wedge.
 
     resume_failover is a best-effort backstop reached outside the workflow's
@@ -1524,7 +1726,7 @@ def test_clear_failed_restore_clears_state_before_resume_failover(mocker):
     ev.charm.sentinel_manager.resume_failover.side_effect = RuntimeError("sentinel unreachable")
 
     with pytest.raises(RuntimeError):
-        ev._clear_failed_restore(resume=True)
+        ev._finish_failed_restore(resume=True)
 
     # Cleared BEFORE the resume raised -> not wedged.
     ev.charm.state.cluster.update.assert_called_once()
@@ -1598,6 +1800,87 @@ def test_completed_restore_clears_terminal_statuses(mocker, cloud_spec, restore_
     deleted = {call.args[0] for call in delete.call_args_list}
     assert RestoreStatuses.RESTORE_FAILED.value in deleted
     assert RestoreStatuses.RESTORE_UNHEALTHY.value in deleted
+
+
+# ── failover-suppression self-heal ───────────────────────────────────────────
+#
+# The workflow's "no restore in progress" branch also resumes a sentinel a failed
+# restore left suppressed, so it runs on every hook the workflow observes.
+
+
+def test_update_status_resumes_failover_left_suppressed(mocker, cloud_spec, restore_managers):
+    """A sentinel still at the suppressed down-after outside a restore is resumed.
+
+    resume_failover is best-effort on every teardown path and Sentinel persists
+    SENTINEL SET to its own conf, so a sentinel unreachable at teardown would
+    otherwise stay failover-suppressed until the next config re-render. Each
+    unit self-heals its own sentinel, with update-status as the periodic backstop.
+    """
+    restore_managers.is_failover_suppressed.return_value = True
+    # A resume clears the suppression, so a hook that re-enters the workflow (a
+    # single-unit deployment re-emits peer relation-changed from the TLS handler)
+    # heals once and then reads the configured value.
+    restore_managers.resume_local_failover.side_effect = lambda: setattr(
+        restore_managers.is_failover_suppressed, "return_value", False
+    )
+    ctx, state = _restore_context_and_state(cloud_spec)  # no restore in progress
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.resume_local_failover.assert_called_once()
+
+
+def test_peer_relation_changed_resumes_failover_left_suppressed(
+    mocker, cloud_spec, restore_managers
+):
+    """The self-heal also runs on the peer hook, not only on the 5-minute backstop.
+
+    A restore ends by clearing the app-level restore-id, which re-delivers peer
+    relation-changed to every unit -- exactly when a sentinel left suppressed by a
+    best-effort teardown should be caught, rather than up to an update-status later.
+    """
+    restore_managers.is_failover_suppressed.return_value = True
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        leader=False,  # no restore in progress
+        peers_data={1: {"start-state": "started"}},
+    )
+    peer = next(r for r in state.relations if r.id == 1)
+
+    ctx.run(ctx.on.relation_changed(peer, remote_unit=1), state)
+
+    restore_managers.resume_local_failover.assert_called_once()
+
+
+def test_update_status_keeps_suppression_during_restore(mocker, cloud_spec, restore_managers):
+    """Suppression is by design mid-restore: the self-heal must not undo it."""
+    restore_managers.is_failover_suppressed.return_value = True
+    ctx, state = _restore_context_and_state(
+        cloud_spec,
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+    )
+
+    ctx.run(ctx.on.update_status(), state)
+
+    restore_managers.resume_local_failover.assert_not_called()
+
+
+def test_update_status_suppression_check_tolerates_sentinel_error(
+    mocker, cloud_spec, restore_managers
+):
+    """A sentinel that can't be queried is skipped (retried next update-status), not a crash."""
+    from common.exceptions import ValkeyWorkloadCommandError
+
+    restore_managers.is_failover_suppressed.side_effect = ValkeyWorkloadCommandError("down")
+    ctx, state = _restore_context_and_state(cloud_spec)
+
+    ctx.run(ctx.on.update_status(), state)  # must not raise
+
+    restore_managers.resume_local_failover.assert_not_called()
 
 
 # ── restore-awareness guards (single early-return clauses) ────────────────────

@@ -54,10 +54,12 @@ def _reconcile_env() -> ExitStack:
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
         patch("managers.sentinel.SentinelManager.restart_service"),
-        # stands in for `openssl x509 -ext subjectAltName`: the on-disk SANs carry OLD_IP
+        # stands in for `openssl x509 -ext subjectAltName`: the on-disk SANs carry OLD_IP.
+        # exec returns (stdout, stderr) -- the second element matters because other
+        # update-status work unpacks both.
         patch(
             "workload_vm.ValkeyVmWorkload.exec",
-            return_value=(f"DNS:www.example.com, IP Address:{OLD_IP}",),
+            return_value=(f"DNS:www.example.com, IP Address:{OLD_IP}", None),
         ),
         patch("workload_vm.ValkeyVmWorkload.restart"),
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({NEW_IP})),
@@ -68,6 +70,9 @@ def _reconcile_env() -> ExitStack:
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
+        # unrelated update-status self-heal: it would otherwise drive the sentinel
+        # CLI through the openssl stub above.
+        patch("managers.sentinel.SentinelManager.reconcile_failover_suppression"),
     )
     stack = ExitStack()
     for p in patches:
