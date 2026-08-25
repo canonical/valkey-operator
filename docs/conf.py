@@ -245,6 +245,11 @@ exclude_patterns = [
     "doc-cheat-sheet*",
     ".venv*",
     "_dev",
+    ".sphinx",
+    "_build",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
 ]
 
 # Adds custom CSS files, located remotely or in 'html_static_path'.

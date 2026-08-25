@@ -2,6 +2,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,7 @@ from charmlibs.interfaces.tls_certificates import (
 )
 from ops import testing
 
+from common.exceptions import ValkeyTLSLoadError
 from src.charm import ValkeyCharm
 from src.common.exceptions import ValkeyWorkloadCommandError
 from src.literals import (
@@ -304,8 +306,11 @@ def test_client_certificate_denied(cloud_spec):
 
 def test_client_certificate_available(cloud_spec):
     ca = MagicMock("my_ca")
+    ca.raw = "my_ca"
     csr = MagicMock("my_csr")
+    csr.raw = "my_csr"
     cert = MagicMock("my_cert")
+    cert.raw = "my_cert"
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
@@ -487,7 +492,10 @@ def test_check_certificate_expiration(cloud_spec):
         model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
     )
 
-    with patch("workload_k8s.ValkeyK8sWorkload.exec", return_value="0"):
+    # exec returns (stdout, stderr); the openssl -checkend path only cares that it
+    # doesn't raise, and the sentinel down-after self-heal on update-status parses
+    # stdout as JSON.
+    with patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=("{}", None)):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert not state_out.get_relation(1).local_unit_data.get("tls-certificate-expiring")
         assert not status_is(state_out, TLSStatuses.CERTIFICATE_EXPIRING.value)
@@ -564,6 +572,139 @@ def test_client_certificate_renewed(cloud_spec):
             assert write_certs.call_count == 3
             reload_tls.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
+            assert (
+                state_out.get_relation(1).local_unit_data.get("applied-client-cert-fingerprint")
+                == sha256(b"my_certmy_ca").hexdigest()
+            )
+
+
+def test_certificate_re_emitted_unchanged_skips_restart(cloud_spec):
+    # The tls lib re-emits certificate-available for an unchanged certificate on
+    # every relation-changed of the client-certificates relation (shared across
+    # units, so every peer's renewal fires it); an already-applied certificate
+    # must be a no-op, or Sentinel gets restarted on every re-emission.
+    ca = MagicMock("my_ca")
+    ca.raw = "my_ca"
+    csr = MagicMock("my_csr")
+    csr.raw = "my_csr"
+    cert = MagicMock("my_cert")
+    cert.raw = "my_cert"
+    private_key = MagicMock("my_key")
+    private_key.raw = "my_key"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "tls-client-state": "tls",
+            "client-cert-ready": "true",
+            "applied-client-cert-fingerprint": sha256(b"my_certmy_ca").hexdigest(),
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    certificate = ProviderCertificate(
+        relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
+
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                return_value=([certificate], private_key),
+            ),
+            patch("charmlibs.pathops.ContainerPath.mkdir"),
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+            patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_ca"),
+            patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
+            patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash,
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("workload_k8s.ValkeyK8sWorkload.restart") as restart,
+        ):
+            event.certificate = certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            manager.run()
+
+            write_certs.assert_not_called()
+            rehash.assert_not_called()
+            reload_tls.assert_not_called()
+            restart.assert_not_called()
+            event.defer.assert_not_called()
+
+
+def test_failed_tls_reload_does_not_record_fingerprint(cloud_spec):
+    # A deferred apply must stay retryable: the fingerprint is only recorded
+    # once reload+restart has been handed off, so a redelivered event after a
+    # failed reload still does the work instead of being skipped.
+    ca = MagicMock("my_ca")
+    ca.raw = "my_ca"
+    csr = MagicMock("my_csr")
+    csr.raw = "my_csr"
+    cert = MagicMock("my_cert")
+    cert.raw = "my_cert"
+    private_key = MagicMock("my_key")
+    private_key.raw = "my_key"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    certificate = ProviderCertificate(
+        relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        event = MagicMock(spec=CertificateAvailableEvent)
+
+        with (
+            patch(
+                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_assigned_certificates",
+                return_value=([certificate], private_key),
+            ),
+            patch("charmlibs.pathops.ContainerPath.mkdir"),
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+            patch("charmlibs.pathops.ContainerPath.read_text", return_value="my_ca"),
+            patch("charmlibs.pathops.ContainerPath.write_text"),
+            patch("workload_k8s.ValkeyK8sWorkload.write_file"),
+            patch("managers.tls.TLSManager.rehash_ca_certificates"),
+            patch(
+                "managers.cluster.ClusterManager.reload_tls_settings",
+                side_effect=ValkeyTLSLoadError("reload failed"),
+            ),
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("workload_k8s.ValkeyK8sWorkload.restart"),
+        ):
+            event.certificate = certificate.certificate
+            charm.tls_events._on_certificate_available(event)
+            state_out = manager.run()
+
+            event.defer.assert_called_once()
+            assert (
+                state_out.get_relation(1).local_unit_data.get("applied-client-cert-fingerprint")
+                is None
+            )
 
 
 def test_new_client_ca_single_unit(cloud_spec):
@@ -1368,3 +1509,35 @@ def test_peer_relation_changed_ca_rotation_workload_error_defers(cloud_spec):
             ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
         )
     assert "valkey_peers_relation_changed" in [e.name for e in state_out.deferred]
+
+
+def test_certificate_already_applied_without_peer_relation(cloud_spec):
+    # A certificate-available can arrive before the peer relation exists, so the
+    # idempotency guard must degrade to "not applied" instead of dereferencing the
+    # unbuilt unit databag model.
+    ca = MagicMock("my_ca")
+    ca.raw = "my_ca"
+    csr = MagicMock("my_csr")
+    csr.raw = "my_csr"
+    cert = MagicMock("my_cert")
+    cert.raw = "my_cert"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    certificate = ProviderCertificate(
+        relation_id=3, certificate=cert, certificate_signing_request=csr, ca=ca, chain=[cert, ca]
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        leader=True,
+        relations={status_peer_relation, client_tls_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd", cloud_spec=cloud_spec),
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+
+        assert charm.state.unit_server.model is None
+        assert charm.tls_manager.certificate_already_applied(certificate) is False

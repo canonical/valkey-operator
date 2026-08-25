@@ -109,3 +109,26 @@ def test_wait_until_resynced_times_out_raises_not_ready(mocker):
 
     with pytest.raises(ValkeyClusterNotReadyError):
         cm.wait_until_resynced(900)
+
+
+def test_bounded_waits_log_their_own_progress(mocker, caplog):
+    """The restore waits log where they happen -- in the manager, not the event handler.
+
+    Log output belongs in the manager method that does the work, so the event
+    flow stays readable.
+    """
+    import logging
+
+    cm, client = _cluster_manager_with_client()
+    client.ping.return_value = True
+    client.info_persistence.return_value = {"loading": "0"}
+    cm.is_replica_synced = MagicMock(return_value=True)
+
+    with caplog.at_level(logging.INFO):
+        cm.wait_until_loaded(600)
+        cm.wait_until_resynced(900)
+
+    assert "restore.wait: dataset to load (up to 600s)" in caplog.text
+    assert "restore.wait: dataset loaded" in caplog.text
+    assert "restore.wait: replica resync (up to 900s)" in caplog.text
+    assert "restore.wait: replica resynced" in caplog.text

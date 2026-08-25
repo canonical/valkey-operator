@@ -13,6 +13,7 @@ from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    DEPLOY_TIMEOUT_TLS_S,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CERT_FILE,
@@ -71,7 +72,7 @@ def test_build_and_deploy(
             idle_period=30,
             unit_count={APP_NAME: NUM_UNITS, GLIDE_RUNNER_NAME: 1},
         ),
-        timeout=600,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
     juju.wait(lambda status: jubilant.all_blocked(status, VAULT_NAME))
 
