@@ -1258,3 +1258,15 @@ def test_create_backup_kills_producer_on_upload_failure(mocker):
     backend.delete.assert_not_called()
     # The lock is still released on the way out.
     assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
+
+def test_metadata_declares_azure_relation():
+    """The Azure integrator relation is declared and mutually exclusive-friendly."""
+    import pathlib
+
+    import yaml
+
+    meta = yaml.safe_load(pathlib.Path("metadata.yaml").read_text())
+    az = meta["requires"]["azure-credentials"]
+    assert az["interface"] == "azure_storage"
+    assert az["limit"] == 1
+    assert az["optional"] is True
