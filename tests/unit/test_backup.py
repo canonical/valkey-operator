@@ -612,26 +612,41 @@ def test_on_s3_credentials_changed_leader_writes_databag(mocker):
     assert creds["path"] == "p"
 
 
-def test_safe_error_surfaces_s3_code_only():
-    """Only the structured S3 error code reaches the action result."""
+def test_safe_error_surfaces_s3_code_only(mocker):
+    """Only the structured S3 error code reaches the action result.
+
+    Raised through the manager rather than hand-wired: the action surface has to
+    survive however the manager wraps the SDK error, so a test that builds the
+    chain itself would keep passing after the wrapping changes underneath it.
+    """
+    import pytest
     from botocore.exceptions import ClientError
 
-    from src.common.exceptions import ValkeyBackupError
+    # Flat import: the manager raises `common.exceptions.ValkeyBackupError`, a
+    # different class object from the `src.`-prefixed one, so pytest.raises must
+    # be given the flat one to catch it.
+    from common.exceptions import ValkeyBackupError
     from src.events.backup import _safe_error
+    from src.managers.backup import BackupManager
 
-    client_err = ClientError(
+    state = mocker.MagicMock()
+    state.cluster.s3_credentials = _s3_params(path="p")
+    fake_bucket = mocker.MagicMock()
+    fake_bucket.objects.filter.side_effect = ClientError(
         {
             "Error": {
                 "Code": "AccessDenied",
                 "Message": "leak https://s3.internal RequestId=ABC123",
             }
         },
-        "PutObject",
+        "ListObjectsV2",
     )
-    wrapped = ValkeyBackupError(client_err)
-    wrapped.__cause__ = client_err
+    mocker.patch.object(BackupManager, "_get_bucket_resource", return_value=fake_bucket)
 
-    msg = _safe_error(wrapped)
+    with pytest.raises(ValkeyBackupError) as excinfo:
+        BackupManager(state=state, workload=mocker.MagicMock()).list_backups()
+
+    msg = _safe_error(excinfo.value)
     assert msg == "S3 request failed: AccessDenied"
     assert "s3.internal" not in msg
     assert "RequestId" not in msg

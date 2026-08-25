@@ -77,7 +77,16 @@ class KubernetesClientError(Exception):
 
 
 class ValkeyBackupError(Exception):
-    """Raised when a backup operation fails."""
+    """Raised when a backup operation fails.
+
+    ``safe_code`` is the structured error code from the failing object-storage
+    call (e.g. "AccessDenied"), safe to put in a world-readable action result;
+    the message itself is not (it carries endpoints and request ids).
+    """
+
+    def __init__(self, *args: object, safe_code: str | None = None):
+        super().__init__(*args)
+        self.safe_code = safe_code
 
 
 class ValkeyBackupInProgressError(ValkeyBackupError):
@@ -89,4 +98,11 @@ class ValkeyBackupInProgressError(ValkeyBackupError):
 
 
 class ValkeyRestoreError(Exception):
-    """Raised when a restore operation fails."""
+    """Raised when a restore operation fails.
+
+    Carries ``safe_code`` for the same reason as ``ValkeyBackupError``.
+    """
+
+    def __init__(self, *args: object, safe_code: str | None = None):
+        super().__init__(*args)
+        self.safe_code = safe_code

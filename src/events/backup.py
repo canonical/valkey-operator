@@ -12,7 +12,6 @@ import uuid
 from typing import TYPE_CHECKING
 
 import ops
-from botocore.exceptions import ClientError
 from object_storage import (
     S3Requirer,
     StorageConnectionInfoChangedEvent,
@@ -44,17 +43,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _safe_error(exc: ValkeyBackupError) -> str:
+def _safe_error(exc: ValkeyBackupError | ValkeyRestoreError) -> str:
     """Return an action-safe error string.
 
-    Action results are world-readable, so surface only the object-storage error
-    code (e.g. "AccessDenied"); the detail goes to the unit log.
+    Action results are world-readable, so surface only the structured error code
+    the failing operation attached (e.g. "AccessDenied"); the rest of the message
+    -- endpoint, bucket, request id -- goes to the unit log only.
     """
-    cause = exc.__cause__ or (exc.args[0] if exc.args else None)
-    if isinstance(cause, ClientError):
-        code = cause.response.get("Error", {}).get("Code", "")
-        if code:
-            return f"S3 request failed: {code}"
+    if exc.safe_code:
+        return f"S3 request failed: {exc.safe_code}"
     return "Backup operation failed. See juju debug-log on this unit for details."
 
 

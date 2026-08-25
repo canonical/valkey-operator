@@ -55,6 +55,15 @@ _BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _PEM_HEADER_RE = re.compile(r"-+BEGIN [A-Z ]+-+")
 
 
+def _s3_error_code(exc: ClientError) -> str:
+    """Structured error code of a botocore failure ("AccessDenied", ...).
+
+    Read the code, never the message: alt-S3 backends reword and recase the
+    message, and the code is the only part safe to surface in an action result.
+    """
+    return exc.response.get("Error", {}).get("Code", "")
+
+
 class _CountingReader:
     """Wrap a binary stream, counting bytes read and capturing the head.
 
@@ -173,8 +182,7 @@ class BackupManager(ManagerStatusProtocol):
                 WaiterConfig={"Delay": 1, "MaxAttempts": 5}  # pyright: ignore[reportCallIssue]
             )
         except ClientError as e:
-            # Match the structured code, not the message (alt-S3 backends recase it).
-            code = e.response.get("Error", {}).get("Code", "")
+            code = _s3_error_code(e)
             if code in {
                 "BucketAlreadyOwnedByYou",
                 "BucketAlreadyExists",
@@ -182,7 +190,7 @@ class BackupManager(ManagerStatusProtocol):
             }:
                 logger.info("Using existing bucket %s", s3_parameters.bucket)
                 return
-            raise ValkeyBackupError(e) from e
+            raise ValkeyBackupError(e, safe_code=code) from e
 
     # ── TLS CA chain ─────────────────────────────────────────────────────
 
@@ -217,7 +225,7 @@ class BackupManager(ManagerStatusProtocol):
         try:
             keys = [obj.key for obj in bucket.objects.filter(Prefix=f"{path}/")]
         except ClientError as e:
-            raise ValkeyBackupError(e) from e
+            raise ValkeyBackupError(e, safe_code=_s3_error_code(e)) from e
         ids = [k.removeprefix(f"{path}/") for k in keys]
         ids = [bid for bid in ids if _BACKUP_ID_RE.match(bid)]
         ids.sort(reverse=True)
@@ -293,7 +301,7 @@ class BackupManager(ManagerStatusProtocol):
             # boto3 aborts the multipart upload itself; just stop the producer.
             proc.kill()
             logger.warning("backup.failed backup_id=%s", backup_id)
-            raise ValkeyBackupError(e) from e
+            raise ValkeyBackupError(e, safe_code=_s3_error_code(e)) from e
         else:
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             logger.info(
@@ -326,7 +334,7 @@ class BackupManager(ManagerStatusProtocol):
                 .read()
             )
         except ClientError as e:
-            raise ValkeyRestoreError(e) from e
+            raise ValkeyRestoreError(e, safe_code=_s3_error_code(e)) from e
         if not head.startswith(_RDB_MAGIC):
             raise ValkeyRestoreError(f"Object for {backup_id} is not a valid RDB stream")
         logger.info("restore.verified backup_id=%s (RDB header ok)", backup_id)
@@ -346,7 +354,7 @@ class BackupManager(ManagerStatusProtocol):
         try:
             obj = bucket.Object(f"{s3_parameters.path}/{backup_id}").get()
         except ClientError as e:
-            raise ValkeyRestoreError(e) from e
+            raise ValkeyRestoreError(e, safe_code=_s3_error_code(e)) from e
 
         logger.info(
             "restore.download.started backup_id=%s bytes=%s -> %s",
