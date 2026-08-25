@@ -8,18 +8,23 @@ from __future__ import annotations
 
 import logging
 import pathlib
+from enum import Enum
 from typing import IO, TYPE_CHECKING, BinaryIO, NamedTuple, Protocol, cast
 from urllib.parse import urlparse
 
 import boto3
+from azure.core.exceptions import HttpResponseError, ResourceExistsError
+from azure.storage.blob import BlobServiceClient
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from common.exceptions import StorageBackendError
-from core.models import BackupCredentials, S3Parameters
+from core.models import AzureStorageParameters, BackupCredentials, S3Parameters
+from literals import AZURE_HTTPS_PROTOCOLS
 
 if TYPE_CHECKING:
+    from azure.storage.blob import BlobClient, ContainerClient
     from mypy_boto3_s3.literals import BucketLocationConstraintType
     from mypy_boto3_s3.service_resource import Bucket, S3ServiceResource
 
@@ -83,6 +88,8 @@ def build_backend(params: BackupCredentials, ca_path: pathlib.Path) -> StorageBa
     """
     if isinstance(params, S3Parameters):
         return S3Backend(params, ca_path)
+    if isinstance(params, AzureStorageParameters):
+        return AzureBackend(params)
     raise StorageBackendError(f"No storage backend for {type(params).__name__} credentials")
 
 
@@ -225,3 +232,125 @@ class S3Backend:
             self._bucket().Object(self._key(backup_id)).delete()
         except Exception as e:  # best-effort cleanup
             logger.warning("Failed to delete object %s: %s", self._key(backup_id), e)
+
+
+class AzureBackend:
+    """Azure Blob object store via azure-storage-blob."""
+
+    def __init__(self, params: "AzureStorageParameters"):
+        self.params = params
+
+    @property
+    def location(self) -> str:
+        """Account host, container and prefix -- the audit trail's destination.
+
+        ``hostname``, not the raw URL: an endpoint carrying a SAS token or
+        userinfo must never put credentials into the log.
+        """
+        parsed = urlparse(self._account_url())
+        host = parsed.hostname or self.params.storage_account
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return f"azure://{host}/{self.params.container}/{self.params.path}"
+
+    def _account_url(self) -> str:
+        """Explicit endpoint (emulator/private) if given, else the derived Blob host."""
+        if self.params.endpoint:
+            return self.params.endpoint
+        scheme = "https" if self.params.connection_protocol in AZURE_HTTPS_PROTOCOLS else "http"
+        return f"{scheme}://{self.params.storage_account}.blob.core.windows.net"
+
+    def _service(self) -> BlobServiceClient:
+        """Build a BlobServiceClient for the configured account.
+
+        The account name is passed explicitly rather than left to the SDK: given a
+        bare key it derives the account from the host's first label, which raises
+        "Unable to determine account name for shared key credential" whenever the
+        endpoint is not ``<account>.blob.*`` -- an emulator or a custom domain,
+        where the account sits in the URL path instead.
+        """
+        return BlobServiceClient(
+            account_url=self._account_url(),
+            credential={
+                "account_name": self.params.storage_account,
+                "account_key": self.params.secret_key,
+            },
+        )
+
+    def _container(self) -> "ContainerClient":
+        return self._service().get_container_client(self.params.container)
+
+    def _blob(self, backup_id: str) -> "BlobClient":
+        return self._container().get_blob_client(self._key(backup_id))
+
+    def _key(self, backup_id: str) -> str:
+        return f"{self.params.path}/{backup_id}"
+
+    @staticmethod
+    def _error_code(exc: HttpResponseError) -> str:
+        """Structured error code of an azure-storage failure ("AuthenticationFailed", ...).
+
+        ``process_storage_error`` attaches the provider's code as a ``StorageErrorCode``
+        -- a ``(str, Enum)`` member whose ``str()`` renders "StorageErrorCode.AUTH..." --
+        so read ``.value`` to get the wire code an action result should show. Absent on
+        transport-level failures the service never answered, hence the default.
+        """
+        code = getattr(exc, "error_code", None) or ""
+        return code.value if isinstance(code, Enum) else str(code)
+
+    def ensure_container(self) -> None:
+        """Create the configured container; tolerates an already-existing one."""
+        try:
+            self._container().create_container()
+        except ResourceExistsError:
+            # Subclass of HttpResponseError, so this clause must stay first.
+            logger.info("Using existing container %s", self.params.container)
+        except HttpResponseError as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def list_object_ids(self) -> list[str]:
+        """Return every blob id stored under the path prefix (auto-paginated)."""
+        prefix = f"{self.params.path}/"
+        try:
+            names = [b.name for b in self._container().list_blobs(name_starts_with=prefix)]
+        except HttpResponseError as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+        return [n.removeprefix(prefix) for n in names]
+
+    def head(self, backup_id: str, n: int = 16) -> bytes:
+        """Ranged read of the first ``n`` bytes of the blob for ``backup_id``."""
+        try:
+            return self._blob(backup_id).download_blob(offset=0, length=n).readall()
+        except HttpResponseError as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def upload(self, backup_id: str, reader: IO[bytes]) -> None:
+        """Stream ``reader`` into the blob for ``backup_id`` (sequential block blob).
+
+        ``length=None`` + ``max_concurrency=1``: the source is a non-rewindable
+        pipe from ``valkey-cli --rdb -``, so the SDK must stage blocks
+        sequentially off ``read()`` rather than seek around a known-size stream.
+        """
+        try:
+            self._blob(backup_id).upload_blob(
+                reader, blob_type="BlockBlob", overwrite=True, length=None, max_concurrency=1
+            )
+        except HttpResponseError as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def download(self, backup_id: str) -> RemoteObject:
+        """Open the blob for ``backup_id``; its downloader reads as binary."""
+        try:
+            downloader = self._blob(backup_id).download_blob()
+        except HttpResponseError as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+        # The downloader already knows the blob length, so the restore trail gets
+        # its byte count without a second round trip.
+        return RemoteObject(cast(BinaryIO, downloader), downloader.size)
+
+    def delete(self, backup_id: str) -> None:
+        """Delete the blob for ``backup_id``, swallowing any error (best-effort)."""
+        try:
+            self._blob(backup_id).delete_blob()
+        except Exception as e:  # best-effort cleanup
+            logger.warning("Failed to delete blob %s: %s", self._key(backup_id), e)
