@@ -12,8 +12,8 @@ file so that Claude Code and Gemini CLI pick it up too.)
   continuous writes with `valkey-glide` to validate HA scenarios.
 - The integration env's `commands_pre` runs `sudo apt install wget`, downloads a Valkey tarball
   from download.valkey.io, and installs `valkey-cli` into `/usr/local/bin` — all before any
-  controller check. Building the integration dependency group needs
-  `libprotobuf-dev protobuf-compiler` and a Rust toolchain (CI pins 1.90.0).
+  controller check. The integration dependency group installs entirely from PyPI wheels — no
+  protobuf headers or Rust toolchain are needed to build it.
 - When `$CI` is unset, tox runs `juju add-model testing` — a second local run fails if the model
   still exists; `juju destroy-model testing` between runs, or invoke pytest directly from
   `.tox/integration/bin/pytest`.
