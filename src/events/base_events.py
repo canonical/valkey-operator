@@ -714,7 +714,8 @@ class BaseEvents(ops.Object):
 
             # check health after scale down
             self.charm.sentinel_manager.verify_expected_replica_count(active_sentinels)
-            # release lock
+
+        if active_sentinels:
             scale_down_lock.release_lock(primary_ip=primary_ip)
 
         self._set_state_for_going_away()
