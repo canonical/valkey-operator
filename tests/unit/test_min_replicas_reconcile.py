@@ -60,6 +60,8 @@ def test_peer_relation_departed_reconciles_min_replicas(cloud_spec):
         patch("common.client.SentinelClient.primary", return_value={"quorum": "2"}),
         patch("common.client.SentinelClient.set"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"),
+        patch("managers.sentinel.SentinelManager.get_active_sentinel_ips"),
+        patch("managers.sentinel.SentinelManager.verify_expected_replica_count"),
         patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write") as mock_reconcile,
     ):
         ctx.run(ctx.on.relation_departed(relation, remote_unit=2), state_in)

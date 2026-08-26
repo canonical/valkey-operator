@@ -64,6 +64,10 @@ class SentinelIncorrectReplicaCountError(Exception):
     """Custom Exception if the sentinel sees an incorrect number of replicas."""
 
 
+class NotAllDepartingSentinelsStoppedError(Exception):
+    """Custom Exception if not all departing Sentinels have already been stopped."""
+
+
 class RequestingLockTimedOutError(Exception):
     """Custom Exception if requesting a lock times out."""
 
