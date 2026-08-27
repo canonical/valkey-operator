@@ -36,7 +36,7 @@ def _s3_params(**overrides):
 
 def _backend(mocker, **overrides):
     """Build an S3Backend with its boto3 Bucket faked out; return (backend, bucket)."""
-    from src.managers.backup_backend import S3Backend
+    from src.common.storage_backend import S3Backend
 
     bucket = mocker.MagicMock()
     mocker.patch.object(S3Backend, "_bucket", return_value=bucket)
@@ -49,7 +49,7 @@ def _backend(mocker, **overrides):
 def test_s3backend_bucket_built_with_checksum_workaround(mocker, tmp_path):
     import boto3
 
-    from src.managers.backup_backend import S3Backend
+    from src.common.storage_backend import S3Backend
 
     fake_session = mocker.MagicMock()
     fake_resource = mocker.MagicMock()
@@ -79,7 +79,7 @@ def test_s3backend_bucket_built_with_checksum_workaround(mocker, tmp_path):
 def test_s3backend_bucket_uses_ca_chain_when_provided(mocker, tmp_path):
     import boto3
 
-    from src.managers.backup_backend import S3Backend
+    from src.common.storage_backend import S3Backend
 
     mocker.patch("boto3.Session")
     ca_path = tmp_path / "s3_ca_chain.pem"
@@ -282,7 +282,7 @@ def test_s3backend_delete_swallows_errors(mocker):
 
 def test_build_backend_selects_by_credentials_type(mocker):
     """The one place a credentials type maps to a backend; BackupManager never sees it."""
-    from managers.backup_backend import S3Backend, build_backend
+    from common.storage_backend import S3Backend, build_backend
 
     assert isinstance(build_backend(_s3_params(), mocker.MagicMock()), S3Backend)
 
@@ -290,7 +290,7 @@ def test_build_backend_selects_by_credentials_type(mocker):
 def test_build_backend_rejects_unknown_credentials(mocker):
     """An unregistered credentials type fails loudly rather than silently doing nothing."""
     from common.exceptions import StorageBackendError
-    from managers.backup_backend import build_backend
+    from common.storage_backend import build_backend
 
     with pytest.raises(StorageBackendError):
         build_backend(object(), mocker.MagicMock())  # pyright: ignore[reportArgumentType]

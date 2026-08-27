@@ -291,7 +291,7 @@ def test_ensure_container_delegates_to_the_backend(mocker):
     """The manager just asks the backend; the create semantics are the backend's."""
     from src.managers.backup import BackupManager
 
-    backend = _fake_backend(mocker)
+    backend = _fake_built_backend(mocker)
 
     BackupManager(state=mocker.MagicMock(), workload=mocker.MagicMock()).ensure_container(
         _s3_params()
@@ -306,7 +306,7 @@ def test_ensure_container_wraps_backend_error_and_keeps_the_code(mocker):
     from common.exceptions import StorageBackendError, ValkeyBackupError
     from src.managers.backup import BackupManager
 
-    backend = _fake_backend(mocker)
+    backend = _fake_built_backend(mocker)
     backend.ensure_container.side_effect = StorageBackendError("x", safe_code="AccessDenied")
 
     with pytest.raises(ValkeyBackupError) as excinfo:
@@ -408,15 +408,29 @@ def _s3_params(**overrides):
 
 
 def _fake_backend(mocker):
-    """Patch BackupManager onto a fake StorageBackend and hand it back.
+    """Patch BackupManager's cached backend onto a fake StorageBackend.
 
     Manager tests assert what the manager asks of the backend; the SDK wiring
-    behind the Protocol is covered in test_backup_backend.py.
+    behind the Protocol is covered in test_storage_backend.py.
     """
     from src.managers.backup import BackupManager
 
     backend = mocker.MagicMock()
-    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    mocker.patch.object(BackupManager, "storage_backend", backend)
+    return backend
+
+
+def _fake_built_backend(mocker):
+    """Patch the registry itself, for the paths that build a backend from params.
+
+    ensure_container runs before the credentials reach the databag, so it calls
+    build_backend directly instead of going through the cached property.
+
+    Patched on `src.managers.backup`: that is the module these tests import
+    BackupManager from, so it is the namespace the call resolves against.
+    """
+    backend = mocker.MagicMock()
+    mocker.patch("src.managers.backup.build_backend", return_value=backend)
     return backend
 
 
@@ -707,9 +721,9 @@ def test_safe_error_surfaces_s3_code_only(mocker):
     # different class object from the `src.`-prefixed one, so pytest.raises must
     # be given the flat one to catch it.
     # ...and flat for S3Backend too: src/ imports are flat, so the class the
-    # manager actually instantiates is `managers.backup_backend.S3Backend`.
+    # manager actually instantiates is `common.storage_backend.S3Backend`.
     from common.exceptions import ValkeyBackupError
-    from managers.backup_backend import S3Backend
+    from common.storage_backend import S3Backend
     from src.events.backup import _safe_error
     from src.managers.backup import BackupManager
 

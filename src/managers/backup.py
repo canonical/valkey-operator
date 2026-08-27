@@ -10,6 +10,7 @@ import logging
 import pathlib
 import re
 from datetime import datetime, timezone
+from functools import cached_property
 from typing import IO, TYPE_CHECKING, Any, cast
 
 from charmlibs import pathops
@@ -19,6 +20,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from common.client import ValkeyClient
 from common.exceptions import StorageBackendError, ValkeyBackupError, ValkeyRestoreError
+from common.storage_backend import StorageBackend, build_backend
 from literals import (
     BACKUP_CA_FILENAME,
     BACKUP_ID_FORMAT,
@@ -26,7 +28,6 @@ from literals import (
     CharmUsers,
     RestoreStep,
 )
-from managers.backup_backend import StorageBackend, build_backend
 from statuses import BackupStatuses, CharmStatuses, RestoreStatuses
 
 if TYPE_CHECKING:
@@ -117,16 +118,31 @@ class BackupManager(ManagerStatusProtocol):
 
     # ── backend selection ────────────────────────────────────────────────
 
-    def _backend_for(self, params: "BackupCredentials") -> StorageBackend:
-        """Build the storage backend that handles these credentials."""
+    @cached_property
+    def storage_backend(self) -> StorageBackend:
+        """The backend serving the app's active backup credentials.
+
+        Cached because a manager instance lives for exactly one hook: every
+        operation in that hook shares one backend object. Raises
+        ``StorageBackendError`` when no integrator has supplied credentials yet,
+        which each caller translates into its own backup/restore error.
+        """
+        params = self.state.active_backup_credentials
+        if params is None:
+            raise StorageBackendError("Backup storage credentials unavailable")
         return build_backend(params, self._backup_ca_path)
 
     # ── container lifecycle ──────────────────────────────────────────────
 
     def ensure_container(self, params: "BackupCredentials") -> None:
-        """Idempotently create the bucket/container for just-validated params."""
+        """Idempotently create the bucket/container for just-validated params.
+
+        Builds its own backend instead of using ``storage_backend``: this runs
+        before the credentials are written to the databag, so ``state`` cannot
+        supply them yet.
+        """
         try:
-            self._backend_for(params).ensure_container()
+            build_backend(params, self._backup_ca_path).ensure_container()
         except StorageBackendError as e:
             raise ValkeyBackupError(str(e), safe_code=e.safe_code) from e
 
@@ -155,11 +171,8 @@ class BackupManager(ManagerStatusProtocol):
 
     def list_backups(self) -> list[str]:
         """Return valid backup ids in the configured container, newest first."""
-        params = self.state.active_backup_credentials
-        if params is None:
-            raise ValkeyBackupError("Backup storage credentials unavailable")
         try:
-            ids = self._backend_for(params).list_object_ids()
+            ids = self.storage_backend.list_object_ids()
         except StorageBackendError as e:
             raise ValkeyBackupError(str(e), safe_code=e.safe_code) from e
         ids = [bid for bid in ids if _BACKUP_ID_RE.match(bid)]
@@ -186,10 +199,10 @@ class BackupManager(ManagerStatusProtocol):
         ``valkey-cli --rdb -`` stdout into the backend's ``upload``,
         and cleans up the stored object on failure.
         """
-        params = self.state.active_backup_credentials
-        if params is None:
-            raise ValkeyBackupError("Backup storage credentials unavailable")
-        backend = self._backend_for(params)
+        try:
+            backend = self.storage_backend
+        except StorageBackendError as e:
+            raise ValkeyBackupError(str(e), safe_code=e.safe_code) from e
         started = datetime.now(timezone.utc)
         backup_id = started.strftime(BACKUP_ID_FORMAT)
         # Structured audit trail for forensics; destination logged, creds never.
@@ -248,11 +261,8 @@ class BackupManager(ManagerStatusProtocol):
         A ranged read of the first 16 bytes (not a full download), so a missing or
         non-RDB backup-id fails while valkey is still serving.
         """
-        params = self.state.active_backup_credentials
-        if params is None:
-            raise ValkeyRestoreError("Backup storage credentials unavailable")
         try:
-            head = self._backend_for(params).head(backup_id)
+            head = self.storage_backend.head(backup_id)
         except StorageBackendError as e:
             raise ValkeyRestoreError(str(e), safe_code=e.safe_code) from e
         if not head.startswith(_RDB_MAGIC):
@@ -266,11 +276,8 @@ class BackupManager(ManagerStatusProtocol):
         in the charm container) to ``dump.rdb.part``, then an atomic same-partition
         rename onto ``dump.rdb`` so it never appears partial.
         """
-        params = self.state.active_backup_credentials
-        if params is None:
-            raise ValkeyRestoreError("Backup storage credentials unavailable")
         try:
-            obj = self._backend_for(params).download(backup_id)
+            obj = self.storage_backend.download(backup_id)
         except StorageBackendError as e:
             raise ValkeyRestoreError(str(e), safe_code=e.safe_code) from e
 
@@ -389,21 +396,22 @@ class BackupManager(ManagerStatusProtocol):
             ).root
         )
 
-        if scope == "unit" and self.state.unit_server.is_backup_in_progress:
-            status_list.append(BackupStatuses.BACKUP_IN_PROGRESS.value)
+        if scope == "unit":
+            if self.state.unit_server.is_backup_in_progress:
+                status_list.append(BackupStatuses.BACKUP_IN_PROGRESS.value)
+            return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        if scope == "app" and self.state.backup_backends_conflict:
+        if self.state.backup_backends_conflict:
             # Nothing can pick a backend, so this beats the credentials status.
             status_list.append(BackupStatuses.BACKUP_BACKENDS_CONFLICT.value)
         elif (
-            scope == "app"
-            and self.state.unit_server.is_started
+            self.state.unit_server.is_started
             and self.state.backup_relations
             and not self.state.active_backup_credentials
         ):
             status_list.append(BackupStatuses.BACKUP_CREDENTIALS_MISSING.value)
 
-        if scope == "app" and self.state.cluster.is_restore_in_progress:
+        if self.state.cluster.is_restore_in_progress:
             status_list.append(RestoreStatuses.RESTORE_IN_PROGRESS.value)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]

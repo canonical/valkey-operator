@@ -431,7 +431,7 @@ def test_download_backup_streams_body_to_data_partition_and_moves_atomically(moc
     """
     import logging
 
-    from managers.backup_backend import RemoteObject
+    from common.storage_backend import RemoteObject
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
@@ -442,7 +442,7 @@ def test_download_backup_streams_body_to_data_partition_and_moves_atomically(moc
     body = mocker.Mock()  # the backend's streaming body
     backend = mocker.MagicMock()
     backend.download.return_value = RemoteObject(body, 4096)
-    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    mocker.patch.object(BackupManager, "storage_backend", backend)
 
     with caplog.at_level(logging.INFO):
         mgr.download_backup("2026-05-13T10:00:00Z")
@@ -465,7 +465,7 @@ def test_verify_backup_is_rdb_accepts_valid_head(mocker):
     mgr.state = mocker.MagicMock()
     backend = mocker.MagicMock()
     backend.head.return_value = b"REDIS0011"
-    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    mocker.patch.object(BackupManager, "storage_backend", backend)
 
     mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")  # no raise
 
@@ -489,7 +489,7 @@ def test_restore_reads_wrap_backend_errors_and_keep_the_code(mocker):
     backend = mocker.MagicMock()
     backend.head.side_effect = StorageBackendError("x", safe_code="NoSuchKey")
     backend.download.side_effect = StorageBackendError("x", safe_code="AccessDenied")
-    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    mocker.patch.object(BackupManager, "storage_backend", backend)
 
     with pytest.raises(ValkeyRestoreError) as excinfo:
         mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")
@@ -525,7 +525,7 @@ def test_verify_backup_is_rdb_rejects_bad_head(mocker):
     mgr.state = mocker.MagicMock()
     backend = mocker.MagicMock()
     backend.head.return_value = b"NOT-AN-RDB.."
-    mocker.patch.object(BackupManager, "_backend_for", return_value=backend)
+    mocker.patch.object(BackupManager, "storage_backend", backend)
 
     with pytest.raises(ValkeyRestoreError):
         mgr.verify_backup_is_rdb("2026-05-13T10:00:00Z")
