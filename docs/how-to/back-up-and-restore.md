@@ -1,32 +1,32 @@
+(how-to-backup)=
+
 # How to back up and restore
 
-Charmed Valkey can stream a point-in-time RDB backup of your dataset to object
-storage, list the backups it has taken, and restore the whole cluster from any of
-them. Both S3-compatible object storage and Azure Blob storage are supported.
+This guide walks you through protecting your Valkey data: taking point-in-time
+backups of your dataset to object storage, listing the backups you have taken,
+and restoring the whole cluster from any of them. Both S3-compatible object
+storage and Azure Blob storage are supported through their respective integrators.
 
-Backups are driven by three charm actions — `create-backup`, `list-backups`, and
-`restore` — and by a related storage-integrator charm that holds the storage
-credentials. You relate **either** the [`s3-integrator`](https://charmhub.io/s3-integrator)
-**or** the [`azure-storage-integrator`](https://charmhub.io/azure-storage-integrator),
-never both at once: the two backends are mutually exclusive, and relating both leaves
-Charmed Valkey blocked until you remove one.
+The integrators store credentials. Charmed Valkey reads the credentials over the
+relation and never stores them in plain text.
 
-## Relate an object-storage integrator
+```{caution}
+The storage integrators are mutually exclusive.
+Relating both blocks Charmed Valkey until you remove one.
+```
 
-Choose one of the two options below depending on where you want to store backups.
-In both cases the credentials live in the integrator charm — Charmed Valkey reads
-them over the relation and never stores them in plain text.
+## S3-compatible object storage
 
-### Option A — S3-compatible storage
-
-Deploy the S3 integrator:
+To use S3-compatible storage for your backups, deploy
+[`s3-integrator`](https://charmhub.io/s3-integrator):
 
 ```shell
 juju deploy s3-integrator --channel 2/edge
 ```
 
-Store the access key and secret key in a [Juju secret](https://canonical-juju.readthedocs-hosted.com/en/latest/user/reference/secret/)
-and grant it to the integrator:
+Store the access key and secret key in a
+[Juju secret](https://canonical-juju.readthedocs-hosted.com/en/latest/user/reference/secret/)
+and grant access to the integrator:
 
 ```shell
 juju add-secret s3-creds access-key=<ACCESS_KEY> secret-key=<SECRET_KEY>
@@ -52,27 +52,33 @@ HTTPS:
 juju config s3-integrator tls-ca-chain="$(base64 -w0 ca-chain.pem)"
 ```
 
-Finally, integrate Charmed Valkey with the S3 integrator on the `s3-credentials`
-endpoint:
+Finally, integrate Charmed Valkey with the S3 integrator:
 
 ```shell
 juju integrate valkey:s3-credentials s3-integrator
 ```
 
-### Option B — Azure Blob storage
+## Azure Blob storage
 
-Deploy the Azure storage integrator:
+To use Azure Blob storage for your backups, deploy
+[`azure-storage-integrator`](https://charmhub.io/azure-storage-integrator):
 
 ```shell
 juju deploy azure-storage-integrator --channel 1/edge
 ```
 
-Store the storage-account key in a Juju secret (the content key must be
-`secret-key`) and grant it to the integrator:
+Store the storage-account key in a
+[Juju secret](https://canonical-juju.readthedocs-hosted.com/en/latest/user/reference/secret/)
+and grant access to the integrator:
 
 ```shell
 juju add-secret azure-creds secret-key=<STORAGE_ACCOUNT_KEY>
 juju grant-secret azure-creds azure-storage-integrator
+```
+
+```{note}
+See [Azure limitations](#azure-limitations) below before choosing an endpoint or
+connection protocol for Azure.
 ```
 
 Point the integrator at the secret and configure the container:
@@ -86,29 +92,43 @@ juju config azure-storage-integrator \
   path=<PATH_PREFIX>
 ```
 
-Finally, integrate Charmed Valkey with the Azure storage integrator on the
-`azure-credentials` endpoint:
+Finally, integrate Charmed Valkey with the Azure storage integrator:
 
 ```shell
 juju integrate valkey:azure-credentials azure-storage-integrator
 ```
 
-```{note}
-See [Azure limitations](#azure-limitations) below before choosing an endpoint or
-connection protocol for Azure.
-```
+(azure-limitations)=
+
+### Azure limitations
+
+The Azure Blob backend supports public Azure Blob storage over HTTPS and
+plain-HTTP emulators such as [Azurite](https://github.com/Azure/Azurite). However,
+it does not provide full feature parity with the S3 backend:
+
+- **HTTPS endpoints that use a private or custom CA are not supported.** The
+  `azure_storage` relation does not provide a CA-chain field, so Charmed Valkey
+  can verify only certificates issued by a public CA in the system trust store.
+  It cannot establish a trusted HTTPS connection to an Azure-compatible endpoint,
+  such as an Azure Stack deployment, that uses a private or self-signed
+  certificate. If you require a custom CA, use the S3 backend and configure
+  `tls-ca-chain` instead.
+- **The `abfs` and `abfss` connection protocols are not supported.** These protocols
+  identify ADLS Gen2 hierarchical-namespace endpoints, which use a different API
+  from Azure Blob storage. Use a supported Blob protocol instead: `https` or
+  `wasbs` for HTTPS, or `http` or `wasb` for HTTP.
 
 ## Create a backup
 
-Once an integrator is related and `active`, take a backup. `create-backup` can run
-on **any** unit — leader or follower — and streams that unit's dataset straight to
-object storage:
+After relating an integrator, wait for it to reach `active` status. Run the
+`create-backup` action on **any** unit — leader or follower — to stream that
+unit's dataset directly to object storage:
 
 ```shell
 juju run valkey/leader create-backup
 ```
 
-On success the action returns the identifier of the new backup:
+On success, the action returns the identifier of the new backup:
 
 ```text
 backup-id: 2026-07-20T12:30:00Z
@@ -116,34 +136,37 @@ backup-id: 2026-07-20T12:30:00Z
 
 ## List backups
 
-List the backups currently in the configured bucket or container, newest first:
+List all backups currently available in the configured bucket or container:
 
 ```shell
 juju run valkey/leader list-backups
 ```
 
-By default the list is rendered as a table. Pass `output=json` for machine-readable
-output:
+Review the table, which lists the newest backup first.
+To retrieve machine-readable output, pass `output=json`:
 
 ```shell
 juju run valkey/leader list-backups output=json
 ```
 
-`list-backups` is read-only and safe to run while another backup is still uploading.
+The `list-backups` action is read-only and safe to run while another backup is
+still uploading.
 
 ## Restore a backup
 
 Restoring replaces the dataset on **all** units with the contents of the chosen
-backup, so it must run on the **leader** unit. Pass the `backup-id` exactly as it
-appears in `list-backups`:
+backup, so it must run on the **leader** unit.
+
+Copy the `backup-id` exactly as shown by `list-backups`, then run the `restore`
+action.
+
+```{caution}
+The `restore` action overwrites the dataset on every unit. Before
+proceeding, create a fresh backup of the current data.
+```
 
 ```shell
 juju run valkey/leader restore backup-id=2026-07-20T12:30:00Z
-```
-
-```{caution}
-`restore` overwrites the current dataset on every unit. Take a fresh backup first
-if you might need the current data again.
 ```
 
 The action confirms that the restore was initiated:
@@ -152,37 +175,27 @@ The action confirms that the restore was initiated:
 restore: initiated for 2026-07-20T12:30:00Z
 ```
 
-Charmed Valkey then coordinates the restore across the cluster and returns to
-`active` once every unit has loaded the restored dataset.
+Charmed Valkey coordinates the restore across the cluster. Check its progress:
+
+```shell
+juju status
+```
+
+Verify that every unit returns to `active` status, indicating that each unit has
+fully loaded the restored dataset.
 
 ## Troubleshooting
 
-Two application statuses cover the configuration mistakes:
+If Charmed Valkey does not reach `active` status, check the output of `juju status`
+for one of the following messages:
 
-- `Missing or invalid backup storage credentials` — an integrator is related but
-  Charmed Valkey has nothing usable stored. The most common cause is an unset
-  `path`: the integrators default it to empty, and Charmed Valkey requires it so
-  that `list-backups` can never enumerate a whole bucket or container. Check the
-  integrator's config and `juju debug-log` on the leader.
-- `More than one backup storage integrator related; relate exactly one` — both `s3-integrator` and
-  `azure-storage-integrator` are related. Remove one; the survivor is picked up
-  automatically, without waiting for any further event.
-
-## Azure limitations
-
-The Azure Blob backend supports the common case — public Azure Blob storage over
-HTTPS, and plain-HTTP emulators such as [Azurite](https://github.com/Azure/Azurite)
-— but it does **not** have full parity with the S3 backend:
-
-- **No private or custom-CA HTTPS endpoint.** The `azure_storage` relation carries
-  no CA-chain field, so Charmed Valkey can only verify endpoints signed by a public
-  CA already in the system trust store. An Azure-compatible endpoint (for example an
-  Azure Stack deployment) fronted by a private or self-signed certificate cannot be
-  trusted over HTTPS. Only public Azure over HTTPS and plain-HTTP emulators work.
-  If you need a custom CA, use the S3 backend instead, which accepts a
-  `tls-ca-chain`.
-- **`abfs` and `abfss` connection protocols are unsupported.** These designate
-  ADLS-Gen2 (hierarchical-namespace) endpoints served by a different API than Blob
-  storage. Charmed Valkey rejects them up front rather than mis-talking the Blob
-  API to a data-lake endpoint. Use a Blob connection protocol — `https` or `wasbs`
-  (HTTPS), or `http` or `wasb` (HTTP) — instead.
+- **`Missing or invalid backup storage credentials`**: The related integrator
+  does not provide valid storage credentials or configuration. Check the
+  integrator configuration and ensure that `path` is set. Integrators use an
+  empty path by default, but Charmed Valkey requires a path to prevent
+  `list-backups` from listing an entire bucket or container. If the problem
+  persists, inspect `juju debug-log` for the leader unit.
+- **`More than one backup storage integrator related; relate exactly one`**: Both
+  `s3-integrator` and `azure-storage-integrator` are related. Remove one of the
+  integrations. Charmed Valkey automatically detects and uses the remaining
+  integrator.
