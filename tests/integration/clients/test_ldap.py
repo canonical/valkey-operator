@@ -75,13 +75,15 @@ def test_build_and_deploy(
         timeout=600,
     )
 
+    # PostgreSQL is deliberately absent: it re-stamps its agent status every few seconds under
+    # load, so an `idle_period` it takes part in may never elapse. An active GLAuth already
+    # implies a working database.
     juju_k8s_model.wait(
         lambda status: are_agents_idle(
             status,
             LDAP_NAME,
             LDAP_UTILS_NAME,
             TLS_NAME,
-            LDAP_PG_NAME,
             idle_period=30,
         ),
         timeout=600,
