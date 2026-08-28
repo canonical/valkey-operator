@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_S3_EXISTS_CODES = {"BucketAlreadyOwnedByYou", "BucketAlreadyExists", "BucketNameUnavailable"}
-
 
 class RemoteObject(NamedTuple):
     """A stored object opened for reading."""
@@ -88,17 +86,13 @@ def build_backend(params: BackupCredentials, ca_path: pathlib.Path) -> StorageBa
     raise StorageBackendError(f"No storage backend for {type(params).__name__} credentials")
 
 
-def _s3_error_code(exc: ClientError) -> str:
-    """Structured error code of a botocore failure ("AccessDenied", ...).
-
-    Read the code, never the message: alt-S3 backends reword and recase the
-    message, and the code is the only part safe to surface in an action result.
-    """
-    return exc.response.get("Error", {}).get("Code", "")
-
-
 class S3Backend:
     """S3 object store via boto3."""
+
+    _EXISTS_CODES = frozenset(
+        {"BucketAlreadyOwnedByYou", "BucketAlreadyExists", "BucketNameUnavailable"}
+    )
+    """CreateBucket codes meaning the bucket is already there -- not a failure."""
 
     def __init__(self, params: "S3Parameters", ca_path: pathlib.Path):
         self.params = params
@@ -121,6 +115,15 @@ class S3Backend:
 
     def _key(self, backup_id: str) -> str:
         return f"{self.params.path}/{backup_id}"
+
+    @staticmethod
+    def _error_code(exc: ClientError) -> str:
+        """Structured error code of a botocore failure ("AccessDenied", ...).
+
+        Read the code, never the message: alt-S3 backends reword and recase the
+        message, and the code is the only part safe to surface in an action result.
+        """
+        return exc.response.get("Error", {}).get("Code", "")
 
     def _bucket(self) -> "Bucket":
         """Build a boto3 Bucket resource configured per the s3-integrator envelope."""
@@ -170,10 +173,10 @@ class S3Backend:
                 WaiterConfig={"Delay": 1, "MaxAttempts": 5}  # pyright: ignore[reportCallIssue]
             )
         except ClientError as e:
-            if _s3_error_code(e) in _S3_EXISTS_CODES:
+            if self._error_code(e) in self._EXISTS_CODES:
                 logger.info("Using existing bucket %s", self.params.bucket)
                 return
-            raise StorageBackendError(str(e), safe_code=_s3_error_code(e)) from e
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def list_object_ids(self) -> list[str]:
         """Return every object id stored under the path prefix (auto-paginated)."""
@@ -181,7 +184,7 @@ class S3Backend:
         try:
             keys = [obj.key for obj in self._bucket().objects.filter(Prefix=prefix)]
         except ClientError as e:
-            raise StorageBackendError(str(e), safe_code=_s3_error_code(e)) from e
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         return [k.removeprefix(prefix) for k in keys]
 
     def head(self, backup_id: str, n: int = 16) -> bytes:
@@ -194,7 +197,7 @@ class S3Backend:
                 .read()
             )
         except ClientError as e:
-            raise StorageBackendError(str(e), safe_code=_s3_error_code(e)) from e
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def upload(self, backup_id: str, reader: IO[bytes]) -> None:
         """Stream ``reader`` into the object for ``backup_id`` (managed multipart)."""
@@ -205,14 +208,14 @@ class S3Backend:
                 Config=TransferConfig(multipart_chunksize=8 * 1024 * 1024),
             )
         except ClientError as e:
-            raise StorageBackendError(str(e), safe_code=_s3_error_code(e)) from e
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def download(self, backup_id: str) -> RemoteObject:
         """Open the object for ``backup_id``; its StreamingBody reads as binary."""
         try:
             obj = self._bucket().Object(self._key(backup_id)).get()
         except ClientError as e:
-            raise StorageBackendError(str(e), safe_code=_s3_error_code(e)) from e
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         # The StreamingBody is a binary read()-able at runtime (cast for the stub).
         return RemoteObject(cast(BinaryIO, obj["Body"]), obj.get("ContentLength"))
 
