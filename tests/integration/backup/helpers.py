@@ -78,7 +78,7 @@ def deploy_and_relate_s3(
         )
 
     # Require agents idle as well as workloads active: after `integrate` the
-    # workloads stay active while the leader's relation hooks (create_bucket +
+    # workloads stay active while the leader's relation hooks (ensure_container +
     # credential storage) are still running, so a workload-only wait can return
     # before S3 is actually wired up.
     juju.wait(
