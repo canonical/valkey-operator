@@ -42,6 +42,11 @@ LDAP_INGRESS_NAME = "traefik-k8s"
 DATA_INTEGRATOR_NAME = "data-integrator"
 
 AUTHENTIK_CHANNEL = "latest/edge"
+# Every authentication costs Valkey an admin bind, a search and a user bind against the outpost,
+# and Authentik answers each in the high hundreds of milliseconds -- an order of magnitude slower
+# than GLAuth. Credentials are supplied when the client connects, so all three have to fit inside
+# the connection timeout; Glide's 2s default expires mid-bind and surfaces as "timed out".
+LDAP_CONNECTION_TIMEOUT_MS = 20000
 DIRECTORY_ENTRIES = json.loads(
     Path("./tests/integration/clients/data/authentik_entries.json").read_text()
 )
@@ -206,6 +211,7 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         key=TEST_KEY,
         value=TEST_VALUE,
+        connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
     )
     assert result == "OK", "Failed to write data for charm user with LDAP enabled"
 
@@ -216,6 +222,7 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             key=TEST_KEY,
+            connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
         )
         == TEST_VALUE
     ), "Failed to read data for charm user with LDAP enabled"
@@ -237,6 +244,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
         password=password,
         key=TEST_KEY,
         value=TEST_VALUE,
+        connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
     )
     assert result == "OK", f"Failed to write data for user {username} with LDAP enabled"
 
@@ -247,6 +255,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
             username=username,
             password=password,
             key=TEST_KEY,
+            connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
         )
         == TEST_VALUE
     ), f"Failed to read data for user {username} with LDAP enabled"
@@ -263,6 +272,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
             username=username,
             password=password,
             key=TEST_KEY,
+            connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
         )
         == TEST_VALUE
     ), f"Failed to read data for user {username} with LDAP enabled"
@@ -274,6 +284,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
         password=password,
         key=TEST_KEY,
         value=TEST_VALUE,
+        connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
     )
     assert not result == "OK", "Failed to write data with LDAP enabled"
 
@@ -287,6 +298,7 @@ def test_ensure_ldap_auth(juju: jubilant.Juju) -> None:
         endpoints=endpoints,
         username=username,
         password=password,
+        connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
     )
 
 
@@ -310,6 +322,7 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
         password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
         key=TEST_KEY,
         value=TEST_VALUE,
+        connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
     )
     assert result == "OK", "Failed to write data for charm user with LDAP disabled"
 
@@ -320,6 +333,7 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
             username=CharmUsers.VALKEY_ADMIN.value,
             password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
             key=TEST_KEY,
+            connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
         )
         == TEST_VALUE
     ), "Failed to read data for charm user with LDAP disabled"
@@ -335,4 +349,5 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
             endpoints=endpoints,
             username=username,
             password=password,
+            connection_timeout=LDAP_CONNECTION_TIMEOUT_MS,
         )
