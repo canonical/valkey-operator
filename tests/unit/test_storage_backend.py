@@ -10,6 +10,8 @@ imported flat (`common.exceptions`) because src/ imports are flat, so the class
 the backend raises is the flat one, not the `src.`-prefixed copy.
 """
 
+import io
+
 import pytest
 from botocore.exceptions import ClientError
 
@@ -567,6 +569,65 @@ def test_build_backend_selects_the_azure_backend(mocker):
     from common.storage_backend import AzureBackend, build_backend
 
     assert isinstance(build_backend(_az_params(), mocker.MagicMock()), AzureBackend)
+
+
+# ── transport-level failures ────────────────────────────────────────────
+
+
+def _transport_calls(backend):
+    """Every StorageBackend method that must translate an SDK failure, by name."""
+    return {
+        "ensure_container": backend.ensure_container,
+        "list_object_ids": backend.list_object_ids,
+        "head": lambda: backend.head("2026-05-13T10:00:00Z"),
+        "upload": lambda: backend.upload("2026-05-13T10:00:00Z", io.BytesIO(b"x")),
+        "download": lambda: backend.download("2026-05-13T10:00:00Z"),
+    }
+
+
+def test_azurebackend_wraps_transport_errors(mocker):
+    """A failure the service never answered is still a StorageBackendError.
+
+    ``ServiceRequestError`` (DNS, refused connection, TLS handshake) is an
+    ``AzureError`` but *not* an ``HttpResponseError``, so catching only the
+    latter lets a raw SDK exception past the Protocol's contract -- and past
+    ``create_backup``'s handler, orphaning the ``valkey-cli --rdb`` producer.
+    """
+    from azure.core.exceptions import ServiceRequestError
+
+    from common.exceptions import StorageBackendError
+
+    for name in _transport_calls(_az_backend(mocker)[0]):
+        backend, container = _az_backend(mocker)
+        container.create_container.side_effect = ServiceRequestError("unreachable")
+        container.list_blobs.side_effect = ServiceRequestError("unreachable")
+        blob = container.get_blob_client.return_value
+        blob.download_blob.side_effect = ServiceRequestError("unreachable")
+        blob.upload_blob.side_effect = ServiceRequestError("unreachable")
+
+        with pytest.raises(StorageBackendError) as excinfo:
+            _transport_calls(backend)[name]()
+        # No wire code exists when the service never replied.
+        assert excinfo.value.safe_code == "", name
+
+
+def test_s3backend_wraps_transport_errors(mocker):
+    """The same gap on the S3 side: BotoCoreError is disjoint from ClientError."""
+    from botocore.exceptions import EndpointConnectionError
+
+    from common.exceptions import StorageBackendError
+
+    for name in _transport_calls(_backend(mocker)[0]):
+        backend, bucket = _backend(mocker)
+        err = EndpointConnectionError(endpoint_url="https://e")
+        bucket.create.side_effect = err
+        bucket.objects.filter.side_effect = err
+        bucket.Object.return_value.get.side_effect = err
+        bucket.upload_fileobj.side_effect = err
+
+        with pytest.raises(StorageBackendError) as excinfo:
+            _transport_calls(backend)[name]()
+        assert excinfo.value.safe_code == "", name
 
 
 # ── client construction (container-scoped) ──────────────────────────────

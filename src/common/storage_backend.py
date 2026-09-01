@@ -13,11 +13,11 @@ from typing import IO, TYPE_CHECKING, BinaryIO, NamedTuple, Protocol, cast
 from urllib.parse import urlparse
 
 import boto3
-from azure.core.exceptions import HttpResponseError, ResourceExistsError
+from azure.core.exceptions import AzureError, ResourceExistsError
 from azure.storage.blob import ContainerClient
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from common.exceptions import StorageBackendError
 from core.models import AzureStorageParameters, BackupCredentials, S3Parameters
@@ -124,12 +124,15 @@ class S3Backend:
         return f"{self.params.path}/{backup_id}"
 
     @staticmethod
-    def _error_code(exc: ClientError) -> str:
+    def _error_code(exc: ClientError | BotoCoreError) -> str:
         """Structured error code of a botocore failure ("AccessDenied", ...).
 
         Read the code, never the message: alt-S3 backends reword and recase the
         message, and the code is the only part safe to surface in an action result.
+        Empty for a ``BotoCoreError``, which the service never answered at all.
         """
+        if not isinstance(exc, ClientError):
+            return ""
         return exc.response.get("Error", {}).get("Code", "")
 
     def _bucket(self) -> "Bucket":
@@ -179,7 +182,7 @@ class S3Backend:
             bucket.wait_until_exists(
                 WaiterConfig={"Delay": 1, "MaxAttempts": 5}  # pyright: ignore[reportCallIssue]
             )
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             if self._error_code(e) in self._EXISTS_CODES:
                 logger.info("Using existing bucket %s", self.params.bucket)
                 return
@@ -190,7 +193,7 @@ class S3Backend:
         prefix = f"{self.params.path}/"
         try:
             keys = [obj.key for obj in self._bucket().objects.filter(Prefix=prefix)]
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         return [k.removeprefix(prefix) for k in keys]
 
@@ -203,7 +206,7 @@ class S3Backend:
                 .get(Range=f"bytes=0-{n - 1}")["Body"]
                 .read()
             )
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def upload(self, backup_id: str, reader: IO[bytes]) -> None:
@@ -214,14 +217,14 @@ class S3Backend:
                 self._key(backup_id),
                 Config=TransferConfig(multipart_chunksize=8 * 1024 * 1024),
             )
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def download(self, backup_id: str) -> RemoteObject:
         """Open the object for ``backup_id``; its StreamingBody reads as binary."""
         try:
             obj = self._bucket().Object(self._key(backup_id)).get()
-        except ClientError as e:
+        except (ClientError, BotoCoreError) as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         # The StreamingBody is a binary read()-able at runtime (cast for the stub).
         return RemoteObject(cast(BinaryIO, obj["Body"]), obj.get("ContentLength"))
@@ -288,7 +291,7 @@ class AzureBackend:
         return f"{self.params.path}/{backup_id}"
 
     @staticmethod
-    def _error_code(exc: HttpResponseError) -> str:
+    def _error_code(exc: AzureError) -> str:
         """Structured error code of an azure-storage failure ("AuthenticationFailed", ...).
 
         ``process_storage_error`` attaches the provider's code as a ``StorageErrorCode``
@@ -304,9 +307,9 @@ class AzureBackend:
         try:
             self._container().create_container()
         except ResourceExistsError:
-            # Subclass of HttpResponseError, so this clause must stay first.
+            # Subclass of AzureError, so this clause must stay first.
             logger.info("Using existing container %s", self.params.container)
-        except HttpResponseError as e:
+        except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def list_object_ids(self) -> list[str]:
@@ -314,7 +317,7 @@ class AzureBackend:
         prefix = f"{self.params.path}/"
         try:
             names = [b.name for b in self._container().list_blobs(name_starts_with=prefix)]
-        except HttpResponseError as e:
+        except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         return [n.removeprefix(prefix) for n in names]
 
@@ -322,7 +325,7 @@ class AzureBackend:
         """Ranged read of the first ``n`` bytes of the blob for ``backup_id``."""
         try:
             return self._blob(backup_id).download_blob(offset=0, length=n).readall()
-        except HttpResponseError as e:
+        except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def upload(self, backup_id: str, reader: IO[bytes]) -> None:
@@ -336,14 +339,14 @@ class AzureBackend:
             self._blob(backup_id).upload_blob(
                 reader, blob_type="BlockBlob", overwrite=True, length=None, max_concurrency=1
             )
-        except HttpResponseError as e:
+        except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
 
     def download(self, backup_id: str) -> RemoteObject:
         """Open the blob for ``backup_id``; its downloader reads as binary."""
         try:
             downloader = self._blob(backup_id).download_blob()
-        except HttpResponseError as e:
+        except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
         # The downloader already knows the blob length, so the restore trail gets
         # its byte count without a second round trip.
