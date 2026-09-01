@@ -367,7 +367,7 @@ def test_azurebackend_account_url_honours_an_explicit_endpoint(mocker):
 
 
 def test_azurebackend_location_names_the_destination_without_credentials(mocker):
-    """The audit trail gets host/container/prefix -- never a SAS token or userinfo."""
+    """The audit trail gets host/container/prefix -- never userinfo or a query string."""
     backend, _ = _az_backend(
         mocker, endpoint="https://acct.blob.core.windows.net:8443/?sig=SECRETTOKEN"
     )

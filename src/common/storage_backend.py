@@ -244,8 +244,8 @@ class AzureBackend:
     def location(self) -> str:
         """Account host, container and prefix -- the audit trail's destination.
 
-        ``hostname``, not the raw URL: an endpoint carrying a SAS token or
-        userinfo must never put credentials into the log.
+        ``hostname``, not the raw URL: an endpoint carrying userinfo must
+        never put credentials into the log.
         """
         parsed = urlparse(self._account_url())
         host = parsed.hostname or self.params.storage_account
