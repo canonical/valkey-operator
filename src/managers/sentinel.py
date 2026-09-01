@@ -241,8 +241,13 @@ class SentinelManager(ManagerStatusProtocol):
         logger.info("Resetting Sentinels after unit removal")
         primary_ip = self.get_primary_ip()
         active_sentinels = self.get_active_sentinel_ips(primary_ip)
+        expected_sentinels = self.all_sentinel_endpoints()
 
-        if len(active_sentinels) != self.state.model.app.planned_units():
+        # ensure that no departing sentinels is still alive before the reset
+        if (
+            any(sentinel for sentinel in active_sentinels if sentinel not in expected_sentinels)
+            or len(active_sentinels) != self.state.model.app.planned_units()
+        ):
             raise NotAllDepartingSentinelsStoppedError(
                 "Cluster should have %s units, but %s Sentinels are active",
                 self.state.model.app.planned_units(),
