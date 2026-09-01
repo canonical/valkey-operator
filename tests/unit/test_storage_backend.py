@@ -366,46 +366,6 @@ def test_azurebackend_account_url_honours_an_explicit_endpoint(mocker):
     assert backend._account_url() == "http://10.0.0.5:10000/devstoreaccount1"
 
 
-def test_azurebackend_service_client_names_the_account_explicitly(mocker):
-    """The account name is passed, not left to the SDK to infer from the URL.
-
-    A bare string credential makes azure-storage derive the account from the
-    host's first label, which raises "Unable to determine account name for
-    shared key credential" for any endpoint whose host is not
-    ``<account>.blob.*`` -- an emulator or a custom domain, where the account
-    sits in the URL path instead.
-    """
-    from src.common import storage_backend
-
-    service_cls = mocker.patch.object(storage_backend, "BlobServiceClient")
-    from src.common.storage_backend import AzureBackend
-
-    AzureBackend(_az_params())._service()
-
-    _, kwargs = service_cls.call_args
-    assert kwargs["account_url"] == "https://acct.blob.core.windows.net"
-    assert kwargs["credential"] == {"account_name": "acct", "account_key": "SK"}
-
-
-def test_azurebackend_service_client_works_for_a_path_style_endpoint(mocker):
-    """The emulator case: host is an IP, the account is the first path segment."""
-    from src.common import storage_backend
-
-    service_cls = mocker.patch.object(storage_backend, "BlobServiceClient")
-    from src.common.storage_backend import AzureBackend
-
-    AzureBackend(
-        _az_params(
-            endpoint="http://10.0.0.5:10000/devstoreaccount1",
-            **{"storage-account": "devstoreaccount1", "connection-protocol": "http"},
-        )
-    )._service()
-
-    _, kwargs = service_cls.call_args
-    assert kwargs["account_url"] == "http://10.0.0.5:10000/devstoreaccount1"
-    assert kwargs["credential"]["account_name"] == "devstoreaccount1"
-
-
 def test_azurebackend_location_names_the_destination_without_credentials(mocker):
     """The audit trail gets host/container/prefix -- never a SAS token or userinfo."""
     backend, _ = _az_backend(
@@ -609,14 +569,50 @@ def test_build_backend_selects_the_azure_backend(mocker):
     assert isinstance(build_backend(_az_params(), mocker.MagicMock()), AzureBackend)
 
 
-def test_azurebackend_container_client_is_scoped_to_the_configured_container(mocker):
-    """Every blob operation goes through this, so the container name must reach it."""
+# ── client construction (container-scoped) ──────────────────────────────
+
+
+def test_azurebackend_container_client_is_built_directly(mocker):
+    """One client, not a service client that hands out a container client.
+
+    ``ContainerClient`` takes the account URL and container name itself, so the
+    ``BlobServiceClient`` hop buys nothing.
+    """
     from src.common import storage_backend
     from src.common.storage_backend import AzureBackend
 
-    service_cls = mocker.patch.object(storage_backend, "BlobServiceClient")
+    container_cls = mocker.patch.object(storage_backend, "ContainerClient")
+    assert not hasattr(storage_backend, "BlobServiceClient")
 
     container = AzureBackend(_az_params(container="valkey-backups"))._container()
 
-    service_cls.return_value.get_container_client.assert_called_once_with("valkey-backups")
-    assert container is service_cls.return_value.get_container_client.return_value
+    _, kwargs = container_cls.call_args
+    assert kwargs["account_url"] == "https://acct.blob.core.windows.net"
+    assert kwargs["container_name"] == "valkey-backups"
+    assert kwargs["credential"] == {"account_name": "acct", "account_key": "SK"}
+    assert container is container_cls.return_value
+
+
+def test_azurebackend_container_client_works_for_a_path_style_endpoint(mocker):
+    """The emulator case: host is an IP, the account is the first path segment.
+
+    A bare string credential makes azure-storage derive the account from the
+    host's first label, which raises "Unable to determine account name for
+    shared key credential" for any endpoint whose host is not
+    ``<account>.blob.*``, so the account name is always passed explicitly.
+    """
+    from src.common import storage_backend
+    from src.common.storage_backend import AzureBackend
+
+    container_cls = mocker.patch.object(storage_backend, "ContainerClient")
+
+    AzureBackend(
+        _az_params(
+            endpoint="http://10.0.0.5:10000/devstoreaccount1",
+            **{"storage-account": "devstoreaccount1", "connection-protocol": "http"},
+        )
+    )._container()
+
+    _, kwargs = container_cls.call_args
+    assert kwargs["account_url"] == "http://10.0.0.5:10000/devstoreaccount1"
+    assert kwargs["credential"]["account_name"] == "devstoreaccount1"

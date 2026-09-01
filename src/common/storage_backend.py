@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import boto3
 from azure.core.exceptions import HttpResponseError, ResourceExistsError
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import ContainerClient
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -24,7 +24,7 @@ from core.models import AzureStorageParameters, BackupCredentials, S3Parameters
 from literals import AZURE_HTTPS_PROTOCOLS
 
 if TYPE_CHECKING:
-    from azure.storage.blob import BlobClient, ContainerClient
+    from azure.storage.blob import BlobClient
     from mypy_boto3_s3.literals import BucketLocationConstraintType
     from mypy_boto3_s3.service_resource import Bucket, S3ServiceResource
 
@@ -260,8 +260,11 @@ class AzureBackend:
         scheme = "https" if self.params.connection_protocol in AZURE_HTTPS_PROTOCOLS else "http"
         return f"{scheme}://{self.params.storage_account}.blob.core.windows.net"
 
-    def _service(self) -> BlobServiceClient:
-        """Build a BlobServiceClient for the configured account.
+    def _container(self) -> ContainerClient:
+        """Build a client scoped to the configured container -- every call starts here.
+
+        ``ContainerClient`` takes the account URL and container name itself, so
+        there is no BlobServiceClient to hop through.
 
         The account name is passed explicitly rather than left to the SDK: given a
         bare key it derives the account from the host's first label, which raises
@@ -269,16 +272,14 @@ class AzureBackend:
         endpoint is not ``<account>.blob.*`` -- an emulator or a custom domain,
         where the account sits in the URL path instead.
         """
-        return BlobServiceClient(
+        return ContainerClient(
             account_url=self._account_url(),
+            container_name=self.params.container,
             credential={
                 "account_name": self.params.storage_account,
                 "account_key": self.params.secret_key,
             },
         )
-
-    def _container(self) -> "ContainerClient":
-        return self._service().get_container_client(self.params.container)
 
     def _blob(self, backup_id: str) -> "BlobClient":
         return self._container().get_blob_client(self._key(backup_id))
