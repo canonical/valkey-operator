@@ -240,6 +240,13 @@ class BackupManager(ManagerStatusProtocol):
             proc.kill()
             logger.warning("backup.failed backup_id=%s", backup_id)
             raise ValkeyBackupError(str(e), safe_code=e.safe_code) from e
+        except Exception:
+            # Nothing should get past the backends' translation, but an SDK that
+            # grows a new exception type must not leave valkey-cli blocked on a
+            # pipe nobody drains. The producer dies with the backup either way.
+            proc.kill()
+            logger.warning("backup.failed backup_id=%s", backup_id)
+            raise
         else:
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             logger.info(

@@ -1613,3 +1613,33 @@ def test_azure_parameters_accepts_every_blob_connection_protocol():
             }
         )
         assert params.connection_protocol == proto
+
+
+def test_create_backup_kills_producer_on_an_unexpected_upload_error(mocker):
+    """No SDK escape may orphan the producer.
+
+    The backends translate their own failures, but an exception neither handler
+    names would otherwise skip `proc.kill()` and leave `valkey-cli --rdb -`
+    blocked on a pipe nobody drains.
+    """
+    import pytest
+
+    from src.managers.backup import BackupManager
+
+    state = _make_state(mocker)
+    workload = mocker.MagicMock()
+    workload.cli = "valkey-cli"
+    proc = mocker.MagicMock()
+    workload.exec_stream.return_value = proc
+
+    backend = _fake_backend(mocker)
+    backend.upload.side_effect = RuntimeError("SDK leaked something new")
+    fixed_now = mocker.patch("src.managers.backup.datetime")
+    fixed_now.now.return_value.strftime.return_value = "2026-05-13T10:00:00Z"
+
+    with pytest.raises(RuntimeError):
+        BackupManager(state=state, workload=workload).create_backup()
+
+    proc.kill.assert_called_once()
+    # The lock is still released on the way out.
+    assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
