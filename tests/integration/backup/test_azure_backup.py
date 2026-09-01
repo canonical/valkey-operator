@@ -8,8 +8,11 @@ Mirrors ``test_s3_backup.py`` (any-unit backup, list ordering, object presence,
 RDB magic) against azure-storage-integrator + the Azurite emulator, and adds a
 restore smoke on the leader (the ``restore`` action is leader-only).
 
-Needs a bootstrapped Juju controller, a built charm, and a host docker daemon
-for Azurite -- the suite skips when docker is unavailable:
+Runs on both substrates. Azurite is a host service reached at the host's
+routable IP, exactly as MicroCeph serves the S3 modules, so nothing here is
+K8s-specific.
+
+Needs a bootstrapped Juju controller and a built charm:
 
     tox run -e integration -- tests/integration/backup/test_azure_backup.py --substrate k8s
 """

@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import json
 import secrets
+import shutil
 import socket
 import subprocess
 import time
@@ -28,7 +29,7 @@ from pathlib import Path
 import boto3
 import pytest
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import ContainerClient
 from botocore.config import Config
 
 RGW_SSL_PORT = 445
@@ -160,15 +161,21 @@ def s3_bucket(microceph):
 
 
 # ── Azurite (Azure Blob emulator) ─────────────────────────────────────────────
-# Unlike MicroCeph (a snap, installed above), Azurite ships only as an OCI image,
-# so it needs a container runtime. Two are tried in order -- a host `docker`
-# daemon (what the CI runners have) and microk8s behind a NodePort (what a local
-# k8s dev box has) -- and the suite skips when neither is available.
+# A host service, like MicroCeph above, reached from both substrates at the
+# host's routable IP -- no container runtime and no cluster in the way. Azurite
+# has no snap, so it comes from npm on top of the node snap; a container image
+# is not an option because the integration workflow purges Docker so Canonical
+# K8s can install over a clean containerd.
 AZURITE_PORT = 10000
-AZURITE_NODE_PORT = 30000
-AZURITE_CONTAINER = "valkey-azurite"
-AZURITE_NAMESPACE = "valkey-azurite"
-_AZURITE_IMAGE = "mcr.microsoft.com/azure-storage/azurite:latest"
+# Pinned: on `latest` a new emulator release would silently re-point the store
+# these tests assert against.
+AZURITE_VERSION = "3.37.0"
+_AZURITE_BIN = "azurite-blob"
+_NODE_CHANNEL = "22/stable"  # azurite 3.37 declares node >= 22
+# Blobs and the emulator's log persist between modules and between local runs,
+# next to the MicroCeph gateway certificate for the same reason.
+_AZURITE_DIR = Path.home() / ".cache" / "azurite"
+_AZURITE_LOG = _AZURITE_DIR / "azurite.log"
 # Azurite's well-known development account name + key. Published in Microsoft's
 # emulator docs and hardcoded in Azurite itself -- public test material, not a
 # secret, and it only ever authenticates against the local emulator.
@@ -176,46 +183,6 @@ _AZURITE_ACCOUNT = "devstoreaccount1"
 _AZURITE_KEY = (
     "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 )
-
-_AZURITE_MANIFEST = f"""
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {AZURITE_NAMESPACE}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: azurite
-  namespace: {AZURITE_NAMESPACE}
-spec:
-  replicas: 1
-  selector:
-    matchLabels: {{app: azurite}}
-  template:
-    metadata:
-      labels: {{app: azurite}}
-    spec:
-      containers:
-        - name: azurite
-          image: {_AZURITE_IMAGE}
-          args: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "{AZURITE_PORT}"]
-          ports:
-            - containerPort: {AZURITE_PORT}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: azurite
-  namespace: {AZURITE_NAMESPACE}
-spec:
-  type: NodePort
-  selector: {{app: azurite}}
-  ports:
-    - port: {AZURITE_PORT}
-      targetPort: {AZURITE_PORT}
-      nodePort: {AZURITE_NODE_PORT}
-"""
 
 
 def _wait_for_port(host: str, port: int, timeout: int = 60) -> bool:
@@ -226,56 +193,46 @@ def _wait_for_port(host: str, port: int, timeout: int = 60) -> bool:
     return False
 
 
-def _start_azurite_docker() -> None:
-    """Run Azurite's blob endpoint on a host docker daemon; idempotent.
+def _start_azurite() -> None:
+    """Launch the blob endpoint detached, so it outlives this pytest session.
 
-    Reuses a live container, restarts a stopped one, creates it otherwise.
+    Module-scoped fixtures tear down between modules; an emulator tied to one
+    would take the blobs an earlier module wrote with it.
     """
-    try:
-        running = _run("docker", "inspect", "-f", "{{.State.Running}}", AZURITE_CONTAINER)
-    except subprocess.CalledProcessError:
-        _run(
-            "docker", "run", "-d", "--name", AZURITE_CONTAINER,
-            "-p", f"{AZURITE_PORT}:{AZURITE_PORT}",
-            _AZURITE_IMAGE,
-            "azurite-blob", "--blobHost", "0.0.0.0",
+    _AZURITE_DIR.mkdir(parents=True, exist_ok=True)
+    with _AZURITE_LOG.open("ab") as log:
+        subprocess.Popen(
+            [
+                _AZURITE_BIN,
+                "--blobHost", "0.0.0.0",
+                "--blobPort", str(AZURITE_PORT),
+                "--location", _AZURITE_DIR.as_posix(),
+            ],
+            stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
         )  # fmt: skip
-    else:
-        # A container left stopped by an earlier run never opens the port.
-        if running != "true":
-            _run("docker", "start", AZURITE_CONTAINER)
-
-
-def _start_azurite_microk8s() -> None:
-    """Run Azurite as a microk8s Deployment behind a NodePort; idempotent.
-
-    The manifest goes in on stdin rather than as a path: microk8s is a strict
-    snap with a private /tmp, so it cannot read a file the test process wrote
-    to a temp directory.
-    """
-    _run("microk8s", "kubectl", "apply", "-f", "-", input=_AZURITE_MANIFEST)
-    _run(
-        "microk8s", "kubectl", "-n", AZURITE_NAMESPACE,
-        "rollout", "status", "deploy/azurite", "--timeout=180s",
-    )  # fmt: skip
 
 
 def _ensure_azurite(host_ip: str) -> int:
-    """Start Azurite on whichever runtime is available; return its host port.
+    """Install Azurite and serve its blob endpoint on the host; each step idempotent.
 
-    Returns 0 when no runtime could serve it, which the fixture turns into a skip.
+    Returns the port, or 0 when it could not be served -- no snapd, no network --
+    which the fixture turns into a skip.
     """
-    for start, port in (
-        (_start_azurite_docker, AZURITE_PORT),
-        (_start_azurite_microk8s, AZURITE_NODE_PORT),
-    ):
-        try:
-            start()
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            continue  # runtime missing or refused; try the next one
-        if _wait_for_port(host_ip, port):
-            return port
-    return 0
+    try:
+        if not shutil.which(_AZURITE_BIN):
+            # concierge installs the node snap for CI; this covers a local box.
+            _run("sudo", "snap", "install", "node", "--classic", f"--channel={_NODE_CHANNEL}")
+            # An explicit prefix: the node snap's own is read-only, and /usr/local
+            # is already where the integration env puts valkey-cli.
+            _run(
+                "sudo", "npm", "install", "-g",
+                "--prefix", "/usr/local", f"azurite@{AZURITE_VERSION}",
+            )  # fmt: skip
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return 0
+    if not _port_open(host_ip, AZURITE_PORT):
+        _start_azurite()
+    return AZURITE_PORT if _wait_for_port(host_ip, AZURITE_PORT) else 0
 
 
 @pytest.fixture(scope="module")
@@ -290,7 +247,7 @@ def azurite() -> dict:
     """
     host_ip = _host_ip()
     if not (port := _ensure_azurite(host_ip)):
-        pytest.skip("Azurite needs a host docker daemon or a running microk8s")
+        pytest.skip("Azurite unavailable: could not install or start it on this host")
 
     return {
         "container": f"valkey-backup-{secrets.token_hex(4)}",
@@ -310,14 +267,14 @@ def azure_container(azurite: dict):
     its client (account_url = endpoint, account named explicitly), so the test
     inspects the very store the charm writes to.
     """
-    service = BlobServiceClient(
+    container = ContainerClient(
         account_url=azurite["endpoint"],
+        container_name=azurite["container"],
         credential={
             "account_name": azurite["storage-account"],
             "account_key": azurite["secret-key"],
         },
     )
-    container = service.get_container_client(azurite["container"])
     try:
         container.create_container()
     except ResourceExistsError:
