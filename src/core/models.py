@@ -160,6 +160,7 @@ class PeerUnitModel(PeerModel):
     is_sentinel_healthy: bool = Field(default=True)
     client_user_epoch: float = Field(default=0)
     topology_observer_pid: int = Field(default=0)
+    topology_observer_signature: str = Field(default="")
     backup_id: str = Field(default="")
     restore_step: str = Field(default="")
     restore_role: str = Field(default="")
