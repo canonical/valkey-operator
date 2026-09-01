@@ -17,6 +17,7 @@ from tests.integration.helpers import (
     TLS_NAME,
     WrongPassError,
     are_agents_idle,
+    are_apps_active_and_agents_idle,
     auth_test,
     does_status_match,
     get_cluster_endpoints,
@@ -92,7 +93,23 @@ def test_build_and_deploy(
     if substrate == Substrate.VM:
         logger.info("Set up ingress")
         juju_k8s_model.integrate(f"{LDAP_NAME}:ingress", f"{LDAP_INGRESS_NAME}:ingress-per-unit")
-        juju_k8s_model.wait(jubilant.all_active)
+        # GLAuth replaces its certificate the moment ingress lands, so that the ingress address
+        # becomes a SAN. Until the reissued one is loaded it keeps serving a certificate valid
+        # only for its in-cluster DNS name, and a Valkey connecting to the ingress address inside
+        # that window fails verification and caches the server as unhealthy for good. GLAuth
+        # reports `active` throughout the swap, so wait for its agent to fall idle instead.
+        # PostgreSQL stays out of the gate for the reason given above.
+        juju_k8s_model.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status,
+                LDAP_NAME,
+                LDAP_UTILS_NAME,
+                LDAP_INGRESS_NAME,
+                TLS_NAME,
+                idle_period=30,
+            ),
+            timeout=600,
+        )
 
     logger.info("Set up LDAP users")
     utils_unit = next(iter(juju_k8s_model.status().get_units(LDAP_UTILS_NAME)))
