@@ -245,8 +245,9 @@ class SentinelManager(ManagerStatusProtocol):
 
         # ensure that no departing sentinels is still alive before the reset
         if (
-            any(sentinel for sentinel in active_sentinels if sentinel not in expected_sentinels)
+            len(expected_sentinels) != self.state.model.app.planned_units()
             or len(active_sentinels) != self.state.model.app.planned_units()
+            or set(active_sentinels) != set(expected_sentinels)
         ):
             raise NotAllDepartingSentinelsStoppedError(
                 "Cluster should have %s units, but %s Sentinels are active",
@@ -280,6 +281,10 @@ class SentinelManager(ManagerStatusProtocol):
                 raise CannotSeeAllActiveSentinelsError(
                     "Sentinel at %s does not see all other sentinels after reset." % sentinel_ip
                 )
+
+            # ensure the cluster can still reach quorum before continuing to the next sentinel
+            primary_ip = self.get_primary_ip()
+            logger.debug("Reset completed for %s, primary ip is %s", sentinel_ip, primary_ip)
 
     @retry(
         wait=wait_fixed(5),

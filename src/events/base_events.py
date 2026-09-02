@@ -735,8 +735,10 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
-        if len(active_sentinels) > 1:
+        try:
             scale_down_lock.release_lock(primary_ip=primary_ip)
+        except ValkeyWorkloadCommandError:
+            logger.warning("Failed to release scale-down lock, will be released when TTL expires")
 
         self._set_state_for_going_away()
 
