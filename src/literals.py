@@ -52,6 +52,10 @@ BACKUP_CREDENTIAL_FIELDS: dict[str, str] = {
     AZURE_RELATION_NAME: "azure_credentials",
 }
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+# Structured code create-backup reports when an object already occupies the
+# generated id. Ids have one-second resolution, so two units starting a backup
+# in the same second would otherwise replace each other's snapshot.
+BACKUP_EXISTS_CODE = "BackupAlreadyExists"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
 # Normal down-after (rendered by ConfigManager, reasserted by resume_failover);

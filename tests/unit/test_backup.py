@@ -535,6 +535,52 @@ def test_create_backup_deletes_object_and_raises_when_cli_fails(mocker):
     assert last_update.args[0] == {"backup_id": ""}
 
 
+def test_create_backup_refuses_to_overwrite_an_existing_backup(mocker):
+    """An object already under this id is never replaced -- on any backend."""
+    import pytest
+
+    from common.exceptions import ValkeyBackupError
+    from literals import BACKUP_EXISTS_CODE
+    from src.managers.backup import BackupManager
+
+    state = _make_state(mocker)
+    workload = mocker.MagicMock()
+    backend = _fake_backend(mocker)
+    backend.list_object_ids.return_value = ["2026-05-13T10:00:00Z"]
+    fixed_now = mocker.patch("src.managers.backup.datetime")
+    fixed_now.now.return_value.strftime.return_value = "2026-05-13T10:00:00Z"
+
+    with pytest.raises(ValkeyBackupError) as excinfo:
+        BackupManager(state=state, workload=workload).create_backup()
+
+    assert excinfo.value.safe_code == BACKUP_EXISTS_CODE
+    # Nothing ran: no producer, no upload, and the stored backup is untouched.
+    workload.exec_stream.assert_not_called()
+    backend.upload.assert_not_called()
+    backend.delete.assert_not_called()
+    state.unit_server.update.assert_not_called()
+
+
+def test_create_backup_wraps_a_failing_existence_probe(mocker):
+    """A backend error on the pre-flight listing fails the action, safe code intact."""
+    import pytest
+
+    from common.exceptions import StorageBackendError, ValkeyBackupError
+    from src.managers.backup import BackupManager
+
+    state = _make_state(mocker)
+    workload = mocker.MagicMock()
+    backend = _fake_backend(mocker)
+    backend.list_object_ids.side_effect = StorageBackendError("nope", safe_code="AccessDenied")
+
+    with pytest.raises(ValkeyBackupError) as excinfo:
+        BackupManager(state=state, workload=workload).create_backup()
+
+    assert excinfo.value.safe_code == "AccessDenied"
+    workload.exec_stream.assert_not_called()
+    state.unit_server.update.assert_not_called()
+
+
 def test_create_backup_refuses_to_run_without_credentials(mocker):
     """No related backup backend: fail before touching valkey or the databag lock."""
     import pytest

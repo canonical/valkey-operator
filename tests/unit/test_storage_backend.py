@@ -506,9 +506,26 @@ def test_azurebackend_upload_streams_to_the_backup_id_blob(mocker):
     args, kwargs = blob.upload_blob.call_args
     assert args[0] is reader
     assert kwargs["blob_type"] == "BlockBlob"
-    assert kwargs["overwrite"] is True
+    # A stored backup is never replaced; the SDK turns this into If-None-Match.
+    assert kwargs["overwrite"] is False
     assert kwargs["length"] is None
     assert kwargs["max_concurrency"] == 1
+
+
+def test_azurebackend_upload_refuses_to_replace_an_existing_blob(mocker):
+    """The store itself rejects the write, and its code reaches the action result."""
+    from azure.core.exceptions import ResourceExistsError
+
+    from common.exceptions import StorageBackendError
+
+    backend, container = _az_backend(mocker)
+    exists = ResourceExistsError(message="already there")
+    exists.error_code = "BlobAlreadyExists"
+    container.get_blob_client.return_value.upload_blob.side_effect = exists
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.upload("2026-05-13T10:00:00Z", mocker.MagicMock())
+    assert excinfo.value.safe_code == "BlobAlreadyExists"
 
 
 def test_azurebackend_upload_wraps_http_errors(mocker):

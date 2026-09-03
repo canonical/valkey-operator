@@ -67,7 +67,12 @@ class StorageBackend(Protocol):
         ...
 
     def upload(self, backup_id: str, reader: IO[bytes]) -> None:
-        """Stream ``reader`` into the object for ``backup_id``."""
+        """Stream ``reader`` into the object for ``backup_id``.
+
+        Must not replace a stored object: where the store can express the
+        precondition, use it. ``BackupManager`` checks the id up front for the
+        backends whose SDK cannot.
+        """
         ...
 
     def download(self, backup_id: str) -> RemoteObject:
@@ -334,10 +339,13 @@ class AzureBackend:
         ``length=None`` + ``max_concurrency=1``: the source is a non-rewindable
         pipe from ``valkey-cli --rdb -``, so the SDK must stage blocks
         sequentially off ``read()`` rather than seek around a known-size stream.
+
+        ``overwrite=False`` (the SDK's If-None-Match) so an existing snapshot is
+        never replaced; the commit fails with ``ResourceExistsError`` instead.
         """
         try:
             self._blob(backup_id).upload_blob(
-                reader, blob_type="BlockBlob", overwrite=True, length=None, max_concurrency=1
+                reader, blob_type="BlockBlob", overwrite=False, length=None, max_concurrency=1
             )
         except AzureError as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
