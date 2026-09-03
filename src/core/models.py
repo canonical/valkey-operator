@@ -145,6 +145,7 @@ class PeerAppModel(PeerModel):
     restore_token: str = Field(default="")
     restore_instruction: str = Field(default="")
     restore_participants: str = Field(default="")
+    sentinel_reset_required: bool = Field(default=False)
 
 
 class PeerUnitModel(PeerModel):

@@ -101,6 +101,10 @@ class ScaleDownStatuses(Enum):
         status="maintenance",
         message="Waiting for juju to remove the unit...",
     )
+    SENTINEL_NOT_REMOVED_AFTER_SCALEDOWN = StatusObject(
+        status="maintenance",
+        message="Not all Sentinels removed after scale down",
+    )
 
 
 class TLSStatuses(Enum):
