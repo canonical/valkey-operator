@@ -20,7 +20,6 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-import shutil
 import socket
 import subprocess
 import time
@@ -162,20 +161,15 @@ def s3_bucket(microceph):
 
 # ── Azurite (Azure Blob emulator) ─────────────────────────────────────────────
 # A host service, like MicroCeph above, reached from both substrates at the
-# host's routable IP -- no container runtime and no cluster in the way. Azurite
-# has no snap, so it comes from npm on top of the node snap; a container image
-# is not an option because the integration workflow purges Docker so Canonical
-# K8s can install over a clean containerd.
+# host's routable IP. The snap bundles its own Node runtime and runs the blob
+# endpoint as a daemon, so no container runtime is involved -- the integration
+# workflow purges Docker so Canonical K8s can install over a clean containerd.
 AZURITE_PORT = 10000
-# Pinned: on `latest` a new emulator release would silently re-point the store
-# these tests assert against.
-AZURITE_VERSION = "3.37.0"
-_AZURITE_BIN = "azurite-blob"
-_NODE_CHANNEL = "22/stable"  # azurite 3.37 declares node >= 22
-# Blobs and the emulator's log persist between modules and between local runs,
-# next to the MicroCeph gateway certificate for the same reason.
-_AZURITE_DIR = Path.home() / ".cache" / "azurite"
-_AZURITE_LOG = _AZURITE_DIR / "azurite.log"
+AZURITE_SERVICE = "azurite.blob"
+# The only channel carrying a revision today; stable/candidate/beta are empty.
+# Move to a stable track once the snap is promoted -- edge moves under the suite
+# the way an unpinned image tag would.
+_AZURITE_CHANNEL = "latest/edge"
 # Azurite's well-known development account name + key. Published in Microsoft's
 # emulator docs and hardcoded in Azurite itself -- public test material, not a
 # secret, and it only ever authenticates against the local emulator.
@@ -193,45 +187,29 @@ def _wait_for_port(host: str, port: int, timeout: int = 60) -> bool:
     return False
 
 
-def _start_azurite() -> None:
-    """Launch the blob endpoint detached, so it outlives this pytest session.
-
-    Module-scoped fixtures tear down between modules; an emulator tied to one
-    would take the blobs an earlier module wrote with it.
-    """
-    _AZURITE_DIR.mkdir(parents=True, exist_ok=True)
-    with _AZURITE_LOG.open("ab") as log:
-        subprocess.Popen(
-            [
-                _AZURITE_BIN,
-                "--blobHost", "0.0.0.0",
-                "--blobPort", str(AZURITE_PORT),
-                "--location", _AZURITE_DIR.as_posix(),
-            ],
-            stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
-        )  # fmt: skip
-
-
 def _ensure_azurite(host_ip: str) -> int:
-    """Install Azurite and serve its blob endpoint on the host; each step idempotent.
+    """Install + serve Azurite's blob endpoint on the host; each step idempotent.
 
     Returns the port, or 0 when it could not be served -- no snapd, no network --
     which the fixture turns into a skip.
     """
     try:
-        if not shutil.which(_AZURITE_BIN):
-            # concierge installs the node snap for CI; this covers a local box.
-            _run("sudo", "snap", "install", "node", "--classic", f"--channel={_NODE_CHANNEL}")
-            # An explicit prefix: the node snap's own is read-only, and /usr/local
-            # is already where the integration env puts valkey-cli.
-            _run(
-                "sudo", "npm", "install", "-g",
-                "--prefix", "/usr/local", f"azurite@{AZURITE_VERSION}",
-            )  # fmt: skip
+        try:
+            _run("snap", "list", "azurite")
+        except subprocess.CalledProcessError:
+            _run("sudo", "snap", "install", "azurite", f"--channel={_AZURITE_CHANNEL}")
+        # Out of the box the daemon binds 127.0.0.1, which from a unit resolves to
+        # the unit itself; charm units reach the emulator at the host's routable IP.
+        _run("sudo", "snap", "set", "azurite", "host=0.0.0.0")
+        # The snap ships install-mode: disable, so the daemon needs an explicit
+        # start; --enable is a no-op on a running service.
+        _run("sudo", "snap", "start", "--enable", AZURITE_SERVICE)
+        # `snap set` does not bounce the daemon and the launcher reads `host` only
+        # at start, so the restart is what actually applies the bind address. It
+        # also starts a stopped service, making this safe from any prior state.
+        _run("sudo", "snap", "restart", AZURITE_SERVICE)
     except (FileNotFoundError, subprocess.CalledProcessError):
         return 0
-    if not _port_open(host_ip, AZURITE_PORT):
-        _start_azurite()
     return AZURITE_PORT if _wait_for_port(host_ip, AZURITE_PORT) else 0
 
 

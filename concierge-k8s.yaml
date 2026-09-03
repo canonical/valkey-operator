@@ -17,8 +17,8 @@ host:
     # S3-compatible backend for the backup integration tests.
     microceph:
       channel: squid/stable
-    # Runtime for Azurite, the Azure Blob emulator the backup tests install
-    # from npm. Here rather than in the fixture so the download lands in
-    # `concierge prepare`, not in the job's test budget.
-    node:
-      channel: 22/stable
+    # Azure Blob emulator for the backup integration tests. Here rather than in
+    # the fixture so the download lands in `concierge prepare`, not in the job's
+    # test budget.
+    azurite:
+      channel: latest/edge
