@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 
 import logging
+import subprocess
 
 import jubilant
 import pytest
@@ -201,9 +202,17 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     ), "Failed to read data for charm user with LDAP enabled"
 
 
-def test_ensure_ldap_auth(juju: jubilant.Juju, substrate: Substrate) -> None:
+def test_ensure_ldap_auth(
+    juju: jubilant.Juju, juju_k8s_model: jubilant.Juju, substrate: Substrate
+) -> None:
     """Ensure authentication with LDAP works and authorization is set up correctly."""
     endpoints = get_cluster_endpoints(juju, APP_NAME)
+
+    # todo: remove debug output
+    ldap_cert = subprocess.getoutput(
+        "openssl s_client -connect 10.64.140.43:3893 -starttls ldap </dev/null 2>/dev/null   | openssl x509 -noout -subject -ext subjectAltName -dates"
+    )
+    logger.info("LDAP cert: %s", ldap_cert)
 
     logger.info("Ensure access for LDAP user with read and write permissions")
     # connect with user in LDAP group "superheroes"
