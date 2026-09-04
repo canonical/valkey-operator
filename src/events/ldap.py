@@ -227,6 +227,8 @@ class LDAPEvents(ops.Object):
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
         self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         ldap_config = self.charm.config_manager.generate_ldap_config()
+        # todo: remove logger
+        logger.debug("LDAP config: %s", ldap_config)
         self.charm.cluster_manager.reload_ldap_settings(ldap_config)
 
         logger.info("Update ACL configuration")

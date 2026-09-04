@@ -184,6 +184,8 @@ class AuthManager(ManagerStatusProtocol):
 
                 acl_content += f"user {username} on {base_auth_rule} {group_auth_rule}\n"
 
+        # todo: remove logger
+        logger.debug("LDAP users: %s", acl_content)
         return acl_content
 
     def _resolve_ldap_group_permissions(self) -> dict[str, list[str]]:
@@ -218,6 +220,9 @@ class AuthManager(ManagerStatusProtocol):
         search_attribute = str(self.state.config.get("ldap-search-attribute", ""))
         search_filter = str(self.state.config.get("ldap-search-filter", ""))
 
+        # todo: remove logger
+        logger.debug("Getting LDAP users for group %s", ldap_group)
+
         try:
             if not ldap_connection.search(
                 search_base=base_dn,
@@ -240,6 +245,8 @@ class AuthManager(ManagerStatusProtocol):
         for entry in ldap_connection.entries:
             ldap_users.add(entry[search_attribute].value)
 
+        # todo: remove logger
+        logger.debug("LDAP query result: %s", ldap_users)
         return ldap_users
 
     def set_sentinel_acl_file(self, passwords: dict[str, str] | None = None) -> None:
