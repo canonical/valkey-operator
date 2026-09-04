@@ -209,9 +209,10 @@ def test_ensure_ldap_auth(
     endpoints = get_cluster_endpoints(juju, APP_NAME)
 
     # todo: remove debug output
-    subprocess.getoutput(
+    ldap_cert = subprocess.getoutput(
         "openssl s_client -connect 10.64.140.43:3893 -starttls ldap </dev/null 2>/dev/null   | openssl x509 -noout -subject -ext subjectAltName -dates"
     )
+    logger.info("LDAP cert: %s", ldap_cert)
 
     logger.info("Ensure access for LDAP user with read and write permissions")
     # connect with user in LDAP group "superheroes"
