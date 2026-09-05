@@ -18,6 +18,8 @@ S3_INTEGRATOR_APP = "s3-integrator"
 S3_CREDS_SECRET = "s3-creds"
 AZURE_INTEGRATOR_APP = "azure-storage-integrator"
 AZURE_CREDS_SECRET = "azure-creds"
+GCS_INTEGRATOR_APP = "gcs-integrator"
+GCS_CREDS_SECRET = "gcs-creds"
 BACKUP_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
@@ -186,6 +188,88 @@ def deploy_and_relate_azure(
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, AZURE_INTEGRATOR_APP, idle_period=30
+        ),
+        timeout=1000,
+        delay=5,
+        successes=3,
+    )
+
+
+def deploy_and_relate_gcs(
+    juju: jubilant.Juju,
+    charm: str,
+    substrate: Substrate,
+    gcs: dict,
+    num_units: int = 3,
+) -> None:
+    """Deploy the local valkey charm + gcs-integrator, wire creds, and relate them.
+
+    Mirrors ``deploy_and_relate_azure``: idempotent, each step skipped when
+    already done, so it is safe to call at the top of every test and again after
+    a redeploy. The integrator setup is guarded on the integrator app's presence,
+    and the valkey app is (re)deployed and (re)related on its own.
+
+    The `gcs` fixture mints a fresh path prefix per run, so a model left over
+    from an earlier run keeps the *old* prefix in the integrator's config
+    (`juju remove-application gcs-integrator` + `juju remove-secret gcs-creds`
+    between runs, or backups land where the test does not look).
+    """
+    status = juju.status()
+
+    if GCS_INTEGRATOR_APP not in status.apps:
+        juju.deploy(GCS_INTEGRATOR_APP, channel="1/edge")
+        # gcs-integrator takes the service-account key as a Juju secret (content
+        # key `secret-key`, published verbatim): create + grant it, then point
+        # `credentials` at its URI. jubilant writes the content through a temp
+        # YAML file, so a JSON value with quotes and braces round-trips.
+        creds = juju.add_secret(
+            name=GCS_CREDS_SECRET,
+            content={"secret-key": gcs["secret-key"]},
+        )
+        juju.grant_secret(identifier=creds, app=GCS_INTEGRATOR_APP)
+        juju.config(
+            GCS_INTEGRATOR_APP,
+            {
+                "credentials": creds,
+                "bucket": gcs["bucket"],
+                # Required by the charm even though the integrator defaults it to
+                # "": an empty prefix would let list-backups enumerate the whole
+                # bucket.
+                "path": gcs["path"],
+            },
+        )
+
+    # Always deploy the local charm under test -- never a Charmhub revision.
+    if APP_NAME not in status.apps:
+        juju.deploy(
+            charm,
+            resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+            num_units=num_units,
+            trust=True,
+        )
+
+    # Require agents idle as well as workloads active: after `integrate` the
+    # workloads stay active while the leader's relation hooks (ensure_container +
+    # credential storage) are still running, so a workload-only wait can return
+    # before GCS is actually wired up.
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GCS_INTEGRATOR_APP, idle_period=30
+        ),
+        timeout=1000,
+        delay=5,
+        successes=3,
+    )
+
+    # Integrate only when the relation does not yet exist (a redeploy drops it).
+    try:
+        juju.integrate(APP_NAME, GCS_INTEGRATOR_APP)
+    except jubilant.CLIError as exc:
+        if "already exists" not in str(exc).lower():
+            raise
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, GCS_INTEGRATOR_APP, idle_period=30
         ),
         timeout=1000,
         delay=5,
