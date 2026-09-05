@@ -151,10 +151,16 @@ def test_active_backup_credentials_follows_the_relation(cloud_spec, mocker):
 def test_backup_credential_registry_maps_relations_to_databag_fields():
     """Adding a backend is one registry entry: its relation and where creds land."""
     from src.core.models import PeerAppModel
-    from src.literals import AZURE_RELATION_NAME, BACKUP_CREDENTIAL_FIELDS, S3_RELATION_NAME
+    from src.literals import (
+        AZURE_RELATION_NAME,
+        BACKUP_CREDENTIAL_FIELDS,
+        GCS_RELATION_NAME,
+        S3_RELATION_NAME,
+    )
 
     assert BACKUP_CREDENTIAL_FIELDS[S3_RELATION_NAME] == "s3_credentials"
     assert BACKUP_CREDENTIAL_FIELDS[AZURE_RELATION_NAME] == "azure_credentials"
+    assert BACKUP_CREDENTIAL_FIELDS[GCS_RELATION_NAME] == "gcs_credentials"
     # Every registered field must exist on the app databag model, or the leader
     # would silently write credentials nothing reads back.
     for field in BACKUP_CREDENTIAL_FIELDS.values():
@@ -164,7 +170,7 @@ def test_backup_credential_registry_maps_relations_to_databag_fields():
 def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     """Relation discovery and the conflict check are driven by the registry alone.
 
-    Exercised with the two registered backends, so it also pins the mutual
+    Exercised with the three registered backends, so it also pins the mutual
     exclusion the charm enforces: relate exactly one storage integrator.
     """
     from ops import testing
@@ -172,6 +178,7 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     from src.charm import ValkeyCharm
     from src.literals import (
         AZURE_RELATION_NAME,
+        GCS_RELATION_NAME,
         PEER_RELATION,
         S3_RELATION_NAME,
         STATUS_PEERS_RELATION,
@@ -182,6 +189,7 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     s3_rel = testing.Relation(id=3, endpoint=S3_RELATION_NAME, interface="s3")
     azure_rel = testing.Relation(id=4, endpoint=AZURE_RELATION_NAME, interface="azure_storage")
+    gcs_rel = testing.Relation(id=5, endpoint=GCS_RELATION_NAME, interface="gcs")
     common = {
         "model": testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
         "leader": True,
@@ -203,6 +211,17 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
         assert len(manager.charm.state.backup_relations) == 2
         assert manager.charm.state.backup_backends_conflict is True
         # Nothing can pick a backend, so no credentials are active.
+        assert manager.charm.state.active_backup_credentials is None
+
+    third = testing.State(relations={peer, status_peer, gcs_rel}, **common)
+    with ctx(ctx.on.update_status(), third) as manager:
+        assert len(manager.charm.state.backup_relations) == 1
+        assert manager.charm.state.backup_backends_conflict is False
+
+    all_three = testing.State(relations={peer, status_peer, s3_rel, azure_rel, gcs_rel}, **common)
+    with ctx(ctx.on.update_status(), all_three) as manager:
+        assert len(manager.charm.state.backup_relations) == 3
+        assert manager.charm.state.backup_backends_conflict is True
         assert manager.charm.state.active_backup_credentials is None
 
 
@@ -1925,3 +1944,233 @@ def test_cluster_gcs_credentials_parses_envelope_and_defaults_none(mocker):
 
     cluster.model = None
     assert cluster.gcs_credentials is None
+
+
+def test_metadata_declares_gcs_relation():
+    """The GCS integrator relation is declared and mutually exclusive-friendly."""
+    import pathlib
+
+    import yaml
+
+    meta = yaml.safe_load(pathlib.Path("metadata.yaml").read_text())
+    gcs = meta["requires"]["gcs-credentials"]
+    assert gcs["interface"] == "gcs"
+    assert gcs["limit"] == 1
+    assert gcs["optional"] is True
+
+
+def test_gcs_credentials_flow_through_the_real_requirer(mocker, cloud_spec):
+    """Contract test through object-storage-charmlib, not a hand-shaped payload.
+
+    The lib json.loads every published field, so the key reaches the charm as a
+    dict; the provider's databag points at a Juju secret holding it. The leader
+    must end up with the envelope stored.
+    """
+    import json
+
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import GCS_RELATION_NAME, PEER_RELATION, STATUS_PEERS_RELATION
+
+    ensure = mocker.patch("managers.backup.BackupManager.ensure_container")
+    key = _gcs_service_account()
+    secret = testing.Secret(tracked_content={"secret-key": key})
+    gcs_rel = testing.Relation(
+        id=5,
+        endpoint=GCS_RELATION_NAME,
+        interface="gcs",
+        remote_app_name="gcs-integrator",
+        remote_app_data={
+            "bucket": "b",
+            "path": "valkey",
+            "secret-extra": secret.id,
+            "version": "1",
+        },
+        local_app_data={"requested-secrets": json.dumps(["secret-key"]), "version": "1"},
+    )
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={
+            testing.PeerRelation(id=1, endpoint=PEER_RELATION),
+            testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+            gcs_rel,
+        },
+        secrets={secret},
+        containers={testing.Container(name="valkey", can_connect=True)},
+    )
+
+    with ctx(ctx.on.relation_changed(gcs_rel, remote_unit=0), state_in) as manager:
+        manager.run()
+        stored = manager.charm.state.cluster.gcs_credentials
+
+    ensure.assert_called_once()
+    assert stored is not None
+    assert stored.bucket == "b"
+    assert stored.path == "valkey"
+    assert json.loads(stored.secret_key)["client_email"] == "backup@proj.iam.gserviceaccount.com"
+
+
+def test_on_gcs_credentials_changed_leader_writes_databag(mocker):
+    """The GCS handler delegates the leader/conflict/validate/store half.
+
+    The key arrives in the dict form the lib hands over.
+    """
+    import json
+
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = True
+    charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+
+    info = json.loads(_gcs_service_account())
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {
+        "bucket": " data-charms-testing ",
+        "path": "/valkey/",
+        "secret-key": info,
+        "storage-class": "STANDARD",
+    }
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.ensure_container.assert_called_once()
+    args, _ = charm.state.cluster.update.call_args
+    creds = json.loads(args[0]["gcs_credentials"])
+    assert creds["bucket"] == "data-charms-testing"
+    assert creds["path"] == "valkey"
+    assert json.loads(creds["secret-key"]) == info
+    assert creds["storage-class"] == "STANDARD"
+
+
+def test_on_gcs_credentials_changed_without_info_is_a_noop(mocker):
+    """Fired on leader_elected with no GCS relation: nothing to store."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {}
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
+
+
+def test_on_gcs_credentials_changed_never_touches_the_s3_ca(mocker):
+    """The endpoint CA is an S3-only concept; GCS must not clobber the file."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {
+        "bucket": "b",
+        "path": "valkey",
+        "secret-key": _gcs_service_account(),
+    }
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.store_tls_ca_chain.assert_not_called()
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+
+
+def test_on_gcs_credentials_gone_defers_during_backup(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = True
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    event = mocker.MagicMock()
+
+    evt._on_gcs_credentials_gone(event)
+
+    event.defer.assert_called_once()
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_gcs_credentials_gone_clears_databag_and_converges_the_others(mocker):
+    """Removing the GCS integrator clears the conflict, so S3 and Azure get another go."""
+    from src.events.backup import BackupEvents
+    from src.literals import AZURE_RELATION_NAME, GCS_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    s3_handler = mocker.Mock()
+    azure_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: s3_handler,
+        AZURE_RELATION_NAME: azure_handler,
+        GCS_RELATION_NAME: mocker.Mock(),
+    }
+
+    evt._on_gcs_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"gcs_credentials": ""})
+    # GCS carries no charm-local CA, so nothing on disk is touched.
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+    s3_handler.assert_called_once()
+    azure_handler.assert_called_once()
+    evt._credentials_changed_handlers[GCS_RELATION_NAME].assert_not_called()
+
+
+def test_on_gcs_credentials_gone_non_leader_does_not_clear_databag(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {}
+
+    evt._on_gcs_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_s3_credentials_gone_converges_the_surviving_gcs_backend(mocker):
+    """The mirror case: dropping S3 must re-drive the still-related GCS backend."""
+    from src.events.backup import BackupEvents
+    from src.literals import GCS_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    gcs_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: mocker.Mock(),
+        GCS_RELATION_NAME: gcs_handler,
+    }
+
+    evt._on_s3_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"s3_credentials": ""})
+    gcs_handler.assert_called_once()

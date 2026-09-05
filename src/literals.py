@@ -38,6 +38,7 @@ LDAP_RELATION = "ldap"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
 S3_RELATION_NAME = "s3-credentials"
 AZURE_RELATION_NAME = "azure-credentials"
+GCS_RELATION_NAME = "gcs-credentials"
 # azure-storage-integrator connection-protocol values that designate an https/http
 # Blob endpoint. abfs/abfss designate ADLS-Gen2 (*.dfs.*), served by the datalake
 # SDK rather than the Blob SDK, so they are rejected up front.
@@ -55,6 +56,7 @@ GCS_STORAGE_CLASSES = frozenset({"STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"})
 BACKUP_CREDENTIAL_FIELDS: dict[str, str] = {
     S3_RELATION_NAME: "s3_credentials",
     AZURE_RELATION_NAME: "azure_credentials",
+    GCS_RELATION_NAME: "gcs_credentials",
 }
 BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 # Structured code create-backup reports when an object already occupies the
