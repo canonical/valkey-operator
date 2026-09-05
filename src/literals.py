@@ -61,6 +61,9 @@ BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 # generated id. Ids have one-second resolution, so two units starting a backup
 # in the same second would otherwise replace each other's snapshot.
 BACKUP_EXISTS_CODE = "BackupAlreadyExists"
+# Structured code for a GCS service-account key whose PEM body the SDK cannot
+# parse; the underlying error is a bare ValueError from cryptography.
+GCS_INVALID_KEY_CODE = "InvalidServiceAccountKey"
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
 # Normal down-after (rendered by ConfigManager, reasserted by resume_failover);

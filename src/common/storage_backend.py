@@ -6,29 +6,59 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
+import shutil
 from enum import Enum
 from typing import IO, TYPE_CHECKING, BinaryIO, NamedTuple, Protocol, cast
 from urllib.parse import urlparse
 
 import boto3
+import requests
 from azure.core.exceptions import AzureError, ResourceExistsError
 from azure.storage.blob import ContainerClient
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from google.api_core.exceptions import (
+    Conflict,
+    Forbidden,
+    GoogleAPIError,
+    NotFound,
+    RetryError,
+    from_http_status,
+)
+from google.auth.exceptions import GoogleAuthError
+from google.cloud import storage
+from google.cloud.storage.exceptions import DataCorruption, InvalidResponse
 
 from common.exceptions import StorageBackendError
-from core.models import AzureStorageParameters, BackupCredentials, S3Parameters
-from literals import AZURE_HTTPS_PROTOCOLS
+from core.models import AzureStorageParameters, BackupCredentials, GCSParameters, S3Parameters
+from literals import AZURE_HTTPS_PROTOCOLS, GCS_INVALID_KEY_CODE
 
 if TYPE_CHECKING:
     from azure.storage.blob import BlobClient
+    from google.cloud.storage.blob import Blob as GCSBlob
+    from google.cloud.storage.bucket import Bucket as GCSBucket
     from mypy_boto3_s3.literals import BucketLocationConstraintType
     from mypy_boto3_s3.service_resource import Bucket, S3ServiceResource
 
 logger = logging.getLogger(__name__)
+
+# Every root the GCS SDK can raise past its own retries: api_core's (every HTTP
+# status class plus RetryError), google-auth's (a bad key at token exchange, an
+# unreachable token endpoint), resumable-media's (what the BlobWriter path
+# raises for a non-2xx on initiate or on a chunk -- that path is not wrapped by
+# the SDK's _raise_from_invalid_response, and InvalidResponse's base class is
+# plain Exception) and requests' (transport paths not folded into a RetryError).
+_GCS_ERRORS = (
+    GoogleAPIError,
+    GoogleAuthError,
+    InvalidResponse,
+    DataCorruption,
+    requests.RequestException,
+)
 
 
 class RemoteObject(NamedTuple):
@@ -70,8 +100,9 @@ class StorageBackend(Protocol):
         """Stream ``reader`` into the object for ``backup_id``.
 
         Must not replace a stored object: where the store can express the
-        precondition, use it. ``BackupManager`` checks the id up front for the
-        backends whose SDK cannot.
+        precondition (Azure's ``overwrite=False``, GCS's ``if_generation_match=0``),
+        use it. ``BackupManager`` checks the id up front for the backends whose SDK
+        cannot.
         """
         ...
 
@@ -95,6 +126,8 @@ def build_backend(params: BackupCredentials, ca_path: pathlib.Path) -> StorageBa
         return S3Backend(params, ca_path)
     if isinstance(params, AzureStorageParameters):
         return AzureBackend(params)
+    if isinstance(params, GCSParameters):
+        return GCSBackend(params)
     raise StorageBackendError(f"No storage backend for {type(params).__name__} credentials")
 
 
@@ -366,3 +399,180 @@ class AzureBackend:
             self._blob(backup_id).delete_blob()
         except Exception as e:  # best-effort cleanup
             logger.warning("Failed to delete blob %s: %s", self._key(backup_id), e)
+
+
+class GCSBackend:
+    """Google Cloud Storage via google-cloud-storage."""
+
+    _CHUNK = 8 * 1024 * 1024
+    """Resumable-upload and ranged-read chunk: a multiple of 256 KiB, as the SDK
+    requires for resumable sessions, and the same size as S3's multipart part."""
+
+    def __init__(self, params: "GCSParameters"):
+        self.params = params
+
+    @property
+    def location(self) -> str:
+        """Bucket and prefix -- the audit trail's destination.
+
+        No host in a ``gs://`` locator, so no userinfo can ever reach the log.
+        """
+        return f"gs://{self.params.bucket}/{self.params.path}"
+
+    def _info(self) -> dict:
+        """Parse the service-account key. GCSParameters canonicalised it to JSON."""
+        return json.loads(self.params.secret_key)
+
+    def _client(self) -> storage.Client:
+        """Build a client from the service-account key -- every call starts here.
+
+        ``project`` is passed explicitly for clarity (the SDK would also take it
+        from the key). No env vars, no Application Default Credentials.
+
+        cryptography rejects a PEM body it cannot parse with a bare ValueError;
+        its message names the format, never the key material.
+        """
+        info = self._info()
+        try:
+            return storage.Client.from_service_account_info(info, project=info.get("project_id"))
+        except ValueError as e:
+            raise StorageBackendError(str(e), safe_code=GCS_INVALID_KEY_CODE) from e
+
+    def _bucket(self) -> "GCSBucket":
+        """Return a bucket handle; no round trip until a method is called on it."""
+        return self._client().bucket(self.params.bucket)
+
+    def _blob(self, backup_id: str) -> "GCSBlob":
+        return self._bucket().blob(self._key(backup_id))
+
+    def _key(self, backup_id: str) -> str:
+        return f"{self.params.path}/{backup_id}"
+
+    @staticmethod
+    def _error_code(exc: BaseException) -> str:
+        """Structured code of an SDK failure: the exception class name.
+
+        ``Forbidden``, ``NotFound``, ``PreconditionFailed``, ``RefreshError`` --
+        stable and structured, unlike ``str(exc)``, which the SDK formats as
+        ``<status> <verb> <url>: <message>`` and which must never reach a
+        world-readable action result. Two normalisations first: a ``RetryError``
+        is named after its cause (a 503 storm reads ``ServiceUnavailable``), and
+        an ``InvalidResponse`` from the resumable-media layer carries only an
+        HTTP status, mapped to the api_core class of that status.
+        """
+        if isinstance(exc, RetryError) and exc.cause is not None:
+            exc = exc.cause
+        if isinstance(exc, InvalidResponse):
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if isinstance(status, int):
+                return type(from_http_status(status, "")).__name__
+        return type(exc).__name__
+
+    def ensure_container(self) -> None:
+        """Create the configured bucket; tolerates an already-existing one.
+
+        Get first. NotFound means absent (GCS answers 404 only for a name nobody
+        owns), so create; a Conflict there is a race on a global name -- usually
+        ours, and if not, the first backup reports Forbidden. Forbidden on the
+        get means the bucket exists but its metadata is not readable: our bucket
+        under a key without ``storage.buckets.get``, or somebody else's. A
+        create could only fail, so a one-object list under the prefix decides
+        instead -- rather than storing credentials that fail at the first backup.
+        """
+        try:
+            client = self._client()
+            try:
+                client.get_bucket(self.params.bucket)
+                return
+            except NotFound:
+                bucket = client.bucket(self.params.bucket)
+                if self.params.storage_class:
+                    bucket.storage_class = self.params.storage_class
+                try:
+                    client.create_bucket(bucket, project=self._info().get("project_id"))
+                except Conflict:
+                    logger.info("Using existing bucket %s", self.params.bucket)
+            except Forbidden:
+                prefix = f"{self.params.path}/"
+                next(
+                    iter(client.list_blobs(self.params.bucket, prefix=prefix, max_results=1)),
+                    None,
+                )
+                logger.info("Using existing bucket %s (objects listable)", self.params.bucket)
+        except _GCS_ERRORS as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def list_object_ids(self) -> list[str]:
+        """Return every object id stored under the path prefix (auto-paginated)."""
+        prefix = f"{self.params.path}/"
+        try:
+            names = [b.name for b in self._client().list_blobs(self.params.bucket, prefix=prefix)]
+        except _GCS_ERRORS as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+        return [n.removeprefix(prefix) for n in names]
+
+    def head(self, backup_id: str, n: int = 16) -> bytes:
+        """Ranged read of the first ``n`` bytes of the object for ``backup_id``."""
+        try:
+            return self._blob(backup_id).download_as_bytes(start=0, end=n - 1)
+        except _GCS_ERRORS as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def upload(self, backup_id: str, reader: IO[bytes]) -> None:
+        """Stream ``reader`` into the object for ``backup_id`` (resumable upload).
+
+        ``blob.open("wb")`` rather than ``upload_from_file``: the SDK's uploader
+        calls ``tell()`` on its source, and the source here is a non-rewindable
+        pipe from ``valkey-cli --rdb -``. The writer buffers ``_CHUNK`` bytes and
+        drives the resumable session itself, so the pipe is only ever ``read()``.
+
+        ``if_generation_match=0`` goes on the session-initiate request, so a
+        colliding id fails before any RDB bytes leave the unit. On success the
+        final chunk carries the SDK's own checksum (md5 on this build), which GCS
+        verifies.
+
+        Two cancellation paths, both needed. ``__exit__`` terminates the session
+        for an exception raised inside the block. But for an RDB under one chunk
+        the session is initiated and its only chunk sent from ``close()``, i.e.
+        inside ``__exit__`` on the success path; a failure there leaves the
+        buffer open, and ``io.IOBase.__del__`` would re-send it at GC -- a commit
+        after the action reported failure -- so the writer is terminated here.
+        """
+        try:
+            writer = self._blob(backup_id).open(
+                "wb", chunk_size=self._CHUNK, ignore_flush=True, if_generation_match=0
+            )
+            try:
+                with writer:
+                    # blob.open("wb") is typed as a union of read/write/text
+                    # handles (no py.typed in google-cloud-storage), but "wb"
+                    # always returns a BlobWriter, which is binary-writable.
+                    shutil.copyfileobj(reader, writer, self._CHUNK)  # pyright: ignore[reportArgumentType]
+            except BaseException:
+                if not writer.closed:
+                    writer.terminate()  # pyright: ignore[reportAttributeAccessIssue]
+                raise
+        except _GCS_ERRORS as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+
+    def download(self, backup_id: str) -> RemoteObject:
+        """Open the object for ``backup_id``; the reader fetches ranged chunks."""
+        try:
+            blob = self._bucket().get_blob(self._key(backup_id))
+        except _GCS_ERRORS as e:
+            raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e
+        if blob is None:
+            raise StorageBackendError(
+                f"No object for backup-id {backup_id}", safe_code=NotFound.__name__
+            )
+        # get_blob populated the metadata, so the restore trail gets its byte
+        # count without a second round trip. The reader disables checksums for
+        # its own ranged reads.
+        return RemoteObject(cast(BinaryIO, blob.open("rb", chunk_size=self._CHUNK)), blob.size)
+
+    def delete(self, backup_id: str) -> None:
+        """Delete the object for ``backup_id``, swallowing any error (best-effort)."""
+        try:
+            self._blob(backup_id).delete()
+        except Exception as e:  # best-effort cleanup
+            logger.warning("Failed to delete object %s: %s", self._key(backup_id), e)
