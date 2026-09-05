@@ -44,6 +44,10 @@ AZURE_RELATION_NAME = "azure-credentials"
 AZURE_HTTPS_PROTOCOLS = frozenset({"https", "wasbs"})
 AZURE_HTTP_PROTOCOLS = frozenset({"http", "wasb"})
 AZURE_REJECTED_PROTOCOLS = frozenset({"abfs", "abfss"})
+# gcs-integrator storage-class values. Applied only when the charm creates the
+# bucket; anything else is refused at the relation boundary rather than by the
+# SDK at bucket creation.
+GCS_STORAGE_CLASSES = frozenset({"STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE"})
 # Every backup backend: its integrator relation -> the app databag field its
 # validated credentials envelope is stored under. Relation discovery, the
 # mutual-exclusion check, credential selection and the action guards all read

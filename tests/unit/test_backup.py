@@ -1689,3 +1689,239 @@ def test_create_backup_kills_producer_on_an_unexpected_upload_error(mocker):
     proc.kill.assert_called_once()
     # The lock is still released on the way out.
     assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
+
+
+# ── GCS backend ─────────────────────────────────────────────────────────
+
+
+def _gcs_service_account(**overrides) -> str:
+    """Build a syntactically complete service-account key; the private key is a stub.
+
+    Only the model and the mocked SDK ever see it, so the PEM body is never
+    parsed. ``overrides`` replace top-level keys (``None`` keeps the key with a
+    null value, which is how "absent" is exercised).
+    """
+    import json
+
+    info = {
+        "type": "service_account",
+        "project_id": "proj",
+        "client_email": "backup@proj.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    info.update(overrides)
+    return json.dumps(info)
+
+
+def test_gcs_parameters_valid_and_normalised():
+    """Trims whitespace, strips the separators that would corrupt object names.
+
+    Also stores the key as canonical JSON text.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    key = _gcs_service_account()
+    p = GCSParameters.model_validate(
+        {
+            "bucket": " /data-charms-testing/ ",
+            "path": "/valkey/",
+            "secret-key": f"  {key}\n",
+            "storage-class": " nearline ",
+        }
+    )
+    assert p.bucket == "data-charms-testing"
+    assert p.path == "valkey"
+    assert p.secret_key == json.dumps(json.loads(key), sort_keys=True)
+    assert p.storage_class == "NEARLINE"
+
+
+def test_gcs_parameters_accepts_the_dict_the_requirer_lib_hands_over():
+    """object-storage-charmlib json.loads every published field, so the JSON key reaches the charm as a dict.
+
+    It is canonicalised back to JSON text.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    info = json.loads(_gcs_service_account())
+    p = GCSParameters.model_validate({"bucket": "b", "path": "valkey", "secret-key": info})
+    assert isinstance(p.secret_key, str)
+    assert json.loads(p.secret_key) == info
+
+
+def test_gcs_parameters_accepts_a_base64_encoded_key():
+    """CI secret plumbing cannot carry raw JSON, so a base64 form is accepted and decoded at the boundary.
+
+    As mongo does: either alphabet, and wrapped at 76 columns the way the
+    `base64` CLI emits it without -w0 (spread's env export turns those
+    newlines into spaces, which is the same case).
+    """
+    import base64
+    import json
+
+    from src.core.models import GCSParameters
+
+    key = _gcs_service_account()
+    wrapped = base64.encodebytes(key.encode()).decode()
+    assert "\n" in wrapped.strip()  # the case under test really is multi-line
+    for encoded in (
+        base64.b64encode(key.encode()).decode(),
+        base64.urlsafe_b64encode(key.encode()).decode(),
+        wrapped,
+        wrapped.replace("\n", " "),
+    ):
+        p = GCSParameters.model_validate({"bucket": "b", "path": "valkey", "secret-key": encoded})
+        assert json.loads(p.secret_key) == json.loads(key)
+
+
+def test_gcs_parameters_canonical_form_is_key_order_independent():
+    """The stored envelope must compare equal to a re-supplied key with the same content.
+
+    Otherwise _store_credentials re-runs ensure_container on every
+    leader-elected and rewrites the secret for nothing.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    info = json.loads(_gcs_service_account())
+    reordered = dict(reversed(list(info.items())))
+    base = {"bucket": "b", "path": "valkey"}
+    a = GCSParameters.model_validate({**base, "secret-key": info})
+    b = GCSParameters.model_validate({**base, "secret-key": json.dumps(reordered)})
+    assert a.secret_key == b.secret_key
+    assert a.model_dump() == b.model_dump()
+
+
+def test_gcs_parameters_storage_class_is_optional():
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey", "secret-key": _gcs_service_account()}
+    assert GCSParameters.model_validate(base).storage_class is None
+    assert GCSParameters.model_validate({**base, "storage-class": ""}).storage_class is None
+
+
+def test_gcs_parameters_rejects_an_unknown_storage_class():
+    """Only the integrator's documented classes are accepted.
+
+    The SDK would refuse the rest only at bucket creation, long after the
+    relation settled.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    with pytest.raises(ValidationError):
+        GCSParameters.model_validate(
+            {
+                "bucket": "b",
+                "path": "valkey",
+                "secret-key": _gcs_service_account(),
+                "storage-class": "GLACIER",
+            }
+        )
+
+
+def test_gcs_parameters_rejects_empty_required():
+    """An empty path would make list_backups enumerate the whole bucket."""
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey", "secret-key": _gcs_service_account()}
+    for field in ("bucket", "path", "secret-key"):
+        with pytest.raises(ValidationError):
+            GCSParameters.model_validate({**base, field: ""})
+    with pytest.raises(ValidationError):
+        GCSParameters.model_validate({"bucket": "b", "path": "valkey"})
+
+
+def test_gcs_parameters_rejects_a_malformed_service_account_key():
+    """A key that is not JSON, not base64 JSON, not an object, or lacks a required field is refused.
+
+    The relation boundary names the field, never the value, whether the
+    input was a string or the lib's dict.
+    """
+    import base64
+    import json
+
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey"}
+    bad = {
+        "not json": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----",
+        "base64 of not json": base64.b64encode(b"stub, not json").decode(),
+        "not an object": "[1, 2]",
+        "no client_email": _gcs_service_account(client_email=None),
+        "no private_key": _gcs_service_account(private_key=""),
+        "dict without private_key": json.loads(_gcs_service_account(private_key="")),
+    }
+    for reason, key in bad.items():
+        with pytest.raises(ValidationError) as excinfo:
+            GCSParameters.model_validate({**base, "secret-key": key})
+        text = str(excinfo.value)
+        assert "stub" not in text and "BEGIN PRIVATE KEY" not in text, reason
+    assert "private_key" in str(excinfo.value)
+
+
+def test_gcs_parameters_ignores_unknown_fields():
+    from src.core.models import GCSParameters
+
+    p = GCSParameters.model_validate(
+        {
+            "bucket": "b",
+            "path": "valkey",
+            "secret-key": _gcs_service_account(),
+            "endpoint": "https://storage.googleapis.com",
+        }
+    )
+    assert not hasattr(p, "endpoint")
+
+
+def test_peer_app_model_has_gcs_credentials_field():
+    from src.core.models import PeerAppModel
+
+    fields = PeerAppModel.model_fields
+    assert "gcs_credentials" in fields
+    assert fields["gcs_credentials"].default is None
+
+
+def test_cluster_gcs_credentials_parses_envelope_and_defaults_none(mocker):
+    """The stored envelope parses back to GCSParameters; unset reads as None."""
+    import json
+
+    from src.core.models import GCSParameters, ValkeyCluster
+
+    cluster = ValkeyCluster.__new__(ValkeyCluster)
+    cluster.model = mocker.MagicMock()
+
+    key = _gcs_service_account()
+    params = GCSParameters.model_validate(
+        {"bucket": "b", "path": "valkey", "secret-key": key, "storage-class": "STANDARD"}
+    )
+    cluster.model.gcs_credentials = params.model_dump_json(by_alias=True)
+    got = cluster.gcs_credentials
+    assert isinstance(got, GCSParameters)
+    assert got.bucket == "b"
+    assert json.loads(got.secret_key) == json.loads(key)
+    assert got.storage_class == "STANDARD"
+    # Round trip is stable: what was stored re-validates to the same envelope.
+    assert got.model_dump() == params.model_dump()
+
+    cluster.model.gcs_credentials = None
+    assert cluster.gcs_credentials is None
+
+    cluster.model.gcs_credentials = "{not json"
+    assert cluster.gcs_credentials is None
+
+    cluster.model = None
+    assert cluster.gcs_credentials is None
