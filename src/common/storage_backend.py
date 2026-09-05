@@ -537,6 +537,9 @@ class GCSBackend:
         inside ``__exit__`` on the success path; a failure there leaves the
         buffer open, and ``io.IOBase.__del__`` would re-send it at GC -- a commit
         after the action reported failure -- so the writer is terminated here.
+        The cancel itself is best-effort: its DELETE can fail for the same
+        network reason the upload did, and the original error is the one the
+        action must report.
         """
         try:
             writer = self._blob(backup_id).open(
@@ -550,7 +553,17 @@ class GCSBackend:
                     shutil.copyfileobj(reader, writer, self._CHUNK)  # pyright: ignore[reportArgumentType]
             except BaseException:
                 if not writer.closed:
-                    writer.terminate()  # pyright: ignore[reportAttributeAccessIssue]
+                    # Best-effort: the DELETE that cancels the session can fail for
+                    # the same reason the upload did, and the original error is the
+                    # one the action must report.
+                    try:
+                        writer.terminate()  # pyright: ignore[reportAttributeAccessIssue]
+                    except Exception as e:
+                        logger.warning(
+                            "Could not cancel the resumable session for %s: %s",
+                            self._key(backup_id),
+                            e,
+                        )
                 raise
         except _GCS_ERRORS as e:
             raise StorageBackendError(str(e), safe_code=self._error_code(e)) from e

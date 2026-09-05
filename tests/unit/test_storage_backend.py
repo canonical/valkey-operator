@@ -1120,6 +1120,31 @@ def test_gcsbackend_upload_terminates_a_writer_that_failed_in_close(mocker):
     assert upload.transmit_next_chunk.call_count == 1
 
 
+def test_gcsbackend_upload_keeps_the_original_error_when_terminate_fails(mocker):
+    """Cancelling a failed upload is best-effort.
+
+    The DELETE can fail for the same reason the upload did; the action must
+    still report the upload's code, not the cancel's.
+    """
+    import requests
+
+    from common.exceptions import StorageBackendError
+
+    chunk = 256 * 1024
+    backend, client = _gcs_backend(mocker)
+    backend._CHUNK = chunk
+    writer, upload, transport = _real_blob_writer(mocker, chunk)
+    client.bucket.return_value.blob.return_value.open.return_value = writer
+    upload.transmit_next_chunk.side_effect = _invalid_response(503)
+    transport.delete.side_effect = requests.ConnectionError("unreachable")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.upload("2026-05-13T10:00:00Z", io.BytesIO(b"REDIS0012"))
+
+    assert excinfo.value.safe_code == "ServiceUnavailable"
+    transport.delete.assert_called_once()
+
+
 # ── download / delete ───────────────────────────────────────────────────
 
 
@@ -1221,6 +1246,11 @@ def test_gcsbackend_safe_code_normalises_retry_and_invalid_response(mocker):
     )
     corrupt = DataCorruption(_invalid_response(200).response, "checksum mismatch")
     assert GCSBackend._error_code(corrupt) == "DataCorruption"
+
+    from google.cloud.storage.exceptions import InvalidResponse
+
+    # A response object without an int status_code: no mapping, class name wins.
+    assert GCSBackend._error_code(InvalidResponse(object(), "no status")) == "InvalidResponse"
 
 
 def test_gcsbackend_wraps_every_sdk_root(mocker):

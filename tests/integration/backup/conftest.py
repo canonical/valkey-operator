@@ -31,6 +31,7 @@ import pytest
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import ContainerClient
 from botocore.config import Config
+from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from literals import Substrate
@@ -325,4 +326,7 @@ def gcs_bucket(gcs: dict):
     bucket = client.bucket(gcs["bucket"])
     yield bucket
     for blob in client.list_blobs(gcs["bucket"], prefix=f"{gcs['path']}/"):
-        blob.delete()
+        try:
+            blob.delete()
+        except NotFound:
+            pass  # a concurrent cleanup got there first; the goal is an empty prefix

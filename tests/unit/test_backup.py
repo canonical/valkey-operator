@@ -2003,7 +2003,7 @@ def test_gcs_credentials_flow_through_the_real_requirer(mocker, cloud_spec):
     )
 
     with ctx(ctx.on.relation_changed(gcs_rel, remote_unit=0), state_in) as manager:
-        manager.run()
+        state_out = manager.run()
         stored = manager.charm.state.cluster.gcs_credentials
 
     ensure.assert_called_once()
@@ -2011,6 +2011,20 @@ def test_gcs_credentials_flow_through_the_real_requirer(mocker, cloud_spec):
     assert stored.bucket == "b"
     assert stored.path == "valkey"
     assert json.loads(stored.secret_key)["client_email"] == "backup@proj.iam.gserviceaccount.com"
+
+    # Only a secret URI may hit the databag: the envelope lives in an app-owned
+    # Juju secret (dpcharmlibs hyphenates the field name).
+    peer_out = state_out.get_relation(1)
+    assert "gcs-credentials" not in peer_out.local_app_data
+    assert not any("private_key" in v for v in peer_out.local_app_data.values())
+    envelopes = [s for s in state_out.secrets if "gcs-credentials" in (s.latest_content or {})]
+    assert len(envelopes) == 1
+    assert (
+        json.loads(json.loads(envelopes[0].latest_content["gcs-credentials"])["secret-key"])[
+            "client_email"
+        ]
+        == "backup@proj.iam.gserviceaccount.com"
+    )
 
 
 def test_on_gcs_credentials_changed_leader_writes_databag(mocker):
