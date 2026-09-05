@@ -151,10 +151,16 @@ def test_active_backup_credentials_follows_the_relation(cloud_spec, mocker):
 def test_backup_credential_registry_maps_relations_to_databag_fields():
     """Adding a backend is one registry entry: its relation and where creds land."""
     from src.core.models import PeerAppModel
-    from src.literals import AZURE_RELATION_NAME, BACKUP_CREDENTIAL_FIELDS, S3_RELATION_NAME
+    from src.literals import (
+        AZURE_RELATION_NAME,
+        BACKUP_CREDENTIAL_FIELDS,
+        GCS_RELATION_NAME,
+        S3_RELATION_NAME,
+    )
 
     assert BACKUP_CREDENTIAL_FIELDS[S3_RELATION_NAME] == "s3_credentials"
     assert BACKUP_CREDENTIAL_FIELDS[AZURE_RELATION_NAME] == "azure_credentials"
+    assert BACKUP_CREDENTIAL_FIELDS[GCS_RELATION_NAME] == "gcs_credentials"
     # Every registered field must exist on the app databag model, or the leader
     # would silently write credentials nothing reads back.
     for field in BACKUP_CREDENTIAL_FIELDS.values():
@@ -164,7 +170,7 @@ def test_backup_credential_registry_maps_relations_to_databag_fields():
 def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     """Relation discovery and the conflict check are driven by the registry alone.
 
-    Exercised with the two registered backends, so it also pins the mutual
+    Exercised with the three registered backends, so it also pins the mutual
     exclusion the charm enforces: relate exactly one storage integrator.
     """
     from ops import testing
@@ -172,6 +178,7 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     from src.charm import ValkeyCharm
     from src.literals import (
         AZURE_RELATION_NAME,
+        GCS_RELATION_NAME,
         PEER_RELATION,
         S3_RELATION_NAME,
         STATUS_PEERS_RELATION,
@@ -182,6 +189,7 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
     status_peer = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     s3_rel = testing.Relation(id=3, endpoint=S3_RELATION_NAME, interface="s3")
     azure_rel = testing.Relation(id=4, endpoint=AZURE_RELATION_NAME, interface="azure_storage")
+    gcs_rel = testing.Relation(id=5, endpoint=GCS_RELATION_NAME, interface="gcs")
     common = {
         "model": testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
         "leader": True,
@@ -203,6 +211,17 @@ def test_backup_relations_and_conflict_follow_the_registry(cloud_spec):
         assert len(manager.charm.state.backup_relations) == 2
         assert manager.charm.state.backup_backends_conflict is True
         # Nothing can pick a backend, so no credentials are active.
+        assert manager.charm.state.active_backup_credentials is None
+
+    third = testing.State(relations={peer, status_peer, gcs_rel}, **common)
+    with ctx(ctx.on.update_status(), third) as manager:
+        assert len(manager.charm.state.backup_relations) == 1
+        assert manager.charm.state.backup_backends_conflict is False
+
+    all_three = testing.State(relations={peer, status_peer, s3_rel, azure_rel, gcs_rel}, **common)
+    with ctx(ctx.on.update_status(), all_three) as manager:
+        assert len(manager.charm.state.backup_relations) == 3
+        assert manager.charm.state.backup_backends_conflict is True
         assert manager.charm.state.active_backup_credentials is None
 
 
@@ -1689,3 +1708,483 @@ def test_create_backup_kills_producer_on_an_unexpected_upload_error(mocker):
     proc.kill.assert_called_once()
     # The lock is still released on the way out.
     assert state.unit_server.update.call_args_list[-1].args[0] == {"backup_id": ""}
+
+
+# ── GCS backend ─────────────────────────────────────────────────────────
+
+
+def _gcs_service_account(**overrides) -> str:
+    """Build a syntactically complete service-account key; the private key is a stub.
+
+    Only the model and the mocked SDK ever see it, so the PEM body is never
+    parsed. ``overrides`` replace top-level keys (``None`` keeps the key with a
+    null value, which is how "absent" is exercised).
+    """
+    import json
+
+    info = {
+        "type": "service_account",
+        "project_id": "proj",
+        "client_email": "backup@proj.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    info.update(overrides)
+    return json.dumps(info)
+
+
+def test_gcs_parameters_valid_and_normalised():
+    """Trims whitespace, strips the separators that would corrupt object names.
+
+    Also stores the key as canonical JSON text.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    key = _gcs_service_account()
+    p = GCSParameters.model_validate(
+        {
+            "bucket": " /data-charms-testing/ ",
+            "path": "/valkey/",
+            "secret-key": f"  {key}\n",
+            "storage-class": " nearline ",
+        }
+    )
+    assert p.bucket == "data-charms-testing"
+    assert p.path == "valkey"
+    assert p.secret_key == json.dumps(json.loads(key), sort_keys=True)
+    assert p.storage_class == "NEARLINE"
+
+
+def test_gcs_parameters_accepts_the_dict_the_requirer_lib_hands_over():
+    """object-storage-charmlib json.loads every published field, so the JSON key reaches the charm as a dict.
+
+    It is canonicalised back to JSON text.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    info = json.loads(_gcs_service_account())
+    p = GCSParameters.model_validate({"bucket": "b", "path": "valkey", "secret-key": info})
+    assert isinstance(p.secret_key, str)
+    assert json.loads(p.secret_key) == info
+
+
+def test_gcs_parameters_accepts_a_base64_encoded_key():
+    """CI secret plumbing cannot carry raw JSON, so a base64 form is accepted and decoded at the boundary.
+
+    As mongo does: either alphabet, and wrapped at 76 columns the way the
+    `base64` CLI emits it without -w0 (spread's env export turns those
+    newlines into spaces, which is the same case).
+    """
+    import base64
+    import json
+
+    from src.core.models import GCSParameters
+
+    key = _gcs_service_account()
+    wrapped = base64.encodebytes(key.encode()).decode()
+    assert "\n" in wrapped.strip()  # the case under test really is multi-line
+    for encoded in (
+        base64.b64encode(key.encode()).decode(),
+        base64.urlsafe_b64encode(key.encode()).decode(),
+        wrapped,
+        wrapped.replace("\n", " "),
+    ):
+        p = GCSParameters.model_validate({"bucket": "b", "path": "valkey", "secret-key": encoded})
+        assert json.loads(p.secret_key) == json.loads(key)
+
+
+def test_gcs_parameters_canonical_form_is_key_order_independent():
+    """The stored envelope must compare equal to a re-supplied key with the same content.
+
+    Otherwise _store_credentials re-runs ensure_container on every
+    leader-elected and rewrites the secret for nothing.
+    """
+    import json
+
+    from src.core.models import GCSParameters
+
+    info = json.loads(_gcs_service_account())
+    reordered = dict(reversed(list(info.items())))
+    base = {"bucket": "b", "path": "valkey"}
+    a = GCSParameters.model_validate({**base, "secret-key": info})
+    b = GCSParameters.model_validate({**base, "secret-key": json.dumps(reordered)})
+    assert a.secret_key == b.secret_key
+    assert a.model_dump() == b.model_dump()
+
+
+def test_gcs_parameters_storage_class_is_optional():
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey", "secret-key": _gcs_service_account()}
+    assert GCSParameters.model_validate(base).storage_class is None
+    assert GCSParameters.model_validate({**base, "storage-class": ""}).storage_class is None
+
+
+def test_gcs_parameters_rejects_an_unknown_storage_class():
+    """Only the integrator's documented classes are accepted.
+
+    The SDK would refuse the rest only at bucket creation, long after the
+    relation settled.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    with pytest.raises(ValidationError):
+        GCSParameters.model_validate(
+            {
+                "bucket": "b",
+                "path": "valkey",
+                "secret-key": _gcs_service_account(),
+                "storage-class": "GLACIER",
+            }
+        )
+
+
+def test_gcs_parameters_rejects_empty_required():
+    """An empty path would make list_backups enumerate the whole bucket."""
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey", "secret-key": _gcs_service_account()}
+    for field in ("bucket", "path", "secret-key"):
+        with pytest.raises(ValidationError):
+            GCSParameters.model_validate({**base, field: ""})
+    with pytest.raises(ValidationError):
+        GCSParameters.model_validate({"bucket": "b", "path": "valkey"})
+
+
+def test_gcs_parameters_rejects_a_malformed_service_account_key():
+    """A key that is not JSON, not base64 JSON, not an object, or lacks a required field is refused.
+
+    The relation boundary names the field, never the value, whether the
+    input was a string or the lib's dict.
+    """
+    import base64
+    import json
+
+    import pytest
+    from pydantic import ValidationError
+
+    from src.core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey"}
+    bad = {
+        "not json": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----",
+        "base64 of not json": base64.b64encode(b"stub, not json").decode(),
+        "not an object": "[1, 2]",
+        "no client_email": _gcs_service_account(client_email=None),
+        "no private_key": _gcs_service_account(private_key=""),
+        "dict without private_key": json.loads(_gcs_service_account(private_key="")),
+    }
+    for reason, key in bad.items():
+        with pytest.raises(ValidationError) as excinfo:
+            GCSParameters.model_validate({**base, "secret-key": key})
+        text = str(excinfo.value)
+        assert "stub" not in text and "BEGIN PRIVATE KEY" not in text, reason
+    assert "private_key" in str(excinfo.value)
+
+
+def test_gcs_parameters_ignores_unknown_fields():
+    from src.core.models import GCSParameters
+
+    p = GCSParameters.model_validate(
+        {
+            "bucket": "b",
+            "path": "valkey",
+            "secret-key": _gcs_service_account(),
+            "endpoint": "https://storage.googleapis.com",
+        }
+    )
+    assert not hasattr(p, "endpoint")
+
+
+def test_peer_app_model_has_gcs_credentials_field():
+    from src.core.models import PeerAppModel
+
+    fields = PeerAppModel.model_fields
+    assert "gcs_credentials" in fields
+    assert fields["gcs_credentials"].default is None
+
+
+def test_cluster_gcs_credentials_parses_envelope_and_defaults_none(mocker):
+    """The stored envelope parses back to GCSParameters; unset reads as None."""
+    import json
+
+    from src.core.models import GCSParameters, ValkeyCluster
+
+    cluster = ValkeyCluster.__new__(ValkeyCluster)
+    cluster.model = mocker.MagicMock()
+
+    key = _gcs_service_account()
+    params = GCSParameters.model_validate(
+        {"bucket": "b", "path": "valkey", "secret-key": key, "storage-class": "STANDARD"}
+    )
+    cluster.model.gcs_credentials = params.model_dump_json(by_alias=True)
+    got = cluster.gcs_credentials
+    assert isinstance(got, GCSParameters)
+    assert got.bucket == "b"
+    assert json.loads(got.secret_key) == json.loads(key)
+    assert got.storage_class == "STANDARD"
+    # Round trip is stable: what was stored re-validates to the same envelope.
+    assert got.model_dump() == params.model_dump()
+
+    cluster.model.gcs_credentials = None
+    assert cluster.gcs_credentials is None
+
+    cluster.model.gcs_credentials = "{not json"
+    assert cluster.gcs_credentials is None
+
+    cluster.model = None
+    assert cluster.gcs_credentials is None
+
+
+def test_metadata_declares_gcs_relation():
+    """The GCS integrator relation is declared and mutually exclusive-friendly."""
+    import pathlib
+
+    import yaml
+
+    meta = yaml.safe_load(pathlib.Path("metadata.yaml").read_text())
+    gcs = meta["requires"]["gcs-credentials"]
+    assert gcs["interface"] == "gcs"
+    assert gcs["limit"] == 1
+    assert gcs["optional"] is True
+
+
+def test_gcs_credentials_flow_through_the_real_requirer(mocker, cloud_spec):
+    """Contract test through object-storage-charmlib, not a hand-shaped payload.
+
+    The lib json.loads every published field, so the key reaches the charm as a
+    dict; the provider's databag points at a Juju secret holding it. The leader
+    must end up with the envelope stored.
+    """
+    import json
+
+    from ops import testing
+
+    from src.charm import ValkeyCharm
+    from src.literals import GCS_RELATION_NAME, PEER_RELATION, STATUS_PEERS_RELATION
+
+    ensure = mocker.patch("managers.backup.BackupManager.ensure_container")
+    key = _gcs_service_account()
+    secret = testing.Secret(tracked_content={"secret-key": key})
+    gcs_rel = testing.Relation(
+        id=5,
+        endpoint=GCS_RELATION_NAME,
+        interface="gcs",
+        remote_app_name="gcs-integrator",
+        remote_app_data={
+            "bucket": "b",
+            "path": "valkey",
+            "secret-extra": secret.id,
+            "version": "1",
+        },
+        local_app_data={"requested-secrets": json.dumps(["secret-key"]), "version": "1"},
+    )
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = testing.State(
+        model=testing.Model(name="m", type="lxd", cloud_spec=cloud_spec),
+        leader=True,
+        relations={
+            testing.PeerRelation(id=1, endpoint=PEER_RELATION),
+            testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+            gcs_rel,
+        },
+        secrets={secret},
+        containers={testing.Container(name="valkey", can_connect=True)},
+    )
+
+    with ctx(ctx.on.relation_changed(gcs_rel, remote_unit=0), state_in) as manager:
+        state_out = manager.run()
+        stored = manager.charm.state.cluster.gcs_credentials
+
+    ensure.assert_called_once()
+    assert stored is not None
+    assert stored.bucket == "b"
+    assert stored.path == "valkey"
+    assert json.loads(stored.secret_key)["client_email"] == "backup@proj.iam.gserviceaccount.com"
+
+    # Only a secret URI may hit the databag: the envelope lives in an app-owned
+    # Juju secret (dpcharmlibs hyphenates the field name).
+    peer_out = state_out.get_relation(1)
+    assert "gcs-credentials" not in peer_out.local_app_data
+    assert not any("private_key" in v for v in peer_out.local_app_data.values())
+    envelopes = [s for s in state_out.secrets if "gcs-credentials" in (s.latest_content or {})]
+    assert len(envelopes) == 1
+    assert (
+        json.loads(json.loads(envelopes[0].latest_content["gcs-credentials"])["secret-key"])[
+            "client_email"
+        ]
+        == "backup@proj.iam.gserviceaccount.com"
+    )
+
+
+def test_on_gcs_credentials_changed_leader_writes_databag(mocker):
+    """The GCS handler delegates the leader/conflict/validate/store half.
+
+    The key arrives in the dict form the lib hands over.
+    """
+    import json
+
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = True
+    charm.state.peer_relation = mocker.MagicMock()
+    charm.state.backup_backends_conflict = False
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+
+    info = json.loads(_gcs_service_account())
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {
+        "bucket": " data-charms-testing ",
+        "path": "/valkey/",
+        "secret-key": info,
+        "storage-class": "STANDARD",
+    }
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.ensure_container.assert_called_once()
+    args, _ = charm.state.cluster.update.call_args
+    creds = json.loads(args[0]["gcs_credentials"])
+    assert creds["bucket"] == "data-charms-testing"
+    assert creds["path"] == "valkey"
+    assert json.loads(creds["secret-key"]) == info
+    assert creds["storage-class"] == "STANDARD"
+
+
+def test_on_gcs_credentials_changed_without_info_is_a_noop(mocker):
+    """Fired on leader_elected with no GCS relation: nothing to store."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {}
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+    charm.backup_manager.ensure_container.assert_not_called()
+
+
+def test_on_gcs_credentials_changed_never_touches_the_s3_ca(mocker):
+    """The endpoint CA is an S3-only concept; GCS must not clobber the file."""
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt.gcs_requirer = mocker.MagicMock()
+    evt.gcs_requirer.get_storage_connection_info.return_value = {
+        "bucket": "b",
+        "path": "valkey",
+        "secret-key": _gcs_service_account(),
+    }
+
+    evt._on_gcs_credentials_changed(mocker.MagicMock())
+
+    charm.backup_manager.store_tls_ca_chain.assert_not_called()
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+
+
+def test_on_gcs_credentials_gone_defers_during_backup(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = True
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    event = mocker.MagicMock()
+
+    evt._on_gcs_credentials_gone(event)
+
+    event.defer.assert_called_once()
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_gcs_credentials_gone_clears_databag_and_converges_the_others(mocker):
+    """Removing the GCS integrator clears the conflict, so S3 and Azure get another go."""
+    from src.events.backup import BackupEvents
+    from src.literals import AZURE_RELATION_NAME, GCS_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    s3_handler = mocker.Mock()
+    azure_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: s3_handler,
+        AZURE_RELATION_NAME: azure_handler,
+        GCS_RELATION_NAME: mocker.Mock(),
+    }
+
+    evt._on_gcs_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"gcs_credentials": ""})
+    # GCS carries no charm-local CA, so nothing on disk is touched.
+    charm.backup_manager.remove_tls_ca_chain.assert_not_called()
+    s3_handler.assert_called_once()
+    azure_handler.assert_called_once()
+    evt._credentials_changed_handlers[GCS_RELATION_NAME].assert_not_called()
+
+
+def test_on_gcs_credentials_gone_non_leader_does_not_clear_databag(mocker):
+    from src.events.backup import BackupEvents
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = False
+
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {}
+
+    evt._on_gcs_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_not_called()
+
+
+def test_on_s3_credentials_gone_converges_the_surviving_gcs_backend(mocker):
+    """The mirror case: dropping S3 must re-drive the still-related GCS backend."""
+    from src.events.backup import BackupEvents
+    from src.literals import GCS_RELATION_NAME, S3_RELATION_NAME
+
+    charm = mocker.MagicMock()
+    charm.state.is_backup_in_progress_any = False
+    charm.state.cluster.is_restore_in_progress = False
+    charm.unit.is_leader.return_value = True
+
+    gcs_handler = mocker.Mock()
+    evt = BackupEvents.__new__(BackupEvents)
+    evt.charm = charm
+    evt._credentials_changed_handlers = {
+        S3_RELATION_NAME: mocker.Mock(),
+        GCS_RELATION_NAME: gcs_handler,
+    }
+
+    evt._on_s3_credentials_gone(mocker.MagicMock())
+
+    charm.state.cluster.update.assert_called_once_with({"s3_credentials": ""})
+    gcs_handler.assert_called_once()

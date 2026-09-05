@@ -694,3 +694,597 @@ def test_azurebackend_container_client_works_for_a_path_style_endpoint(mocker):
     _, kwargs = container_cls.call_args
     assert kwargs["account_url"] == "http://10.0.0.5:10000/devstoreaccount1"
     assert kwargs["credential"]["account_name"] == "devstoreaccount1"
+
+
+# ── GCS backend ─────────────────────────────────────────────────────────
+
+
+def _gcs_key(**overrides) -> str:
+    """Build a syntactically complete service-account key.
+
+    The PEM body is a stub that the mocked SDK never parses.
+    """
+    import json
+
+    info = {
+        "type": "service_account",
+        "project_id": "proj",
+        "client_email": "backup@proj.iam.gserviceaccount.com",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nstub\n-----END PRIVATE KEY-----\n",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    info.update(overrides)
+    return json.dumps(info)
+
+
+def _gcs_params(**overrides):
+    """Build a valid GCSParameters, overriding individual fields by name.
+
+    Flat import, for the same reason as `_s3_params`: `build_backend` dispatches
+    on isinstance, and the `src.`-prefixed copy is a different class object.
+    """
+    from core.models import GCSParameters
+
+    base = {"bucket": "b", "path": "valkey", "secret-key": _gcs_key()}
+    base.update(overrides)
+    return GCSParameters.model_validate(base)
+
+
+def _gcs_backend(mocker, **overrides):
+    """Build a GCSBackend with its storage.Client faked; return (backend, client).
+
+    ``client.bucket()`` and ``client.get_bucket()`` hand out the same MagicMock
+    bucket, so a test can reach the blob through either path. The blob's writer
+    is a context manager that re-raises (``__exit__`` -> False), as the real one.
+    """
+    from src.common.storage_backend import GCSBackend
+
+    client = mocker.MagicMock()
+    bucket = mocker.MagicMock()
+    client.bucket.return_value = bucket
+    client.get_bucket.return_value = bucket
+    writer = mocker.MagicMock()
+    writer.__enter__.return_value = writer
+    writer.__exit__.return_value = False
+    bucket.blob.return_value.open.return_value = writer
+    mocker.patch.object(GCSBackend, "_client", return_value=client)
+    return GCSBackend(_gcs_params(**overrides)), client
+
+
+def _invalid_response(status: int):
+    """Build an InvalidResponse as the resumable-media layer raises it on a bad status.
+
+    That layer is what BlobWriter drives directly, unwrapped by the SDK's
+    `_raise_from_invalid_response`, so the backend has to translate it.
+    """
+    import requests
+    from google.cloud.storage.exceptions import InvalidResponse
+
+    response = requests.Response()
+    response.status_code = status
+    return InvalidResponse(
+        response, "Request failed with status code", status, "Expected one of", 200, 201
+    )
+
+
+GCS_CHUNK = 8 * 1024 * 1024
+
+
+# ── client construction ─────────────────────────────────────────────────
+
+
+def test_gcsbackend_client_is_built_from_the_service_account_key(mocker):
+    """No env vars, no ADC: the key from the relation, and its project, explicitly."""
+    from src.common import storage_backend
+    from src.common.storage_backend import GCSBackend
+
+    from_info = mocker.patch.object(storage_backend.storage.Client, "from_service_account_info")
+
+    client = GCSBackend(_gcs_params())._client()
+
+    args, kwargs = from_info.call_args
+    assert args[0]["client_email"] == "backup@proj.iam.gserviceaccount.com"
+    assert kwargs == {"project": "proj"}
+    assert client is from_info.return_value
+
+
+def test_gcsbackend_client_passes_project_none_when_the_key_has_none(mocker):
+    from src.common import storage_backend
+    from src.common.storage_backend import GCSBackend
+
+    from_info = mocker.patch.object(storage_backend.storage.Client, "from_service_account_info")
+
+    GCSBackend(_gcs_params(**{"secret-key": _gcs_key(project_id=None)}))._client()
+
+    _, kwargs = from_info.call_args
+    assert kwargs == {"project": None}
+
+
+def test_gcsbackend_client_translates_an_unparsable_private_key(mocker):
+    """Cryptography rejects a PEM body it cannot parse with a bare ValueError.
+
+    That happens at client construction; it is the only ValueError the backend
+    translates.
+    """
+    from common.exceptions import StorageBackendError
+    from literals import GCS_INVALID_KEY_CODE
+    from src.common import storage_backend
+    from src.common.storage_backend import GCSBackend
+
+    mocker.patch.object(
+        storage_backend.storage.Client,
+        "from_service_account_info",
+        side_effect=ValueError("Could not deserialize key data."),
+    )
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        GCSBackend(_gcs_params())._client()
+    assert excinfo.value.safe_code == GCS_INVALID_KEY_CODE
+    assert "stub" not in str(excinfo.value)
+
+
+def test_gcsbackend_location_names_the_destination_without_credentials(mocker):
+    backend, _ = _gcs_backend(mocker, bucket="data-charms-testing", path="valkey/k8s")
+    assert backend.location == "gs://data-charms-testing/valkey/k8s"
+    assert "stub" not in backend.location
+
+
+# ── ensure_container ────────────────────────────────────────────────────
+
+
+def test_gcsbackend_ensure_container_uses_an_existing_bucket(mocker):
+    backend, client = _gcs_backend(mocker)
+
+    backend.ensure_container()
+
+    client.get_bucket.assert_called_once_with("b")
+    client.create_bucket.assert_not_called()
+    client.list_blobs.assert_not_called()
+
+
+def test_gcsbackend_ensure_container_creates_a_missing_bucket(mocker):
+    from google.api_core.exceptions import NotFound
+
+    backend, client = _gcs_backend(mocker, **{"storage-class": "nearline"})
+    client.get_bucket.side_effect = NotFound("no such bucket")
+
+    backend.ensure_container()
+
+    bucket = client.bucket.return_value
+    assert bucket.storage_class == "NEARLINE"
+    client.create_bucket.assert_called_once_with(bucket, project="proj")
+
+
+def test_gcsbackend_ensure_container_tolerates_a_create_race(mocker):
+    """NotFound then Conflict: someone created it between the get and the create.
+
+    Bucket names are global, so that someone may not be us; if it was not, the
+    first backup reports Forbidden, which is the honest answer.
+    """
+    from google.api_core.exceptions import Conflict, NotFound
+
+    backend, client = _gcs_backend(mocker)
+    client.get_bucket.side_effect = NotFound("no such bucket")
+    client.create_bucket.side_effect = Conflict("exists")
+
+    backend.ensure_container()  # no raise
+
+    client.list_blobs.assert_not_called()
+
+
+def test_gcsbackend_ensure_container_probes_the_prefix_after_a_forbidden_get(mocker):
+    """ObjectAdmin without storage.buckets.get answers the get with 403 even though usable.
+
+    The same 403 also comes from a bucket owned by someone else. The bucket
+    exists either way (GCS answers 404 only for an absent name), so a create
+    could only fail; a one-object list under the prefix is the one request
+    that tells the two apart.
+    """
+    from google.api_core.exceptions import Forbidden
+
+    backend, client = _gcs_backend(mocker)
+    client.get_bucket.side_effect = Forbidden("no buckets.get")
+    client.list_blobs.return_value = iter([])
+
+    backend.ensure_container()  # no raise
+
+    client.create_bucket.assert_not_called()
+    client.list_blobs.assert_called_once_with("b", prefix="valkey/", max_results=1)
+
+
+def test_gcsbackend_ensure_container_surfaces_a_failed_probe(mocker):
+    """A bucket we can neither read nor list is not ours; refuse to store creds."""
+    from google.api_core.exceptions import Forbidden
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.get_bucket.side_effect = Forbidden("no buckets.get")
+    client.list_blobs.side_effect = Forbidden("403 GET https://storage.googleapis.com/b")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.ensure_container()
+    assert excinfo.value.safe_code == "Forbidden"
+    client.create_bucket.assert_not_called()
+
+
+def test_gcsbackend_ensure_container_wraps_other_errors(mocker):
+    from google.api_core.exceptions import Forbidden, NotFound
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.get_bucket.side_effect = NotFound("no such bucket")
+    client.create_bucket.side_effect = Forbidden("403 POST https://storage.googleapis.com/b")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.ensure_container()
+    assert excinfo.value.safe_code == "Forbidden"
+    assert "storage.googleapis.com" not in excinfo.value.safe_code
+
+
+# ── list / head ─────────────────────────────────────────────────────────
+
+
+def test_gcsbackend_list_object_ids_filters_by_prefix_and_strips_it(mocker):
+    from types import SimpleNamespace
+
+    backend, client = _gcs_backend(mocker)
+    client.list_blobs.return_value = [
+        SimpleNamespace(name="valkey/2026-05-13T10:00:00Z"),
+        SimpleNamespace(name="valkey/2026-05-13T10:00:05Z"),
+    ]
+
+    ids = backend.list_object_ids()
+
+    client.list_blobs.assert_called_once_with("b", prefix="valkey/")
+    assert ids == ["2026-05-13T10:00:00Z", "2026-05-13T10:00:05Z"]
+
+
+def test_gcsbackend_list_object_ids_wraps_errors(mocker):
+    from google.api_core.exceptions import Forbidden
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.list_blobs.side_effect = Forbidden("denied")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.list_object_ids()
+    assert excinfo.value.safe_code == "Forbidden"
+
+
+def test_gcsbackend_head_ranges_over_the_first_bytes_only(mocker):
+    backend, client = _gcs_backend(mocker)
+    blob = client.bucket.return_value.blob.return_value
+    blob.download_as_bytes.return_value = b"REDIS0012"
+
+    assert backend.head("2026-05-13T10:00:00Z") == b"REDIS0012"
+
+    client.bucket.return_value.blob.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    blob.download_as_bytes.assert_called_once_with(start=0, end=15)
+
+
+def test_gcsbackend_head_wraps_errors(mocker):
+    from google.api_core.exceptions import NotFound
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.bucket.return_value.blob.return_value.download_as_bytes.side_effect = NotFound("x")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.head("2026-05-13T10:00:00Z")
+    assert excinfo.value.safe_code == "NotFound"
+
+
+# ── upload ──────────────────────────────────────────────────────────────
+
+
+def test_gcsbackend_upload_streams_through_a_blob_writer(mocker):
+    """blob.open("wb") as a context manager, not upload_from_file.
+
+    The resumable uploader calls tell() on its source, and the source is a
+    non-rewindable pipe. No checksum kwarg: the SDK default (md5 on this
+    build) is what GCS verifies.
+    """
+    backend, client = _gcs_backend(mocker)
+    blob = client.bucket.return_value.blob.return_value
+    writer = blob.open.return_value
+    data = b"REDIS0012" + b"x" * (GCS_CHUNK + 1000)
+
+    backend.upload("2026-05-13T10:00:00Z", io.BytesIO(data))
+
+    client.bucket.return_value.blob.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    blob.open.assert_called_once_with(
+        "wb", chunk_size=GCS_CHUNK, ignore_flush=True, if_generation_match=0
+    )
+    assert b"".join(call.args[0] for call in writer.write.call_args_list) == data
+    writer.__exit__.assert_called_once_with(None, None, None)
+
+
+def test_gcsbackend_upload_refuses_to_replace_an_existing_object(mocker):
+    """if_generation_match=0 makes the session-initiate fail on a colliding id.
+
+    The writer path raises the resumable-media InvalidResponse, not an
+    api_core error, so it is mapped to the status's class: 412 ->
+    PreconditionFailed. The block exits on the exception, which is what
+    cancels the session.
+    """
+    from google.cloud.storage.exceptions import InvalidResponse
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    writer = client.bucket.return_value.blob.return_value.open.return_value
+    writer.write.side_effect = _invalid_response(412)
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.upload("2026-05-13T10:00:00Z", io.BytesIO(b"REDIS0012"))
+    assert excinfo.value.safe_code == "PreconditionFailed"
+    assert writer.__exit__.call_args.args[0] is InvalidResponse
+
+
+def test_gcsbackend_upload_lets_a_reader_failure_propagate_through_the_block(mocker):
+    """A producer that dies mid-stream is not an SDK error.
+
+    It propagates untouched to the manager's catch-all, and the block exits
+    on it (terminate), so no truncated object is committed.
+    """
+    backend, client = _gcs_backend(mocker)
+    writer = client.bucket.return_value.blob.return_value.open.return_value
+    reader = mocker.MagicMock()
+    reader.read.side_effect = BrokenPipeError("valkey-cli died")
+
+    with pytest.raises(BrokenPipeError):
+        backend.upload("2026-05-13T10:00:00Z", reader)
+    assert writer.__exit__.call_args.args[0] is BrokenPipeError
+
+
+def _real_blob_writer(mocker, chunk_size):
+    """Build the SDK's own BlobWriter over a fake blob; return (writer, upload, transport)."""
+    from google.cloud.storage.fileio import BlobWriter
+
+    blob = mocker.MagicMock()
+    upload, transport = mocker.MagicMock(), mocker.MagicMock()
+    blob._initiate_resumable_upload.return_value = (upload, transport)
+    writer = BlobWriter(blob, chunk_size=chunk_size, ignore_flush=True, if_generation_match=0)
+    return writer, upload, transport
+
+
+def test_blobwriter_context_manager_cancels_the_session_on_error(mocker):
+    """Pin the SDK semantics that upload() relies on.
+
+    An exception inside the block cancels the session after the chunks
+    already sent, and never transmits the buffered remainder. (An abandoned
+    writer would: io.IOBase.__del__ calls close(), which commits whatever is
+    buffered as the final chunk.)
+    """
+    chunk = 256 * 1024
+    writer, upload, transport = _real_blob_writer(mocker, chunk)
+
+    with pytest.raises(RuntimeError):
+        with writer:
+            writer.write(b"x" * (chunk + 1))  # one full chunk goes out, 1 byte stays
+            raise RuntimeError("producer died")
+
+    assert upload.transmit_next_chunk.call_count == 1
+    transport.delete.assert_called_once_with(upload.upload_url)
+    assert writer.closed
+
+
+def test_blobwriter_context_manager_commits_on_success(mocker):
+    """A clean exit sends the final (short) chunk.
+
+    The precondition rode on the initiate call.
+    """
+    chunk = 256 * 1024
+    writer, upload, transport = _real_blob_writer(mocker, chunk)
+
+    with writer:
+        writer.write(b"REDIS0012")
+
+    assert upload.transmit_next_chunk.call_count == 1
+    transport.delete.assert_not_called()
+    _, kwargs = writer._blob._initiate_resumable_upload.call_args
+    assert kwargs["if_generation_match"] == 0
+    assert kwargs["chunk_size"] == chunk
+
+
+def test_gcsbackend_upload_terminates_a_writer_that_failed_in_close(mocker):
+    """For an RDB under one chunk, the session's only chunk is sent from close().
+
+    That is, inside __exit__ on the success path. A failure there is raised
+    by __exit__ itself, so the with statement does not terminate; the buffer
+    would stay open and io.IOBase.__del__ would re-send the chunk at GC -- a
+    commit after the action reported failure. upload() terminates the writer
+    itself in that case (real BlobWriter, fake blob).
+    """
+    from common.exceptions import StorageBackendError
+
+    chunk = 256 * 1024
+    backend, client = _gcs_backend(mocker)
+    backend._CHUNK = chunk
+    writer, upload, transport = _real_blob_writer(mocker, chunk)
+    client.bucket.return_value.blob.return_value.open.return_value = writer
+    upload.transmit_next_chunk.side_effect = _invalid_response(503)
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.upload("2026-05-13T10:00:00Z", io.BytesIO(b"REDIS0012"))
+
+    assert excinfo.value.safe_code == "ServiceUnavailable"
+    assert writer.closed
+    transport.delete.assert_called_once_with(upload.upload_url)
+    # A later close() -- what io.IOBase.__del__ does at GC -- is now a no-op.
+    writer.close()
+    assert upload.transmit_next_chunk.call_count == 1
+
+
+def test_gcsbackend_upload_keeps_the_original_error_when_terminate_fails(mocker):
+    """Cancelling a failed upload is best-effort.
+
+    The DELETE can fail for the same reason the upload did; the action must
+    still report the upload's code, not the cancel's.
+    """
+    import requests
+
+    from common.exceptions import StorageBackendError
+
+    chunk = 256 * 1024
+    backend, client = _gcs_backend(mocker)
+    backend._CHUNK = chunk
+    writer, upload, transport = _real_blob_writer(mocker, chunk)
+    client.bucket.return_value.blob.return_value.open.return_value = writer
+    upload.transmit_next_chunk.side_effect = _invalid_response(503)
+    transport.delete.side_effect = requests.ConnectionError("unreachable")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.upload("2026-05-13T10:00:00Z", io.BytesIO(b"REDIS0012"))
+
+    assert excinfo.value.safe_code == "ServiceUnavailable"
+    transport.delete.assert_called_once()
+
+
+# ── download / delete ───────────────────────────────────────────────────
+
+
+def test_gcsbackend_download_returns_the_reader_and_its_length(mocker):
+    backend, client = _gcs_backend(mocker)
+    bucket = client.bucket.return_value
+    blob = bucket.get_blob.return_value
+    blob.size = 4096
+    reader = mocker.MagicMock()
+    blob.open.return_value = reader
+
+    obj = backend.download("2026-05-13T10:00:00Z")
+
+    bucket.get_blob.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    blob.open.assert_called_once_with("rb", chunk_size=GCS_CHUNK)
+    assert obj.body is reader
+    assert obj.size == 4096
+
+
+def test_gcsbackend_download_reports_a_missing_object_as_not_found(mocker):
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.bucket.return_value.get_blob.return_value = None
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.download("2026-05-13T10:00:00Z")
+    assert excinfo.value.safe_code == "NotFound"
+
+
+def test_gcsbackend_download_wraps_errors(mocker):
+    from google.api_core.exceptions import Forbidden
+
+    from common.exceptions import StorageBackendError
+
+    backend, client = _gcs_backend(mocker)
+    client.bucket.return_value.get_blob.side_effect = Forbidden("denied")
+
+    with pytest.raises(StorageBackendError) as excinfo:
+        backend.download("2026-05-13T10:00:00Z")
+    assert excinfo.value.safe_code == "Forbidden"
+
+
+def test_gcsbackend_delete_removes_the_backup_id_object(mocker):
+    backend, client = _gcs_backend(mocker)
+
+    backend.delete("2026-05-13T10:00:00Z")
+
+    client.bucket.return_value.blob.assert_called_once_with("valkey/2026-05-13T10:00:00Z")
+    client.bucket.return_value.blob.return_value.delete.assert_called_once_with()
+
+
+def test_gcsbackend_delete_swallows_errors(mocker):
+    from google.api_core.exceptions import NotFound
+
+    backend, client = _gcs_backend(mocker)
+    client.bucket.return_value.blob.return_value.delete.side_effect = NotFound("gone")
+
+    backend.delete("2026-05-13T10:00:00Z")  # no raise
+
+
+# ── dispatch and error codes ────────────────────────────────────────────
+
+
+def test_build_backend_selects_the_gcs_backend(mocker):
+    from common.storage_backend import GCSBackend, build_backend
+
+    assert isinstance(build_backend(_gcs_params(), mocker.MagicMock()), GCSBackend)
+
+
+def test_gcsbackend_safe_code_is_the_class_name_never_the_message(mocker):
+    """str(exc) is "<status> <verb> <url>: <message>" -- never for an action result."""
+    from google.api_core.exceptions import Forbidden
+
+    from src.common.storage_backend import GCSBackend
+
+    exc = Forbidden("403 GET https://storage.googleapis.com/storage/v1/b/secret-bucket")
+    assert GCSBackend._error_code(exc) == "Forbidden"
+
+
+def test_gcsbackend_safe_code_normalises_retry_and_invalid_response(mocker):
+    """RetryError hides its cause behind a generic name.
+
+    InvalidResponse carries only an HTTP status. Both are mapped to the
+    status's api_core class.
+    """
+    from google.api_core.exceptions import RetryError, ServiceUnavailable
+    from google.cloud.storage.exceptions import DataCorruption
+
+    from src.common.storage_backend import GCSBackend
+
+    assert GCSBackend._error_code(RetryError("deadline", ServiceUnavailable("503"))) == (
+        "ServiceUnavailable"
+    )
+    assert GCSBackend._error_code(_invalid_response(412)) == "PreconditionFailed"
+    assert GCSBackend._error_code(_invalid_response(400)) == "BadRequest"
+    assert GCSBackend._error_code(RetryError("deadline", _invalid_response(503))) == (
+        "ServiceUnavailable"
+    )
+    corrupt = DataCorruption(_invalid_response(200).response, "checksum mismatch")
+    assert GCSBackend._error_code(corrupt) == "DataCorruption"
+
+    from google.cloud.storage.exceptions import InvalidResponse
+
+    # A response object without an int status_code: no mapping, class name wins.
+    assert GCSBackend._error_code(InvalidResponse(object(), "no status")) == "InvalidResponse"
+
+
+def test_gcsbackend_wraps_every_sdk_root(mocker):
+    """api_core, google-auth, resumable-media and requests are the roots the SDK can raise.
+
+    That is, past its own retries; each must become a StorageBackendError
+    with a structured code, or a raw exception escapes create_backup's
+    handlers.
+    """
+    import requests
+    from google.api_core.exceptions import RetryError, ServiceUnavailable
+    from google.auth.exceptions import RefreshError
+    from google.cloud.storage.exceptions import DataCorruption
+
+    from common.exceptions import StorageBackendError
+
+    cases = [
+        (requests.ConnectionError("unreachable"), "ConnectionError"),
+        (RefreshError("invalid_grant: Invalid JWT Signature."), "RefreshError"),
+        (RetryError("deadline", ServiceUnavailable("503")), "ServiceUnavailable"),
+        (_invalid_response(412), "PreconditionFailed"),
+        (DataCorruption(_invalid_response(200).response, "checksum mismatch"), "DataCorruption"),
+    ]
+    for err, code in cases:
+        for name in _transport_calls(_gcs_backend(mocker)[0]):
+            backend, client = _gcs_backend(mocker)
+            bucket = client.bucket.return_value
+            client.get_bucket.side_effect = err
+            client.create_bucket.side_effect = err
+            client.list_blobs.side_effect = err
+            bucket.get_blob.side_effect = err
+            bucket.blob.return_value.download_as_bytes.side_effect = err
+            bucket.blob.return_value.open.side_effect = err
+
+            with pytest.raises(StorageBackendError) as excinfo:
+                _transport_calls(backend)[name]()
+            assert excinfo.value.safe_code == code, (name, err)
