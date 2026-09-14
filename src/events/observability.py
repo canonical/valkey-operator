@@ -21,6 +21,7 @@ from literals import (
     METRICS_ENDPOINT_RELATION,
     METRICS_PORT,
     METRICS_RULES_DIR,
+    SNAP_LOGS_SLOT,
     Substrate,
 )
 
@@ -61,6 +62,7 @@ class ObservabilityEvents(ops.Object):
                 metrics_endpoints=[{"path": "/metrics", "port": METRICS_PORT}],
                 metrics_rules_dir=METRICS_RULES_DIR,
                 logs_rules_dir=LOGS_RULES_DIR,
+                log_slots=[SNAP_LOGS_SLOT],
                 dashboard_dirs=[DASHBOARDS_DIR],
                 refresh_events=[self.charm.on.update_status, self.charm.on.config_changed],
             )
