@@ -6,6 +6,7 @@
 
 import logging
 import re
+import shutil
 import subprocess
 
 import jubilant
@@ -98,7 +99,15 @@ def assert_redis_up_and_single_primary(metrics_by_unit: dict[str, str]) -> None:
 
 def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
     """Configure VM units to resolve Kubernetes cluster.local domain names."""
-    cmd = "kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null"
+    # The DNS pod's ClusterIP is not routable from the VM units (only routes through
+    # kube-proxy on the cluster's own nodes), so resolve the pod IP directly instead.
+    # microk8s's CoreDNS deployment keeps the legacy "kube-dns" label; Canonical K8s (the
+    # `k8s` snap) labels it "coredns".
+    dns_label = "k8s-app=kube-dns" if shutil.which("microk8s") else "k8s-app=coredns"
+    cmd = (
+        f"kubectl get pods -n kube-system -l {dns_label} "
+        "-o jsonpath='{.items[0].status.podIP}' 2>/dev/null"
+    )
     try:
         dns_ip = subprocess.check_output(cmd, shell=True).decode().strip().strip("'\"")
     except Exception:
