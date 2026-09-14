@@ -307,10 +307,8 @@ def test_k8s_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju) -> None:
 
     # 6. Verify Grafana registered the Valkey dashboard
     logger.info("Querying Grafana Search API for Valkey dashboard")
-    pw_res = json.loads(
-        juju.cli("run", f"{GRAFANA_APP}/0", "get-admin-password", "--format", "json")
-    )
-    admin_password = pw_res[f"{GRAFANA_APP}/0"]["results"]["admin-password"]
+    action = juju.run(f"{GRAFANA_APP}/0", "get-admin-password")
+    admin_password = action.results["admin-password"]
     grafana_cmd = (
         f"curl -sf -u admin:{admin_password} 'http://{grafana_ip}:3000/api/search?query=valkey'"
     )

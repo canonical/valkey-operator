@@ -4,7 +4,6 @@
 
 """Shared helpers and fixtures for observability integration tests."""
 
-import json
 import logging
 import re
 import subprocess
@@ -48,12 +47,17 @@ def probe_port(juju: jubilant.Juju, unit_name: str, host: str, port: int = METRI
 
 
 def get_relation_data(juju: jubilant.Juju, unit_name: str, endpoint: str) -> dict:
-    """Retrieve relation data dictionary for a specific endpoint from juju show-unit."""
-    raw = juju.cli("show-unit", unit_name, "--format", "json")
-    unit_data = json.loads(raw)[unit_name]
-    for rel in unit_data.get("relation-info", []):
-        if rel.get("endpoint") == endpoint:
-            return rel
+    """Retrieve relation data dictionary for a specific endpoint from juju show_unit."""
+    unit_info = juju.show_unit(unit_name)
+    for rel in unit_info.relation_info:
+        if rel.endpoint == endpoint:
+            return {
+                "relation-id": rel.relation_id,
+                "endpoint": rel.endpoint,
+                "related-endpoint": rel.related_endpoint,
+                "application-data": rel.app_data,
+                "related-units": {k: {"data": v.data} for k, v in rel.related_units.items()},
+            }
     return {}
 
 
@@ -92,68 +96,20 @@ def assert_redis_up_and_single_primary(metrics_by_unit: dict[str, str]) -> None:
     )
 
 
-def get_or_create_k8s_model(juju: jubilant.Juju, model_name: str = "cos-lite") -> jubilant.Juju:
-    """Get or create a Kubernetes model on the active controller for COS Lite deployments."""
-    raw_models = juju.cli("models", "--format", "json", include_model=False)
-    models_list = json.loads(raw_models).get("models", [])
-
-    for m in models_list:
-        if m.get("name") in [model_name, f"admin/{model_name}"]:
-            j_k8s = jubilant.Juju(model=model_name)
-            j_k8s.wait_timeout = 1000
-            return j_k8s
-
-    controller_name = None
-    try:
-        whoami = json.loads(juju.cli("whoami", "--format", "json", include_model=False))
-        controller_name = whoami.get("controller")
-    except Exception:
-        show_ctrl = json.loads(
-            juju.cli("show-controller", "--format", "json", include_model=False)
-        )
-        controller_name = next(iter(show_ctrl.keys()), None)
-
-    clouds_cmd = ["clouds", "--format", "json"]
-    if controller_name:
-        clouds_cmd.extend(["-c", controller_name])
-
-    raw_clouds = juju.cli(*clouds_cmd, include_model=False)
-    clouds_dict = json.loads(raw_clouds)
-    k8s_cloud_name = None
-    for c_name, c_info in clouds_dict.items():
-        if c_info.get("type") == "k8s":
-            k8s_cloud_name = c_name
-            break
-
-    if not k8s_cloud_name:
-        add_k8s_args = ["add-k8s", "k8s-cloud"]
-        if controller_name:
-            add_k8s_args.extend(["-c", controller_name])
-        try:
-            juju.cli(*add_k8s_args, include_model=False)
-            k8s_cloud_name = "k8s-cloud"
-        except Exception:
-            k8s_cloud_name = "k8s"
-
-    juju.cli("add-model", model_name, k8s_cloud_name, include_model=False)
-    j_k8s = jubilant.Juju(model=model_name)
-    j_k8s.wait_timeout = 1000
-    return j_k8s
-
-
 def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
     """Configure VM units to resolve Kubernetes cluster.local domain names."""
-    try:
-        coredns_ip = (
-            subprocess.check_output(
-                "kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
-                shell=True,
-            )
-            .decode()
-            .strip()
-        )
-    except Exception:
-        coredns_ip = "10.152.183.63"
+    coredns_ip = ""
+    for cmd in [
+        "kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
+        "k8s kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
+        "microk8s kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
+    ]:
+        try:
+            coredns_ip = subprocess.check_output(cmd, shell=True).decode().strip().strip("'\"")
+            if coredns_ip:
+                break
+        except Exception:
+            pass
 
     if not coredns_ip:
         coredns_ip = "10.152.183.63"

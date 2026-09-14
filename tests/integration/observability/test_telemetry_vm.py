@@ -35,7 +35,6 @@ from tests.integration.observability.helpers import (
     PROMETHEUS_APP,
     assert_redis_up_and_single_primary,
     ensure_k8s_dns_resolution,
-    get_or_create_k8s_model,
     get_subordinate_relation_data,
     is_integrated,
     probe_port,
@@ -124,29 +123,39 @@ def test_metrics_exporter_with_tls(ensure_valkey, juju: jubilant.Juju) -> None:
     logger.info("Confirmed exporter TLS integration operational across all %s units", NUM_UNITS)
 
 
-def test_vm_cos_agent_integration(ensure_valkey, juju: jubilant.Juju) -> None:
-    """Deploy subordinate OpenTelemetry Collector and verify cos-agent telemetry databag."""
-    logger.info("Deploying subordinate OpenTelemetry Collector for VM COS testing")
+def _ensure_vm_otelcol(juju: jubilant.Juju) -> bool:
+    """Deploy subordinate OpenTelemetry Collector and integrate with Valkey if not present."""
     status = juju.status()
-
+    needs_wait = False
     if OTELCOL_VM_APP not in status.apps:
+        logger.info("Deploying %s (%s)", OTELCOL_VM_APP, "opentelemetry-collector")
         juju.deploy(
             "opentelemetry-collector",
             app=OTELCOL_VM_APP,
             channel=COS_CHANNEL,
         )
+        needs_wait = True
 
-    needs_wait = False
     if not is_integrated(juju, APP_NAME, COS_AGENT_RELATION, OTELCOL_VM_APP):
         logger.info("Integrating %s:%s with %s", APP_NAME, COS_AGENT_RELATION, OTELCOL_VM_APP)
         juju.integrate(f"{APP_NAME}:{COS_AGENT_RELATION}", f"{OTELCOL_VM_APP}:cos-agent")
         needs_wait = True
 
+    return needs_wait
+
+
+def test_vm_cos_agent_integration(ensure_valkey, juju: jubilant.Juju) -> None:
+    """Deploy subordinate OpenTelemetry Collector and verify cos-agent telemetry databag."""
+    logger.info("Deploying subordinate OpenTelemetry Collector for VM COS testing")
+    needs_wait = _ensure_vm_otelcol(juju)
+
     if needs_wait:
         logger.info("Waiting for applications to settle after cos-agent integration")
         juju.wait(
             lambda s: (
-                s.apps[APP_NAME].app_status.current == "active"
+                APP_NAME in s.apps
+                and OTELCOL_VM_APP in s.apps
+                and s.apps[APP_NAME].app_status.current == "active"
                 and are_agents_idle(s, APP_NAME, OTELCOL_VM_APP, idle_period=30)
             ),
             timeout=DEPLOY_TIMEOUT_S,
@@ -212,9 +221,10 @@ def test_vm_cos_agent_integration(ensure_valkey, juju: jubilant.Juju) -> None:
     logger.info("VM cos-agent integration test completed successfully")
 
 
-def _setup_cos_lite_k8s(juju_k8s: jubilant.Juju, k8s_model_name: str) -> None:
+def _setup_cos_lite_k8s(juju_k8s: jubilant.Juju, k8s_model_name: str) -> bool:
     """Deploy COS Lite applications and create cross-model offers in K8s model."""
     status_k8s = juju_k8s.status()
+    needs_wait = False
     for app, charm in [
         (PROMETHEUS_APP, "prometheus-k8s"),
         (GRAFANA_APP, "grafana-k8s"),
@@ -223,45 +233,47 @@ def _setup_cos_lite_k8s(juju_k8s: jubilant.Juju, k8s_model_name: str) -> None:
         if app not in status_k8s.apps:
             logger.info("Deploying %s in K8s model %s", app, k8s_model_name)
             juju_k8s.deploy(charm, app=app, channel=COS_CHANNEL, trust=True)
+            needs_wait = True
 
     if not is_integrated(juju_k8s, PROMETHEUS_APP, "grafana-source", GRAFANA_APP):
         juju_k8s.integrate(f"{PROMETHEUS_APP}:grafana-source", f"{GRAFANA_APP}:grafana-source")
+        needs_wait = True
     if not is_integrated(juju_k8s, LOKI_APP, "grafana-source", GRAFANA_APP):
         juju_k8s.integrate(f"{LOKI_APP}:grafana-source", f"{GRAFANA_APP}:grafana-source")
+        needs_wait = True
 
     existing_offers = juju_k8s.status().offers
     if "prometheus-remote-write" not in existing_offers:
-        juju_k8s.cli(
-            "offer",
-            f"{k8s_model_name}.{PROMETHEUS_APP}:receive-remote-write",
-            "prometheus-remote-write",
-            include_model=False,
+        juju_k8s.offer(
+            app=PROMETHEUS_APP,
+            endpoint="receive-remote-write",
+            name="prometheus-remote-write",
         )
     if "loki-logging" not in existing_offers:
-        juju_k8s.cli(
-            "offer",
-            f"{k8s_model_name}.{LOKI_APP}:logging",
-            "loki-logging",
-            include_model=False,
+        juju_k8s.offer(
+            app=LOKI_APP,
+            endpoint="logging",
+            name="loki-logging",
         )
     if "grafana-dashboard" not in existing_offers:
-        juju_k8s.cli(
-            "offer",
-            f"{k8s_model_name}.{GRAFANA_APP}:grafana-dashboard",
-            "grafana-dashboard",
-            include_model=False,
+        juju_k8s.offer(
+            app=GRAFANA_APP,
+            endpoint="grafana-dashboard",
+            name="grafana-dashboard",
         )
+    return needs_wait
 
 
 def _connect_vm_to_cos_lite(juju: jubilant.Juju, k8s_model_name: str) -> bool:
     """Consume offers and connect otelcol on VM to COS Lite backends."""
+    needs_wait = _ensure_vm_otelcol(juju)
+
     status_vm = juju.status()
     for offer_name in ["prometheus-remote-write", "loki-logging", "grafana-dashboard"]:
         if offer_name not in status_vm.apps:
             logger.info("Consuming offer %s.%s", k8s_model_name, offer_name)
-            juju.cli("consume", f"{k8s_model_name}.{offer_name}")
+            juju.consume(f"{k8s_model_name}.{offer_name}")
 
-    needs_wait = False
     if not is_integrated(juju, OTELCOL_VM_APP, "send-remote-write", "prometheus-remote-write"):
         juju.integrate(f"{OTELCOL_VM_APP}:send-remote-write", "prometheus-remote-write")
         needs_wait = True
@@ -320,10 +332,8 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
 
     # Verify Grafana Dashboard registered
     logger.info("Querying Grafana Search API for Valkey dashboard")
-    pw_res = json.loads(
-        juju_k8s.cli("run", f"{GRAFANA_APP}/0", "get-admin-password", "--format", "json")
-    )
-    admin_password = pw_res[f"{GRAFANA_APP}/0"]["results"]["admin-password"]
+    action = juju_k8s.run(f"{GRAFANA_APP}/0", "get-admin-password")
+    admin_password = action.results["admin-password"]
     grafana_cmd = (
         f"curl -sf -u admin:{admin_password} 'http://{grafana_ip}:3000/api/search?query=valkey'"
     )
@@ -334,18 +344,19 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
     logger.info("Confirmed Grafana dashboard registered and accessible via VM otelcol")
 
 
-def test_vm_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju) -> None:
+def test_vm_cos_lite_full_stack(
+    ensure_valkey, juju: jubilant.Juju, juju_k8s_model: jubilant.Juju
+) -> None:
     """Deploy COS Lite applications in a Kubernetes model and test live telemetry from VM."""
     logger.info("Setting up Kubernetes model for COS Lite")
-    juju_k8s = get_or_create_k8s_model(juju, model_name="cos-lite")
-    k8s_model_name = juju_k8s.model.split(":")[-1]
+    k8s_model_name = juju_k8s_model.model.split(":")[-1]
 
-    _setup_cos_lite_k8s(juju_k8s, k8s_model_name)
-    needs_wait = _connect_vm_to_cos_lite(juju, k8s_model_name)
+    k8s_needs_wait = _setup_cos_lite_k8s(juju_k8s_model, k8s_model_name)
+    vm_needs_wait = _connect_vm_to_cos_lite(juju, k8s_model_name)
 
-    if needs_wait:
+    if k8s_needs_wait or vm_needs_wait:
         logger.info("Waiting for COS Lite and otelcol to become active")
-        juju_k8s.wait(
+        juju_k8s_model.wait(
             lambda s: are_apps_active_and_agents_idle(
                 s, PROMETHEUS_APP, GRAFANA_APP, LOKI_APP, idle_period=30
             ),
@@ -355,7 +366,9 @@ def test_vm_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju) -> None:
         )
         juju.wait(
             lambda s: (
-                s.apps[APP_NAME].app_status.current == "active"
+                APP_NAME in s.apps
+                and OTELCOL_VM_APP in s.apps
+                and s.apps[APP_NAME].app_status.current == "active"
                 and s.apps[OTELCOL_VM_APP].app_status.current == "active"
                 and are_agents_idle(s, APP_NAME, OTELCOL_VM_APP, idle_period=30)
             ),
@@ -363,5 +376,6 @@ def test_vm_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju) -> None:
             delay=10,
             successes=3,
         )
+        ensure_k8s_dns_resolution(juju, APP_NAME)
 
-    _verify_telemetry_in_cos_lite(juju, juju_k8s)
+    _verify_telemetry_in_cos_lite(juju, juju_k8s_model)
