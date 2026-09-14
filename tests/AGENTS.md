@@ -8,7 +8,7 @@ file so that Claude Code and Gemini CLI pick it up too.)
 - Prerequisites: a bootstrapped Juju controller (Canonical K8s for k8s, lxd for vm), a built charm at
   the repo root, and the built requirer-charm
   (`charmcraft pack` inside `tests/integration/clients/requirer-charm/` →
-  `requirer-charm_ubuntu@24.04-<arch>.charm`). The requirer-charm ("glide-runner") drives
+  `requirer-charm_ubuntu@26.04-<arch>.charm`). The requirer-charm ("glide-runner") drives
   continuous writes with `valkey-glide` to validate HA scenarios.
 - The integration env's `commands_pre` runs `sudo apt install wget`, downloads a Valkey tarball
   from download.valkey.io, and installs `valkey-cli` into `/usr/local/bin` — all before any
