@@ -98,30 +98,25 @@ def assert_redis_up_and_single_primary(metrics_by_unit: dict[str, str]) -> None:
 
 def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
     """Configure VM units to resolve Kubernetes cluster.local domain names."""
-    coredns_ip = ""
-    for cmd in [
-        "kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
-        "k8s kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
-        "microk8s kubectl get svc -n kube-system coredns -o jsonpath='{.spec.clusterIP}' 2>/dev/null",
-    ]:
-        try:
-            coredns_ip = subprocess.check_output(cmd, shell=True).decode().strip().strip("'\"")
-            if coredns_ip:
-                break
-        except Exception:
-            pass
-
-    if not coredns_ip:
-        coredns_ip = "10.152.183.63"
+    cmd = "kubectl get svc -n kube-system kube-dns -o jsonpath='{.spec.clusterIP}' 2>/dev/null"
+    try:
+        dns_ip = subprocess.check_output(cmd, shell=True).decode().strip().strip("'\"")
+    except Exception:
+        dns_ip = ""
+    dns_ip = dns_ip or "10.152.183.10"
+    logger.info("Configuring K8s DNS on VM units using server: %s", dns_ip)
 
     status = juju.status()
     for unit_name in status.apps[app_name].units:
         try:
             juju.ssh(
                 unit_name,
-                f"sudo resolvectl dns eth0 {coredns_ip} && "
+                f"sudo resolvectl dns eth0 {dns_ip} && "
                 f"sudo resolvectl domain eth0 ~cluster.local && "
-                f"sudo systemctl restart snap.opentelemetry-collector.opentelemetry-collector 2>/dev/null || true",
+                f"sudo resolvectl flush-caches && "
+                f"(sudo snap restart opentelemetry-collector 2>/dev/null || "
+                f"sudo systemctl restart snap.opentelemetry-collector.opentelemetry-collector "
+                f"2>/dev/null || true)",
             )
         except Exception as e:
             logger.warning("Could not set DNS on %s: %s", unit_name, e)

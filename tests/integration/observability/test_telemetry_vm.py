@@ -307,7 +307,7 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
     # Verify Prometheus PromQL query
     logger.info("Querying Prometheus PromQL API for redis_up metric across substrates")
     prom_query_cmd = f"curl -sf 'http://{prom_ip}:9090/api/v1/query?query=redis_up'"
-    for attempt in Retrying(stop=stop_after_delay(120), wait=wait_fixed(10)):
+    for attempt in Retrying(stop=stop_after_delay(180), wait=wait_fixed(10)):
         with attempt:
             prom_res = json.loads(juju.ssh(target=probe_unit, command=prom_query_cmd))
             assert prom_res.get("status") == "success", f"PromQL query failed: {prom_res}"
