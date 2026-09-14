@@ -15,6 +15,7 @@ from literals import (
     CLIENT_TLS_RELATION_NAME,
     COS_AGENT_RELATION,
     METRICS_PORT,
+    SNAP_LOGS_SLOT,
     Substrate,
 )
 from tests.integration.helpers import (
@@ -214,6 +215,13 @@ def test_vm_cos_agent_integration(ensure_valkey, juju: jubilant.Juju) -> None:
     )
     logger.info("Confirmed log alert rules delivered via cos-agent")
 
+    # 5. Verify log slots
+    log_slots = config.get("log_slots", [])
+    assert SNAP_LOGS_SLOT in log_slots, (
+        f"Snap log slot {SNAP_LOGS_SLOT} not found in cos-agent data: {log_slots}"
+    )
+    logger.info("Confirmed %s log slot delivered via cos-agent", SNAP_LOGS_SLOT)
+
     for unit_name in juju.status().apps[APP_NAME].units:
         output = read_metrics(juju, unit_name)
         assert "redis_up" in output
@@ -293,6 +301,7 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
     status_k8s = juju_k8s.status()
     prom_ip = status_k8s.apps[PROMETHEUS_APP].units[f"{PROMETHEUS_APP}/0"].address
     grafana_ip = status_k8s.apps[GRAFANA_APP].units[f"{GRAFANA_APP}/0"].address
+    loki_ip = status_k8s.apps[LOKI_APP].units[f"{LOKI_APP}/0"].address
     probe_unit = list(juju.status().apps[APP_NAME].units.keys())[0]
 
     # Verify Prometheus PromQL query
@@ -343,20 +352,43 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
     )
     logger.info("Confirmed Grafana dashboard registered and accessible via VM otelcol")
 
+    # Verify Loki received logs
+    logger.info("Querying Loki LogQL API for logs from VM")
+    loki_cmd = f"curl -sf 'http://{loki_ip}:3100/loki/api/v1/query?query=%7Bjob%3D~%22.%2B%22%7D'"
+    for attempt in Retrying(stop=stop_after_delay(180), wait=wait_fixed(10)):
+        with attempt:
+            loki_res = json.loads(juju.ssh(target=probe_unit, command=loki_cmd))
+            assert loki_res.get("status") == "success", f"Loki query failed: {loki_res}"
+            assert len(loki_res["data"]["result"]) > 0, "No log streams found in Loki"
+    logger.info("Confirmed logs ingested into Loki from VM otelcol")
+
 
 def test_vm_cos_lite_full_stack(
-    ensure_valkey, juju: jubilant.Juju, juju_k8s_model: jubilant.Juju
+    ensure_valkey,
+    juju: jubilant.Juju,
+    k8s_cloud: str,
+    lxd_controller: str,
+    arch: str,
 ) -> None:
     """Deploy COS Lite applications in a Kubernetes model and test live telemetry from VM."""
     logger.info("Setting up Kubernetes model for COS Lite")
-    k8s_model_name = juju_k8s_model.model.split(":")[-1]
+    k8s_model_name = "cos-lite-k8s"
+    model_ref = f"{lxd_controller}:{k8s_model_name}" if lxd_controller else k8s_model_name
+    juju_k8s = jubilant.Juju(model=model_ref)
+    juju_k8s.wait_timeout = 1000
+    try:
+        juju_k8s.add_model(k8s_model_name, cloud=k8s_cloud, controller=lxd_controller or None)
+        juju_k8s.cli("set-model-constraints", f"arch={arch}")
+    except jubilant.CLIError as e:
+        if "already exists" not in str(e).lower():
+            raise
 
-    k8s_needs_wait = _setup_cos_lite_k8s(juju_k8s_model, k8s_model_name)
+    k8s_needs_wait = _setup_cos_lite_k8s(juju_k8s, k8s_model_name)
     vm_needs_wait = _connect_vm_to_cos_lite(juju, k8s_model_name)
 
     if k8s_needs_wait or vm_needs_wait:
         logger.info("Waiting for COS Lite and otelcol to become active")
-        juju_k8s_model.wait(
+        juju_k8s.wait(
             lambda s: are_apps_active_and_agents_idle(
                 s, PROMETHEUS_APP, GRAFANA_APP, LOKI_APP, idle_period=30
             ),
@@ -378,4 +410,4 @@ def test_vm_cos_lite_full_stack(
         )
         ensure_k8s_dns_resolution(juju, APP_NAME)
 
-    _verify_telemetry_in_cos_lite(juju, juju_k8s_model)
+    _verify_telemetry_in_cos_lite(juju, juju_k8s)

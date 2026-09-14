@@ -19,6 +19,7 @@ from literals import (
     METRICS_PORT,
     METRICS_RULES_DIR,
     PEER_RELATION,
+    SNAP_LOGS_SLOT,
 )
 from src.charm import ValkeyCharm
 
@@ -88,6 +89,7 @@ def test_cos_agent_configuration_vm(vm_environment):
         assert cos_agent._metrics_rules == METRICS_RULES_DIR
         assert cos_agent._logs_rules == LOGS_RULES_DIR
         assert cos_agent._dashboard_dirs == [DASHBOARDS_DIR]
+        assert cos_agent._log_slots == [SNAP_LOGS_SLOT]
 
 
 def test_cos_agent_relation_data_vm(vm_environment):
@@ -115,6 +117,7 @@ def test_cos_agent_relation_data_vm(vm_environment):
     assert "dashboards" in config
     assert "metrics_alert_rules" in config
     assert "log_alert_rules" in config
+    assert config.get("log_slots") == [SNAP_LOGS_SLOT]
     # Ensure localhost:9121 is in the scrape target
     scrape_jobs = config["metrics_scrape_jobs"]
     assert any(
