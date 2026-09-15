@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Set up environment
         run: |
           # snapd intermittently cannot reach the store on a fresh runner
@@ -138,7 +138,7 @@ jobs:
           sudo rm -f /etc/cni/net.d/87-podman-bridge.conflist
       - name: Checkout
         timeout-minutes: 3
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Set up environment
         # leaves room for the retry budget below on top of the ~3 min this step takes
         timeout-minutes: 8
