@@ -119,6 +119,12 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
             channel=COS_CHANNEL,
             trust=True,
         )
+        juju.wait(
+            lambda s: are_apps_active_and_agents_idle(s, OTELCOL_K8S_APP, idle_period=30),
+            timeout=DEPLOY_TIMEOUT_S,
+            delay=10,
+            successes=3,
+        )
 
     needs_wait = False
     if not is_integrated(juju, APP_NAME, METRICS_ENDPOINT_RELATION, OTELCOL_K8S_APP):
