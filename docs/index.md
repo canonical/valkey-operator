@@ -23,7 +23,7 @@ integration interfaces, and lifecycle automation.
 |                                                                                                        |                                                                                               |
 |--------------------------------------------------------------------------------------------------------| --------------------------------------------------------------------------------------------- |
 | [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to Valkey for new users </br>     | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
-<!--| [Reference](/reference/index) </br> Technical information - specifications, APIs, architecture  | [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics |-->
+<!--| [Reference](/reference/index) </br> Technical information - specifications, APIs, architecture-->  | [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics |
 
 ## How this documentation is organised
 
@@ -65,5 +65,6 @@ for more information.
 Home <self>
 Tutorial <tutorial>
 /how-to/index
+/explanation/index
 Contact <reference/contact>
 ```
