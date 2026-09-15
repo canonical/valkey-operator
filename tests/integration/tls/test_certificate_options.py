@@ -3,11 +3,13 @@
 # See LICENSE file for licensing details.
 import logging
 import os
+import platform
 import re
 import subprocess
 from pathlib import Path
 
 import jubilant
+import pytest
 
 from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
@@ -34,6 +36,11 @@ NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 VAULT_NAME = "vault"
+
+pytestmark = pytest.mark.skipif(
+    platform.machine() in {"aarch64", "arm64"},
+    reason="Vault charm 1.18 does not support ARM64",
+)
 
 
 def test_build_and_deploy(
