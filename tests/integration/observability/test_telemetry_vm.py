@@ -32,6 +32,7 @@ from tests.integration.observability.helpers import (
     GRAFANA_APP,
     LOKI_APP,
     NUM_UNITS,
+    OTELCOL_CHANNEL,
     OTELCOL_VM_APP,
     PROMETHEUS_APP,
     assert_redis_up_and_single_primary,
@@ -133,7 +134,7 @@ def _ensure_vm_otelcol(juju: jubilant.Juju) -> bool:
         juju.deploy(
             "opentelemetry-collector",
             app=OTELCOL_VM_APP,
-            channel=COS_CHANNEL,
+            channel=OTELCOL_CHANNEL,
         )
         needs_wait = True
 

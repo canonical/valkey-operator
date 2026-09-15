@@ -17,9 +17,10 @@ from tests.integration.helpers import APP_NAME
 logger = logging.getLogger(__name__)
 
 NUM_UNITS = 3
-COS_CHANNEL = "0.130/stable"
+COS_CHANNEL = "2/stable"
 OTELCOL_K8S_APP = "otelcol-k8s"
 OTELCOL_VM_APP = "otelcol"
+OTELCOL_CHANNEL = "0.130/stable"
 PROMETHEUS_APP = "prometheus"
 GRAFANA_APP = "grafana"
 LOKI_APP = "loki"

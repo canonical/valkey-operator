@@ -33,6 +33,7 @@ from tests.integration.observability.helpers import (
     GRAFANA_APP,
     LOKI_APP,
     NUM_UNITS,
+    OTELCOL_CHANNEL,
     OTELCOL_K8S_APP,
     PROMETHEUS_APP,
     assert_redis_up_and_single_primary,
@@ -116,7 +117,7 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
         juju.deploy(
             "opentelemetry-collector-k8s",
             app=OTELCOL_K8S_APP,
-            channel=COS_CHANNEL,
+            channel=OTELCOL_CHANNEL,
             trust=True,
         )
         juju.wait(
