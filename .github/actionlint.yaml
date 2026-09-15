@@ -1,0 +1,11 @@
+# Copyright 2025 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+# actionlint's bundled runner-label list has no `ubuntu-26.04` yet — those GitHub-hosted runners
+# are still in public preview — so every `runs-on: ubuntu-26.04` trips its runner-label check.
+# Declaring them here is actionlint's documented escape hatch. Drop this file once actionlint
+# ships the labels.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - ubuntu-26.04-arm

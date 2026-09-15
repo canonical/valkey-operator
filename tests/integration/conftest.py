@@ -25,7 +25,7 @@ def glide_runner_charm(arch: str) -> str:
     # Return str instead of pathlib.Path since python-libjuju's model.deploy(), juju deploy, and
     # juju bundle files expect local charms to begin with `./` or `/` to distinguish them from
     # Charmhub charms.
-    return f"./tests/integration/clients/requirer-charm/requirer-charm_ubuntu@24.04-{arch}.charm"
+    return f"./tests/integration/clients/requirer-charm/requirer-charm_ubuntu@26.04-{arch}.charm"
 
 
 @pytest.fixture(scope="function")
@@ -65,7 +65,7 @@ def charm(arch: str) -> str:
     # Return str instead of pathlib.Path since python-libjuju's model.deploy(), juju deploy, and
     # juju bundle files expect local charms to begin with `./` or `/` to distinguish them from
     # Charmhub charms.
-    return f"./valkey_ubuntu@24.04-{arch}.charm"
+    return f"./valkey_ubuntu@26.04-{arch}.charm"
 
 
 @pytest.fixture(scope="module")

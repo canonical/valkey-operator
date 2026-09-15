@@ -347,7 +347,7 @@ class ValkeyVmWorkload(WorkloadBase):
         MemTotal. lxcfs virtualizes MemTotal to the container limit inside an
         LXD system container, and it reflects the guest's RAM in an LXD VM,
         MAAS, or cloud VM. Returns 0 if nothing is readable. Cgroup v1 is not
-        supported (Ubuntu noble is cgroup v2 only).
+        supported, as Ubuntu 26.04 is cgroup v2 only.
         """
         return (
             self._read_cgroup_limit("sys/fs/cgroup/memory.max")
