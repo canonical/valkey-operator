@@ -59,7 +59,7 @@ def test_build_and_deploy(
     juju.deploy(
         "vault-k8s" if substrate == Substrate.K8S else "vault",
         app=VAULT_NAME,
-        channel="2.0/stable",
+        channel="2.0/edge",
         config={
             "pki_ca_common_name": "mydomain.com",
             "pki_allow_any_name": False,
