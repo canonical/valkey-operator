@@ -42,7 +42,10 @@ def test_build_and_deploy(
     """Deploy the charm under test and a TLS provider."""
     logger.info("Installing vault cli client")
     subprocess.run(
-        ["sudo", "snap", "install", "vault"], check=True, text=True, capture_output=True
+        ["sudo", "snap", "install", "vault", "--channel=2.0/stable"],
+        check=True,
+        text=True,
+        capture_output=True,
     )
 
     juju.deploy(
@@ -56,7 +59,7 @@ def test_build_and_deploy(
     juju.deploy(
         "vault-k8s" if substrate == Substrate.K8S else "vault",
         app=VAULT_NAME,
-        channel="1.18/edge",
+        channel="2.0/edge",
         config={
             "pki_ca_common_name": "mydomain.com",
             "pki_allow_any_name": False,
