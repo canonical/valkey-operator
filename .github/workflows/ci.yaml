@@ -118,8 +118,6 @@ jobs:
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:
       path-to-charm-directory: ${{ matrix.path }}
-      # TODO: re-enable cache once charmcraftcache supports 26.04
-      cache: false
 
   integration-test:
     name: Integration test
