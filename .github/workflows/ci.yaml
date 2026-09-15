@@ -21,17 +21,48 @@ on:
         value: ${{ jobs.build.outputs.artifact-prefix }}
 
 jobs:
+  # Inlined from canonical/data-platform-workflows lint.yaml: the reusable workflow hardcodes
+  # `runs-on: ubuntu-latest` (24.04, Python 3.12), which cannot satisfy this project's `^3.14`.
+  # Upstream removed the workflow in v46.0.0 and now tells callers to run `tox run -e lint`
+  # from their own job anyway.
+  lint-workflows:
+    name: Lint .github/workflows/
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install actionlint
+        id: install
+        run: |
+          curl -O https://raw.githubusercontent.com/rhysd/actionlint/main/.github/actionlint-matcher.json
+          echo "::add-matcher::actionlint-matcher.json"
+          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: Run actionlint
+        run: |
+          '${{ steps.install.outputs.executable }}' -color
+
   lint:
     name: Lint
-    uses: canonical/data-platform-workflows/.github/workflows/lint.yaml@v40.0.2
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install tox & poetry
+        run: |
+          pipx install tox
+          pipx install poetry
+      - name: Run linters
+        run: tox run -e lint
 
   unit-test:
     name: Unit test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Install tox & poetry
         run: |
           pipx install tox
@@ -43,11 +74,11 @@ jobs:
 
   static:
     name: Static type check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Install tox & poetry
         run: |
           pipx install tox
@@ -57,7 +88,7 @@ jobs:
 
   lib-check:
     name: Check libraries
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Checkout

@@ -48,7 +48,7 @@ PERMISSION_DENIED_CODES = ("NOPERM", "PermissionDenied")
 @pytest.fixture
 def requirer_charm(arch: str) -> str:
     """Path to the requirer charm file to use for testing."""
-    return f"./tests/integration/clients/requirer-charm/requirer-charm_ubuntu@24.04-{arch}.charm"
+    return f"./tests/integration/clients/requirer-charm/requirer-charm_ubuntu@26.04-{arch}.charm"
 
 
 def test_build_and_deploy(

@@ -321,7 +321,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         """Pod's cgroup v2 memory limit read from inside the Valkey container.
 
         Falls back to /proc/meminfo MemTotal when the cgroup limit is unset
-        ("max"). Returns 0 if neither is readable. Cgroup v1 is not supported
-        (Ubuntu noble — the only supported substrate — is cgroup v2 only).
+        ("max"). Returns 0 if neither is readable. Cgroup v1 is not supported,
+        as Ubuntu 26.04 is cgroup v2 only.
         """
         return self._read_cgroup_limit("sys/fs/cgroup/memory.max") or self._read_meminfo_total()
