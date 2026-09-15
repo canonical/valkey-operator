@@ -3,13 +3,11 @@
 # See LICENSE file for licensing details.
 import logging
 import os
-import platform
 import re
 import subprocess
 from pathlib import Path
 
 import jubilant
-import pytest
 
 from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
@@ -37,11 +35,6 @@ TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 VAULT_NAME = "vault"
 
-pytestmark = pytest.mark.skipif(
-    platform.machine() in {"aarch64", "arm64"},
-    reason="Vault charm 1.18 does not support ARM64",
-)
-
 
 def test_build_and_deploy(
     charm: str, juju: jubilant.Juju, substrate: Substrate, glide_runner_charm
@@ -49,7 +42,10 @@ def test_build_and_deploy(
     """Deploy the charm under test and a TLS provider."""
     logger.info("Installing vault cli client")
     subprocess.run(
-        ["sudo", "snap", "install", "vault"], check=True, text=True, capture_output=True
+        ["sudo", "snap", "install", "vault", "--channel=2.0/stable"],
+        check=True,
+        text=True,
+        capture_output=True,
     )
 
     juju.deploy(
@@ -63,7 +59,7 @@ def test_build_and_deploy(
     juju.deploy(
         "vault-k8s" if substrate == Substrate.K8S else "vault",
         app=VAULT_NAME,
-        channel="1.18/edge",
+        channel="2.0/stable",
         config={
             "pki_ca_common_name": "mydomain.com",
             "pki_allow_any_name": False,

@@ -1,6 +1,4 @@
 summary: test_certificate_options.py
-systems:
-  - -ubuntu-26.04-arm
 environment:
   TEST_MODULE: test_certificate_options.py
 execute: |
