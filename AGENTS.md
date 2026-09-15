@@ -220,8 +220,8 @@ Any code touching addresses, file paths, services, or networking must handle bot
   credentials: only ever target a local, throwaway controller/model; never run destructive
   `juju`/`kubectl` commands (destroy-model, remove-application, delete) against a controller you did
   not create without explicit user confirmation.
-- Base is Ubuntu 26.04; both amd64 and arm64 platforms build (`charmcraft.yaml`) — ARM integration
-  tests are still a TODO. Channel is `9/edge`.
+- Base is Ubuntu 26.04; both amd64 and arm64 platforms build (`charmcraft.yaml`) and run
+  integration tests via Spread. Channel is `9/edge`.
 - Always invoke a specific env (`tox run -e <env>`); bare `tox` errors on an undefined `static` env
   reference (legacy `env_list` entry).
 - `valkey-glide` is a released PyPI dependency (`^2.5`), pinned in both `poetry.lock` and
