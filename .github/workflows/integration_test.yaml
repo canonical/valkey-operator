@@ -16,11 +16,11 @@ on:
 jobs:
   collect-integration-tests:
     name: Collect spread jobs | ${{ inputs.path-to-charm-directory }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Set up environment
         run: |
           # snapd intermittently cannot reach the store on a fresh runner
@@ -58,7 +58,7 @@ jobs:
           )
           jobs = []
           for job in spread_jobs:
-              # Example `job`: "github-ci:ubuntu-24.04:tests/spread/test_charm.py:juju36"
+              # Example `job`: "github-ci:ubuntu-26.04:tests/spread/test_charm.py:juju36"
               _, runner, task = job.split(":")
               # Example: "test_charm.py"
               task = task.removeprefix("tests/spread/")
@@ -124,7 +124,7 @@ jobs:
           sudo nft flush ruleset
           sudo ip link delete docker0 2>/dev/null || true
       - name: Remove podman CNI bridge config
-        # Ubuntu 24.04 runners ship podman with a CNI bridge config
+        # Ubuntu 26.04 runners ship podman with a CNI bridge config
         # (/etc/cni/net.d/87-podman-bridge.conflist) that sorts
         # lexicographically before Cilium's config (05-cilium.conflist).
         # When that file is present, containerd picks the podman bridge
@@ -138,7 +138,7 @@ jobs:
           sudo rm -f /etc/cni/net.d/87-podman-bridge.conflist
       - name: Checkout
         timeout-minutes: 3
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Set up environment
         # leaves room for the retry budget below on top of the ~3 min this step takes
         timeout-minutes: 8
@@ -174,7 +174,7 @@ jobs:
         # Only upload results from one spread system & one spread variant
         # Allure can only process one result per pytest test ID. If parameterization is done via
         # spread instead of pytest, there will be overlapping pytest test IDs.
-        if: ${{ (success() || (failure() && steps.spread.outcome == 'failure')) && startsWith(matrix.job.spread_job, 'github-ci:ubuntu-24.04:') && endsWith(matrix.job.spread_job, ':juju36') && github.event_name == 'schedule' && github.run_attempt == '1' }}
+        if: ${{ (success() || (failure() && steps.spread.outcome == 'failure')) && startsWith(matrix.job.spread_job, 'github-ci:ubuntu-26.04:') && endsWith(matrix.job.spread_job, ':juju36') && github.event_name == 'schedule' && github.run_attempt == '1' }}
         uses: actions/upload-artifact@v5
         with:
           name: allure-results-integration-test-${{ matrix.job.name_in_artifact }}

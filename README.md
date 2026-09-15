@@ -54,7 +54,7 @@ sequence to make sure the cluster stays available and healthy during the operati
 Charmed Valkey is shipped in the track `9/edge`: [Valkey 9/edge](https://charmhub.io/valkey?channel=9/edge)
 
 It is based on the following platform:
-- Noble (Ubuntu 24.04)
+- Resolute (Ubuntu 26.04)
 - Supported architectures: `amd64`.
 
 ## Documentation

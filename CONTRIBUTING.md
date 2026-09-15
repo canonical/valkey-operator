@@ -49,7 +49,7 @@ Deploy with `--trust` (mandatory) and, on Kubernetes, the image resource using t
 `upstream-source` value from `metadata.yaml`:
 
 ```shell
-juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 \
+juju deploy ./valkey_ubuntu@26.04-amd64.charm -n 3 \
   --resource valkey-image=<upstream-source from metadata.yaml> --trust
 ```
 

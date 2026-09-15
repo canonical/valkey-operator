@@ -74,7 +74,7 @@ environment variable.
 
 ## Essential commands
 
-All linting/testing goes through `tox` + `poetry` (Python `^3.12`; dependency groups in `pyproject.toml`).
+All linting/testing goes through `tox` + `poetry` (Python `^3.14`; dependency groups in `pyproject.toml`).
 
 ```bash
 tox run -e lint          # ruff check + ruff format --check + codespell + shellcheck
@@ -97,7 +97,7 @@ tox run -e integration -- tests/integration/test_charm.py --substrate k8s
 
 # Deploy a locally-built charm. --trust is mandatory; the image resource is K8s-only — use the
 # current `upstream-source` value from metadata.yaml as the tag.
-juju deploy ./valkey_ubuntu@24.04-amd64.charm -n 3 \
+juju deploy ./valkey_ubuntu@26.04-amd64.charm -n 3 \
   --resource valkey-image=<upstream-source from metadata.yaml> --trust
 ```
 
@@ -220,7 +220,7 @@ Any code touching addresses, file paths, services, or networking must handle bot
   credentials: only ever target a local, throwaway controller/model; never run destructive
   `juju`/`kubectl` commands (destroy-model, remove-application, delete) against a controller you did
   not create without explicit user confirmation.
-- Base is Ubuntu 24.04; both amd64 and arm64 platforms build (`charmcraft.yaml`) — ARM integration
+- Base is Ubuntu 26.04; both amd64 and arm64 platforms build (`charmcraft.yaml`) — ARM integration
   tests are still a TODO. Channel is `9/edge`.
 - Always invoke a specific env (`tox run -e <env>`); bare `tox` errors on an undefined `static` env
   reference (legacy `env_list` entry).
