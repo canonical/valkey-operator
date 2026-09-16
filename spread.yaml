@@ -43,7 +43,7 @@ backends:
       CONCIERGE_EXTRA_SNAPS: charmcraft
       CONCIERGE_EXTRA_DEBS: pipx
     systems:
-      - ubuntu-24.04:
+      - ubuntu-26.04:
           username: runner
     prepare: |
       systemctl disable --now unattended-upgrades.service
@@ -78,13 +78,12 @@ backends:
     allocate: |
       sudo tee /etc/ssh/sshd_config.d/10-spread-github-ci.conf << 'EOF'
       PasswordAuthentication yes
-      PermitEmptyPasswords yes
       EOF
 
       sudo systemctl daemon-reload
-      sudo systemctl start ssh
+      sudo systemctl restart ssh
 
-      sudo passwd --delete runner
+      echo "runner:$SPREAD_PASSWORD" | sudo chpasswd
 
       ADDRESS localhost
     # HACK: spread does not pass environment variables set on runner
@@ -99,7 +98,9 @@ backends:
       # spread exports host values in unescaped double quotes.
       GCS_SERVICE_ACCOUNT: "$(HOST: echo $GCS_SERVICE_ACCOUNT)"
     systems:
-      - ubuntu-24.04:
+      - ubuntu-26.04:
+          username: runner
+      - ubuntu-26.04-arm:
           username: runner
 
 suites:
