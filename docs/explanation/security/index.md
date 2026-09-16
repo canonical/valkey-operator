@@ -60,12 +60,12 @@ In the following, we provide guidance on how to harden your deployment using:
 
 ### Operating system
 
-Valkey runs on top of Ubuntu 26.04 LTS (Resolute Raccoon). Deploy a [Landscape Client Charm](https://charmhub.io/landscape-client?) to connect the underlying VM 
+Valkey runs on top of Ubuntu 26.04 LTS (Resolute Raccoon). Deploy a [Landscape Client Charm](https://charmhub.io/landscape-client) to connect the underlying VM 
 to a Landscape User Account to manage security upgrades and integrate [Ubuntu Pro](https://ubuntu.com/pro) subscriptions.
 
 ### Security upgrades
 
-Charmed Valkey installs a pinned revision of the the `valkey-snap`, where each revision of the charm pins 
+Charmed Valkey installs a pinned revision of the `valkey-snap`, where each revision of the charm pins 
 a revision of the snap to provide reproducible environments.
 
 New versions of the Valkey operator may be released to provide patching of vulnerabilities (CVEs). It is important 
@@ -91,11 +91,11 @@ For more information on encryption, see the [Cryptography](cryptography) explana
 Charmed Valkey authenticates clients via Access Control Lists, allowing named users to be created 
 and assigned fine-grained permissions. 
 
-Authentication and authorization are enabled by default. Connecting to Valkey without authentication
+Authentication and authorisation are enabled by default. Connecting to Valkey without authentication
 (using the `default` user) is disabled by default. Charmed Valkey creates an internal admin user 
 with full access to the Valkey cluster. Additional users are created for each client relation. 
 These client users are restricted to access only the range of keys specified in their relation 
-through the `prefix` field.
+request.
 
 As an additional layer of authentication and authorisation, Charmed Valkey supports LDAP. 
 See [How to manage LDAP](../../how-to/ldap.md) for more information.
@@ -110,7 +110,7 @@ Refer to the [COS production deployments best practices](https://charmhub.io/top
 ````{tab-set}
 ```{tab-item} VM
 :sync: vm
-Logging is enabled by default. The logs are stored in the `/var/snap/charmed-valkey/common/var/log/valkey` 
+Logging is enabled by default. The logs are stored in the `/var/snap/valkey-charmed/common/var/log/valkey` 
 directory of the Valkey container.
 ```
 
