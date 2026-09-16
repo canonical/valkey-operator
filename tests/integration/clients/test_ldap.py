@@ -73,7 +73,9 @@ def test_build_and_deploy(
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        # the machine is very busy and under load with the entire stack of LDAP deployed
+        # allow more time to settle than usual
+        timeout=720,
     )
 
     # PostgreSQL is deliberately absent: it re-stamps its agent status every few seconds under
@@ -155,6 +157,11 @@ def test_ldap_integration(
 
     logger.info("Add LDAP CA certificate")
     juju.integrate(f"{APP_NAME}:ldap-ca-cert", ca_name)
+    # wait for the CA cert relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
