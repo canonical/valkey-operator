@@ -122,7 +122,7 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
         )
         juju.wait(
             lambda s: are_apps_active_and_agents_idle(s, OTELCOL_K8S_APP, idle_period=30),
-            timeout=DEPLOY_TIMEOUT_S,
+            timeout=DEPLOY_TIMEOUT_TLS_S,
             delay=10,
             successes=3,
         )
@@ -215,8 +215,13 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
         assert "redis_up" in metrics_out
 
 
-def test_k8s_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju) -> None:
+def test_k8s_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju, arch: str) -> None:
     """Deploy COS Lite core charms (Prometheus, Grafana, Loki) and test live telemetry ingestion."""
+    if arch == "arm64":
+        pytest.skip(
+            "COS Lite charms (prometheus-k8s, grafana-k8s, loki-k8s) are not available for arm64"
+        )
+
     logger.info("Deploying core COS Lite applications (Prometheus, Grafana, Loki)")
     status = juju.status()
 

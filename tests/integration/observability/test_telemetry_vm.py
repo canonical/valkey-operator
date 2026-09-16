@@ -135,6 +135,7 @@ def _ensure_vm_otelcol(juju: jubilant.Juju) -> bool:
             "opentelemetry-collector",
             app=OTELCOL_VM_APP,
             channel=OTELCOL_CHANNEL,
+            base="ubuntu@26.04",
         )
         needs_wait = True
 
@@ -367,11 +368,17 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
 def test_vm_cos_lite_full_stack(
     ensure_valkey,
     juju: jubilant.Juju,
-    k8s_cloud: str,
     lxd_controller: str,
     arch: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Deploy COS Lite applications in a Kubernetes model and test live telemetry from VM."""
+    if arch == "arm64":
+        pytest.skip(
+            "COS Lite charms (prometheus-k8s, grafana-k8s, loki-k8s) are not available for arm64"
+        )
+    # avoids setting up microk8s
+    k8s_cloud: str = request.getfixturevalue("k8s_cloud")
     logger.info("Setting up Kubernetes model for COS Lite")
     k8s_model_name = "cos-lite-k8s"
     model_ref = f"{lxd_controller}:{k8s_model_name}" if lxd_controller else k8s_model_name
