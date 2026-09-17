@@ -113,6 +113,7 @@ def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
         dns_ip = subprocess.check_output(cmd, shell=True).decode().strip().strip("'\"")
     except Exception:
         dns_ip = ""
+    # 10.152.183.10 is the default ClusterIP for kube-dns in MicroK8s (from service CIDR 10.152.183.0/24).
     dns_ip = dns_ip or "10.152.183.10"
     logger.info("Configuring K8s DNS on VM units using server: %s", dns_ip)
 

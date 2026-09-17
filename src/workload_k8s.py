@@ -295,7 +295,6 @@ class ValkeyK8sWorkload(WorkloadBase):
                 return False
 
             self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-            self.container.replan()
             return True
         except (pebble.ConnectionError, pebble.APIError) as e:
             raise ValkeyWorkloadCommandError(f"Failed to configure metrics exporter: {e}") from e

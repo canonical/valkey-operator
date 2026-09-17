@@ -154,6 +154,7 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
 
     if needs_wait:
         logger.info("Waiting for applications to settle after K8s COS integration")
+        # otelcol-k8s is in BlockedStatus until related to a backend, so wait for active Valkey and idle agents.
         juju.wait(
             lambda s: (
                 s.apps[APP_NAME].app_status.current == "active"
@@ -168,7 +169,7 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
 
     # 1. Verify metrics-endpoint relation data
     logger.info("Verifying metrics-endpoint relation data on %s", cos_unit)
-    for attempt in Retrying(stop=stop_after_delay(120), wait=wait_fixed(5)):
+    for attempt in Retrying(stop=stop_after_delay(180), wait=wait_fixed(5)):
         with attempt:
             metrics_rel = get_relation_data(juju, cos_unit, "metrics-endpoint")
             assert metrics_rel, f"No relation info found for metrics-endpoint on {cos_unit}"

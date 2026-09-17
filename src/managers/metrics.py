@@ -54,13 +54,10 @@ class MetricsManager(ManagerStatusProtocol):
         """Reconcile the metrics exporter configuration and service state."""
         if not self.workload.can_connect:
             return
-        password = self.state.cluster.internal_users_credentials.get(
-            CharmUsers.VALKEY_MONITORING.value
-        )
-        if not password:
+        env = self.exporter_env()
+        if not env.get("REDIS_PASSWORD"):
             return
 
-        env = self.exporter_env()
         changed = self.workload.configure_metrics_exporter(env)
         if changed:
             logger.info("Metrics exporter configuration updated -> Restarting exporter")

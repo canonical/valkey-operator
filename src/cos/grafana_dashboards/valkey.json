@@ -49,7 +49,7 @@
       }
     ]
   },
-  "description": "Redis Dashboard for Prometheus Redis Exporter 1.x",
+  "description": "Valkey Dashboard for Prometheus Redis Exporter 1.x",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "gnetId": 763,
