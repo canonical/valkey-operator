@@ -109,7 +109,9 @@ class BaseEvents(ops.Object):
     def _on_install(self, event: ops.InstallEvent) -> None:
         """Handle install event."""
         if self.charm.substrate == Substrate.K8S:
-            logger.debug("No installation required.")
+            if self.charm.unit.is_leader():
+                logger.info("Create services for primary and replica endpoints")
+                self.charm.sentinel_manager.reconcile_k8s_services()
             return
 
         try:
