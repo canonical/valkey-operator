@@ -1,0 +1,22 @@
+rules:
+  # Allowlist trusted actions and pre-commit repos.
+  forbidden-uses:
+    config:
+      allow:
+        - canonical/*
+        - actions/*
+        - tiobe/tics-github-action
+        - codecov/codecov-action
+  unpinned-uses:
+    config:
+      policies:
+        canonical/*: ref-pin
+        actions/*: ref-pin
+        tiobe/tics-github-action: ref-pin
+        codecov/codecov-action: ref-pin
+  secrets-inherit:
+    ignore:
+      - release.yaml:16
+      - ci.yaml:149
+  self-repository:
+    disable: true
