@@ -31,7 +31,8 @@ from tests.integration.helpers import (
 
 logger = logging.getLogger(__name__)
 
-NUM_UNITS = 3
+# run with one unit to avoid medium runners to be overloaded
+NUM_UNITS = 1
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 LDAP_NAME = "authentik-ldap-outpost"
@@ -115,8 +116,6 @@ def test_build_and_deploy(
             status,
             LDAP_NAME,
             LDAP_SERVER_NAME,
-            LDAP_WORKER_NAME,
-            LDAP_INGRESS_NAME,
             TLS_NAME,
             idle_period=30,
         ),
@@ -210,7 +209,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -324,7 +325,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 

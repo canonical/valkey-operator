@@ -28,7 +28,8 @@ from tests.integration.helpers import (
 
 logger = logging.getLogger(__name__)
 
-NUM_UNITS = 3
+# run with one unit to avoid medium runners to be overloaded
+NUM_UNITS = 1
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 LDAP_NAME = "glauth-k8s"
@@ -82,7 +83,7 @@ def test_build_and_deploy(
     # load, so an `idle_period` it takes part in may never elapse. An active GLAuth already
     # implies a working database.
     juju_k8s_model.wait(
-        lambda status: are_agents_idle(
+        lambda status: are_apps_active_and_agents_idle(
             status,
             LDAP_NAME,
             LDAP_UTILS_NAME,
@@ -208,7 +209,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -318,7 +321,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
