@@ -5,3 +5,6 @@ execute: |
   tox run -e integration -- "tests/integration/clients/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
 artifacts:
   - allure-results
+systems:
+  - ubuntu-26.04
+  - ubuntu-26.04-arm
