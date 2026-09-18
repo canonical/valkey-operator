@@ -52,13 +52,6 @@ DIRECTORY_ENTRIES = json.loads(
 )
 
 
-@pytest.fixture(autouse=True)
-def skip_if_arm(arch: str):
-    """Skip the test if arm infra."""
-    if arch == "arm64":
-        pytest.skip("No arm version for Authentik worker operator available")
-
-
 def test_build_and_deploy(
     charm: str,
     glide_runner_charm: str,
