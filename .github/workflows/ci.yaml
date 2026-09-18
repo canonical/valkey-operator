@@ -32,15 +32,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install actionlint
         id: install
         run: |
           curl -O https://raw.githubusercontent.com/rhysd/actionlint/main/.github/actionlint-matcher.json
           echo "::add-matcher::actionlint-matcher.json"
           bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: Install zizmor
+        run: pipx install zizmor
       - name: Run actionlint
         run: |
-          '${{ steps.install.outputs.executable }}' -color
+          "${ACTIONLINT_EXECUTABLE}" -color
+        env:
+          ACTIONLINT_EXECUTABLE: ${{ steps.install.outputs.executable }}
+      - name: Run zizmor
+        run: zizmor .
+    permissions: {}
 
   lint:
     name: Lint
@@ -49,12 +58,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install tox & poetry
         run: |
           pipx install tox
           pipx install poetry
       - name: Run linters
         run: tox run -e lint
+    permissions: {}
 
   unit-test:
     name: Unit test
@@ -63,6 +75,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install tox & poetry
         run: |
           pipx install tox
@@ -71,6 +85,7 @@ jobs:
         run: tox run -e unit
       - name: Upload Coverage to Codecov
         uses: codecov/codecov-action@v4
+    permissions: {}
 
   static:
     name: Static type check
@@ -79,12 +94,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Install tox & poetry
         run: |
           pipx install tox
           pipx install poetry
       - name: Run pyright
         run: tox run -e static
+    permissions: {}
 
   lib-check:
     name: Check libraries
@@ -92,9 +110,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - run: |
           # Workaround for https://github.com/canonical/charmcraft/issues/1389#issuecomment-1880921728
           touch requirements.txt
@@ -106,6 +125,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           use-labels: false
           fail-build: ${{ github.event_name == 'pull_request' }}
+    permissions: {}
 
   build:
     strategy:
@@ -118,6 +138,7 @@ jobs:
     uses: canonical/data-platform-workflows/.github/workflows/build_charm.yaml@v40.0.2
     with:
       path-to-charm-directory: ${{ matrix.path }}
+    permissions: {}
 
   integration-test:
     name: Integration test
@@ -129,3 +150,4 @@ jobs:
     with:
       artifact-prefix: ${{ needs.build.outputs.artifact-prefix }}
     secrets: inherit
+    permissions: {}
