@@ -28,8 +28,7 @@ from tests.integration.helpers import (
 
 logger = logging.getLogger(__name__)
 
-# run with one unit to avoid medium runners to be overloaded
-NUM_UNITS = 1
+NUM_UNITS = 3
 TEST_KEY = "test_key"
 TEST_VALUE = "test_value"
 LDAP_NAME = "glauth-k8s"
