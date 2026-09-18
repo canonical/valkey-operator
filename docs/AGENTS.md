@@ -55,12 +55,12 @@ toctree, bad anchor) fails the build, not just a lint pass.
 
 ## CI
 
-- `.github/workflows/automatic-doc-checks.yml` — on push to `main`/`*/edge` or PRs touching
+- `.github/workflows/automatic-doc-checks.yml` — on push to `main`/`*/edge` or pull requests touching
   `docs/**`, runs the shared `canonical/documentation-workflows` checks (spelling, inclusive
   language, linkcheck).
 - `.github/workflows/markdown-style-checks.yml` — `make install && make lint-md` on `docs/**`
   changes.
-- `.github/workflows/check-removed-urls.yml` — on PRs, builds docs from both the PR branch and the
+- `.github/workflows/check-removed-urls.yml` — on pull requests, builds docs from both the PR branch and the
   base branch and diffs the generated URL lists to catch pages/anchors removed by the PR.
 - Per the root `AGENTS.md`: docs-only changes (`docs/**`) are excluded from release tagging and
   from the integration-test gate.
