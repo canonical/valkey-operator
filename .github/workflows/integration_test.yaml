@@ -64,7 +64,7 @@ jobs:
               _, runner, task = job.split(":")
               # Example: "test_charm.py"
               task = task.removeprefix("tests/spread/")
-              if runner.endswith("-arm"):
+              if "arm64" in runner:
                   architecture = "arm64"
               else:
                   architecture = "amd64"
@@ -111,7 +111,7 @@ jobs:
       - name: Disk usage
         timeout-minutes: 5
         run: df --human-readable
-      - name: Purge Docker
+      - name: (GitHub hosted) Purge Docker
         # GitHub-hosted Azure runners ship Docker pre-installed and active.
         # Canonical K8s requires "A system with no previous installations
         # of containerd/docker as this may cause conflicts"
@@ -120,11 +120,26 @@ jobs:
         # Completely purging Docker requires also
         # deleting the Docker-specific `iptables-nft` rulesets
         # created on installation.
+        if: ${{ ! contains(matrix.job.runner, 'self-hosted') }}
         timeout-minutes: 5
         run: |
           sudo apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker.io containerd 2>/dev/null || true
           sudo nft flush ruleset
           sudo ip link delete docker0 2>/dev/null || true
+      - name: (IS hosted) Purge Docker
+        if: ${{ contains(matrix.job.runner, 'self-hosted') }}
+        timeout-minutes: 5
+        run: |
+          sudo apt-get purge -y docker.io containerd 2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          for chain in DOCKER DOCKER-ISOLATION-STAGE-1 DOCKER-ISOLATION-STAGE-2 DOCKER-USER DOCKER-FORWARD; do
+            sudo iptables -D FORWARD -j $chain 2>/dev/null || true
+            sudo iptables -F $chain 2>/dev/null || true
+            sudo iptables -X $chain 2>/dev/null || true
+            sudo iptables -t nat -F $chain 2>/dev/null || true
+            sudo iptables -t nat -X $chain 2>/dev/null || true
+          done
+          sudo iptables -P FORWARD ACCEPT
       - name: Remove podman CNI bridge config
         # Ubuntu 26.04 runners ship podman with a CNI bridge config
         # (/etc/cni/net.d/87-podman-bridge.conflist) that sorts

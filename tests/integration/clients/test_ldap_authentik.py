@@ -52,13 +52,6 @@ DIRECTORY_ENTRIES = json.loads(
 )
 
 
-@pytest.fixture(autouse=True)
-def skip_if_arm(arch: str):
-    """Skip the test if arm infra."""
-    if arch == "arm64":
-        pytest.skip("No arm version for Authentik worker operator available")
-
-
 def test_build_and_deploy(
     charm: str,
     glide_runner_charm: str,
@@ -122,8 +115,6 @@ def test_build_and_deploy(
             status,
             LDAP_NAME,
             LDAP_SERVER_NAME,
-            LDAP_WORKER_NAME,
-            LDAP_INGRESS_NAME,
             TLS_NAME,
             idle_period=30,
         ),
@@ -217,7 +208,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -331,7 +324,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 

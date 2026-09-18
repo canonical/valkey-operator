@@ -1,7 +1,10 @@
-summary: test_ldap.py
+summary: test_ldap_glauth.py
 environment:
-  TEST_MODULE: test_ldap.py
+  TEST_MODULE: test_ldap_glauth.py
 execute: |
   tox run -e integration -- "tests/integration/clients/$TEST_MODULE" --substrate k8s --alluredir="$SPREAD_TASK/allure-results"
 artifacts:
   - allure-results
+systems:
+  - self-hosted-linux-amd64-resolute-large
+  - self-hosted-linux-arm64-resolute-large

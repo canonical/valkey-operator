@@ -73,14 +73,16 @@ def test_build_and_deploy(
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        # the machine is very busy and under load with the entire stack of LDAP deployed
+        # allow more time to settle than usual
+        timeout=720,
     )
 
     # PostgreSQL is deliberately absent: it re-stamps its agent status every few seconds under
     # load, so an `idle_period` it takes part in may never elapse. An active GLAuth already
     # implies a working database.
     juju_k8s_model.wait(
-        lambda status: are_agents_idle(
+        lambda status: are_apps_active_and_agents_idle(
             status,
             LDAP_NAME,
             LDAP_UTILS_NAME,
@@ -155,6 +157,11 @@ def test_ldap_integration(
 
     logger.info("Add LDAP CA certificate")
     juju.integrate(f"{APP_NAME}:ldap-ca-cert", ca_name)
+    # wait for the CA cert relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
@@ -201,7 +208,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -311,7 +320,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
