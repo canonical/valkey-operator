@@ -103,69 +103,77 @@ def lxd_controller(lxd_cloud: str, juju: jubilant.Juju, substrate: Substrate):
             yield controller
 
 
-@pytest.fixture(scope="module")
-def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju):
-    """Provision a microk8s cloud, if a k8s cloud isn't already present, and return the name."""
-    # Ask the controller that will host the model, not the client: the client list also carries
-    # clouds the controller cannot use, such as the built-in `microk8s`, and picking one of those
-    # makes `add-model` fail with "cloud not found".
-    cloud_args = ["clouds", "--format", "json"]
-    if lxd_controller:
-        cloud_args += ["--controller", lxd_controller]
-    clouds = json.loads(juju.cli(*cloud_args, include_model=False))
-    for cloud, details in clouds.items():
-        if "k8s" == details.get("type"):
-            logger.info(f"Identified existing k8s cloud: {cloud}")
-            yield cloud
-            return
-
+def _find_k8s_cloud_on_controller(juju: jubilant.Juju, controller: str) -> str | None:
+    """Find an existing k8s cloud registered on the specified controller."""
+    if not controller:
+        return None
     try:
-        subprocess.run(["sudo", "snap", "install", "--classic", "microk8s"], check=True)
-        subprocess.run(["sudo", "snap", "install", "--classic", "kubectl"], check=True)
-        subprocess.run(["sudo", "microk8s", "enable", "dns"], check=True)
-        subprocess.run(["sudo", "microk8s", "enable", "hostpath-storage"], check=True)
-        subprocess.run(
-            ["sudo", "microk8s", "enable", "metallb:10.64.140.43-10.64.140.49"],
-            check=True,
+        clouds = json.loads(
+            juju.cli("clouds", "--controller", controller, "--format", "json", include_model=False)
         )
+        for cloud, details in clouds.items():
+            if details.get("type") == "k8s":
+                logger.info(f"Identified existing k8s cloud on controller {controller}: {cloud}")
+                return cloud
+    except Exception as e:
+        logger.warning(f"Could not query clouds on controller {controller}: {e}")
+    return None
 
-        # Configure kubectl now
-        subprocess.run(["mkdir", "-p", str(pathlib.Path.home() / ".kube")], check=True)
-        kubeconfig = subprocess.check_output(["sudo", "microk8s", "config"])
-        with open(str(pathlib.Path.home() / ".kube" / "config"), "w") as f:
-            f.write(kubeconfig.decode())
-        for attempt in Retrying(stop=stop_after_delay(150), wait=wait_fixed(15)):
-            with attempt:
-                if (
-                    len(
-                        subprocess.check_output(
-                            "kubectl get po -A  --field-selector=status.phase!=Running",
-                            shell=True,
-                            stderr=subprocess.DEVNULL,
-                        ).decode()
-                    )
-                    != 0
-                ):  # We got sth different from "No resources found." in stderr
-                    raise Exception()
 
-        # add this microk8s as a juju k8s cloud, by explicitly providing its config
-        # this is done to bypass the issue with juju 3.9 necessitating strictly confined microk8s
-        config = kubeconfig.decode()
-        juju.cli(
-            "add-k8s",
-            MICROK8S_CLOUD_NAME,
-            "--client",
-            "--controller",
-            lxd_controller,
-            stdin=config,
-            include_model=False,
-        )
+def _find_client_k8s_cloud(juju: jubilant.Juju) -> str | None:
+    """Find an existing k8s cloud defined on the client."""
+    clouds = json.loads(juju.cli("clouds", "--format", "json", include_model=False))
+    for cloud, details in clouds.items():
+        if details.get("type") == "k8s":
+            logger.info(f"Identified client-side k8s cloud: {cloud}")
+            return cloud
+    return None
 
-    except subprocess.CalledProcessError as e:
-        pytest.exit(str(e))
 
-    yield MICROK8S_CLOUD_NAME
+def _install_microk8s_cloud(juju: jubilant.Juju, controller: str) -> None:
+    """Install microk8s and register it with the controller."""
+    subprocess.run(["sudo", "snap", "install", "--classic", "microk8s"], check=True)
+    subprocess.run(["sudo", "snap", "install", "--classic", "kubectl"], check=True)
+    subprocess.run(["sudo", "microk8s", "enable", "dns"], check=True)
+    subprocess.run(["sudo", "microk8s", "enable", "hostpath-storage"], check=True)
+    subprocess.run(
+        ["sudo", "microk8s", "enable", "metallb:10.64.140.43-10.64.140.49"],
+        check=True,
+    )
 
+    # Configure kubectl now
+    subprocess.run(["mkdir", "-p", str(pathlib.Path.home() / ".kube")], check=True)
+    kubeconfig = subprocess.check_output(["sudo", "microk8s", "config"])
+    with open(str(pathlib.Path.home() / ".kube" / "config"), "w") as f:
+        f.write(kubeconfig.decode())
+    for attempt in Retrying(stop=stop_after_delay(150), wait=wait_fixed(15)):
+        with attempt:
+            if (
+                len(
+                    subprocess.check_output(
+                        "kubectl get po -A  --field-selector=status.phase!=Running",
+                        shell=True,
+                        stderr=subprocess.DEVNULL,
+                    ).decode()
+                )
+                != 0
+            ):
+                raise Exception()
+
+    config = kubeconfig.decode()
+    juju.cli(
+        "add-k8s",
+        MICROK8S_CLOUD_NAME,
+        "--client",
+        "--controller",
+        controller,
+        stdin=config,
+        include_model=False,
+    )
+
+
+def _cleanup_microk8s_cloud(juju: jubilant.Juju, controller: str) -> None:
+    """Destroy microk8s models, remove cloud from controller, and uninstall packages."""
     models = json.loads(juju.cli("models", "--format", "json", include_model=False))
     for model in models["models"]:
         if MICROK8S_CLOUD_NAME == model.get("cloud"):
@@ -177,11 +185,46 @@ def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju):
         "--client",
         MICROK8S_CLOUD_NAME,
         "--controller",
-        lxd_controller,
+        controller,
         include_model=False,
     )
     subprocess.run(["sudo", "snap", "remove", "--purge", "microk8s"], check=True)
     subprocess.run(["sudo", "snap", "remove", "--purge", "kubectl"], check=True)
+
+
+@pytest.fixture(scope="module")
+def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju, substrate: Substrate):
+    """Provision a microk8s cloud, if a k8s cloud isn't already present, and return the name."""
+    if substrate == Substrate.K8S:
+        yield ""
+        return
+
+    controller_k8s = _find_k8s_cloud_on_controller(juju, lxd_controller)
+    if controller_k8s:
+        yield controller_k8s
+        return
+
+    client_k8s = _find_client_k8s_cloud(juju)
+    if client_k8s and lxd_controller:
+        logger.info(f"Adding existing k8s cloud {client_k8s} to controller {lxd_controller}")
+        juju.cli("add-k8s", client_k8s, "--controller", lxd_controller, include_model=False)
+        yield client_k8s
+        try:
+            juju.cli("remove-k8s", client_k8s, "--controller", lxd_controller, include_model=False)
+        except Exception as e:
+            logger.warning(
+                f"Could not remove k8s cloud {client_k8s} from controller {lxd_controller}: {e}"
+            )
+        return
+
+    try:
+        _install_microk8s_cloud(juju, lxd_controller)
+    except subprocess.CalledProcessError as e:
+        pytest.exit(str(e))
+
+    yield MICROK8S_CLOUD_NAME
+
+    _cleanup_microk8s_cloud(juju, lxd_controller)
 
 
 @pytest.fixture(scope="module")
