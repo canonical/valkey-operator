@@ -151,7 +151,7 @@ outpost is already related to it; for GLAuth, deploy and integrate Traefik now:
 
 ```shell
 juju deploy traefik-k8s --trust
-juju integrate traefik-k8s:ingress glauth-k8s:ingress-per-unit
+juju integrate traefik-k8s:ingress-per-unit glauth-k8s:ingress
 ```
 
 **Expose cross-model relations**
