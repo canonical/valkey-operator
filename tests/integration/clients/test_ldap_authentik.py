@@ -113,8 +113,8 @@ def test_build_and_deploy(
     juju_k8s_model.wait(
         lambda status: are_apps_active_and_agents_idle(
             status,
-            LDAP_NAME,
             LDAP_SERVER_NAME,
+            LDAP_WORKER_NAME,
             TLS_NAME,
             idle_period=30,
         ),
@@ -148,11 +148,23 @@ def test_ldap_integration(
         ca_name = TLS_NAME
 
     juju.integrate(f"{APP_NAME}:ldap", ldap_name)
-
+    # wait for the LDAP relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
             expected_app_statuses={APP_NAME: [AuthStatuses.LDAP_CA_CERT_MISSING.value]},
+        ),
+        timeout=100,
+    )
+    juju_k8s_model.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status,
+            LDAP_NAME,
+            idle_period=30,
         ),
         timeout=100,
     )

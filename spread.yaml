@@ -107,9 +107,9 @@ backends:
           username: runner
       - ubuntu-26.04-arm:
           username: runner
-      - self-hosted-linux-amd64-resolute-large:
+      - self-hosted-linux-amd64-resolute-xlarge:
           username: ubuntu
-      - self-hosted-linux-arm64-resolute-large:
+      - self-hosted-linux-arm64-resolute-xlarge:
           username: ubuntu
 
 suites:

@@ -6,5 +6,5 @@ execute: |
 artifacts:
   - allure-results
 systems:
-  - self-hosted-linux-amd64-resolute-large
-  - self-hosted-linux-arm64-resolute-large
+  - self-hosted-linux-amd64-resolute-xlarge
+  - self-hosted-linux-arm64-resolute-xlarge

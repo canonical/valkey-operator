@@ -146,7 +146,11 @@ def test_ldap_integration(
         ca_name = TLS_NAME
 
     juju.integrate(f"{APP_NAME}:ldap", ldap_name)
-
+    # wait for the LDAP relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
