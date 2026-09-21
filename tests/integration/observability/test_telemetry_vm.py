@@ -28,7 +28,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
 )
 from tests.integration.observability.helpers import (
-    COS_CHANNEL,
+    COS_LITE_CHANNELS,
     GRAFANA_APP,
     LOKI_APP,
     NUM_UNITS,
@@ -242,7 +242,7 @@ def _setup_cos_lite_k8s(juju_k8s: jubilant.Juju, k8s_model_name: str) -> bool:
     ]:
         if app not in status_k8s.apps:
             logger.info("Deploying %s in K8s model %s", app, k8s_model_name)
-            juju_k8s.deploy(charm, app=app, channel=COS_CHANNEL, trust=True)
+            juju_k8s.deploy(charm, app=app, channel=COS_LITE_CHANNELS[app], trust=True)
             needs_wait = True
 
     if not is_integrated(juju_k8s, PROMETHEUS_APP, "grafana-source", GRAFANA_APP):
@@ -356,7 +356,9 @@ def _verify_telemetry_in_cos_lite(juju: jubilant.Juju, juju_k8s: jubilant.Juju) 
 
     # Verify Loki received logs
     logger.info("Querying Loki LogQL API for logs from VM")
-    loki_cmd = f"curl -sf 'http://{loki_ip}:3100/loki/api/v1/query?query=%7Bjob%3D~%22.%2B%22%7D'"
+    loki_cmd = (
+        f"curl -sf 'http://{loki_ip}:3100/loki/api/v1/query_range?query=%7Bjob%3D~%22.%2B%22%7D'"
+    )
     for attempt in Retrying(stop=stop_after_delay(180), wait=wait_fixed(10)):
         with attempt:
             loki_res = json.loads(juju.ssh(target=probe_unit, command=loki_cmd))

@@ -29,7 +29,7 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
 )
 from tests.integration.observability.helpers import (
-    COS_CHANNEL,
+    COS_LITE_CHANNELS,
     GRAFANA_APP,
     LOKI_APP,
     NUM_UNITS,
@@ -234,7 +234,7 @@ def test_k8s_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju, arch: str) 
     ]:
         if app not in status.apps:
             logger.info("Deploying %s (%s)", app, charm)
-            juju.deploy(charm, app=app, channel=COS_CHANNEL, trust=True)
+            juju.deploy(charm, app=app, channel=COS_LITE_CHANNELS[app], trust=True)
 
     # 2. Integrate with Valkey
     needs_wait = False
@@ -333,7 +333,9 @@ def test_k8s_cos_lite_full_stack(ensure_valkey, juju: jubilant.Juju, arch: str) 
 
     # 7. Verify Loki received logs
     logger.info("Querying Loki LogQL API for Valkey logs")
-    loki_cmd = f"curl -sf 'http://{loki_ip}:3100/loki/api/v1/query?query=%7Bjob%3D~%22.%2B%22%7D'"
+    loki_cmd = (
+        f"curl -sf 'http://{loki_ip}:3100/loki/api/v1/query_range?query=%7Bjob%3D~%22.%2B%22%7D'"
+    )
     loki_res = json.loads(juju.ssh(target=probe_unit, command=loki_cmd))
     assert loki_res.get("status") == "success", f"Loki query failed: {loki_res}"
     assert len(loki_res["data"]["result"]) > 0, "No log streams found in Loki"

@@ -17,13 +17,20 @@ from tests.integration.helpers import APP_NAME
 logger = logging.getLogger(__name__)
 
 NUM_UNITS = 3
-COS_CHANNEL = "2/stable"
 OTELCOL_K8S_APP = "otelcol-k8s"
 OTELCOL_VM_APP = "otelcol"
 OTELCOL_CHANNEL = "0.130/stable"
 PROMETHEUS_APP = "prometheus"
 GRAFANA_APP = "grafana"
 LOKI_APP = "loki"
+
+# From COS Lite 3 Stable
+# https://github.com/canonical/observability-stack/blob/tf-cos-lite-3.0.2/terraform/cos-lite/locals.tf#L32
+COS_LITE_CHANNELS = {
+    PROMETHEUS_APP: "3.11/stable",
+    GRAFANA_APP: "12.4/stable",
+    LOKI_APP: "3.7/stable",
+}
 
 
 def read_metrics(juju: jubilant.Juju, unit_name: str, host: str = "127.0.0.1") -> str:
