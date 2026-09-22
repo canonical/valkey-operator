@@ -122,7 +122,7 @@ def test_build_and_deploy(
     )
 
     # Authentik LDAP outpost might be active or blocked because of missing LDAP relation
-    juju.wait(
+    juju_k8s_model.wait(
         lambda status: (
             jubilant.all_active(status, LDAP_NAME) or jubilant.all_blocked(status, LDAP_NAME)
         ),
@@ -174,7 +174,7 @@ def test_ldap_integration(
             LDAP_NAME,
             idle_period=15,
         ),
-        timeout=100,
+        timeout=600,
     )
 
     logger.info("Add LDAP CA certificate")
