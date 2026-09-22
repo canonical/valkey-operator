@@ -793,14 +793,14 @@ tests = ["pytest-operator"]
 
 [[package]]
 name = "dpcharmlibs-interfaces"
-version = "1.2.0"
+version = "1.2.1"
 description = "The dpcharmlibs.interfaces package."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "dpcharmlibs_interfaces-1.2.0-py3-none-any.whl", hash = "sha256:468dd5bbb7a0b0f37123782f16fb58df68ca491d67ed82dfd958fb27e9384d64"},
-    {file = "dpcharmlibs_interfaces-1.2.0.tar.gz", hash = "sha256:28e1336f62d2d1239c87f468230e871369478a59c3393176ef54ad8ed045b8f5"},
+    {file = "dpcharmlibs_interfaces-1.2.1-py3-none-any.whl", hash = "sha256:f0fde722013fc745e11fabf64f06fcc60b5e1c2f6bd6c66a4713a5d7a3c89fb2"},
+    {file = "dpcharmlibs_interfaces-1.2.1.tar.gz", hash = "sha256:3676b6e8e4a0a0276125f02a61670fdd905cd9a0d0e7d5dc572d508cde5a04e1"},
 ]
 
 [package.dependencies]
@@ -2310,4 +2310,4 @@ h11 = ">=0.16.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "dd88b44f7833468197312410bd7591fbc6f3afe822ceef6687c6e5ced3657bad"
+content-hash = "95497b27b4a60bcc3a86a8bffb7e784e8b634cf564cfd774a72cd3f937b64f4e"
