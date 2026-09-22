@@ -73,9 +73,7 @@ def test_build_and_deploy(
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        # the machine is very busy and under load with the entire stack of LDAP deployed
-        # allow more time to settle than usual
-        timeout=720,
+        timeout=600,
     )
 
     # PostgreSQL is deliberately absent: it re-stamps its agent status every few seconds under

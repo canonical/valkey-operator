@@ -100,7 +100,7 @@ def test_build_and_deploy(
     juju_k8s_model.integrate(f"{LDAP_INGRESS_NAME}:certificates", f"{TLS_NAME}:certificates")
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=15, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         # the machine is very busy and under load with the entire stack of LDAP deployed
         # allow more time to settle than usual
         timeout=720,
@@ -113,20 +113,14 @@ def test_build_and_deploy(
     juju_k8s_model.wait(
         lambda status: are_apps_active_and_agents_idle(
             status,
+            LDAP_NAME,
             LDAP_SERVER_NAME,
             LDAP_WORKER_NAME,
+            LDAP_INGRESS_NAME,
             TLS_NAME,
-            idle_period=15,
+            idle_period=30,
         ),
-        timeout=600,
-    )
-
-    # Authentik LDAP outpost might be active or blocked because of missing LDAP relation
-    juju_k8s_model.wait(
-        lambda status: (
-            jubilant.all_active(status, LDAP_NAME) or jubilant.all_blocked(status, LDAP_NAME)
-        ),
-        timeout=600,
+        timeout=1800,
     )
 
     logger.info("Set up LDAP users")
@@ -158,7 +152,7 @@ def test_ldap_integration(
     juju.integrate(f"{APP_NAME}:ldap", ldap_name)
     # wait for the LDAP relation to settle
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=15, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
     )
     juju.wait(
@@ -172,7 +166,7 @@ def test_ldap_integration(
         lambda status: are_apps_active_and_agents_idle(
             status,
             LDAP_NAME,
-            idle_period=15,
+            idle_period=30,
         ),
         timeout=600,
     )
@@ -181,7 +175,7 @@ def test_ldap_integration(
     juju.integrate(f"{APP_NAME}:ldap-ca-cert", ca_name)
     # wait for the CA cert relation to settle
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=15, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
     )
     juju.wait(
@@ -205,7 +199,7 @@ def test_relation_with_data_integrator(juju: jubilant.Juju) -> None:
     juju.integrate(f"{APP_NAME}:valkey-client", f"{DATA_INTEGRATOR_NAME}:valkey")
     # wait for client relation to settle before activating LDAP
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=15, unit_count=NUM_UNITS),
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=600,
     )
     juju.wait(
@@ -229,7 +223,7 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=15, unit_count=NUM_UNITS
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
         ),
         timeout=600,
     )
@@ -345,7 +339,7 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
 
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, idle_period=15, unit_count=NUM_UNITS
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
         ),
         timeout=600,
     )
