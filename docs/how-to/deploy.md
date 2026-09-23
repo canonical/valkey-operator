@@ -20,9 +20,28 @@ juju add-model <model name>
 
 Then, use the [`juju deploy`](https://canonical-juju.readthedocs-hosted.com/en/latest/user/reference/juju-cli/list-of-juju-cli-commands/deploy/) command:
 
+`````{tab-set}
+:sync-group: substrate
+
+````{tab-item} VM
+:sync: vm
+
+```shell
+juju deploy valkey --channel 9/edge -n <number_of_replicas>
+```
+
+````
+
+````{tab-item} K8s
+:sync: k8s
+
 ```shell
 juju deploy valkey --channel 9/edge -n <number_of_replicas> --trust
 ```
+
+````
+
+`````
 
 If you are not sure where to start or would like a more guided walk through for
 setting up your environment, see the {ref}`tutorial`.
