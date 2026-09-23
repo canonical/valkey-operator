@@ -48,6 +48,7 @@ class MetricsManager(ManagerStatusProtocol):
             "REDIS_EXPORTER_INCL_SYSTEM_METRICS": "true",
             "REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL": "true",
             "REDIS_EXPORTER_INCL_CONFIG_METRICS": "false",
+            "REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT": "true",
         }
 
     def reconcile(self) -> None:

@@ -65,6 +65,7 @@ def test_exporter_env_rendered_k8s(base_state):
         assert env["REDIS_EXPORTER_INCL_SYSTEM_METRICS"] == "true"
         assert env["REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL"] == "true"
         assert env["REDIS_EXPORTER_INCL_CONFIG_METRICS"] == "false"
+        assert env["REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT"] == "true"
 
 
 def test_exporter_env_rendered_vm(vm_environment):

@@ -38,24 +38,7 @@ class ObservabilityEvents(ops.Object):
         super().__init__(charm, "observability")
         self.charm = charm
 
-        if self.charm.state.substrate == Substrate.K8S:
-            self.metrics_endpoint = MetricsEndpointProvider(
-                self.charm,
-                relation_name=METRICS_ENDPOINT_RELATION,
-                jobs=[{"static_configs": [{"targets": [f"*:{METRICS_PORT}"]}]}],
-                alert_rules_path=METRICS_RULES_DIR,
-            )
-            self.grafana_dashboards = GrafanaDashboardProvider(
-                self.charm,
-                relation_name=GRAFANA_DASHBOARD_RELATION,
-                dashboards_path=DASHBOARDS_DIR,
-            )
-            self.log_forwarder = LogForwarder(
-                self.charm,
-                relation_name=LOGGING_RELATION,
-                alert_rules_path=LOGS_RULES_DIR,
-            )
-        else:
+        if self.charm.state.substrate == Substrate.VM:
             self.cos_agent = COSAgentProvider(
                 self.charm,
                 relation_name=COS_AGENT_RELATION,
@@ -66,3 +49,21 @@ class ObservabilityEvents(ops.Object):
                 dashboard_dirs=[DASHBOARDS_DIR],
                 refresh_events=[self.charm.on.update_status, self.charm.on.config_changed],
             )
+            return
+
+        self.metrics_endpoint = MetricsEndpointProvider(
+            self.charm,
+            relation_name=METRICS_ENDPOINT_RELATION,
+            jobs=[{"static_configs": [{"targets": [f"*:{METRICS_PORT}"]}]}],
+            alert_rules_path=METRICS_RULES_DIR,
+        )
+        self.grafana_dashboards = GrafanaDashboardProvider(
+            self.charm,
+            relation_name=GRAFANA_DASHBOARD_RELATION,
+            dashboards_path=DASHBOARDS_DIR,
+        )
+        self.log_forwarder = LogForwarder(
+            self.charm,
+            relation_name=LOGGING_RELATION,
+            alert_rules_path=LOGS_RULES_DIR,
+        )

@@ -212,8 +212,8 @@ def test_vm_cos_agent_integration(ensure_valkey, juju: jubilant.Juju) -> None:
 
     # 4. Verify log alert rules
     log_rules = json.dumps(config.get("log_alert_rules", {}))
-    assert "ValkeyBackgroundSaveFailed" in log_rules, (
-        "ValkeyBackgroundSaveFailed alert not found in cos-agent rules"
+    assert "ValkeySentinelFailoverAborted" in log_rules, (
+        "ValkeySentinelFailoverAborted alert not found in cos-agent rules"
     )
     logger.info("Confirmed log alert rules delivered via cos-agent")
 

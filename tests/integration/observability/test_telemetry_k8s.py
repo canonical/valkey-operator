@@ -206,8 +206,8 @@ def test_k8s_otelcol_integration(ensure_valkey, juju: jubilant.Juju) -> None:
             assert logging_rel, f"No relation info found for receive-loki-logs on {cos_unit}"
             log_app_data = logging_rel.get("application-data") or {}
             assert "alert_rules" in log_app_data, f"Missing 'alert_rules' in {log_app_data}"
-            assert "ValkeyBackgroundSaveFailed" in log_app_data["alert_rules"], (
-                "ValkeyBackgroundSaveFailed not found in alert_rules"
+            assert "ValkeySentinelFailoverAborted" in log_app_data["alert_rules"], (
+                "ValkeySentinelFailoverAborted not found in alert_rules"
             )
     logger.info("Confirmed log alert rules delivered via receive-loki-logs")
 
