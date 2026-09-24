@@ -5,7 +5,7 @@ module "valkey" {
 
   app_name = var.valkey.app_name
   base     = var.valkey.base
-  channel  = var.valkey.channel != null ? var.valkey.channel : "9/${var.risk}"
+  channel  = coalesce(var.valkey.channel, "9/${var.risk}")
   config = merge(
     var.valkey.config,
     length(juju_secret.admin_password) > 0 ? {
@@ -18,6 +18,7 @@ module "valkey" {
   constraints        = var.valkey.constraints
   endpoint_bindings  = var.valkey.endpoint_bindings
   expose             = var.valkey.expose
+  offered_endpoints  = var.offered_endpoints
   resources          = var.valkey.resources
   revision           = var.valkey.revision
   storage_directives = var.valkey.storage_directives
@@ -31,7 +32,7 @@ module "self_signed_certificates" {
 
   app_name    = var.tls.deploy.app_name
   base        = var.tls.deploy.base
-  channel     = var.tls.deploy.channel != null ? var.tls.deploy.channel : "1/${var.risk}"
+  channel     = coalesce(var.tls.deploy.channel, "1/${var.risk}")
   config      = var.tls.deploy.config
   constraints = var.tls.deploy.constraints
   model_uuid  = local.model_uuid
@@ -44,7 +45,7 @@ module "data_integrator" {
 
   app_name    = var.data_integrator.deploy.app_name
   base        = var.data_integrator.deploy.base
-  channel     = var.data_integrator.deploy.channel != null ? var.data_integrator.deploy.channel : "latest/${var.risk}"
+  channel     = coalesce(var.data_integrator.deploy.channel, "latest/${var.risk}")
   constraints = var.data_integrator.deploy.constraints
   model_uuid  = local.model_uuid
   revision    = var.data_integrator.deploy.revision
@@ -63,23 +64,23 @@ module "opentelemetry_collector" {
 
   app_name    = var.cos.deploy.app_name
   base        = var.cos.deploy.base
-  channel     = var.cos.deploy.channel != null ? var.cos.deploy.channel : "0.130/${var.risk}"
+  channel     = coalesce(var.cos.deploy.channel, "0.130/${var.risk}")
   config      = var.cos.deploy.config
   constraints = var.cos.deploy.constraints
   model_uuid  = local.model_uuid
-  resources   = var.cos.deploy.resources != null ? var.cos.deploy.resources : {}
+  resources   = var.cos.deploy.resources
   revision    = var.cos.deploy.revision
 
   storage_directives = var.cos.deploy.storage_directives
 }
 
 module "s3_integrator" {
-  count  = local.s3_integrator_enabled ? 1 : 0
+  count  = local.backup_type == "s3" ? 1 : 0
   source = "git::https://github.com/canonical/object-storage-integrator//s3/terraform/charm/s3_integrator?ref=85fef8977e0a6d146af5c418ec463aefb6bdbddb"
 
-  app_name    = local.backups_integrator_app_name
-  base        = local.backups_integrator_base
-  channel     = local.backups_integrator_channel
+  app_name    = local.backup_integrator.app_name
+  base        = local.backup_integrator.base
+  channel     = local.backup_integrator.channel
   constraints = var.backup.deploy.constraints
   model_uuid  = local.model_uuid
   revision    = var.backup.deploy.revision
@@ -93,12 +94,12 @@ module "s3_integrator" {
 }
 
 module "azure_storage_integrator" {
-  count  = local.azure_integrator_enabled ? 1 : 0
+  count  = local.backup_type == "azure" ? 1 : 0
   source = "git::https://github.com/canonical/object-storage-integrator//azure_storage/terraform/charm/azure_storage_integrator?ref=85fef8977e0a6d146af5c418ec463aefb6bdbddb"
 
-  app_name    = local.backups_integrator_app_name
-  base        = local.backups_integrator_base
-  channel     = local.backups_integrator_channel
+  app_name    = local.backup_integrator.app_name
+  base        = local.backup_integrator.base
+  channel     = local.backup_integrator.channel
   constraints = var.backup.deploy.constraints
   model_uuid  = local.model_uuid
   revision    = var.backup.deploy.revision
@@ -112,12 +113,12 @@ module "azure_storage_integrator" {
 }
 
 module "gcs_integrator" {
-  count  = local.gcs_integrator_enabled ? 1 : 0
+  count  = local.backup_type == "gcs" ? 1 : 0
   source = "git::https://github.com/canonical/object-storage-integrator//gcs/terraform/charm/gcs_integrator?ref=85fef8977e0a6d146af5c418ec463aefb6bdbddb"
 
-  app_name    = local.backups_integrator_app_name
-  base        = local.backups_integrator_base
-  channel     = local.backups_integrator_channel
+  app_name    = local.backup_integrator.app_name
+  base        = local.backup_integrator.base
+  channel     = local.backup_integrator.channel
   constraints = var.backup.deploy.constraints
   model_uuid  = local.model_uuid
   revision    = var.backup.deploy.revision

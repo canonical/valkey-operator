@@ -1,23 +1,20 @@
 locals {
-  azure_integrator_enabled = var.backup.deploy != null && try(var.backup.deploy.storage_type, "") == "azure"
-
   # Config keys the pinned integrator modules accept. Their config is a closed object that drops
-  # unknown keys. Refresh these lists when the module refs are bumped.
+  # unknown keys. Refresh these lists when the module refs are bumped. credentials is left out
+  # because the module sets it from the *_secret_version secret.
   backup_config_allowed_keys = {
     azure = [
       "connection-protocol",
       "container",
-      "credentials",
       "endpoint",
       "path",
       "resource-group",
       "storage-account",
     ]
-    gcs = ["bucket", "credentials", "path", "storage-class"]
+    gcs = ["bucket", "path", "storage-class"]
     s3 = [
       "attributes",
       "bucket",
-      "credentials",
       "endpoint",
       "experimental-delete-older-than-days",
       "path",
@@ -29,24 +26,51 @@ locals {
     ]
   }
 
-  backups_integrator_app_name = var.backup.deploy != null ? coalesce(
-    var.backup.deploy.app_name,
-    local.s3_integrator_enabled ? "s3-integrator" :
-    local.azure_integrator_enabled ? "azure-storage-integrator" : "gcs-integrator"
-  ) : null
+  # The bundled backup integrator's app_name, base and channel: backup.deploy overrides the
+  # per-type default. null when backup.deploy is unset.
+  backup_integrator = local.backup_type == null ? null : {
+    for k, v in local.backup_integrator_defaults[local.backup_type] : k => coalesce(var.backup.deploy[k], v)
+  }
 
-  backups_integrator_base = var.backup.deploy != null ? coalesce(
-    var.backup.deploy.base,
-    local.azure_integrator_enabled ? "ubuntu@22.04" : "ubuntu@24.04"
-  ) : null
+  backup_integrator_defaults = {
+    azure = { app_name = "azure-storage-integrator", base = "ubuntu@22.04", channel = "1/${var.risk}" }
+    gcs   = { app_name = "gcs-integrator", base = "ubuntu@24.04", channel = "1/${var.risk}" }
+    s3    = { app_name = "s3-integrator", base = "ubuntu@24.04", channel = "2/${var.risk}" }
+  }
 
-  backups_integrator_channel = var.backup.deploy != null ? coalesce(
-    var.backup.deploy.channel,
-    local.s3_integrator_enabled ? "2/${var.risk}" : "1/${var.risk}"
-  ) : null
+  # backup.deploy.storage_type (s3, azure or gcs), or null when no integrator is bundled.
+  backup_type = try(var.backup.deploy.storage_type, null)
 
-  gcs_integrator_enabled = var.backup.deploy != null && try(var.backup.deploy.storage_type, "") == "gcs"
-  model_uuid             = var.model.create ? juju_model.this[0].uuid : data.juju_model.this[0].uuid
-  product_version        = "1.0.0"
-  s3_integrator_enabled  = var.backup.deploy != null && try(var.backup.deploy.storage_type, "s3") == "s3"
+  # Every component this module can deploy: the juju_application object, or { name } where the
+  # upstream module exposes only app_name. null when not deployed. one() keeps known fields known
+  # at plan, where try() would turn the whole object unknown.
+  components = {
+    azure_storage_integrator = one(module.azure_storage_integrator[*].application)
+    data_integrator          = one(module.data_integrator[*].application)
+    gcs_integrator           = one(module.gcs_integrator[*].application)
+    opentelemetry_collector  = one([for m in module.opentelemetry_collector : { name = m.app_name }])
+    s3_integrator            = one(module.s3_integrator[*].application)
+    self_signed_certificates = one([for m in module.self_signed_certificates : { name = m.app_name }])
+    valkey                   = module.valkey.application
+  }
+
+  # Config keys the pinned data-integrator module accepts. Its config is a closed object that drops
+  # unknown keys. Refresh this list when the module ref is bumped.
+  data_integrator_config_allowed_keys = [
+    "consumer-group-prefix",
+    "database-name",
+    "entity-permissions",
+    "entity-type",
+    "extra-group-roles",
+    "extra-user-roles",
+    "index-name",
+    "keyspace-name",
+    "mtls-cert",
+    "prefix-name",
+    "requested-entities-secret",
+    "topic-name",
+  ]
+
+  model_uuid      = var.model.create ? juju_model.this[0].uuid : data.juju_model.this[0].uuid
+  product_version = "1.0.0"
 }

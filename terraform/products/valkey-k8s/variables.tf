@@ -24,6 +24,11 @@ variable "azure_secret_version" {
   description = "0 creates no secret. 1 creates it. Increment to rotate the Azure credentials."
   type        = number
   default     = 0
+
+  validation {
+    condition     = var.azure_secret_version == 0 || local.backup_type == "azure"
+    error_message = "azure_secret_version is set, but backup.deploy does not deploy azure-storage-integrator (storage_type = \"azure\")."
+  }
 }
 
 variable "backup" {
@@ -71,40 +76,10 @@ variable "backup" {
   }
 
   validation {
-    condition = !(
-      var.backup.deploy != null && (
-        var.backup.s3_credentials != null ||
-        var.backup.azure_credentials != null ||
-        var.backup.gcs_credentials != null
-      )
-    )
-    error_message = "backup.deploy and consumed credentials relations (s3_credentials, azure_credentials, gcs_credentials) are mutually exclusive. Set backup.deploy = null to consume an existing integrator."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.backup.azure_credentials, var.backup.gcs_credentials, var.backup.s3_credentials] :
-      target == null || contains(["endpoint", "offer"], target.kind)
-    ])
-    error_message = "backup integration target kind must be either 'endpoint' or 'offer'."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.backup.azure_credentials, var.backup.gcs_credentials, var.backup.s3_credentials] :
-      target == null ? true :
-      target.kind == "endpoint" ? (target.name != null && target.name != "" && target.endpoint != null && target.endpoint != "") : true
-    ])
-    error_message = "Both 'name' and 'endpoint' attributes must be provided for in-model backup integrations."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.backup.azure_credentials, var.backup.gcs_credentials, var.backup.s3_credentials] :
-      target == null ? true :
-      target.kind == "offer" ? (target.url != null && target.url != "") : true
-    ])
-    error_message = "The 'url' attribute must be provided for cross-model backup integrations."
+    condition = length([
+      for x in [var.backup.deploy, var.backup.azure_credentials, var.backup.gcs_credentials, var.backup.s3_credentials] : x if x != null
+    ]) <= 1
+    error_message = "Valkey supports one backup storage integrator at a time. Set at most one of backup.deploy, backup.s3_credentials, backup.azure_credentials and backup.gcs_credentials."
   }
 
   validation {
@@ -112,53 +87,20 @@ variable "backup" {
       keys(var.backup.deploy.config),
       lookup(local.backup_config_allowed_keys, var.backup.deploy.storage_type, keys(var.backup.deploy.config))
     )) == 0
-    error_message = "backup.deploy.config contains keys not supported by the pinned ${try(var.backup.deploy.storage_type, "")} integrator module: ${try(join(", ", sort(setsubtract(keys(var.backup.deploy.config), lookup(local.backup_config_allowed_keys, var.backup.deploy.storage_type, [])))), "")}."
-  }
-
-  validation {
-    condition     = var.backup.deploy == null || !contains(keys(try(var.backup.deploy.config, {})), "credentials")
-    error_message = "backup.deploy.config must not set 'credentials'. The module sets it to the Juju secret it creates from the s3, azure or gcs secret variables."
+    error_message = "backup.deploy.config for the ${try(var.backup.deploy.storage_type, "")} integrator accepts only: ${try(join(", ", local.backup_config_allowed_keys[var.backup.deploy.storage_type]), "")}. The module sets credentials itself from the matching *_secret_version secret."
   }
 }
 
 variable "certificate_transfer" {
-  description = "CA certificate transfer integration (consumed relation)."
+  description = "CA certificate transfer provider to integrate with Valkey certificate-transfer. null = not integrated."
   type = object({
-    certificate_transfer = optional(object({
-      kind       = string
-      name       = optional(string)
-      endpoint   = optional(string)
-      url        = optional(string)
-      controller = optional(string)
-    }))
+    kind       = string
+    name       = optional(string)
+    endpoint   = optional(string)
+    url        = optional(string)
+    controller = optional(string)
   })
-  default = {}
-
-  validation {
-    condition     = var.certificate_transfer.certificate_transfer == null || contains(["endpoint", "offer"], try(var.certificate_transfer.certificate_transfer.kind, ""))
-    error_message = "certificate_transfer.certificate_transfer.kind must be either 'endpoint' or 'offer'."
-  }
-
-  validation {
-    condition = (
-      var.certificate_transfer.certificate_transfer == null ? true :
-      var.certificate_transfer.certificate_transfer.kind == "endpoint" ? (
-        var.certificate_transfer.certificate_transfer.name != null && var.certificate_transfer.certificate_transfer.name != "" &&
-        var.certificate_transfer.certificate_transfer.endpoint != null && var.certificate_transfer.certificate_transfer.endpoint != ""
-      ) : true
-    )
-    error_message = "Both 'name' and 'endpoint' attributes must be provided for in-model certificate_transfer integration."
-  }
-
-  validation {
-    condition = (
-      var.certificate_transfer.certificate_transfer == null ? true :
-      var.certificate_transfer.certificate_transfer.kind == "offer" ? (
-        var.certificate_transfer.certificate_transfer.url != null && var.certificate_transfer.certificate_transfer.url != ""
-      ) : true
-    )
-    error_message = "The 'url' attribute must be provided for cross-model certificate_transfer integration."
-  }
+  default = null
 }
 
 variable "cos" {
@@ -171,7 +113,7 @@ variable "cos" {
       channel            = optional(string)
       constraints        = optional(string) # null: follow the model constraints (set model.constraints = "arch=arm64" on arm64)
       config             = optional(map(string), {})
-      resources          = optional(map(string))
+      resources          = optional(map(string), {})
       revision           = optional(number)
       storage_directives = optional(map(string), {})
     }))
@@ -253,32 +195,6 @@ variable "cos" {
     ])
     error_message = "cos.metrics_endpoint, cos.logging and cos.grafana_dashboard are a same-model escape hatch and accept kind = \"endpoint\" only. To reach COS in another model, set cos.deploy and use cos.prometheus, cos.loki and cos.grafana."
   }
-
-  validation {
-    condition = alltrue([
-      for target in [var.cos.grafana_dashboard, var.cos.logging, var.cos.metrics_endpoint, var.cos.prometheus, var.cos.loki, var.cos.grafana] :
-      target == null || contains(["endpoint", "offer"], target.kind)
-    ])
-    error_message = "cos integration target kind must be either 'endpoint' or 'offer'."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.cos.grafana_dashboard, var.cos.logging, var.cos.metrics_endpoint, var.cos.prometheus, var.cos.loki, var.cos.grafana] :
-      target == null ? true :
-      target.kind == "endpoint" ? (target.name != null && target.name != "" && target.endpoint != null && target.endpoint != "") : true
-    ])
-    error_message = "Both 'name' and 'endpoint' attributes must be provided for in-model cos integrations."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.cos.grafana_dashboard, var.cos.logging, var.cos.metrics_endpoint, var.cos.prometheus, var.cos.loki, var.cos.grafana] :
-      target == null ? true :
-      target.kind == "offer" ? (target.url != null && target.url != "") : true
-    ])
-    error_message = "The 'url' attribute must be provided for cross-model cos integrations."
-  }
 }
 
 variable "data_integrator" {
@@ -300,23 +216,8 @@ variable "data_integrator" {
   }
 
   validation {
-    condition = var.data_integrator.deploy == null || alltrue([
-      for k in keys(var.data_integrator.deploy.config) : contains([
-        "consumer-group-prefix",
-        "database-name",
-        "entity-permissions",
-        "entity-type",
-        "extra-group-roles",
-        "extra-user-roles",
-        "index-name",
-        "keyspace-name",
-        "mtls-cert",
-        "prefix-name",
-        "requested-entities-secret",
-        "topic-name",
-      ], k)
-    ])
-    error_message = "data_integrator.deploy.config contains keys not supported by the pinned data-integrator module."
+    condition     = var.data_integrator.deploy == null || length(setsubtract(keys(var.data_integrator.deploy.config), local.data_integrator_config_allowed_keys)) == 0
+    error_message = "data_integrator.deploy.config accepts only: ${join(", ", local.data_integrator_config_allowed_keys)}."
   }
 }
 
@@ -332,6 +233,11 @@ variable "gcs_secret_version" {
   description = "0 creates no secret. 1 creates it. Increment to rotate the GCS credentials."
   type        = number
   default     = 0
+
+  validation {
+    condition     = var.gcs_secret_version == 0 || local.backup_type == "gcs"
+    error_message = "gcs_secret_version is set, but backup.deploy does not deploy gcs-integrator (storage_type = \"gcs\")."
+  }
 }
 
 variable "juju_controller" {
@@ -368,29 +274,8 @@ variable "ldap" {
   default = {}
 
   validation {
-    condition = alltrue([
-      for target in [var.ldap.ldap, var.ldap.ldap_ca_cert] :
-      target == null || contains(["endpoint", "offer"], target.kind)
-    ])
-    error_message = "ldap integration target kind must be either 'endpoint' or 'offer'."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.ldap.ldap, var.ldap.ldap_ca_cert] :
-      target == null ? true :
-      target.kind == "endpoint" ? (target.name != null && target.name != "" && target.endpoint != null && target.endpoint != "") : true
-    ])
-    error_message = "Both 'name' and 'endpoint' attributes must be provided for in-model ldap integrations."
-  }
-
-  validation {
-    condition = alltrue([
-      for target in [var.ldap.ldap, var.ldap.ldap_ca_cert] :
-      target == null ? true :
-      target.kind == "offer" ? (target.url != null && target.url != "") : true
-    ])
-    error_message = "The 'url' attribute must be provided for cross-model ldap integrations."
+    condition     = (var.ldap.ldap != null) == (var.ldap.ldap_ca_cert != null)
+    error_message = "Set ldap.ldap and ldap.ldap_ca_cert together, or neither."
   }
 }
 
@@ -406,7 +291,7 @@ variable "logging_config" {
 }
 
 variable "model" {
-  description = "Juju model configuration. If create is true, a new model with 'name' is created. If false, an existing model is looked up by name and owner. constraints applies to a created model only; applications that set no arch inherit it, so set constraints = \"arch=arm64\" on arm64."
+  description = "Juju model configuration. With create = true, the module creates a model called name. With create = false, it looks up an existing model by name and owner. constraints applies only to a created model. Applications that set no arch inherit it, so set constraints = \"arch=arm64\" on arm64."
   type = object({
     constraints = optional(string)
     create      = optional(bool, true)
@@ -414,9 +299,7 @@ variable "model" {
     owner       = optional(string, "admin")
   })
   default = {
-    create = true
-    name   = "valkey"
-    owner  = "admin"
+    name = "valkey"
   }
 
   validation {
@@ -427,12 +310,12 @@ variable "model" {
 
 variable "offered_endpoints" {
   description = "Valkey provides endpoints to expose as Juju offers. Each offer is named <valkey app_name>-<endpoint>."
-  type        = set(string)
+  type        = list(string)
   default     = []
 
   validation {
-    condition     = alltrue([for e in var.offered_endpoints : contains(["cos-agent", "grafana-dashboard", "metrics-endpoint", "valkey-client"], e)])
-    error_message = "offered_endpoints accepts only Valkey provides endpoints: cos-agent, grafana-dashboard, metrics-endpoint, valkey-client."
+    condition     = alltrue([for e in var.offered_endpoints : contains(["grafana-dashboard", "metrics-endpoint", "valkey-client"], e)])
+    error_message = "offered_endpoints accepts grafana-dashboard, metrics-endpoint and valkey-client. cos-agent is left out because it needs a machine subordinate, which K8s and cross-model relations cannot provide."
   }
 }
 
@@ -441,7 +324,7 @@ variable "proxy" {
   type = object({
     http     = optional(string)
     https    = optional(string)
-    no_proxy = optional(string)
+    no-proxy = optional(string)
   })
   default = null
 
@@ -482,6 +365,11 @@ variable "s3_secret_version" {
   description = "0 creates no secret. 1 creates it. Increment to rotate the S3 credentials."
   type        = number
   default     = 0
+
+  validation {
+    condition     = var.s3_secret_version == 0 || local.backup_type == "s3"
+    error_message = "s3_secret_version is set, but backup.deploy does not deploy s3-integrator (storage_type = \"s3\")."
+  }
 }
 
 variable "tls" {
@@ -514,32 +402,6 @@ variable "tls" {
     condition     = !(var.tls.deploy != null && var.tls.client_certificates != null)
     error_message = "tls.deploy and tls.client_certificates are mutually exclusive. To consume an external tls-certificates provider, leave tls.deploy unset or set it to null."
   }
-
-  validation {
-    condition     = var.tls.client_certificates == null || contains(["endpoint", "offer"], try(var.tls.client_certificates.kind, ""))
-    error_message = "tls.client_certificates.kind must be either 'endpoint' or 'offer'."
-  }
-
-  validation {
-    condition = (
-      var.tls.client_certificates == null ? true :
-      var.tls.client_certificates.kind == "endpoint" ? (
-        var.tls.client_certificates.name != null && var.tls.client_certificates.name != "" &&
-        var.tls.client_certificates.endpoint != null && var.tls.client_certificates.endpoint != ""
-      ) : true
-    )
-    error_message = "Both 'name' and 'endpoint' attributes must be provided for in-model client_certificates integration."
-  }
-
-  validation {
-    condition = (
-      var.tls.client_certificates == null ? true :
-      var.tls.client_certificates.kind == "offer" ? (
-        var.tls.client_certificates.url != null && var.tls.client_certificates.url != ""
-      ) : true
-    )
-    error_message = "The 'url' attribute must be provided for cross-model client_certificates integration."
-  }
 }
 
 variable "tls_client_private_key" {
@@ -567,12 +429,12 @@ variable "valkey" {
     endpoint_bindings = optional(set(object({
       endpoint = optional(string)
       space    = string
-    })))
-    expose = optional(map(object({
+    })), [])
+    expose = optional(list(object({
       cidrs     = optional(string)
       endpoints = optional(string)
       spaces    = optional(string)
-    })), {})
+    })), [])
     resources          = optional(map(string), {})
     revision           = optional(number)
     storage_directives = optional(map(string), {})
@@ -581,7 +443,7 @@ variable "valkey" {
   default = {}
 
   validation {
-    condition     = try(var.valkey.units, 3) >= 1
+    condition     = var.valkey.units >= 1
     error_message = "valkey.units must be at least 1."
   }
 

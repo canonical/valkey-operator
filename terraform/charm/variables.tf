@@ -5,7 +5,7 @@ variable "app_name" {
 }
 
 variable "base" {
-  description = "The operating system base on which to deploy (e.g. ubuntu@26.04)."
+  description = "The operating system base on which to deploy, for example ubuntu@26.04."
   type        = string
   default     = "ubuntu@26.04"
 }
@@ -29,22 +29,27 @@ variable "constraints" {
 }
 
 variable "endpoint_bindings" {
-  description = "Map of endpoint bindings for spaces."
+  description = "Set of endpoint-to-space bindings. An entry without endpoint sets the default space."
   type = set(object({
     endpoint = optional(string)
     space    = string
   }))
-  default = null
+  default = []
 }
 
 variable "expose" {
-  description = "Map of expose definitions to make application ports publicly accessible."
-  type = map(object({
+  description = "Expose settings for the application. Takes at most one entry. [] leaves the application unexposed and [{}] exposes it to all CIDRs."
+  type = list(object({
     cidrs     = optional(string)
     endpoints = optional(string)
     spaces    = optional(string)
   }))
-  default = {}
+  default = []
+
+  validation {
+    condition     = length(var.expose) <= 1
+    error_message = "expose takes at most one entry because Juju keeps one expose setting per application. To expose several endpoints, list them comma-separated in the endpoints attribute of that entry."
+  }
 }
 
 variable "machines" {
@@ -61,12 +66,12 @@ variable "model_uuid" {
 
 variable "offered_endpoints" {
   description = "List of endpoints to expose as Juju offers for cross-model consumption. Each offer is named <app_name>-<endpoint>."
-  type        = set(string)
+  type        = list(string)
   default     = []
 }
 
 variable "resources" {
-  description = "Map of charm resource names to OCI image hashes or revisions."
+  description = "Map of charm resource name to a Charmhub revision number or an OCI image URL. {} uses the resources published with the charm revision."
   type        = map(string)
   default     = {}
 }

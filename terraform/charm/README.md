@@ -1,15 +1,16 @@
-# Valkey Charm Terraform Module
+# Valkey charm Terraform module
 
-Terraform module to deploy the Charmed Valkey application on Kubernetes or VM clouds using the Juju Terraform provider.
+Terraform module that deploys the Valkey charm on Kubernetes or machine clouds with the Juju
+Terraform provider.
 
-This module conforms to CC008 Charm Terraform Standards.
+The module follows the CC008 Charm Terraform Standards.
 
 ## Requirements
 
 | Name | Version |
 |------|---------|
 | terraform | >= 1.6 |
-| juju | >= 1.0.0 |
+| juju | > 1.0.0 |
 
 ## Usage
 
@@ -24,7 +25,7 @@ module "valkey" {
 }
 ```
 
-For Kubernetes deployments, set `trust = true` and provide the `valkey-image` resource:
+For Kubernetes deployments, set `trust = true`:
 
 ```hcl
 module "valkey" {
@@ -35,10 +36,6 @@ module "valkey" {
   channel  = "9/edge"
   units    = 3
   trust    = true
-
-  resources = {
-    valkey-image = "ghcr.io/canonical/valkey-charmed:9.0.4-26.04_edge"
-  }
 }
 ```
 
@@ -51,12 +48,12 @@ module "valkey" {
 | channel | Channel of the charm. | `string` | `"9/edge"` | no |
 | config | Map of charm configuration options. | `map(string)` | `{}` | no |
 | constraints | Juju constraints for this application. | `string` | `null` | no |
-| endpoint_bindings | Map of endpoint bindings for spaces. | `set(object({ endpoint = optional(string), space = string }))` | `null` | no |
-| expose | Map of expose definitions to make ports publicly accessible. | `map(object({ cidrs = optional(string), endpoints = optional(string), spaces = optional(string) }))` | `{}` | no |
+| endpoint_bindings | Set of endpoint-to-space bindings. An entry without `endpoint` sets the default space. | `set(object({ endpoint = optional(string), space = string }))` | `[]` | no |
+| expose | Expose settings. Takes at most one entry. `[]` leaves the application unexposed and `[{}]` exposes it to all CIDRs. | `list(object({ cidrs = optional(string), endpoints = optional(string), spaces = optional(string) }))` | `[]` | no |
 | machines | List of Juju machine IDs to place units on. | `set(string)` | `[]` | no |
 | model_uuid | Reference to an existing Juju model UUID. | `string` | n/a | yes |
-| offered_endpoints | List of endpoints to expose as Juju offers. Each offer is named `<app_name>-<endpoint>`. | `set(string)` | `[]` | no |
-| resources | Map of charm resource names to OCI images or revisions. | `map(string)` | `{}` | no |
+| offered_endpoints | List of endpoints to expose as Juju offers. Each offer is named `<app_name>-<endpoint>`. | `list(string)` | `[]` | no |
+| resources | Map of charm resource name to a Charmhub revision number or an OCI image URL. `{}` uses the resources published with the charm revision. An OCI image URL is never refreshed when the charm is, so pin one only on purpose. | `map(string)` | `{}` | no |
 | revision | Revision number of the charm. Set to null for latest. | `number` | `null` | no |
 | storage_directives | Map of storage directives for application storage. | `map(string)` | `{}` | no |
 | trust | Grant charm trusted status / cloud credentials. Required on K8s. | `bool` | `false` | no |
@@ -68,6 +65,6 @@ module "valkey" {
 |------|-------------|------|
 | app_name | Name of the deployed application. | `string` |
 | application | Object representing the deployed application. | `object` |
-| offers | Map of all offers exposed by the charm, keyed like `provides` (e.g. `valkey_client`). | `map(object)` |
+| offers | Map of all offers exposed by the charm, keyed like `provides`, for example `valkey_client`. Each value is `{ kind = "offer", url }`. | `map(object)` |
 | provides | Provides endpoints. | `map(object)` |
 | requires | Requires endpoints. | `map(object)` |

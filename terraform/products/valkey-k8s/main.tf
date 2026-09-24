@@ -9,7 +9,7 @@ resource "juju_model" "this" {
       for k, v in {
         "http-proxy"  = var.proxy.http
         "https-proxy" = var.proxy.https
-        "no-proxy"    = var.proxy.no_proxy
+        "no-proxy"    = var.proxy["no-proxy"]
       } : k => v if v != null
     } : {}
   )
@@ -26,56 +26,6 @@ resource "terraform_data" "deployed_at" {
 
   lifecycle {
     ignore_changes = [input]
-  }
-}
-
-resource "terraform_data" "validate_backup_integrations" {
-  input = {
-    bundled   = var.backup.deploy != null
-    s3_ext    = var.backup.s3_credentials != null
-    azure_ext = var.backup.azure_credentials != null
-    gcs_ext   = var.backup.gcs_credentials != null
-  }
-
-  lifecycle {
-    precondition {
-      condition = (
-        (var.backup.deploy != null ? 1 : 0) +
-        (var.backup.s3_credentials != null ? 1 : 0) +
-        (var.backup.azure_credentials != null ? 1 : 0) +
-        (var.backup.gcs_credentials != null ? 1 : 0)
-      ) <= 1
-      error_message = "Valkey supports at most one backup storage integrator at a time. Configure either backup.deploy (s3, azure, or gcs) or one external credentials integration."
-    }
-
-    precondition {
-      condition     = var.s3_secret_version == 0 || local.s3_integrator_enabled
-      error_message = "s3_secret_version is set, but backup.deploy is not configured with storage_type = 's3'."
-    }
-
-    precondition {
-      condition     = var.azure_secret_version == 0 || local.azure_integrator_enabled
-      error_message = "azure_secret_version is set, but backup.deploy is not configured with storage_type = 'azure'."
-    }
-
-    precondition {
-      condition     = var.gcs_secret_version == 0 || local.gcs_integrator_enabled
-      error_message = "gcs_secret_version is set, but backup.deploy is not configured with storage_type = 'gcs'."
-    }
-  }
-}
-
-resource "terraform_data" "validate_ldap_integrations" {
-  input = {
-    ldap         = var.ldap.ldap != null
-    ldap_ca_cert = var.ldap.ldap_ca_cert != null
-  }
-
-  lifecycle {
-    precondition {
-      condition     = (var.ldap.ldap != null) == (var.ldap.ldap_ca_cert != null)
-      error_message = "LDAP integrations must be configured together: set both ldap.ldap and ldap.ldap_ca_cert, or neither."
-    }
   }
 }
 
@@ -117,12 +67,12 @@ resource "juju_access_secret" "tls_client_private_key" {
 }
 
 resource "juju_secret" "s3_secret" {
-  count            = local.s3_integrator_enabled && var.s3_secret_version > 0 ? 1 : 0
+  count            = local.backup_type == "s3" && var.s3_secret_version > 0 ? 1 : 0
   model_uuid       = local.model_uuid
-  name             = "${local.backups_integrator_app_name}-credentials"
+  name             = "${local.backup_integrator.app_name}-credentials"
   value_wo         = { "access-key" = var.s3_access_key, "secret-key" = var.s3_secret_key }
   value_wo_version = var.s3_secret_version
-  info             = "S3 credentials for ${local.backups_integrator_app_name}"
+  info             = "S3 credentials for ${local.backup_integrator.app_name}"
 }
 
 resource "juju_access_secret" "s3_secret_access" {
@@ -134,12 +84,12 @@ resource "juju_access_secret" "s3_secret_access" {
 }
 
 resource "juju_secret" "azure_secret" {
-  count            = local.azure_integrator_enabled && var.azure_secret_version > 0 ? 1 : 0
+  count            = local.backup_type == "azure" && var.azure_secret_version > 0 ? 1 : 0
   model_uuid       = local.model_uuid
-  name             = "${local.backups_integrator_app_name}-credentials"
+  name             = "${local.backup_integrator.app_name}-credentials"
   value_wo         = { "secret-key" = var.azure_secret_key }
   value_wo_version = var.azure_secret_version
-  info             = "Azure credentials for ${local.backups_integrator_app_name}"
+  info             = "Azure credentials for ${local.backup_integrator.app_name}"
 }
 
 resource "juju_access_secret" "azure_secret_access" {
@@ -151,12 +101,12 @@ resource "juju_access_secret" "azure_secret_access" {
 }
 
 resource "juju_secret" "gcs_secret" {
-  count            = local.gcs_integrator_enabled && var.gcs_secret_version > 0 ? 1 : 0
+  count            = local.backup_type == "gcs" && var.gcs_secret_version > 0 ? 1 : 0
   model_uuid       = local.model_uuid
-  name             = "${local.backups_integrator_app_name}-credentials"
+  name             = "${local.backup_integrator.app_name}-credentials"
   value_wo         = { "secret-key" = var.gcs_secret_key }
   value_wo_version = var.gcs_secret_version
-  info             = "GCS credentials for ${local.backups_integrator_app_name}"
+  info             = "GCS credentials for ${local.backup_integrator.app_name}"
 }
 
 resource "juju_access_secret" "gcs_secret_access" {
