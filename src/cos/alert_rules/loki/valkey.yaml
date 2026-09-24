@@ -1,0 +1,25 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+groups:
+  - name: valkey_logs_alerts
+    rules:
+      - alert: ValkeyOutOfMemoryAllocationFailed
+        expr: |
+          count_over_time({%%juju_topology%%} |~ "(?i)Out of memory allocating" [5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey memory allocation failed (OOM)
+          description: Valkey on {{ $labels.juju_unit }} failed to allocate memory and aborted.
+
+      - alert: ValkeySentinelFailoverAborted
+        expr: |
+          count_over_time({%%juju_topology%%} |~ "-failover-abort-" [5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sentinel failover aborted
+          description: Sentinel on {{ $labels.juju_unit }} aborted a failover.

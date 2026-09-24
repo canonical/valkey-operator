@@ -10,15 +10,23 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "valkey-charmed"
-SNAP_REVISIONS = {"x86_64": 141, "aarch64": 143}
+SNAP_REVISIONS = {"x86_64": 183, "aarch64": 184}
+SNAP_LOGS_SLOT = f"{SNAP_NAME}:logs"
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
+METRICS_SERVICE = "metrics-exporter"
 SNAP_COMMON_PATH = f"var/snap/{SNAP_NAME}/common"
 SNAP_CURRENT_PATH = f"var/snap/{SNAP_NAME}/current"
 SNAP_CONFIG_FILE = "etc/valkey/valkey.conf"
 SNAP_SENTINEL_CONFIG_FILE = "etc/valkey/sentinel.conf"
 SNAP_ACL_FILE = "etc/valkey/users.acl"
 SNAP_SENTINEL_ACL_FILE = "etc/valkey/sentinel-users.acl"
+METRICS_EXPORTER_ENV_FILE = "etc/valkey/metrics-exporter.env"
+
+COS_DIR = "src/cos"
+METRICS_RULES_DIR = f"{COS_DIR}/alert_rules/prometheus"
+LOGS_RULES_DIR = f"{COS_DIR}/alert_rules/loki"
+DASHBOARDS_DIR = f"{COS_DIR}/grafana_dashboards"
 
 CONFIG_FILE = "var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
@@ -37,9 +45,16 @@ LDAP_CA_CERT_RELATION = "ldap-ca-cert"
 LDAP_RELATION = "ldap"
 LDAP_GROUP_PLACEHOLDER_PROBE = "group-name-probe"
 EXTERNAL_CLIENTS_RELATION = "valkey-client"
+METRICS_ENDPOINT_RELATION = "metrics-endpoint"
+GRAFANA_DASHBOARD_RELATION = "grafana-dashboard"
+LOGGING_RELATION = "logging"
+COS_AGENT_RELATION = "cos-agent"
 S3_RELATION_NAME = "s3-credentials"
 AZURE_RELATION_NAME = "azure-credentials"
 GCS_RELATION_NAME = "gcs-credentials"
+
+VALKEY_LOGS_SERVICE = "valkey-logs"
+SENTINEL_LOGS_SERVICE = "sentinel-logs"
 # azure-storage-integrator connection-protocol values that designate an https/http
 # Blob endpoint. abfs/abfss designate ADLS-Gen2 (*.dfs.*), served by the datalake
 # SDK rather than the Blob SDK, so they are rejected up front.
@@ -79,6 +94,7 @@ CLIENT_PORT = 6379
 TLS_PORT = 6380
 SENTINEL_PORT = 26379
 SENTINEL_TLS_PORT = 26380
+METRICS_PORT = 9121
 
 PRIMARY_NAME = "primary"
 QUORUM_NUMBER = 2

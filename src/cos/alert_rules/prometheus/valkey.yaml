@@ -1,0 +1,119 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+groups:
+  - name: valkey_alerts
+    rules:
+      - alert: ValkeyDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey is down on {{ $labels.juju_unit }}
+          description: Valkey process on unit {{ $labels.juju_unit }} is unreachable by metrics exporter.
+
+      - alert: ValkeyMissingPrimary
+        expr: |
+          count by (juju_model_uuid, juju_application) (redis_instance_info)
+            unless count by (juju_model_uuid, juju_application) (redis_instance_info{role="master"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey cluster has no primary
+          description: Valkey cluster has no unit reporting role="master". Automatic failover may have stalled.
+
+      - alert: ValkeyTooManyPrimaries
+        expr: count by (juju_model_uuid, juju_application) (redis_instance_info{role="master"}) > 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey cluster has multiple primaries (split-brain)
+          description: More than one Valkey unit reports role="master". Sentinel split-brain detected.
+
+      - alert: ValkeyDisconnectedReplicas
+        expr: |
+          count by (juju_model_uuid, juju_application) (redis_connected_slaves)
+            - sum by (juju_model_uuid, juju_application) (redis_connected_slaves) - 1 > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey replicas disconnected from replication
+          description: Replicas are not replicating from primary on Valkey cluster {{ $labels.juju_application }}.
+
+      - alert: ValkeyPrimaryLinkDown
+        expr: redis_master_link_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey replica lost its link to the primary
+          description: Replica {{ $labels.juju_unit }} has been disconnected from its primary for more than 2 minutes.
+
+      # TODO: add alerts on the new INFO fields once we move to Valkey 9.1.
+      - alert: ValkeyRDBSaveFailed
+        expr: redis_rdb_last_bgsave_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey RDB snapshot failed
+          description: The last background RDB save failed on {{ $labels.juju_unit }}. Valkey refuses writes (MISCONF) until a save succeeds.
+
+      # The charm sets appendonly no, so the AOF alerts below cannot fire until AOF is enabled.
+      - alert: ValkeyAOFWriteFailed
+        expr: redis_aof_last_write_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey AOF write failed
+          description: The last write to the append-only file failed on {{ $labels.juju_unit }}.
+
+      - alert: ValkeyAOFRewriteFailed
+        expr: redis_aof_last_bgrewrite_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey AOF rewrite failed
+          description: The last background AOF rewrite failed on {{ $labels.juju_unit }}.
+
+      - alert: ValkeyClusterFlapping
+        expr: changes(redis_connected_slaves[1m]) > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Valkey replication connection is flapping
+          description: Rapid reconnect/disconnect cycles detected on {{ $labels.juju_unit }}.
+
+      - alert: ValkeyOutOfSystemMemory
+        expr: redis_memory_used_bytes / redis_total_system_memory_bytes * 100 > 90 and redis_total_system_memory_bytes > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Valkey system memory usage > 90%
+          description: Memory usage on {{ $labels.juju_unit }} exceeds 90% of available system memory.
+
+      - alert: ValkeyOutOfConfiguredMaxmemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90 and on(instance) redis_memory_max_bytes > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Valkey memory usage approaching maxmemory (> 90%)
+          description: Memory usage on {{ $labels.juju_unit }} is above 90% of configured maxmemory limit.
+
+      - alert: ValkeyTooManyConnections
+        expr: redis_connected_clients / redis_config_maxclients * 100 > 90 and redis_config_maxclients > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Valkey client connections > 90% of limit
+          description: Connected clients on {{ $labels.juju_unit }} exceeds 90% of maxclients.
