@@ -113,7 +113,6 @@ def test_build_and_deploy(
     juju_k8s_model.wait(
         lambda status: are_apps_active_and_agents_idle(
             status,
-            LDAP_NAME,
             LDAP_SERVER_NAME,
             LDAP_WORKER_NAME,
             LDAP_INGRESS_NAME,
@@ -121,6 +120,18 @@ def test_build_and_deploy(
             idle_period=30,
         ),
         timeout=1800,
+    )
+
+    # Authentik LDAP outpost might be active or blocked because of missing LDAP relation
+    juju_k8s_model.wait(
+        lambda status: are_agents_idle(status, LDAP_NAME, idle_period=30),
+        timeout=1800,
+    )
+    juju_k8s_model.wait(
+        lambda status: (
+            jubilant.all_active(status, LDAP_NAME) or jubilant.all_blocked(status, LDAP_NAME)
+        ),
+        timeout=600,
     )
 
     logger.info("Set up LDAP users")
