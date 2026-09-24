@@ -55,7 +55,7 @@ module "valkey" {
 | expose | Map of expose definitions to make ports publicly accessible. | `map(object({ cidrs = optional(string), endpoints = optional(string), spaces = optional(string) }))` | `{}` | no |
 | machines | List of Juju machine IDs to place units on. | `set(string)` | `[]` | no |
 | model_uuid | Reference to an existing Juju model UUID. | `string` | n/a | yes |
-| offered_endpoints | List of endpoints to expose as Juju offers. | `set(string)` | `[]` | no |
+| offered_endpoints | List of endpoints to expose as Juju offers. Each offer is named `<app_name>-<endpoint>`. | `set(string)` | `[]` | no |
 | resources | Map of charm resource names to OCI images or revisions. | `map(string)` | `{}` | no |
 | revision | Revision number of the charm. Set to null for latest. | `number` | `null` | no |
 | storage_directives | Map of storage directives for application storage. | `map(string)` | `{}` | no |
@@ -68,6 +68,6 @@ module "valkey" {
 |------|-------------|------|
 | app_name | Name of the deployed application. | `string` |
 | application | Object representing the deployed application. | `object` |
-| offers | Map of all offers exposed by the charm. | `map(object)` |
+| offers | Map of all offers exposed by the charm, keyed like `provides` (e.g. `valkey_client`). | `map(object)` |
 | provides | Provides endpoints. | `map(object)` |
 | requires | Requires endpoints. | `map(object)` |

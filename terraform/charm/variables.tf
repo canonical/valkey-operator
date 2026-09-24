@@ -60,7 +60,7 @@ variable "model_uuid" {
 }
 
 variable "offered_endpoints" {
-  description = "List of endpoints to expose as Juju offers for cross-model consumption."
+  description = "List of endpoints to expose as Juju offers for cross-model consumption. Each offer is named <app_name>-<endpoint>."
   type        = set(string)
   default     = []
 }

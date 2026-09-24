@@ -30,6 +30,7 @@ resource "juju_application" "valkey" {
 resource "juju_offer" "valkey" {
   for_each         = var.offered_endpoints
   model_uuid       = var.model_uuid
+  name             = "${juju_application.valkey.name}-${each.value}"
   application_name = juju_application.valkey.name
   endpoints        = [each.value]
 }
