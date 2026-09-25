@@ -94,7 +94,11 @@ class BaseEvents(ops.Object):
             return
 
         if event.storage.name == DATA_STORAGE:
-            self.charm.cluster_manager.clean_up_inconsistent_dump_files()
+            try:
+                self.charm.cluster_manager.clean_up_inconsistent_dump_files()
+            except ValkeyWorkloadCommandError:
+                event.defer()
+                return
 
         if self.charm.state.substrate == Substrate.K8S:
             return
