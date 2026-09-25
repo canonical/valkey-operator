@@ -11,6 +11,7 @@ from time import sleep
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from ops import pebble
 from tenacity import (
     Retrying,
     retry,
@@ -295,9 +296,13 @@ class ClusterManager(ManagerStatusProtocol):
         dump file is inconsistent and must be removed by the operator code, because Valkey will
         not clean up on its own.
         """
-        for temp_file in self.workload.working_dir.glob("temp-*.rdb"):
-            logger.info("Removing temporary dump-file %s", temp_file)
-            temp_file.unlink(missing_ok=True)
+        try:
+            for temp_file in self.workload.working_dir.glob("temp-*.rdb"):
+                logger.info("Removing temporary dump-file %s", temp_file)
+                temp_file.unlink(missing_ok=True)
+        except pebble.ConnectionError as e:
+            logger.error("Error cleaning up inconsistent dump files: %s", e)
+            raise ValkeyWorkloadCommandError("Error cleaning up inconsistent dump files") from e
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
