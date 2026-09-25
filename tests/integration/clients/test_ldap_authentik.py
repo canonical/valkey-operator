@@ -4,6 +4,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import jubilant
@@ -50,6 +51,20 @@ LDAP_CONNECTION_TIMEOUT_MS = 20000
 DIRECTORY_ENTRIES = json.loads(
     Path("./tests/integration/clients/data/authentik_entries.json").read_text()
 )
+
+
+def _ingress_serving_scheme(status: jubilant.Status, ingress_name: str) -> str | None:
+    """Read the scheme the ingress reports serving on, once it has a certificate.
+
+    Args:
+        status: Juju status for the model traefik is deployed in.
+        ingress_name: Name of the deployed traefik application.
+
+    Returns:
+        The scheme of the advertised address, or None if it advertises none yet.
+    """
+    serving = re.search(r"(?P<scheme>https?)://", status.apps[ingress_name].app_status.message)
+    return serving.group("scheme") if serving else None
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +143,12 @@ def test_build_and_deploy(
             idle_period=30,
         ),
         timeout=1800,
+    )
+
+    # ensure Traefik does actually serve https
+    juju_k8s_model.wait(
+        lambda status: _ingress_serving_scheme(status, LDAP_INGRESS_NAME) == "https",
+        timeout=1200,
     )
 
     logger.info("Set up LDAP users")
