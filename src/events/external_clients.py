@@ -382,6 +382,7 @@ class ExternalClientsEvents(ops.Object):
         if self.charm.state.substrate == Substrate.K8S:
             try:
                 self.charm.sentinel_manager.set_pod_labels()
+                self.charm.cluster_manager.reset_client_connections()
             except (KubernetesClientError, ValkeyCannotGetPrimaryIPError) as e:
                 logger.error("Error updating Kubernetes services: %s", e)
                 event.defer()
