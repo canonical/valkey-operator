@@ -304,6 +304,24 @@ class ClusterManager(ManagerStatusProtocol):
             logger.error("Error cleaning up inconsistent dump files: %s", e)
             raise ValkeyWorkloadCommandError("Error cleaning up inconsistent dump files") from e
 
+    def reset_client_connections(self) -> None:
+        """Disconnect all clients to re-establish connections after failover."""
+        endpoints = [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            # reset replica AND primary clients (for clients specifically connecting to a replica)
+            if unit.is_active
+        ]
+
+        client = self._get_valkey_client()
+
+        for endpoint in endpoints:
+            logger.info("Reset client connections on server %s", endpoint)
+            try:
+                client.reset_client_connections(endpoint)
+            except ValkeyWorkloadCommandError as e:
+                logger.warning("Could not reset client connections on %s: %s", endpoint, e)
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(

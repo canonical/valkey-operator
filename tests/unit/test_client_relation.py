@@ -4,7 +4,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import yaml
 from ops import testing
@@ -20,6 +20,7 @@ from literals import (
     SENTINEL_PORT,
     STATUS_PEERS_RELATION,
 )
+from src.common.custom_events import TopologyChangedEvent
 from statuses import ExternalClientsStatuses
 
 from .helpers import status_is
@@ -776,3 +777,50 @@ def test_certificate_transfer_ca_removed_pebble_down_defers():
             ctx.on.relation_broken(relation=certificate_transfer_relation), state_in
         )
     assert "certificates_removed" in [e.name for e in state_out.deferred]
+
+
+def test_topology_changed_event():
+    primary_endpoint = "valkey-0.valkey-endpoints"
+    key_prefix = "test:*"
+    request_id = "0cbbc9781f189ea5"
+    salt = "mWpK32IQW4bsu65t"
+
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started", "hostname": primary_endpoint},
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_relation = testing.Relation(
+        id=3,
+        endpoint=EXTERNAL_CLIENTS_RELATION,
+        remote_app_data={
+            "version": "v1",
+            "requests": f'[{{"resource": "{key_prefix}", "request-id": "{request_id}", "salt": "{salt}"}}]',
+        },
+    )
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation, client_relation},
+        containers={container},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+    )
+    event = MagicMock(spec=TopologyChangedEvent)
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm = manager.charm
+
+        with (
+            patch("managers.sentinel.SentinelManager.set_pod_labels") as update_pod_labels,
+            patch("common.client.ValkeyClient.exec_cli_command") as reset_client_connections,
+            patch(
+                "events.external_clients.ExternalClientsEvents._update_client_relations"
+            ) as update_client_relations,
+        ):
+            charm.client_events._on_topology_changed(event)
+            update_pod_labels.assert_called_once()
+            assert reset_client_connections.call_count == 2
+            update_client_relations.assert_called_once()
