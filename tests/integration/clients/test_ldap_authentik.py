@@ -158,6 +158,11 @@ def test_ldap_integration(
 
     juju.integrate(f"{APP_NAME}:ldap", ldap_name)
 
+    # wait for the LDAP relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
@@ -217,7 +222,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -331,7 +338,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
