@@ -142,13 +142,13 @@ def test_build_and_deploy(
             TLS_NAME,
             idle_period=30,
         ),
-        timeout=1800,
+        timeout=900,
     )
 
     # ensure Traefik does actually serve https
     juju_k8s_model.wait(
         lambda status: _ingress_serving_scheme(status, LDAP_INGRESS_NAME) == "https",
-        timeout=1200,
+        timeout=1800,
     )
 
     logger.info("Set up LDAP users")
