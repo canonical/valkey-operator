@@ -132,6 +132,39 @@ class ValkeyCharm(ops.CharmBase):
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 
+        if self.refresh and not self.refresh.next_unit_allowed_to_refresh:
+            self._handle_refresh_coordination()
+
+    def _handle_refresh_coordination(self) -> None:
+        """Handle refresh health checks and set next_unit_allowed_to_refresh."""
+        if not self.refresh.in_progress:
+            self.refresh.next_unit_allowed_to_refresh = True
+            return
+
+        if not self.refresh_manager.workload_allowed_to_start():
+            logger.info("Workload not allowed to start yet")
+            return
+
+        logger.info("Restarting workload")
+        self.workload.stop()
+        self.workload.start()
+
+        logger.info("Confirming health")
+        primary_ip = self.sentinel_manager.get_primary_ip()
+        active_sentinels = self.sentinel_manager.get_active_sentinel_ips(primary_ip)
+        if not (
+            self.cluster_manager.is_healthy(
+                # only check replica sync if there is another unit that can be primary
+                check_replica_sync=len(active_sentinels) > 1
+            )
+            and self.sentinel_manager.is_healthy()
+        ):
+            logger.info("Unit not healthy, refresh cannot proceed yet")
+            return
+
+        logger.info("Unit is healthy, allowing next unit to refresh")
+        self.refresh.next_unit_allowed_to_refresh = True
+
     def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
         """Handle the restart_workload event."""
         logger.info(

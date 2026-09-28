@@ -123,7 +123,7 @@ class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
         self.charm.metrics_manager.reconcile()
         self.charm.workload.start()
 
-        logger.info("Confirm health after upgrade")
+        logger.info("Confirming health after upgrade")
         if (
             self.charm.cluster_manager.is_healthy(
                 # only check replica sync if there is another unit that can be primary
