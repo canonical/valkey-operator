@@ -8,8 +8,8 @@ module "valkey" {
   channel  = coalesce(var.valkey.channel, "9/${var.risk}")
   config = merge(
     var.valkey.config,
-    length(juju_secret.admin_password) > 0 ? {
-      "system-users" = juju_secret.admin_password[0].secret_uri
+    length(juju_secret.system_users) > 0 ? {
+      "system-users" = juju_secret.system_users[0].secret_uri
     } : {},
     length(juju_secret.tls_client_private_key) > 0 ? {
       "tls-client-private-key" = juju_secret.tls_client_private_key[0].secret_uri
@@ -50,11 +50,12 @@ module "data_integrator" {
   model_uuid  = local.model_uuid
   revision    = var.data_integrator.deploy.revision
 
+  # config["prefix-name"] wins over prefix_name.
   config = merge(
-    var.data_integrator.deploy.config,
     {
       prefix-name = var.data_integrator.deploy.prefix_name
-    }
+    },
+    var.data_integrator.deploy.config
   )
 }
 

@@ -6,9 +6,7 @@ locals {
     for k, v in merge(m.provides, m.requires) : k => { name = m.app_name, endpoint = v }
   }])
 
-  # Valkey endpoint key => the bundled application's { name, endpoint }. one() over a module's
-  # instances yields null when the module is not deployed, and the filter drops it. A renamed
-  # upstream output key fails the plan instead of dropping the integration.
+  # Valkey endpoint key => the bundled application's { name, endpoint }
   bundled_integrations = { for k, v in {
     azure_credentials   = one([for m in module.azure_storage_integrator : m.provides["azure_storage_credentials"]])
     client_certificates = one([for m in module.self_signed_certificates : { name = m.app_name, endpoint = m.provides["certificates"] }])

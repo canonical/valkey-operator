@@ -32,20 +32,20 @@ resource "terraform_data" "deployed_at" {
 # Secrets using write-only attributes: the version variable controls creation
 # (0 -> no secret), rotation (increment), and removal (back to 0). Grants
 # follow the secret's length.
-resource "juju_secret" "admin_password" {
-  count            = var.admin_password_version > 0 ? 1 : 0
+resource "juju_secret" "system_users" {
+  count            = var.system_users_version > 0 ? 1 : 0
   model_uuid       = local.model_uuid
-  name             = "${var.valkey.app_name}-admin-password"
-  value_wo         = { "charmed-operator" = var.admin_password }
-  value_wo_version = var.admin_password_version
-  info             = "Admin password for ${var.valkey.app_name}"
+  name             = "${var.valkey.app_name}-system-users"
+  value_wo         = var.system_users
+  value_wo_version = var.system_users_version
+  info             = "System users' passwords for ${var.valkey.app_name}"
 }
 
-resource "juju_access_secret" "admin_password" {
-  count        = length(juju_secret.admin_password)
+resource "juju_access_secret" "system_users" {
+  count        = length(juju_secret.system_users)
   model_uuid   = local.model_uuid
   applications = [module.valkey.application.name]
-  secret_id    = juju_secret.admin_password[0].secret_id
+  secret_id    = juju_secret.system_users[0].secret_id
   depends_on   = [module.valkey]
 }
 

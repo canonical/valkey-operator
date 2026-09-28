@@ -1,17 +1,3 @@
-variable "admin_password" {
-  description = "Admin password for the internal charmed-operator user. Supply through TF_VAR_admin_password or -var, at plan and at apply."
-  type        = string
-  sensitive   = true
-  ephemeral   = true
-  default     = null
-}
-
-variable "admin_password_version" {
-  description = "0 creates no secret. 1 creates it. Increment to rotate the admin password."
-  type        = number
-  default     = 0
-}
-
 variable "azure_secret_key" {
   description = "Azure Storage Account key or connection string for azure-storage-integrator. Supply through TF_VAR_azure_secret_key or -var, at plan and at apply."
   type        = string
@@ -28,6 +14,11 @@ variable "azure_secret_version" {
   validation {
     condition     = var.azure_secret_version == 0 || local.backup_type == "azure"
     error_message = "azure_secret_version is set, but backup.deploy does not deploy azure-storage-integrator (storage_type = \"azure\")."
+  }
+
+  validation {
+    condition     = var.azure_secret_version >= 0 && floor(var.azure_secret_version) == var.azure_secret_version
+    error_message = "azure_secret_version must be a whole number of at least 0."
   }
 }
 
@@ -238,6 +229,11 @@ variable "gcs_secret_version" {
     condition     = var.gcs_secret_version == 0 || local.backup_type == "gcs"
     error_message = "gcs_secret_version is set, but backup.deploy does not deploy gcs-integrator (storage_type = \"gcs\")."
   }
+
+  validation {
+    condition     = var.gcs_secret_version >= 0 && floor(var.gcs_secret_version) == var.gcs_secret_version
+    error_message = "gcs_secret_version must be a whole number of at least 0."
+  }
 }
 
 variable "juju_controller" {
@@ -370,6 +366,47 @@ variable "s3_secret_version" {
     condition     = var.s3_secret_version == 0 || local.backup_type == "s3"
     error_message = "s3_secret_version is set, but backup.deploy does not deploy s3-integrator (storage_type = \"s3\")."
   }
+
+  validation {
+    condition     = var.s3_secret_version >= 0 && floor(var.s3_secret_version) == var.s3_secret_version
+    error_message = "s3_secret_version must be a whole number of at least 0."
+  }
+}
+
+variable "system_users" {
+  description = "Passwords for the charm's internal system users, keyed by username. Users left out keep their generated passwords. For internal use only: applications must not authenticate as these users. Supply through TF_VAR_system_users or -var, at plan and at apply."
+  type        = map(string)
+  sensitive   = true
+  ephemeral   = true
+  default     = null
+
+  validation {
+    condition = alltrue([for k in try(keys(var.system_users), []) : contains([
+      "charmed-operator",
+      "charmed-replication",
+      "charmed-sentinel-operator",
+      "charmed-sentinel-peers",
+      "charmed-sentinel-valkey",
+      "charmed-stats",
+    ], k)])
+    error_message = "system_users keys must be charm system usernames: charmed-operator, charmed-replication, charmed-sentinel-operator, charmed-sentinel-peers, charmed-sentinel-valkey or charmed-stats."
+  }
+
+  validation {
+    condition     = var.system_users == null || (length(var.system_users) > 0 && alltrue([for v in values(var.system_users) : length(v) > 0]))
+    error_message = "system_users must set at least one user, and every password must be non-empty. Leave it null to keep the generated passwords."
+  }
+}
+
+variable "system_users_version" {
+  description = "0 creates no secret. 1 creates it. Increment to rotate the system users' passwords."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.system_users_version >= 0 && floor(var.system_users_version) == var.system_users_version
+    error_message = "system_users_version must be a whole number of at least 0."
+  }
 }
 
 variable "tls" {
@@ -416,6 +453,11 @@ variable "tls_client_private_key_version" {
   description = "0 creates no secret. 1 creates it. Increment to rotate the client TLS private key."
   type        = number
   default     = 0
+
+  validation {
+    condition     = var.tls_client_private_key_version >= 0 && floor(var.tls_client_private_key_version) == var.tls_client_private_key_version
+    error_message = "tls_client_private_key_version must be a whole number of at least 0."
+  }
 }
 
 variable "valkey" {
@@ -443,12 +485,12 @@ variable "valkey" {
   default = {}
 
   validation {
-    condition     = var.valkey.units >= 1
-    error_message = "valkey.units must be at least 1."
+    condition     = var.valkey.units >= 1 && floor(var.valkey.units) == var.valkey.units
+    error_message = "valkey.units must be a whole number of at least 1."
   }
 
   validation {
     condition     = !anytrue([for k in ["system-users", "tls-client-private-key"] : contains(keys(var.valkey.config), k)])
-    error_message = "valkey.config must not set system-users or tls-client-private-key. The module creates and grants those secrets from admin_password and tls_client_private_key (with their *_version variables)."
+    error_message = "valkey.config must not set system-users or tls-client-private-key. The module creates and grants those secrets from system_users and tls_client_private_key (with their *_version variables)."
   }
 }

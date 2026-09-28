@@ -125,8 +125,8 @@ Each sensitive input is paired with a version number. The version controls creat
 
 ```hcl
 # 1. Root module declares ephemeral variables to receive environment variables
-variable "admin_password" {
-  type      = string
+variable "system_users" {
+  type      = map(string)
   sensitive = true
   ephemeral = true
   default   = null
@@ -136,8 +136,8 @@ variable "admin_password" {
 module "valkey" {
   source = "./terraform/products/valkey-k8s"
 
-  admin_password         = var.admin_password
-  admin_password_version = 1
+  system_users         = var.system_users
+  system_users_version = 1
   # ...
 }
 ```
@@ -145,13 +145,15 @@ module "valkey" {
 Supply credentials through environment variables or command-line flags, at plan and at apply:
 
 ```bash
-export TF_VAR_admin_password="StrongPassword123!"
+export TF_VAR_system_users='{ "charmed-operator" = "StrongPassword123!" }'
 export TF_VAR_tls_client_private_key="$(cat tls.key)"
 export TF_VAR_s3_access_key="..."
 export TF_VAR_s3_secret_key="..."
 ```
 
-To rotate a secret, update the credential in your environment and increment the matching version variable, for example `admin_password_version = 2`. Setting the version back to `0` removes the secret and its grant. Terraform only needs the credential on runs that create or rotate the secret. Any other plan or apply works with it unset.
+To rotate a secret, update the credential in your environment and increment the matching version variable, for example `system_users_version = 2`. Setting the version back to `0` removes the secret and its grant. Terraform only needs the credential on runs that create or rotate the secret. Any other plan or apply works with it unset.
+
+The charm merges `system_users` over its current passwords. Removing a user from the map on rotation keeps that user's last password and does not generate a new one.
 
 ### Provider and lifecycle notes
 
@@ -166,8 +168,6 @@ To rotate a secret, update the credential in your environment and increment the 
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| admin_password | Admin password for charmed-operator. Supply through TF_VAR_admin_password or -var. | `string` | `null` | no |
-| admin_password_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | azure_secret_key | Azure Storage Account key or connection string. Supply through TF_VAR_azure_secret_key or -var. | `string` | `null` | no |
 | azure_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | backup | Remote storage backup configuration. Deploys a bundled integrator under 'deploy' or consumes an existing integrator. | `object` | `{}` | no |
@@ -186,6 +186,8 @@ To rotate a secret, update the credential in your environment and increment the 
 | s3_access_key | AWS S3 Access key for s3-integrator. Supply through TF_VAR_s3_access_key or -var. | `string` | `null` | no |
 | s3_secret_key | AWS S3 Secret key for s3-integrator. Supply through TF_VAR_s3_secret_key or -var. | `string` | `null` | no |
 | s3_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
+| system_users | Passwords for the charm's internal system users, keyed by username: `charmed-operator`, `charmed-replication`, `charmed-sentinel-operator`, `charmed-sentinel-peers`, `charmed-sentinel-valkey` or `charmed-stats`. Users left out keep their generated passwords. Supply through TF_VAR_system_users or -var. | `map(string)` | `null` | no |
+| system_users_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | tls | Client TLS. Omitted: bundled self-signed-certificates. Set `client_certificates` (without `deploy`) for an external provider. `{}` turns client TLS off. | `object` | `{ deploy = {} }` | no |
 | tls_client_private_key | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var. | `string` | `null` | no |
 | tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
