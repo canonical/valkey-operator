@@ -28,7 +28,7 @@ The module follows the CC008 Charm Terraform Standards.
 
 ```hcl
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/products/valkey-k8s?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-k8s?ref=tf-1.0.0"
 
   model = {
     name = "valkey-k8s"
@@ -55,7 +55,7 @@ module "cos" {
 }
 
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/products/valkey-k8s?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-k8s?ref=tf-1.0.0"
 
   model = {
     name = "valkey-k8s"
@@ -93,7 +93,7 @@ To consume an external CA (such as Vault or manual-tls-certificates), set `tls.c
 
 ```hcl
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/products/valkey-k8s?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-k8s?ref=tf-1.0.0"
 
   model = {
     name = "valkey-k8s"
@@ -134,7 +134,7 @@ variable "system_users" {
 
 # 2. Forward the variable into the product module
 module "valkey" {
-  source = "./terraform/products/valkey-k8s"
+  source = "./terraform/product/valkey-k8s"
 
   system_users         = var.system_users
   system_users_version = 1
