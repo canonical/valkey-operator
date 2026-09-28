@@ -7,6 +7,7 @@
 import logging
 import os
 
+import charm_refresh
 import ops
 import ops.log
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
@@ -20,6 +21,7 @@ from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
 from events.ldap import LDAPEvents
 from events.observability import ObservabilityEvents
+from events.refresh import K8sValkeyRefresh, MachinesValkeyRefresh
 from events.tls import TLSEvents
 from literals import CONTAINER, Substrate
 from managers.auth import AuthManager
@@ -28,6 +30,7 @@ from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
 from managers.metrics import MetricsManager
+from managers.refresh import RefreshManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
 from managers.topology import TopologyManager
@@ -79,9 +82,36 @@ class ValkeyCharm(ops.CharmBase):
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
         self.metrics_manager = MetricsManager(state=self.state, workload=self.workload)
 
+        # --- UPGRADES ---
+        try:
+            if self.substrate == Substrate.K8S:
+                self.refresh = charm_refresh.Kubernetes(
+                    K8sValkeyRefresh(
+                        workload_name="Valkey",
+                        charm_name="valkey",
+                        oci_resource_name="valkey-image",
+                        charm=self,
+                    )
+                )
+            else:
+                self.refresh = charm_refresh.Machines(
+                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
+                )
+        except (
+            charm_refresh.UnitTearingDown,
+            charm_refresh.PeerRelationNotReady,
+            charm_refresh.KubernetesJujuAppNotTrusted,
+        ):
+            self.refresh = None
+
+        self.refresh_manager = RefreshManager(
+            state=self.state, workload=self.workload, refresh=self.refresh
+        )
+
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
             self,
+            self.refresh_manager,
             self.cluster_manager,
             self.config_manager,
             self.auth_manager,

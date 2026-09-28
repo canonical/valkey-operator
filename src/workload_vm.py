@@ -354,3 +354,7 @@ class ValkeyVmWorkload(WorkloadBase):
             or self._read_cgroup_limit("sys/fs/cgroup/memory.high")
             or self._read_meminfo_total()
         )
+
+    def snap_revision(self) -> str:
+        """Get the snap revision that is currently installed."""
+        return self.valkey.revision
