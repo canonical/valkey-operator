@@ -8,21 +8,20 @@ locals {
 
   # Valkey endpoint key => the bundled application's { name, endpoint }
   bundled_integrations = { for k, v in {
-    azure_credentials   = one([for m in module.azure_storage_integrator : m.provides["azure_storage_credentials"]])
-    client_certificates = one([for m in module.self_signed_certificates : { name = m.app_name, endpoint = m.provides["certificates"] }])
-    gcs_credentials     = one([for m in module.gcs_integrator : m.provides["gcs_credentials"]])
-    grafana_dashboard   = local.collector == null ? null : local.collector["grafana_dashboards_consumer"]
-    logging             = local.collector == null ? null : local.collector["receive_loki_logs"]
-    metrics_endpoint    = local.collector == null ? null : local.collector["metrics_endpoint"]
-    s3_credentials      = one([for m in module.s3_integrator : m.provides["s3_credentials"]])
-    valkey_client       = one([for m in module.data_integrator : m.requires["valkey"]])
+    azure_credentials = one([for m in module.azure_storage_integrator : m.provides["azure_storage_credentials"]])
+    gcs_credentials   = one([for m in module.gcs_integrator : m.provides["gcs_credentials"]])
+    grafana_dashboard = local.collector == null ? null : local.collector["grafana_dashboards_consumer"]
+    logging           = local.collector == null ? null : local.collector["receive_loki_logs"]
+    metrics_endpoint  = local.collector == null ? null : local.collector["metrics_endpoint"]
+    s3_credentials    = one([for m in module.s3_integrator : m.provides["s3_credentials"]])
+    valkey_client     = one([for m in module.data_integrator : m.requires["valkey"]])
   } : k => { name = v.name, endpoint = v.endpoint } if v != null }
 
   # Integrations with applications this module does not deploy. app is the side this module owns.
   # target is the { kind, name, endpoint, url, controller } object from the input variables.
   external_integrations = { for k, v in {
     azure_credentials    = { app = local.valkey_endpoints["azure_credentials"], target = var.backup.azure_credentials }
-    certificate_transfer = { app = local.valkey_endpoints["certificate_transfer"], target = var.certificate_transfer }
+    certificate_transfer = { app = local.valkey_endpoints["certificate_transfer"], target = var.tls.certificate_transfer }
     client_certificates  = { app = local.valkey_endpoints["client_certificates"], target = var.tls.client_certificates }
     collector_grafana    = { app = local.collector == null ? null : local.collector["grafana_dashboards_provider"], target = var.cos.grafana }
     collector_loki       = { app = local.collector == null ? null : local.collector["send_loki_logs"], target = var.cos.loki }

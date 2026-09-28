@@ -50,7 +50,6 @@ locals {
     gcs_integrator           = one(module.gcs_integrator[*].application)
     opentelemetry_collector  = one([for m in module.opentelemetry_collector : { name = m.app_name }])
     s3_integrator            = one(module.s3_integrator[*].application)
-    self_signed_certificates = one([for m in module.self_signed_certificates : { name = m.app_name }])
     valkey                   = module.valkey.application
   }
 

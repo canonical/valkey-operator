@@ -26,19 +26,6 @@ module "valkey" {
   units              = var.valkey.units
 }
 
-module "self_signed_certificates" {
-  count  = var.tls.deploy != null ? 1 : 0
-  source = "git::https://github.com/canonical/self-signed-certificates-operator//terraform?ref=baf7355a536d454871b96e7afafcd166bbc029f2"
-
-  app_name    = var.tls.deploy.app_name
-  base        = var.tls.deploy.base
-  channel     = coalesce(var.tls.deploy.channel, "1/${var.risk}")
-  config      = var.tls.deploy.config
-  constraints = var.tls.deploy.constraints
-  model_uuid  = local.model_uuid
-  revision    = var.tls.deploy.revision
-}
-
 module "data_integrator" {
   count  = var.data_integrator.deploy != null ? 1 : 0
   source = "git::https://github.com/canonical/data-integrator//terraform/charm/data_integrator?ref=c6582254d6585e119657c66a3797621ec7567019"

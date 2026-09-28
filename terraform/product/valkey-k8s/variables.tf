@@ -82,18 +82,6 @@ variable "backup" {
   }
 }
 
-variable "certificate_transfer" {
-  description = "CA certificate transfer provider to integrate with Valkey certificate-transfer. null = not integrated."
-  type = object({
-    kind       = string
-    name       = optional(string)
-    endpoint   = optional(string)
-    url        = optional(string)
-    controller = optional(string)
-  })
-  default = null
-}
-
 variable "cos" {
   description = "COS configuration. Deploys an in-model integrator under 'deploy' (with outbound relations prometheus, loki, grafana), or connects directly to same-model escape hatches (metrics_endpoint, logging, grafana_dashboard)."
   type = object({
@@ -420,10 +408,19 @@ variable "system_users_version" {
 }
 
 variable "tls" {
-  description = "Client TLS configuration. Set client_certificates to integrate an external tls-certificates provider. Omitted: client TLS off."
+  description = "Client TLS configuration. Set client_certificates to integrate an external tls-certificates provider, and certificate_transfer to trust client CAs for mTLS. Omitted: client TLS off."
   type = object({
     # External tls-certificates provider. null = not integrated.
     client_certificates = optional(object({
+      kind       = string
+      name       = optional(string)
+      endpoint   = optional(string)
+      url        = optional(string)
+      controller = optional(string)
+    }))
+
+    # CA certificate transfer provider for client mTLS. null = not integrated.
+    certificate_transfer = optional(object({
       kind       = string
       name       = optional(string)
       endpoint   = optional(string)

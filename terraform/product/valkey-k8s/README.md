@@ -12,7 +12,7 @@ The module follows the CC008 Charm Terraform Standards.
 - `data-integrator` on the Valkey `valkey-client` endpoint. It hands out client credentials.
 - Optional: `opentelemetry-collector-k8s` under `cos.deploy`, connected to COS in the same model or through offers.
 - Optional: a backup integrator (`s3-integrator`, `azure-storage-integrator` or `gcs-integrator`) under `backup.deploy`, or an existing integrator through `backup.*_credentials`.
-- Optional: client TLS from an external `tls-certificates` provider through `tls.client_certificates`.
+- Optional: client TLS from an external `tls-certificates` provider through `tls.client_certificates`, and client mTLS CAs through `tls.certificate_transfer`.
 - Optional: LDAP and its CA certificate through `ldap`.
 
 ## Requirements
@@ -132,6 +132,21 @@ module "valkey" {
 }
 ```
 
+For mutual TLS, also set `tls.certificate_transfer` to a provider of the CAs that sign your client certificates. Valkey then trusts those CAs when it verifies clients.
+
+```hcl
+  tls = {
+    client_certificates = {
+      kind = "offer"
+      url  = "admin/pki.vault"
+    }
+    certificate_transfer = {
+      kind = "offer"
+      url  = "admin/pki.client-cas"
+    }
+  }
+```
+
 ### Sensitive configurations and secrets
 
 The module takes passwords, private keys and object-store credentials as ephemeral variables and stores them in Juju secrets through the provider's write-only `value_wo` attribute. Terraform sends them to the Juju controller during apply and writes `null` to `terraform.tfstate`.
@@ -195,7 +210,6 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | azure_secret_key | Azure Storage Account key or connection string. Supply through TF_VAR_azure_secret_key or -var. | `string` | `null` | no |
 | azure_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | backup | Remote storage backup configuration. Deploys a bundled integrator under 'deploy' or consumes an existing integrator. | `object` | `{}` | no |
-| certificate_transfer | CA certificate transfer provider as `{ kind, name, endpoint, url, controller }`. `null` skips the integration. | `object` | `null` | no |
 | cos | COS configuration. Deploys the collector under `deploy` and connects it to COS, or connects Valkey to same-model COS apps. | `object` | `{}` | no |
 | data_integrator | Data Integrator charm. Omitted: deployed. `{}` or `{ deploy = null }` skips it. | `object` | `{ deploy = {} }` | no |
 | gcs_secret_key | GCP service-account JSON key for gcs-integrator. Supply through TF_VAR_gcs_secret_key or -var. | `string` | `null` | no |
@@ -212,7 +226,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | s3_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | system_users | Passwords for the charm's internal system users, keyed by username: `charmed-operator`, `charmed-replication`, `charmed-sentinel-operator`, `charmed-sentinel-peers`, `charmed-sentinel-valkey` or `charmed-stats`. Users left out keep their generated passwords. Supply through TF_VAR_system_users or -var. | `map(string)` | `null` | no |
 | system_users_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| tls | Client TLS. Set `client_certificates` to an external `tls-certificates` provider as `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off. | `object` | `{}` | no |
+| tls | Client TLS. Set `client_certificates` to an external `tls-certificates` provider, and `certificate_transfer` to a CA provider for client mTLS. Each takes `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off. | `object` | `{}` | no |
 | tls_client_private_key | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var. | `string` | `null` | no |
 | tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | valkey | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. | `object` | `{}` | no |
