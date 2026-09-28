@@ -8,6 +8,7 @@ import logging
 import os
 
 import ops
+import ops.log
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
@@ -34,6 +35,8 @@ from workload_k8s import ValkeyK8sWorkload
 from workload_vm import ValkeyVmWorkload
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class ValkeyCharm(ops.CharmBase):
@@ -46,6 +49,12 @@ class ValkeyCharm(ops.CharmBase):
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
+        # Show logger name (module name) in logs
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, ops.log.JujuLogHandler):
+                handler.setFormatter(logging.Formatter("{name}:{message}", style="{"))
+
         if os.environ.get("KUBERNETES_SERVICE_HOST"):
             try:
                 self.model.get_cloud_spec()

@@ -71,3 +71,10 @@ options:
       pre-configured Valkey authorization groups. The authorization groups are defined via extra 
       entity permissions through Data integrator.
       Comma-separated list, for example: <ldap_group_1>=<valkey_read>,<ldap_group_2>=<valkey_write>
+
+  pause-after-unit-refresh:
+    type: string
+    default: first
+    description: |
+      Wait for manual confirmation to resume refresh after these units refresh
+      Allowed values: "all", "first", "none"
