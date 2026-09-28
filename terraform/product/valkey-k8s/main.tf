@@ -2,6 +2,15 @@ resource "juju_model" "this" {
   count       = var.model.create ? 1 : 0
   name        = var.model.name
   constraints = var.model.constraints
+  credential  = var.model.credential
+
+  dynamic "cloud" {
+    for_each = var.model.cloud == null ? [] : [var.model.cloud]
+    content {
+      name   = cloud.value.name
+      region = cloud.value.region
+    }
+  }
 
   config = merge(
     var.logging_config != null ? { "logging-config" = var.logging_config } : {},

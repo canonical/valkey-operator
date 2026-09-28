@@ -287,10 +287,15 @@ variable "logging_config" {
 }
 
 variable "model" {
-  description = "Juju model configuration. With create = true, the module creates a model called name. With create = false, it looks up an existing model by name and owner. constraints applies only to a created model. Applications that set no arch inherit it, so set constraints = \"arch=arm64\" on arm64."
+  description = "Juju model configuration. With create = true, the module creates a model called name. With create = false, it looks up an existing model by name and owner. cloud, constraints and credential apply only to a created model. cloud and credential default to the controller's default cloud and credential, so set them when that cloud is not Kubernetes. Applications that set no arch inherit constraints, so set constraints = \"arch=arm64\" on arm64."
   type = object({
+    cloud = optional(object({
+      name   = string
+      region = optional(string)
+    }))
     constraints = optional(string)
     create      = optional(bool, true)
+    credential  = optional(string)
     name        = string
     owner       = optional(string, "admin")
   })
@@ -301,6 +306,11 @@ variable "model" {
   validation {
     condition     = var.model.create || var.model.constraints == null
     error_message = "model.constraints only applies when model.create is true. For an existing model, run juju set-model-constraints instead."
+  }
+
+  validation {
+    condition     = var.model.create || (var.model.cloud == null && var.model.credential == null)
+    error_message = "model.cloud and model.credential only apply when model.create is true. An existing model keeps the cloud it was created on."
   }
 }
 
@@ -410,19 +420,9 @@ variable "system_users_version" {
 }
 
 variable "tls" {
-  description = "Client TLS configuration. Omitted: bundled self-signed-certificates. Set client_certificates (leaving deploy unset) to consume an external provider. tls = {} disables client TLS."
+  description = "Client TLS configuration. Set client_certificates to integrate an external tls-certificates provider. Omitted: client TLS off."
   type = object({
-    # Bundled default implementation: self-signed-certificates. null = do not deploy.
-    deploy = optional(object({
-      app_name    = optional(string, "self-signed-certificates")
-      base        = optional(string, "ubuntu@24.04")
-      channel     = optional(string)
-      constraints = optional(string) # null: follow the model constraints (set model.constraints = "arch=arm64" on arm64)
-      config      = optional(map(string), {})
-      revision    = optional(number)
-    }))
-
-    # Consumed external tls-certificates provider. null = not integrated.
+    # External tls-certificates provider. null = not integrated.
     client_certificates = optional(object({
       kind       = string
       name       = optional(string)
@@ -431,14 +431,7 @@ variable "tls" {
       controller = optional(string)
     }))
   })
-  default = {
-    deploy = {}
-  }
-
-  validation {
-    condition     = !(var.tls.deploy != null && var.tls.client_certificates != null)
-    error_message = "tls.deploy and tls.client_certificates are mutually exclusive. To consume an external tls-certificates provider, leave tls.deploy unset or set it to null."
-  }
+  default = {}
 }
 
 variable "tls_client_private_key" {

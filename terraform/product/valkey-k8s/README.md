@@ -1,7 +1,7 @@
 # Valkey Kubernetes product module
 
-Terraform product module that deploys Valkey on Kubernetes with client TLS and client credentials,
-plus optional COS, backup and LDAP integrations.
+Terraform product module that deploys Valkey on Kubernetes with client credentials, plus optional
+client TLS, COS, backup and LDAP integrations.
 
 The module follows the CC008 Charm Terraform Standards.
 
@@ -9,10 +9,10 @@ The module follows the CC008 Charm Terraform Standards.
 
 - A Juju model, created or looked up by name.
 - Valkey, 3 units by default, deployed with `trust = true`.
-- `self-signed-certificates` on the Valkey `client-certificates` endpoint, or an external provider through `tls.client_certificates`.
 - `data-integrator` on the Valkey `valkey-client` endpoint. It hands out client credentials.
 - Optional: `opentelemetry-collector-k8s` under `cos.deploy`, connected to COS in the same model or through offers.
 - Optional: a backup integrator (`s3-integrator`, `azure-storage-integrator` or `gcs-integrator`) under `backup.deploy`, or an existing integrator through `backup.*_credentials`.
+- Optional: client TLS from an external `tls-certificates` provider through `tls.client_certificates`.
 - Optional: LDAP and its CA certificate through `ldap`.
 
 ## Requirements
@@ -35,6 +35,30 @@ module "valkey" {
   }
 }
 ```
+
+### Deploying on a specific Kubernetes cloud
+
+With `model.create = true`, Juju creates the model on the controller's default cloud. When that cloud is not Kubernetes, for example on a controller bootstrapped on LXD, set `model.cloud` and `model.credential`. To register the cluster from the same configuration, use the provider's `juju_kubernetes_cloud` resource in your root module. The product module does not create clouds, because a cloud belongs to the controller and outlives any one deployment.
+
+```hcl
+resource "juju_kubernetes_cloud" "k8s" {
+  name               = "my-k8s"
+  kubernetes_config  = file("~/.kube/config")
+  storage_class_name = "microk8s-hostpath"
+}
+
+module "valkey" {
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-k8s?ref=tf-1.0.0"
+
+  model = {
+    name       = "valkey-k8s"
+    cloud      = { name = juju_kubernetes_cloud.k8s.name }
+    credential = juju_kubernetes_cloud.k8s.credential
+  }
+}
+```
+
+`juju_kubernetes_cloud` sets no storage class unless you pass `storage_class_name`. List the classes with `kubectl get storageclass`.
 
 ### Retrieving client credentials
 
@@ -87,9 +111,9 @@ Passing explicit `{ kind = "offer", url = ... }` blocks lets Terraform count res
 
 When you set `cos.deploy`, also set `cos.deploy.storage_directives`. The upstream `opentelemetry-collector-k8s` module warns on every plan when it is empty, because the default volume is 1G and resizing it after deployment takes manual steps. See [customize storage options](https://documentation.ubuntu.com/observability/latest/how-to/configure-and-tune/customize-storage-options/).
 
-### Consuming an external TLS certificates provider
+### Enabling client TLS
 
-To consume an external CA (such as Vault or manual-tls-certificates), set `tls.client_certificates` and leave `tls.deploy` unset. Setting both fails at plan. `tls = {}` turns client TLS off.
+The module does not deploy a certificates provider. To turn on client TLS, set `tls.client_certificates` to an existing `tls-certificates` provider, such as self-signed-certificates, Vault or manual-tls-certificates. Client TLS stays off when `tls.client_certificates` is unset.
 
 ```hcl
 module "valkey" {
@@ -158,10 +182,10 @@ The charm merges `system_users` over its current passwords. Removing a user from
 ### Provider and lifecycle notes
 
 - **Risk.** Valkey is published on `9/edge` and `9/beta` only for now. `risk = "candidate"` or `"stable"` fails until Valkey reaches those channels.
-- **arm64.** Juju deploys an application as amd64 unless the application or the model sets an arch. Set `model = { name = "...", constraints = "arch=arm64" }`, or run `juju set-model-constraints arch=arm64` on an existing model. Valkey and every bundled charm then follow the model. The upstream self-signed-certificates and opentelemetry-collector-k8s modules default to `arch=amd64`. This module passes `deploy.constraints`, which defaults to `null`, to remove that pin.
+- **arm64.** Juju deploys an application as amd64 unless the application or the model sets an arch. Set `model = { name = "...", constraints = "arch=arm64" }`, or run `juju set-model-constraints arch=arm64` on an existing model. Valkey and every bundled charm then follow the model. The upstream opentelemetry-collector-k8s module defaults to `arch=amd64`. This module passes `deploy.constraints`, which defaults to `null`, to remove that pin.
 - **Provider configuration.** Per CC008, the module defines `provider "juju" {}` in `providers.tf`. Because the module owns its provider configuration, Terraform does not permit `count`, `for_each`, or `depends_on` on the `module "valkey"` block. When destroying or removing the module, run `terraform destroy` (or `terraform destroy -target=module.valkey`) before removing the block from your configuration.
 - **Grant timing.** Juju can only grant a secret after the application exists, so a hook can run before the grant. If Valkey reads the secret in that window, the hook errors and Juju retries it. This needs `automatically-retry-hooks` left at its default, `true`. Tests with provider 2.3.1 never hit the window.
-- **Offers from upstream modules.** Some bundled charm modules create offers that this module does not control. The `self-signed-certificates` module always creates two offers with fixed names, `certificates` and `send-ca-cert`. The `s3-integrator`, `azure-storage-integrator` and `gcs-integrator` modules always create one offer named after the integrator application. Offer names are unique per model, so two instances of this product module in one model collide. Deploy each instance into its own model.
+- **Offers from upstream modules.** Some bundled charm modules create offers that this module does not control. The `s3-integrator`, `azure-storage-integrator` and `gcs-integrator` modules always create one offer named after the integrator application. Offer names are unique per model, so two instances of this product module in one model collide. Deploy each instance into its own model.
 - **Valkey offers.** Each entry in `offered_endpoints` creates an offer named `<valkey app_name>-<endpoint>`.
 
 ## Inputs
@@ -179,7 +203,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | juju_controller | Juju controller connection details. Ephemeral: supply at plan and at apply. | `object` | `null` | no |
 | ldap | LDAP authentication and certificate integrations. | `object` | `{}` | no |
 | logging_config | Logging configuration to apply to the model. Needs `model.create = true`. | `string` | `null` | no |
-| model | Juju model configuration (constraints, create, name, owner). `constraints`, `logging_config` and `proxy` need `create = true`. | `object` | `{ name = "valkey" }` | no |
+| model | Juju model configuration (cloud, constraints, create, credential, name, owner). `cloud`, `constraints`, `credential`, `logging_config` and `proxy` need `create = true`. | `object` | `{ name = "valkey" }` | no |
 | offered_endpoints | Valkey provides endpoints to offer: `grafana-dashboard`, `metrics-endpoint` or `valkey-client`. Each offer is named `<app_name>-<endpoint>`. | `list(string)` | `[]` | no |
 | proxy | Proxy settings for the Juju model, with the keys `http`, `https` and `no-proxy`. Needs `model.create = true`. | `object` | `null` | no |
 | risk | Risk level for the solution (edge, beta, candidate, stable). | `string` | `"edge"` | no |
@@ -188,7 +212,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | s3_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | system_users | Passwords for the charm's internal system users, keyed by username: `charmed-operator`, `charmed-replication`, `charmed-sentinel-operator`, `charmed-sentinel-peers`, `charmed-sentinel-valkey` or `charmed-stats`. Users left out keep their generated passwords. Supply through TF_VAR_system_users or -var. | `map(string)` | `null` | no |
 | system_users_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| tls | Client TLS. Omitted: bundled self-signed-certificates. Set `client_certificates` (without `deploy`) for an external provider. `{}` turns client TLS off. | `object` | `{ deploy = {} }` | no |
+| tls | Client TLS. Set `client_certificates` to an external `tls-certificates` provider as `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off. | `object` | `{}` | no |
 | tls_client_private_key | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var. | `string` | `null` | no |
 | tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
 | valkey | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. | `object` | `{}` | no |
@@ -197,7 +221,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 
 | Name | Description | Type |
 |------|-------------|------|
-| components | All deployed applications, `null` when not deployed. Each entry is the module's `juju_application` object (name, charm channel/revision/base, units, config, ...). `self_signed_certificates` and `opentelemetry_collector` are `{ name }` only, because their upstream modules expose `app_name` and no `application` output. | `object` |
+| components | All deployed applications, `null` when not deployed. Each entry is the module's `juju_application` object (name, charm channel/revision/base, units, config, ...). `opentelemetry_collector` is `{ name }` only, because its upstream module exposes `app_name` and no `application` output. | `object` |
 | credentials | Connection details as `valkey = { app_name, client_port, tls_port, sentinel_port, sentinel_tls_port, data_integrator_app }`. It holds no password, because data-integrator hands out client credentials. Run `juju run <data_integrator_app>/leader get-credentials` to get them. | `map(object)` |
 | metadata | Metadata of the product deployment (deployed_at, version). CC008 also lists `updated_at`. The module leaves it out because `timestamp()` would make every plan show a change. | `object` |
 | models | Map of model name to `{ model_uuid, components }`. `components` holds only deployed components, in the same shape as the `components` output. | `map(object)` |
