@@ -34,6 +34,7 @@ from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ARCHIVE_STORAGE_PATH,
     DATA_STORAGE_PATH,
+    EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
@@ -255,7 +256,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 check=True,
                 text=True,
                 capture_output=True,
-                timeout=10,
+                timeout=EXEC_TIMEOUT_S,
                 env={**os.environ, **env} if env else os.environ,
             )
             return output.stdout, output.stderr
