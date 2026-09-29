@@ -28,7 +28,7 @@ The module follows the CC008 Charm Terraform Standards.
 
 ```hcl
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-vm?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
 
   model = {
     name = "valkey-vm"
@@ -42,7 +42,7 @@ With `model.create = true`, Juju creates the model on the controller's default c
 
 ```hcl
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-vm?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
 
   model = {
     name       = "valkey-vm"
@@ -71,7 +71,7 @@ module "cos" {
 }
 
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-vm?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
 
   model = {
     name = "valkey-vm"
@@ -107,7 +107,7 @@ The module does not deploy a certificates provider. To turn on client TLS, set `
 
 ```hcl
 module "valkey" {
-  source = "git::https://github.com/canonical/valkey-operator//terraform/product/valkey-vm?ref=tf-1.0.0"
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
 
   model = {
     name = "valkey-vm"
@@ -163,7 +163,7 @@ variable "system_users" {
 
 # 2. Forward the variable into the product module
 module "valkey" {
-  source = "./terraform/product/valkey-vm"
+  source = "./terraform/product/vm"
 
   system_users         = var.system_users
   system_users_version = 1
