@@ -115,20 +115,4 @@ class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
         refresh.update_snap_revision()
         logger.info(f"Updated snap to revision {snap_revision}")
 
-        logger.info("Restarting workload")
-        # query primary again, snap install can take long and there might have been a failover
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.auth_manager.configure_auth()
-        self.charm.config_manager.configure_services(primary_ip)
-        self.charm.metrics_manager.reconcile()
-        self.charm.workload.start()
-
-        logger.info("Confirming health after upgrade")
-        if (
-            self.charm.cluster_manager.is_healthy(
-                # only check replica sync if there is another unit that can be primary
-                check_replica_sync=len(active_sentinels) > 1
-            )
-            and self.charm.sentinel_manager.is_healthy()
-        ):
-            refresh.next_unit_allowed_to_refresh = True
+        self.charm.post_refresh_handling()

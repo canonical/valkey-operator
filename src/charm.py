@@ -132,11 +132,14 @@ class ValkeyCharm(ops.CharmBase):
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 
-        if self.refresh and not self.refresh.next_unit_allowed_to_refresh:
-            self._handle_refresh_coordination()
+        # ensure that post refresh handling is executed in EVERY hook
+        self.post_refresh_handling()
 
-    def _handle_refresh_coordination(self) -> None:
-        """Handle refresh health checks and set next_unit_allowed_to_refresh."""
+    def post_refresh_handling(self) -> None:
+        """Handle post refresh steps like start and health checks."""
+        if not self.refresh or self.refresh.next_unit_allowed_to_refresh:
+            return
+
         if not self.refresh.in_progress:
             self.refresh.next_unit_allowed_to_refresh = True
             return
@@ -146,12 +149,15 @@ class ValkeyCharm(ops.CharmBase):
             return
 
         logger.info("Restarting workload")
-        self.workload.stop()
-        self.workload.start()
-
-        logger.info("Confirming health")
         primary_ip = self.sentinel_manager.get_primary_ip()
         active_sentinels = self.sentinel_manager.get_active_sentinel_ips(primary_ip)
+        self.workload.stop()
+        self.auth_manager.configure_auth()
+        self.config_manager.configure_services(primary_ip)
+        self.metrics_manager.reconcile()
+        self.workload.start()
+
+        logger.info("Confirming health after upgrade")
         if not (
             self.cluster_manager.is_healthy(
                 # only check replica sync if there is another unit that can be primary

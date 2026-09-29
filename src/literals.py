@@ -10,7 +10,6 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "valkey-charmed"
-SNAP_REVISIONS = {"x86_64": 183, "aarch64": 184}
 SNAP_LOGS_SLOT = f"{SNAP_NAME}:logs"
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"

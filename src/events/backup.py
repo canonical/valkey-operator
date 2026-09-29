@@ -384,6 +384,8 @@ class BackupEvents(ops.Object):
         """Return why a restore of ``backup_id`` cannot start, or None if it can."""
         if not self.charm.unit.is_leader():
             return "Restore must be run on the leader unit."
+        if self.charm.refresh_manager.refresh_in_progress:
+            return "Charm refresh in progress, restore not allowed"
         if reason := self._backup_storage_reason():
             return reason
         if self.charm.state.is_backup_in_progress_any:

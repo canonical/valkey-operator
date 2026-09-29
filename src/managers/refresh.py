@@ -31,6 +31,14 @@ class RefreshManager(ManagerStatusProtocol):
         self.workload = workload
         self.refresh = refresh
 
+    @property
+    def refresh_in_progress(self) -> bool:
+        """Check if charm-refresh is currently in progress."""
+        if not self.refresh:
+            return False
+
+        return self.refresh.in_progress
+
     def workload_allowed_to_start(self) -> bool:
         """Check if the workload is allowed to start from refresh-perspective."""
         if not self.refresh:
@@ -62,8 +70,8 @@ class RefreshManager(ManagerStatusProtocol):
             status_list.append(app_status)
             return status_list
 
-        # if self.refresh.in_progress and not self.refresh.next_unit_allowed_to_refresh:
-            # status_list.append(ClusterStatuses.HEALTH_CHECK_FAILED.value)
+        if self.refresh.in_progress and not self.refresh.next_unit_allowed_to_refresh:
+            status_list.append(ClusterStatuses.UNHEALTHY_AFTER_REFRESH.value)
 
         if refresh_unit_status := self.refresh.unit_status_higher_priority:
             unit_status = self._convert_ops_status_to_advanced_status(refresh_unit_status)

@@ -12,8 +12,10 @@ import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import BinaryIO, override
 
+import tomllib
 from charmlibs import pathops, snap
 from tenacity import (
     Retrying,
@@ -42,7 +44,6 @@ from literals import (
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
     SNAP_NAME,
-    SNAP_REVISIONS,
     SNAP_SENTINEL_ACL_FILE,
     SNAP_SENTINEL_CONFIG_FILE,
     SNAP_SENTINEL_SERVICE,
@@ -178,7 +179,7 @@ class ValkeyVmWorkload(WorkloadBase):
             True if successfully installed, False if errors occur and `retry_and_raise` is False.
         """
         if not revision:
-            revision = str(SNAP_REVISIONS[platform.machine()])
+            revision = self._load_pinned_snap_revision()
 
         try:
             self.valkey.ensure(snap.SnapState.Present, revision=revision)
@@ -189,6 +190,14 @@ class ValkeyVmWorkload(WorkloadBase):
             if retry_and_raise:
                 raise RuntimeError
             return False
+
+    @staticmethod
+    def _load_pinned_snap_revision() -> str:
+        """Load the pinned snap revision from the local version config file (charm-refresh)."""
+        working_dir = Path(__file__).absolute().parent
+        versions_file = pathops.LocalPath((working_dir / ".." / "refresh_versions.toml").resolve())
+        versions = tomllib.loads(versions_file.read_text())
+        return versions["snap"]["revisions"][platform.machine()]
 
     @override
     def start(self, service: str | None = None, check_alive: bool = True) -> None:
