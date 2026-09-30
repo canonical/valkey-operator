@@ -4,6 +4,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import jubilant
@@ -50,6 +51,20 @@ LDAP_CONNECTION_TIMEOUT_MS = 20000
 DIRECTORY_ENTRIES = json.loads(
     Path("./tests/integration/clients/data/authentik_entries.json").read_text()
 )
+
+
+def _ingress_serving_scheme(status: jubilant.Status, ingress_name: str) -> str | None:
+    """Read the scheme the ingress reports serving on, once it has a certificate.
+
+    Args:
+        status: Juju status for the model traefik is deployed in.
+        ingress_name: Name of the deployed traefik application.
+
+    Returns:
+        The scheme of the advertised address, or None if it advertises none yet.
+    """
+    serving = re.search(r"(?P<scheme>https?)://", status.apps[ingress_name].app_status.message)
+    return serving.group("scheme") if serving else None
 
 
 @pytest.fixture(autouse=True)
@@ -127,6 +142,12 @@ def test_build_and_deploy(
             TLS_NAME,
             idle_period=30,
         ),
+        timeout=900,
+    )
+
+    # ensure Traefik does actually serve https
+    juju_k8s_model.wait(
+        lambda status: _ingress_serving_scheme(status, LDAP_INGRESS_NAME) == "https",
         timeout=1800,
     )
 
@@ -158,6 +179,11 @@ def test_ldap_integration(
 
     juju.integrate(f"{APP_NAME}:ldap", ldap_name)
 
+    # wait for the LDAP relation to settle
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        timeout=600,
+    )
     juju.wait(
         lambda status: does_status_match(
             status,
@@ -217,7 +243,9 @@ def test_enable_ldap(juju: jubilant.Juju) -> None:
     }
     juju.config(APP_NAME, valkey_ldap_config)
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 
@@ -331,7 +359,9 @@ def test_disable_ldap(juju: jubilant.Juju, substrate: Substrate) -> None:
     juju.remove_relation(f"{APP_NAME}:ldap", ldap_name)
 
     juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
         timeout=600,
     )
 

@@ -88,6 +88,8 @@ SENTINEL_DOWN_AFTER_SUPPRESSED_MS = 86_400_000
 # restore self-terminates (freeing the cluster-wide hold) fast. Raise for bigger data.
 RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
+# TIMEOUT for execs on the workload commands
+EXEC_TIMEOUT_S = 10
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380

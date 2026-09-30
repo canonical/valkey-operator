@@ -385,12 +385,21 @@ class RelationState:
         update_content = {k: items[k] for k in items if k not in delete_fields}
 
         for field, value in update_content.items():
+            # Dicts and lists are stored as JSON strings: hold that form, as a re-read would.
+            if isinstance(value, dict | list):
+                value = json.dumps(value)
             setattr(self.model, field.replace("-", "_"), value)
 
         for field in delete_fields:
             setattr(self.model, field.replace("-", "_"), None)
 
         self.data_interface.write_model(self.relation.id, self.model)
+
+        # Delete fields from the model by resetting them to their default values.
+        for field in delete_fields:
+            name = field.replace("-", "_")
+            if field_info := type(self.model).model_fields.get(name):
+                setattr(self.model, name, field_info.get_default(call_default_factory=True))
 
 
 @final

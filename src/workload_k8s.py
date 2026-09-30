@@ -28,6 +28,7 @@ from literals import (
     CHARM,
     CONFIG_FILE,
     DATA_STORAGE_PATH,
+    EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     METRICS_SERVICE,
     SENTINEL_ACL_FILE,
@@ -307,6 +308,7 @@ class ValkeyK8sWorkload(WorkloadBase):
             process = self.container.exec(
                 command=command,
                 environment=env,
+                timeout=EXEC_TIMEOUT_S,
             )
             return process.wait_output()
         except pebble.APIError as e:
