@@ -292,6 +292,22 @@ class ValkeyClient(CliClient):
         """Run a synchronous (blocking) save for the dataset."""
         self.exec_cli_command(["save"], hostname=hostname, json_output=False)
 
+    def reset_client_connections(self, hostname: str) -> None:
+        """Send a kill command to connected clients of types normal/pubsub.
+
+        Args:
+            hostname (str): The hostname to connect to.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI command fails to execute or returns unexpected output.
+        """
+        self.exec_cli_command(
+            ["client", "kill", "type", "normal"], hostname=hostname, json_output=False
+        )
+        self.exec_cli_command(
+            ["client", "kill", "type", "pubsub"], hostname=hostname, json_output=False
+        )
+
 
 class SentinelClient(CliClient):
     """Handle sentinel-specific client connections."""
