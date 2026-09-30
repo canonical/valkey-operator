@@ -62,7 +62,7 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
 
         return new_patch >= old_patch
 
-    def run_pre_refresh_checks_after_1_unit_refreshed(self) -> None:
+    def run_pre_refresh_checks_after_1_unit_refreshed(self) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         """Implement pre-refresh checks.
 
         These checks are run in three situations:
@@ -116,12 +116,12 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
 
 
 @dataclasses.dataclass(eq=False)
-class K8sValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificKubernetes):
+class K8sValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificKubernetes):  # pyright: ignore[reportIncompatibleMethodOverride]
     """Kubernetes-specific implementation for upgrades."""
 
 
 @dataclasses.dataclass(eq=False)
-class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
+class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):  # pyright: ignore[reportIncompatibleMethodOverride]
     """VM-specific implementation for upgrades."""
 
     def refresh_snap(
@@ -153,10 +153,10 @@ class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
             logger.exception("Snap refresh failed")
             if self.charm.workload.snap_revision() == revision_before_refresh:  # pyright: ignore[reportAttributeAccessIssue]
                 self.charm.workload.start()
-        else:
-            refresh.update_snap_revision()
-            # must raise an uncaught exception her to ensure the unit receives another Juju event
-            raise ValkeyUpgradeError("Snap refresh failed")
+            else:
+                refresh.update_snap_revision()
+                # must raise an uncaught exception her to ensure the unit receives another Juju event
+                raise ValkeyUpgradeError("Snap refresh failed")
 
         refresh.update_snap_revision()
         logger.info(f"Updated snap to revision {snap_revision}")
