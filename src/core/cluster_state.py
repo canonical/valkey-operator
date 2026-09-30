@@ -5,6 +5,7 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
+from functools import cached_property
 
 import ops
 from data_platform_helpers.advanced_statuses.components import StatusesState
@@ -122,7 +123,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             for unit in self.peer_relation.units
         }
 
-    @property
+    # Build one model per hook
+    # Writes go through `RelationState.update`, which mutates the cached model in place.
+    @cached_property
     def unit_server(self) -> ValkeyServer:
         """Get the server state of this unit."""
         return ValkeyServer(
@@ -131,7 +134,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             component=self.model.unit,
         )
 
-    @property
+    @cached_property
     def cluster(self) -> ValkeyCluster:
         """Get the cluster state of the entire Valkey application."""
         return ValkeyCluster(
@@ -140,7 +143,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             component=self.model.app,
         )
 
-    @property
+    @cached_property
     def servers(self) -> set[ValkeyServer]:
         """Get all servers/units in the current peer relation, including this unit itself.
 
