@@ -14,6 +14,7 @@ from data_platform_helpers.advanced_statuses.types import Scope
 
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from literals import Substrate
 from statuses import CharmStatuses, ClusterStatuses
 
 logger = logging.getLogger(__name__)
@@ -23,11 +24,12 @@ class RefreshManager(ManagerStatusProtocol):
     """Manage refresh statuses."""
 
     name: str = "refresh"
+    state: ClusterState
 
     def __init__(
         self, state: ClusterState, workload: WorkloadBase, refresh: charm_refresh.Common | None
     ):
-        self.state = state
+        self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
         self.refresh = refresh
 
@@ -41,6 +43,10 @@ class RefreshManager(ManagerStatusProtocol):
 
     def workload_allowed_to_start(self) -> bool:
         """Check if the workload is allowed to start from refresh-perspective."""
+        # relevant for K8s only
+        if self.state.substrate == Substrate.VM:
+            return True
+
         if not self.refresh:
             return False
 

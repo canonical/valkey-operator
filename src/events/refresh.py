@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 
 import charm_refresh
 
-from common.exceptions import ValkeyUpgradeError
+from common.exceptions import (
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyUpgradeError,
+    ValkeyWorkloadCommandError,
+)
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -58,20 +62,62 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
 
         return new_patch >= old_patch
 
-    @staticmethod
-    def run_pre_refresh_checks_after_1_unit_refreshed() -> None:
-        """Implement pre-refresh checks after 1 unit refreshed."""
-        pass
+    def run_pre_refresh_checks_after_1_unit_refreshed(self) -> None:
+        """Implement pre-refresh checks.
+
+        These checks are run in three situations:
+        - When the user runs the pre-refresh-check action on the leader before the refresh starts
+        - On VM: after the user runs juju refresh and before any unit is refreshed
+        - On K8s: after the user runs juju refresh and after the highest unit has refreshed
+            and before this unit starts its workload
+        """
+        if not self.charm.state.unit_server.is_active:
+            raise charm_refresh.PrecheckFailed("Unit is not started or being removed")
+
+        if self.charm.state.unit_server.is_backup_in_progress:
+            raise charm_refresh.PrecheckFailed("Backup in progress, wait for completion")
+
+        if self.charm.state.cluster.is_restore_in_progress:
+            raise charm_refresh.PrecheckFailed("Database restore in progress, cannot upgrade")
+
+        if self.charm.state.unit_server.is_tls_transitioning:
+            raise charm_refresh.PrecheckFailed(
+                "TLS switchover or CA rotation in progress, cannot upgrade"
+            )
+
+        try:
+            self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError:
+            raise charm_refresh.PrecheckFailed("Primary not available, cannot upgrade")
+
+    def run_pre_refresh_checks_before_any_units_refreshed(self) -> None:
+        """Implement additional pre-refresh checks.
+
+        These checks are only run in two situations:
+        - When the user runs the pre-refresh-check action on the leader before the refresh starts
+        - On VM: after the user runs juju refresh and before any unit is refreshed
+
+        They can support health checks on the local unit.
+        """
+        self.run_pre_refresh_checks_after_1_unit_refreshed()
+
+        try:
+            is_primary = self.charm.cluster_manager.is_primary()
+        except ValkeyWorkloadCommandError:
+            raise charm_refresh.PrecheckFailed("Connection to Valkey fails, cannot upgrade")
+
+        if not self.charm.cluster_manager.is_healthy(
+            is_primary=is_primary, check_replica_sync=True
+        ):
+            raise charm_refresh.PrecheckFailed("Valkey is unhealthy, cannot upgrade")
+
+        if not self.charm.sentinel_manager.is_healthy():
+            raise charm_refresh.PrecheckFailed("Sentinel is unhealthy, cannot upgrade")
 
 
 @dataclasses.dataclass(eq=False)
 class K8sValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificKubernetes):
     """Kubernetes-specific implementation for upgrades."""
-
-    @staticmethod
-    def run_pre_refresh_checks_after_1_unit_refreshed() -> None:
-        """Implement pre-refresh checks after 1 unit refreshed."""
-        pass
 
 
 @dataclasses.dataclass(eq=False)
