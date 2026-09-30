@@ -108,8 +108,8 @@ def test_pre_refresh_checks(app_data, unit_data, pre_check_result) -> None:
             assert str(e.value) == pre_check_result
 
 
-def test_pre_refresh_check_primary_unavailable() -> None:
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+def test_pre_refresh_check_primary_unavailable(vm_environment) -> None:
+    ctx = testing.Context(ValkeyCharm)
 
     peer_relation = testing.PeerRelation(
         id=1,
@@ -117,14 +117,12 @@ def test_pre_refresh_check_primary_unavailable() -> None:
         local_unit_data={"start-state": "started"},
     )
 
-    container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         relations={peer_relation},
-        containers={container},
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
 
-    with ctx(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in) as manager:
+    with ctx(ctx.on.relation_created(relation=peer_relation), state_in) as manager:
         charm: ValkeyCharm = manager.charm
 
         # Mock the refresh constructor to avoid version checks
@@ -135,16 +133,16 @@ def test_pre_refresh_check_primary_unavailable() -> None:
                 side_effect=ValkeyCannotGetPrimaryIPError("error"),
             ),
         ):
-            refresh = K8sValkeyRefresh.__new__(K8sValkeyRefresh)
+            refresh = MachinesValkeyRefresh.__new__(MachinesValkeyRefresh)
             refresh.charm = charm
             with pytest.raises(PrecheckFailed) as e:
-                refresh.run_pre_refresh_checks_after_1_unit_refreshed()
+                refresh.run_pre_refresh_checks_before_any_units_refreshed()
 
             assert str(e.value) == "Primary not available, cannot upgrade"
 
 
 def test_snap_refresh_failed(vm_environment) -> None:
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm)
 
     peer_relation = testing.PeerRelation(
         id=1,
@@ -187,7 +185,7 @@ def test_snap_refresh_failed(vm_environment) -> None:
 
 
 def test_snap_refresh_successful(vm_environment) -> None:
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    ctx = testing.Context(ValkeyCharm)
 
     peer_relation = testing.PeerRelation(
         id=1,

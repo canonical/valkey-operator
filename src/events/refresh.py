@@ -85,11 +85,6 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
                 "TLS switchover or CA rotation in progress, cannot upgrade"
             )
 
-        try:
-            self.charm.sentinel_manager.get_primary_ip()
-        except ValkeyCannotGetPrimaryIPError:
-            raise charm_refresh.PrecheckFailed("Primary not available, cannot upgrade")
-
     def run_pre_refresh_checks_before_any_units_refreshed(self) -> None:
         """Implement additional pre-refresh checks.
 
@@ -100,6 +95,11 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
         They can support health checks on the local unit.
         """
         self.run_pre_refresh_checks_after_1_unit_refreshed()
+
+        try:
+            self.charm.sentinel_manager.get_primary_ip()
+        except ValkeyCannotGetPrimaryIPError:
+            raise charm_refresh.PrecheckFailed("Primary not available, cannot upgrade")
 
         try:
             is_primary = self.charm.cluster_manager.is_primary()
