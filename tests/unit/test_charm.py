@@ -144,6 +144,8 @@ def test_start_primary():
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
         patch("common.client.ValkeyClient.set", return_value=True),
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
+        patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
+        patch("managers.tls.TLSManager.will_certificate_expire"),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
         assert state_out.unit_status == ActiveStatus()

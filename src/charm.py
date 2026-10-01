@@ -20,7 +20,7 @@ from events.external_clients import ExternalClientsEvents
 from events.ldap import LDAPEvents
 from events.observability import ObservabilityEvents
 from events.tls import TLSEvents
-from literals import CONTAINER, Substrate
+from literals import CONTAINER, PEER_RELATION, Substrate
 from managers.auth import AuthManager
 from managers.backup import BackupManager
 from managers.cluster import ClusterManager
@@ -157,6 +157,14 @@ class ValkeyCharm(ops.CharmBase):
 
         self.state.unit_server.update({"is_sentinel_healthy": True})
         restart_lock.release_lock()
+
+    def trigger_relation_change_if_required(self) -> None:
+        """Trigger a peer-relation changed event if it is a single-unit deployment."""
+        if len(self.state.servers) != 1:
+            return
+
+        logger.debug("Trigger a relation-changed event in a single-unit deployment")
+        self.on[PEER_RELATION].relation_changed.emit(self.state.peer_relation)
 
 
 if __name__ == "__main__":
