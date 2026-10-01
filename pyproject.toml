@@ -23,7 +23,8 @@ boto3 = "^1.40"
 mypy-boto3-s3 = "^1.40"
 object-storage-charmlib = "^1.0.0"
 # >=12.15 for StorageStreamDownloader.read(), which the restore path streams through
-azure-storage-blob = "^12.19"
+# pin to 12.30 for azurite API compatibility
+azure-storage-blob = ">=12.19,<12.31"
 google-cloud-storage = "^3.13"
 # Imported directly by the GCS backend for requests.RequestException.
 requests = ">=2.22"
@@ -80,7 +81,7 @@ valkey-glide = "^2.5"
 kubernetes = "^35.0.0"
 boto3 = "^1.40"
 mypy-boto3-s3 = "^1.40"
-azure-storage-blob = "^12.19"
+azure-storage-blob = ">=12.19,<12.31"
 google-cloud-storage = "^3.13"
 
 [tool.poetry.group.build-refresh-version]
