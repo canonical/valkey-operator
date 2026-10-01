@@ -80,6 +80,11 @@ variable "backup" {
     )) == 0
     error_message = "backup.deploy.config for the ${try(var.backup.deploy.storage_type, "")} integrator accepts only: ${try(join(", ", local.backup_config_allowed_keys[var.backup.deploy.storage_type]), "")}. The module sets credentials itself from the matching *_secret_version secret."
   }
+
+  validation {
+    condition     = !contains(["abfs", "abfss"], lower(trimspace(try(var.backup.deploy.config["connection-protocol"], ""))))
+    error_message = "backup.deploy.config connection-protocol must be https (the default), http, wasbs or wasb. Valkey uses the Azure Blob API, and abfs and abfss are ADLS Gen2."
+  }
 }
 
 variable "cos" {

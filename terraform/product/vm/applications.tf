@@ -91,7 +91,10 @@ module "azure_storage_integrator" {
   model_uuid  = local.model_uuid
   revision    = var.backup.deploy.revision
 
+  # Valkey talks to the Blob API only. The integrator's default, abfss, is ADLS Gen2, which
+  # Valkey rejects.
   config = merge(
+    { connection-protocol = "https" },
     var.backup.deploy.config,
     length(juju_secret.azure_secret) > 0 ? {
       credentials = juju_secret.azure_secret[0].secret_uri
