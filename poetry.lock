@@ -71,7 +71,6 @@ files = [
     {file = "anyio-4.15.1-py3-none-any.whl", hash = "sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101"},
     {file = "anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94"},
 ]
-markers = {main = "sys_platform != \"emscripten\""}
 
 [package.dependencies]
 idna = ">=2.8"
@@ -2588,4 +2587,4 @@ h11 = ">=0.16.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "0f96021887270d77692bb6205a1e7c1159990fb665b3f0270bb42f3162a28c95"
+content-hash = "8edc59fcdd492ca1d6f68957409c3264fd1a7f5f180a06fe0fcd44bf6abb944a"
