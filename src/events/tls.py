@@ -252,7 +252,7 @@ class TLSEvents(ops.Object):
                 restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
             )
         self.charm.tls_manager.record_applied_certificate(cert)
-        self._trigger_relation_change_if_required()
+        self.charm.trigger_relation_change_if_required()
 
     def _on_certificate_denied(self, event: CertificateDeniedEvent) -> None:
         """Handle the `certificate-denied` event from TLS provider."""
@@ -309,7 +309,7 @@ class TLSEvents(ops.Object):
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
-            self._trigger_relation_change_if_required()
+            self.charm.trigger_relation_change_if_required()
 
         try:
             self.charm.tls_manager.create_and_store_self_signed_certificate()
@@ -337,7 +337,7 @@ class TLSEvents(ops.Object):
             # need to renew CA first (same validity), this triggers relation-changed event
             self.charm.tls_manager.generate_ca_certificate()
 
-        self._trigger_relation_change_if_required()
+        self.charm.trigger_relation_change_if_required()
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle TLS related secret changes."""
@@ -417,7 +417,7 @@ class TLSEvents(ops.Object):
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.CA_UPDATED)
-                self._trigger_relation_change_if_required()
+                self.charm.trigger_relation_change_if_required()
 
             case TLSCARotationState.CA_UPDATED:
                 if not all(
@@ -436,11 +436,3 @@ class TLSEvents(ops.Object):
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
                 self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)
-
-    def _trigger_relation_change_if_required(self) -> None:
-        """Trigger a relation changed event if it is a single-unit deployment."""
-        if len(self.charm.state.servers) != 1:
-            return
-
-        logger.debug("Trigger a relation-changed event in a single-unit deployment")
-        self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
