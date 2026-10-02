@@ -201,6 +201,34 @@ juju config valkey tls-client-private-key=secret:d6s4hbnmp25c765uceo0
 Once the configuration is set, the charm will use the private key stored in the secret
 to generate new certificate signing requests (CSR) to acquire new certificates from the TLS provider.
 
+## Certificate SANs configuration
+
+In X.509 TLS certificates, a Subject Alternative Name (SAN) allows a certificate subject to be 
+associated with the service name and domain name components of a DNS record. If Charmed Valkey 
+is deployed in an environment where the DNS resolution on the client side does not correspond 
+to the DNS resolution on the server side, it might be required to add custom SANs to the TLS 
+certificates.
+
+### Add extra-sans
+To add different IP addresses or hostnames to the SANs of Charmed Valkey’s TLS certificates, 
+configure the `certificate-extra-sans` option. It is possible to add a comma-separated list 
+of multiple values, as long as each of them is a valid IP address or hostname:
+
+```shell
+juju config valkey certificate-extra-sans="10.241.9.34, valkey-production-cluster.mycompany.com"
+```
+
+If the configured sans are valid and not yet included in Charmed Valkey’s certificates, it will 
+automatically refresh those.
+
+```{caution}
+Wildcards (`*`) are not allowed as part of the `certificate-extra-sans` configuration.
+```
+
+If it is required to include the unit number of each unit, this can be done by using the `{unit}` 
+placeholder. For example, a configuration of `certificate-extra-sans="valkey{unit}.my-external-domain.com"` 
+would result in `valkey0.my-external-domain.com` as an additional SAN in the TLS certificates for unit `valkey/0`.
+
 ## Disable TLS
 
 In general, to disable encryption with TLS, remove the relation between Valkey and 
