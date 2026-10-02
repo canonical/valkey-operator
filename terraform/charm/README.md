@@ -9,8 +9,8 @@ The module follows the CC008 Charm Terraform Standards.
 
 | Name | Version |
 |------|---------|
-| terraform | >= 1.6 |
-| juju | > 1.0.0 |
+| terraform | >= 1.11 |
+| juju | >= 2.2.1 |
 
 ## Usage
 
@@ -53,7 +53,7 @@ module "valkey" {
 | machines | List of Juju machine IDs to place units on. | `set(string)` | `[]` | no |
 | model_uuid | Reference to an existing Juju model UUID. | `string` | n/a | yes |
 | offered_endpoints | List of endpoints to expose as Juju offers. Each offer is named `<app_name>-<endpoint>`. | `list(string)` | `[]` | no |
-| resources | Map of charm resource name to a Charmhub revision number or an OCI image URL. `{}` uses the resources published with the charm revision. An OCI image URL is never refreshed when the charm is, so pin one only on purpose. | `map(string)` | `{}` | no |
+| resources | Map of charm resource name to a Charmhub revision number or an OCI image URL. `{}` uses the resources published with the charm revision. Do not override `valkey-image`. Charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start. | `map(string)` | `{}` | no |
 | revision | Revision number of the charm. Set to null for latest. | `number` | `null` | no |
 | storage_directives | Map of storage directives for application storage. | `map(string)` | `{}` | no |
 | trust | Grant charm trusted status / cloud credentials. Required on K8s. | `bool` | `false` | no |
