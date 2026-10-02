@@ -415,6 +415,73 @@ juju remove-relation valkey:client-certificates self-signed-certificates:certifi
 
 The Charmed Valkey application is not using TLS anymore.
 
+## Inspect the charm's status
+
+Charmed Valkey provides detailed, component-specific status information. Use the `status-detail`
+action to display all current application and unit statuses. It includes an optional `recompute` 
+argument for status re-evaluation and is particularly useful for debugging and understanding 
+the charm’s current state.
+
+Run `juju run valkey/leader status-detail` and inspect Charmed Valkey's status:
+
+```text
+Running operation 15 with 1 task
+  - task 16 on unit-valkey-0
+
+Waiting for task 16...
+14:11:09 Stored statuses:
+14:11:09                                 App Statuses                                 
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Status      │ Component Name   │ Message                │ Action │ Reason │
+│─────────────│──────────────────│────────────────────────│────────│────────│
+│ Maintenance │ tls              │ Enabling client TLS... │ N/A    │ N/A    │
+│ Active      │ cluster          │                        │ N/A    │ N/A    │
+│ Active      │ config           │                        │ N/A    │ N/A    │
+│ Active      │ auth             │                        │ N/A    │ N/A    │
+│ Active      │ sentinel         │                        │ N/A    │ N/A    │
+│ Active      │ external_clients │                        │ N/A    │ N/A    │
+│ Active      │ backup           │                        │ N/A    │ N/A    │
+└─────────────┴──────────────────┴────────────────────────┴────────┴────────┘
+14:11:09                                 Unit Statuses                                
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Status      │ Component Name   │ Message                │ Action │ Reason │
+│─────────────│──────────────────│────────────────────────│────────│────────│
+│ Maintenance │ tls              │ Enabling client TLS... │ N/A    │ N/A    │
+│ Active      │ cluster          │                        │ N/A    │ N/A    │
+│ Active      │ config           │                        │ N/A    │ N/A    │
+│ Active      │ auth             │                        │ N/A    │ N/A    │
+│ Active      │ sentinel         │                        │ N/A    │ N/A    │
+│ Active      │ external_clients │                        │ N/A    │ N/A    │
+│ Active      │ backup           │                        │ N/A    │ N/A    │
+└─────────────┴──────────────────┴────────────────────────┴────────┴────────┘
+
+json-output:
+  app: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Enabling client
+    TLS...", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component Name":
+    "cluster", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active",
+    "Component Name": "config", "Message": "", "Action": "N/A", "Reason": "N/A"},
+    {"Status": "Active", "Component Name": "auth", "Message": "", "Action": "N/A",
+    "Reason": "N/A"}, {"Status": "Active", "Component Name": "sentinel", "Message":
+    "", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component Name":
+    "external_clients", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status":
+    "Active", "Component Name": "backup", "Message": "", "Action": "N/A", "Reason":
+    "N/A"}]'
+  unit: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Enabling
+    client TLS...", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component
+    Name": "cluster", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status":
+    "Active", "Component Name": "config", "Message": "", "Action": "N/A", "Reason":
+    "N/A"}, {"Status": "Active", "Component Name": "auth", "Message": "", "Action":
+    "N/A", "Reason": "N/A"}, {"Status": "Active", "Component Name": "sentinel", "Message":
+    "", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component Name":
+    "external_clients", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status":
+    "Active", "Component Name": "backup", "Message": "", "Action": "N/A", "Reason":
+    "N/A"}]'
+```
+
+This output provides a comprehensive view of statuses, detailing component names, messages, 
+actions, and reasons for each status. The `json-output` section at the end offers a structured
+format, which is ideal for parsing by automation tools and scripts.
+
 ## Clean up your environment
 
 In this tutorial we've successfully deployed Valkey on MicroK8s, added and removed
