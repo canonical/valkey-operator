@@ -95,3 +95,4 @@ parts:
       craftctl default
     stage:
       - LICENSE
+      - icon.svg
