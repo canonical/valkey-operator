@@ -155,8 +155,9 @@ class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
                 self.charm.workload.start()
             else:
                 refresh.update_snap_revision()
-                # must raise an uncaught exception her to ensure the unit receives another Juju event
-                raise ValkeyUpgradeError("Snap refresh failed")
+
+            # must raise an uncaught exception her to ensure the unit receives another Juju event
+            raise ValkeyUpgradeError("Snap refresh failed")
 
         refresh.update_snap_revision()
         logger.info(f"Updated snap to revision {snap_revision}")
