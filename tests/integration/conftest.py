@@ -49,6 +49,12 @@ def substrate(request) -> Substrate:
     return Substrate(request.config.option.substrate)
 
 
+@pytest.fixture(scope="session")
+def model_name(request) -> str:
+    """Juju model that the tests run in."""
+    return request.config.option.model
+
+
 @pytest.fixture(scope="package")
 def arch() -> str:
     """Fixture to provide the platform architecture for testing."""
@@ -69,38 +75,27 @@ def charm(arch: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def juju(arch: str):
-    # `testing` is the default model created by concierge
-    juju = jubilant.Juju(model="testing")
+def juju(arch: str, model_name: str):
+    juju = jubilant.Juju(model=model_name)
     juju.wait_timeout = 1000
-    juju.cli("set-model-constraints", f"arch={arch}")
+    # set-model-constraints replaces them all: keep any set on the model beforehand
+    existing = [c for c in juju.cli("model-constraints").split() if not c.startswith("arch=")]
+    juju.cli("set-model-constraints", *existing, f"arch={arch}")
     yield juju
 
 
 @pytest.fixture(scope="module")
-def lxd_cloud(juju: jubilant.Juju, substrate: Substrate):
+def lxd_controller(juju: jubilant.Juju, substrate: Substrate) -> str:
+    """Return the controller hosting the VM test model; cross-model tests add K8s models there.
+
+    Any machine cloud works (LXD in CI, GCE, ...): the K8s cloud is looked up on this controller.
+    """
     if substrate == Substrate.K8S:
-        yield ""
-        return
+        return ""
 
-    clouds = json.loads(juju.cli("clouds", "--format", "json", include_model=False))
-    for cloud, details in clouds.items():
-        if "lxd" == details.get("type"):
-            logger.info(f"Identified LXD cloud: {cloud}")
-            yield cloud
-
-
-@pytest.fixture(scope="module")
-def lxd_controller(lxd_cloud: str, juju: jubilant.Juju, substrate: Substrate):
-    if substrate == Substrate.K8S:
-        yield ""
-        return
-
-    controllers = json.loads(juju.cli("controllers", "--format", "json", include_model=False))
-    for controller, details in controllers.get("controllers").items():
-        if lxd_cloud == details.get("cloud"):
-            logger.info(f"Identified LXD controller: {controller}")
-            yield controller
+    controller = juju.show_model().controller_name
+    logger.info(f"Identified machine controller: {controller}")
+    return controller
 
 
 def _find_k8s_cloud_on_controller(juju: jubilant.Juju, controller: str) -> str | None:
@@ -228,9 +223,11 @@ def k8s_cloud(arch: str, lxd_controller: str, juju: jubilant.Juju, substrate: Su
 
 
 @pytest.fixture(scope="module")
-def juju_k8s_model(arch: str, k8s_cloud: str, lxd_controller: str, substrate: Substrate):
+def juju_k8s_model(
+    arch: str, k8s_cloud: str, lxd_controller: str, substrate: Substrate, model_name: str
+):
     if substrate == Substrate.K8S:
-        juju_k8s = jubilant.Juju(model="testing")
+        juju_k8s = jubilant.Juju(model=model_name)
         juju_k8s.wait_timeout = 1000
         yield juju_k8s
     else:
