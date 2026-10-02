@@ -11,7 +11,7 @@ from charm_refresh import CharmVersion, PrecheckFailed
 from ops import BlockedStatus, testing
 
 from charm import ValkeyCharm
-from common.exceptions import ValkeyCannotGetPrimaryIPError
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyUpgradeError
 from literals import (
     PEER_RELATION,
 )
@@ -177,9 +177,10 @@ def test_snap_refresh_failed(vm_environment) -> None:
         ):
             refresh = MachinesValkeyRefresh.__new__(MachinesValkeyRefresh)
             refresh.charm = charm
-            refresh.refresh_snap(
-                snap_name="valkey-charmed", snap_revision="183", refresh=mock_refresh
-            )
+            with pytest.raises(ValkeyUpgradeError):
+                refresh.refresh_snap(
+                    snap_name="valkey-charmed", snap_revision="183", refresh=mock_refresh
+                )
 
             assert not mock_refresh.next_unit_allowed_to_refresh
 
