@@ -16,3 +16,10 @@ def pytest_addoption(parser: Parser):
         choices=("vm", "k8s"),
         default="k8s",
     )
+    parser.addoption(
+        "--model",
+        action="store",
+        help="Juju model to run the tests in",
+        # `testing` is the default model created by concierge
+        default="testing",
+    )
