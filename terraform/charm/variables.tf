@@ -71,7 +71,7 @@ variable "offered_endpoints" {
 }
 
 variable "resources" {
-  description = "Map of charm resource name to a Charmhub revision number or an OCI image URL. {} uses the resources published with the charm revision."
+  description = "Map of charm resource name to a Charmhub revision number or an OCI image URL. {} uses the resources published with the charm revision. Warning: charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start."
   type        = map(string)
   default     = {}
 }

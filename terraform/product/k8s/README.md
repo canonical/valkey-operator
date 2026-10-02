@@ -230,7 +230,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | tls | Client TLS. Set `client_certificates` to an external `tls-certificates` provider, and `certificate_transfer` to a CA provider for client mTLS. Each takes `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off. | `object` | `{}` | no |
 | tls_client_private_key | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var. | `string` | `null` | no |
 | tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| valkey | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. | `object` | `{}` | no |
+| valkey | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. `resources` must not override `valkey-image` if you need upgrades. Charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start. | `object` | `{}` | no |
 
 ## Outputs
 

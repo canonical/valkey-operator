@@ -456,7 +456,7 @@ variable "tls_client_private_key_version" {
 }
 
 variable "valkey" {
-  description = "Valkey charm configuration options."
+  description = "Valkey charm configuration options. Warning: charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start."
   type = object({
     app_name    = optional(string, "valkey")
     base        = optional(string, "ubuntu@26.04")
