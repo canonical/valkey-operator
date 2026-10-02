@@ -338,6 +338,7 @@ def test_statuses() -> None:
     with patch("charm_refresh.Kubernetes", MagicMock(return_value=refresh_mock)):
         state_out = ctx.run(ctx.on.update_status(), state_in)
 
+        assert state_out.app_status != BlockedStatus("456")
         assert state_out.unit_status == BlockedStatus("456")
 
     # lower unit status
@@ -348,6 +349,7 @@ def test_statuses() -> None:
     with patch("charm_refresh.Kubernetes", MagicMock(return_value=refresh_mock)):
         state_out = ctx.run(ctx.on.update_status(), state_in)
 
+        assert state_out.app_status != BlockedStatus("789")
         assert state_out.unit_status != BlockedStatus("789")
 
     # invalid status - this must raise to avoid downtime because of overridden refresh-status

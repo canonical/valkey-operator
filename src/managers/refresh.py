@@ -42,7 +42,12 @@ class RefreshManager(ManagerStatusProtocol):
         return self.refresh.in_progress
 
     def workload_allowed_to_start(self) -> bool:
-        """Check if the workload is allowed to start from refresh-perspective."""
+        """Check if the workload is allowed to start from refresh-perspective.
+
+        On K8s, after `juju refresh`, Juju re-creates a pod with the deployed container image.
+        This check ensures that the image is compatible for the upgrade, comparing it to the
+        one pinned in `refresh_versions.toml`.
+        """
         # relevant for K8s only
         if self.state.substrate == Substrate.VM:
             return True
@@ -71,10 +76,11 @@ class RefreshManager(ManagerStatusProtocol):
         if not self.refresh:
             return [CharmStatuses.ACTIVE_IDLE.value]
 
-        if scope == "app" and (refresh_app_status := self.refresh.app_status_higher_priority):
-            app_status = self._convert_ops_status_to_advanced_status(refresh_app_status)
-            status_list.append(app_status)
-            return status_list
+        if scope == "app":
+            if refresh_app_status := self.refresh.app_status_higher_priority:
+                app_status = self._convert_ops_status_to_advanced_status(refresh_app_status)
+                status_list.append(app_status)
+            return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]
 
         if self.refresh.in_progress and not self.refresh.next_unit_allowed_to_refresh:
             status_list.append(ClusterStatuses.UNHEALTHY_AFTER_REFRESH.value)
