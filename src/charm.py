@@ -13,7 +13,11 @@ import ops.log
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
-from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyServicesFailedToStartError,
+    ValkeyUpgradeError,
+    ValkeyWorkloadCommandError,
+)
 from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -133,43 +137,55 @@ class ValkeyCharm(ops.CharmBase):
         self.framework.observe(self.restart_workload, self._on_restart_workload)
 
         # ensure that post refresh handling is executed in EVERY hook
-        self.post_refresh_handling()
+        self.post_refresh_handling(self.refresh)
 
-    def post_refresh_handling(self) -> None:
+    def post_refresh_handling(self, refresh: charm_refresh.Common | None) -> None:
         """Handle post refresh steps like start and health checks."""
-        if not self.refresh or self.refresh.next_unit_allowed_to_refresh:
+        if not refresh or refresh.next_unit_allowed_to_refresh:
             return
 
-        if not self.refresh.in_progress:
-            self.refresh.next_unit_allowed_to_refresh = True
+        if not self.state.unit_server.is_started:
+            logger.debug("Scaled up units must go through start event")
             return
 
-        if not self.refresh_manager.workload_allowed_to_start():
-            logger.info("Workload not allowed to start yet")
+        if not refresh.in_progress and self.workload.alive():
+            if not (
+                self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
+                and self.sentinel_manager.is_healthy
+            ):
+                # to ensure the unit receives another Juju event
+                raise ValkeyUpgradeError("Workload not healthy yet")
+
+            logger.info("Unit is healthy, allowing next unit to refresh")
+            refresh.next_unit_allowed_to_refresh = True
             return
 
         logger.info("Restarting workload")
-        primary_ip = self.sentinel_manager.get_primary_ip()
-        active_sentinels = self.sentinel_manager.get_active_sentinel_ips(primary_ip)
-        self.workload.stop()
+        if self.app.planned_units() == 1:
+            # there is no other sentinel to query
+            primary_ip = self.state.unit_server.get_endpoint(self.state.substrate)
+        else:
+            primary_ip = self.sentinel_manager.get_primary_ip()
         self.auth_manager.configure_auth()
         self.config_manager.configure_services(primary_ip)
         self.metrics_manager.reconcile()
         self.workload.start()
 
+        # config sets min-replicas-to-write=1; reassert the correct value now the server is up
+        self.cluster_manager.reconcile_min_replicas_to_write()
+        if self.unit.is_leader() and self.state.substrate == Substrate.K8S:
+            self.sentinel_manager.set_pod_labels()
+
         logger.info("Confirming health after upgrade")
         if not (
-            self.cluster_manager.is_healthy(
-                # only check replica sync if there is another unit that can be primary
-                check_replica_sync=len(active_sentinels) > 1
-            )
+            self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
             and self.sentinel_manager.is_healthy()
         ):
-            logger.info("Unit not healthy, refresh cannot proceed yet")
-            return
+            # to ensure the unit receives another Juju event
+            raise ValkeyUpgradeError("Workload not healthy yet")
 
         logger.info("Unit is healthy, allowing next unit to refresh")
-        self.refresh.next_unit_allowed_to_refresh = True
+        refresh.next_unit_allowed_to_refresh = True
 
     def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
         """Handle the restart_workload event."""

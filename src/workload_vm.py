@@ -367,4 +367,9 @@ class ValkeyVmWorkload(WorkloadBase):
 
     def snap_revision(self) -> str:
         """Get the snap revision that is currently installed."""
-        return self.valkey.revision
+        client = snap.SnapClient()
+        for s in client.get_installed_snaps():
+            if s["name"] == SNAP_NAME:
+                return str(s["version"])
+
+        return ""

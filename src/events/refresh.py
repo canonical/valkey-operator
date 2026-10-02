@@ -11,11 +11,7 @@ from typing import TYPE_CHECKING
 
 import charm_refresh
 
-from common.exceptions import (
-    ValkeyCannotGetPrimaryIPError,
-    ValkeyUpgradeError,
-    ValkeyWorkloadCommandError,
-)
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyUpgradeError
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -74,6 +70,11 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
         if not self.charm.state.unit_server.is_active:
             raise charm_refresh.PrecheckFailed("Unit is not started or being removed")
 
+        if self.charm.state.unit_server.model.tls_certificate_expiring:
+            raise charm_refresh.PrecheckFailed(
+                "TLS certificates expiring soon, ensure renewal before upgrade"
+            )
+
         if self.charm.state.unit_server.is_backup_in_progress:
             raise charm_refresh.PrecheckFailed("Backup in progress, wait for completion")
 
@@ -97,22 +98,15 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
         self.run_pre_refresh_checks_after_1_unit_refreshed()
 
         try:
-            self.charm.sentinel_manager.get_primary_ip()
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             raise charm_refresh.PrecheckFailed("Primary not available, cannot upgrade")
 
-        try:
-            is_primary = self.charm.cluster_manager.is_primary()
-        except ValkeyWorkloadCommandError:
-            raise charm_refresh.PrecheckFailed("Connection to Valkey fails, cannot upgrade")
+        if not self.charm.cluster_manager.all_servers_healthy(primary_ip):
+            raise charm_refresh.PrecheckFailed("Not all Valkey servers healthy, cannot upgrade")
 
-        if not self.charm.cluster_manager.is_healthy(
-            is_primary=is_primary, check_replica_sync=True
-        ):
-            raise charm_refresh.PrecheckFailed("Valkey is unhealthy, cannot upgrade")
-
-        if not self.charm.sentinel_manager.is_healthy():
-            raise charm_refresh.PrecheckFailed("Sentinel is unhealthy, cannot upgrade")
+        if not self.charm.sentinel_manager.all_sentinels_healthy():
+            raise charm_refresh.PrecheckFailed("Not all Sentinels healthy, cannot upgrade")
 
 
 @dataclasses.dataclass(eq=False)
@@ -156,10 +150,10 @@ class MachinesValkeyRefresh(ValkeyRefresh, charm_refresh.CharmSpecificMachines):
             else:
                 refresh.update_snap_revision()
 
-            # must raise an uncaught exception her to ensure the unit receives another Juju event
+            # must raise an uncaught exception here to ensure the unit receives another Juju event
             raise ValkeyUpgradeError("Snap refresh failed")
 
         refresh.update_snap_revision()
         logger.info(f"Updated snap to revision {snap_revision}")
 
-        self.charm.post_refresh_handling()
+        self.charm.post_refresh_handling(refresh)

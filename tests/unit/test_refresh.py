@@ -141,6 +141,69 @@ def test_pre_refresh_check_primary_unavailable(vm_environment) -> None:
             assert str(e.value) == "Primary not available, cannot upgrade"
 
 
+def test_pre_refresh_check_valkey_unhealthy(vm_environment) -> None:
+    ctx = testing.Context(ValkeyCharm)
+
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+
+    state_in = testing.State(
+        relations={peer_relation},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+    )
+
+    with ctx(ctx.on.relation_created(relation=peer_relation), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+
+        # Mock the refresh constructor to avoid version checks
+        with (
+            patch("events.refresh.ValkeyRefresh.__init__", return_value=None),
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.cluster.ClusterManager.all_servers_healthy", return_value=False),
+        ):
+            refresh = MachinesValkeyRefresh.__new__(MachinesValkeyRefresh)
+            refresh.charm = charm
+            with pytest.raises(PrecheckFailed) as e:
+                refresh.run_pre_refresh_checks_before_any_units_refreshed()
+
+            assert str(e.value) == "Not all Valkey servers healthy, cannot upgrade"
+
+
+def test_pre_refresh_check_sentinel_unhealthy(vm_environment) -> None:
+    ctx = testing.Context(ValkeyCharm)
+
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"start-state": "started"},
+    )
+
+    state_in = testing.State(
+        relations={peer_relation},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+    )
+
+    with ctx(ctx.on.relation_created(relation=peer_relation), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+
+        # Mock the refresh constructor to avoid version checks
+        with (
+            patch("events.refresh.ValkeyRefresh.__init__", return_value=None),
+            patch("managers.sentinel.SentinelManager.get_primary_ip"),
+            patch("managers.cluster.ClusterManager.all_servers_healthy"),
+            patch("managers.sentinel.SentinelManager.all_sentinels_healthy", return_value=False),
+        ):
+            refresh = MachinesValkeyRefresh.__new__(MachinesValkeyRefresh)
+            refresh.charm = charm
+            with pytest.raises(PrecheckFailed) as e:
+                refresh.run_pre_refresh_checks_before_any_units_refreshed()
+
+            assert str(e.value) == "Not all Sentinels healthy, cannot upgrade"
+
+
 def test_snap_refresh_failed(vm_environment) -> None:
     ctx = testing.Context(ValkeyCharm)
 
@@ -250,6 +313,7 @@ def test_post_refresh_healthy_cluster() -> None:
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.metrics.MetricsManager.reconcile"),
+        patch("managers.cluster.ClusterManager.is_primary"),
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
     ):
@@ -259,7 +323,7 @@ def test_post_refresh_healthy_cluster() -> None:
             charm: ValkeyCharm = manager.charm
 
             charm.refresh = mock_refresh
-            charm.post_refresh_handling()
+            charm.post_refresh_handling(mock_refresh)
 
             assert mock_refresh.next_unit_allowed_to_refresh
 
@@ -289,6 +353,7 @@ def test_post_refresh_unhealthy_cluster() -> None:
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.metrics.MetricsManager.reconcile"),
+        patch("managers.cluster.ClusterManager.is_primary"),
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=False),
     ):
@@ -298,7 +363,8 @@ def test_post_refresh_unhealthy_cluster() -> None:
             charm: ValkeyCharm = manager.charm
 
             charm.refresh = mock_refresh
-            charm.post_refresh_handling()
+            with pytest.raises(ValkeyUpgradeError):
+                charm.post_refresh_handling(mock_refresh)
 
             assert not mock_refresh.next_unit_allowed_to_refresh
 
