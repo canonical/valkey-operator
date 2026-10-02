@@ -434,7 +434,7 @@ Waiting for task 16...
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ Status      │ Component Name   │ Message                │ Action │ Reason │
 │─────────────│──────────────────│────────────────────────│────────│────────│
-│ Maintenance │ tls              │ Enabling client TLS... │ N/A    │ N/A    │
+│ Maintenance │ tls              │ Disabling client TLS...│ N/A    │ N/A    │
 │ Active      │ cluster          │                        │ N/A    │ N/A    │
 │ Active      │ config           │                        │ N/A    │ N/A    │
 │ Active      │ auth             │                        │ N/A    │ N/A    │
@@ -446,7 +446,7 @@ Waiting for task 16...
 ┌───────────────────────────────────────────────────────────────────────────┐
 │ Status      │ Component Name   │ Message                │ Action │ Reason │
 │─────────────│──────────────────│────────────────────────│────────│────────│
-│ Maintenance │ tls              │ Enabling client TLS... │ N/A    │ N/A    │
+│ Maintenance │ tls              │ Disabling client TLS...│ N/A    │ N/A    │
 │ Active      │ cluster          │                        │ N/A    │ N/A    │
 │ Active      │ config           │                        │ N/A    │ N/A    │
 │ Active      │ auth             │                        │ N/A    │ N/A    │
@@ -456,7 +456,7 @@ Waiting for task 16...
 └─────────────┴──────────────────┴────────────────────────┴────────┴────────┘
 
 json-output:
-  app: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Enabling client
+  app: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Disabling client
     TLS...", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component Name":
     "cluster", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active",
     "Component Name": "config", "Message": "", "Action": "N/A", "Reason": "N/A"},
@@ -466,7 +466,7 @@ json-output:
     "external_clients", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status":
     "Active", "Component Name": "backup", "Message": "", "Action": "N/A", "Reason":
     "N/A"}]'
-  unit: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Enabling
+  unit: '[{"Status": "Maintenance", "Component Name": "tls", "Message": "Disabling
     client TLS...", "Action": "N/A", "Reason": "N/A"}, {"Status": "Active", "Component
     Name": "cluster", "Message": "", "Action": "N/A", "Reason": "N/A"}, {"Status":
     "Active", "Component Name": "config", "Message": "", "Action": "N/A", "Reason":

@@ -209,7 +209,8 @@ is deployed in an environment where the DNS resolution on the client side does n
 to the DNS resolution on the server side, it might be required to add custom SANs to the TLS 
 certificates.
 
-### Add extra-sans
+### Add extra SANs
+
 To add different IP addresses or host names to the SANs of Charmed Valkey’s TLS certificates, 
 configure the `certificate-extra-sans` option. It is possible to add a comma-separated list 
 of multiple values, as long as each of them is a valid IP address or hostname:
