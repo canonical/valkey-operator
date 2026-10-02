@@ -56,6 +56,10 @@ class ValkeyServicesCouldNotBeStoppedError(Exception):
     """Custom Exception if Valkey services could not be stopped."""
 
 
+class ValkeyUpgradeError(Exception):
+    """Custom Exception if Valkey services could not be upgraded."""
+
+
 class CannotSeeAllActiveSentinelsError(Exception):
     """Custom Exception if the local sentinel cannot see all active sentinels in the cluster."""
 

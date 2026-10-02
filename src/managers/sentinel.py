@@ -190,19 +190,31 @@ class SentinelManager(ManagerStatusProtocol):
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def is_healthy(self) -> bool:
+    def is_healthy(self, hostname: str | None = None) -> bool:
         """Check if the sentinel service is healthy."""
         client = self._get_sentinel_client()
+        if not hostname:
+            hostname = self.state.endpoint
 
-        if not client.ping(hostname=self.state.endpoint):
+        if not client.ping(hostname):
             logger.warning("Health check failed: Sentinel did not respond to ping.")
             return False
 
         try:
-            client.primary(hostname=self.state.endpoint)
+            client.primary(hostname)
         except ValkeyWorkloadCommandError:
             logger.warning("Health check failed: Could not query sentinel for master information.")
             return False
+
+        return True
+
+    def all_sentinels_healthy(self) -> bool:
+        """Check if all Sentinels are healthy."""
+        all_sentinels = self.all_sentinel_endpoints()
+
+        for sentinel in all_sentinels:
+            if not self.is_healthy(hostname=sentinel):
+                return False
 
         return True
 

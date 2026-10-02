@@ -7,11 +7,17 @@
 import logging
 import os
 
+import charm_refresh
 import ops
+import ops.log
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
-from common.exceptions import ValkeyServicesFailedToStartError, ValkeyWorkloadCommandError
+from common.exceptions import (
+    ValkeyServicesFailedToStartError,
+    ValkeyUpgradeError,
+    ValkeyWorkloadCommandError,
+)
 from common.locks import RestartLock
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -19,6 +25,7 @@ from events.base_events import BaseEvents
 from events.external_clients import ExternalClientsEvents
 from events.ldap import LDAPEvents
 from events.observability import ObservabilityEvents
+from events.refresh import K8sValkeyRefresh, MachinesValkeyRefresh
 from events.tls import TLSEvents
 from literals import CONTAINER, PEER_RELATION, Substrate
 from managers.auth import AuthManager
@@ -27,6 +34,7 @@ from managers.cluster import ClusterManager
 from managers.config import ConfigManager
 from managers.external_clients import ExternalClientsManager
 from managers.metrics import MetricsManager
+from managers.refresh import RefreshManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
 from managers.topology import TopologyManager
@@ -34,6 +42,8 @@ from workload_k8s import ValkeyK8sWorkload
 from workload_vm import ValkeyVmWorkload
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class ValkeyCharm(ops.CharmBase):
@@ -46,6 +56,12 @@ class ValkeyCharm(ops.CharmBase):
 
     def __init__(self, *args) -> None:
         super().__init__(*args)
+        # Show logger name (module name) in logs
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, ops.log.JujuLogHandler):
+                handler.setFormatter(logging.Formatter("{name}:{message}", style="{"))
+
         if os.environ.get("KUBERNETES_SERVICE_HOST"):
             try:
                 self.model.get_cloud_spec()
@@ -70,9 +86,36 @@ class ValkeyCharm(ops.CharmBase):
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
         self.metrics_manager = MetricsManager(state=self.state, workload=self.workload)
 
+        # --- UPGRADES ---
+        try:
+            if self.substrate == Substrate.K8S:
+                self.refresh = charm_refresh.Kubernetes(
+                    K8sValkeyRefresh(
+                        workload_name="Valkey",
+                        charm_name="valkey",
+                        oci_resource_name="valkey-image",
+                        charm=self,
+                    )
+                )
+            else:
+                self.refresh = charm_refresh.Machines(
+                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
+                )
+        except (
+            charm_refresh.UnitTearingDown,
+            charm_refresh.PeerRelationNotReady,
+            charm_refresh.KubernetesJujuAppNotTrusted,
+        ):
+            self.refresh = None
+
+        self.refresh_manager = RefreshManager(
+            state=self.state, workload=self.workload, refresh=self.refresh
+        )
+
         # --- STATUS HANDLER ---
         self.status = StatusHandler(
             self,
+            self.refresh_manager,
             self.cluster_manager,
             self.config_manager,
             self.auth_manager,
@@ -92,6 +135,57 @@ class ValkeyCharm(ops.CharmBase):
         self.observability_events = ObservabilityEvents(self)
 
         self.framework.observe(self.restart_workload, self._on_restart_workload)
+
+        # ensure that post refresh handling is executed in EVERY hook
+        self.post_refresh_handling(self.refresh)
+
+    def post_refresh_handling(self, refresh: charm_refresh.Common | None) -> None:
+        """Handle post refresh steps like start and health checks."""
+        if not refresh or refresh.next_unit_allowed_to_refresh:
+            return
+
+        if not self.state.unit_server.is_started:
+            logger.debug("Scaled up units must go through start event")
+            return
+
+        if not refresh.in_progress and self.workload.alive():
+            if not (
+                self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
+                and self.sentinel_manager.is_healthy
+            ):
+                # to ensure the unit receives another Juju event
+                raise ValkeyUpgradeError("Workload not healthy yet")
+
+            logger.info("Unit is healthy, allowing next unit to refresh")
+            refresh.next_unit_allowed_to_refresh = True
+            return
+
+        logger.info("Restarting workload")
+        if self.app.planned_units() == 1:
+            # there is no other sentinel to query
+            primary_ip = self.state.unit_server.get_endpoint(self.state.substrate)
+        else:
+            primary_ip = self.sentinel_manager.get_primary_ip()
+        self.auth_manager.configure_auth()
+        self.config_manager.configure_services(primary_ip)
+        self.metrics_manager.reconcile()
+        self.workload.start()
+
+        # config sets min-replicas-to-write=1; reassert the correct value now the server is up
+        self.cluster_manager.reconcile_min_replicas_to_write()
+        if self.unit.is_leader() and self.state.substrate == Substrate.K8S:
+            self.sentinel_manager.set_pod_labels()
+
+        logger.info("Confirming health after upgrade")
+        if not (
+            self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
+            and self.sentinel_manager.is_healthy()
+        ):
+            # to ensure the unit receives another Juju event
+            raise ValkeyUpgradeError("Workload not healthy yet")
+
+        logger.info("Unit is healthy, allowing next unit to refresh")
+        refresh.next_unit_allowed_to_refresh = True
 
     def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
         """Handle the restart_workload event."""
