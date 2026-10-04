@@ -31,10 +31,12 @@ from literals import (
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     METRICS_SERVICE,
+    PEBBLE_SERVICE_TIMEOUT_SECONDS,
     SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
     SENTINEL_LOG_FILE,
     SENTINEL_LOGS_SERVICE,
+    VALKEY_KILL_DELAY,
     VALKEY_LOG_FILE,
     VALKEY_LOGS_SERVICE,
 )
@@ -158,6 +160,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "user": self.user,
                     "group": self.user,
                     "startup": "enabled",
+                    "kill-delay": VALKEY_KILL_DELAY,
                 },
                 self.sentinel_service: {
                     "override": "replace",
@@ -198,17 +201,24 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def start(self, service: str | None = None, check_alive: bool = True) -> None:
+        # The raw client call: Container.start/restart wait 30 s with no knob,
+        # which expires inside the Valkey kill-delay.
         try:
             if service:
-                self.container.start(service)
+                self.container.pebble.start_services(
+                    [service], timeout=PEBBLE_SERVICE_TIMEOUT_SECONDS
+                )
             else:
                 self.container.add_layer(CHARM, self.pebble_layer, combine=True)
-                self.container.restart(
-                    self.valkey_service,
-                    self.sentinel_service,
-                    self.metrics_service,
-                    self.valkey_logs_service,
-                    self.sentinel_logs_service,
+                self.container.pebble.restart_services(
+                    [
+                        self.valkey_service,
+                        self.sentinel_service,
+                        self.metrics_service,
+                        self.valkey_logs_service,
+                        self.sentinel_logs_service,
+                    ],
+                    timeout=PEBBLE_SERVICE_TIMEOUT_SECONDS,
                 )
         except (
             pebble.ChangeError,
@@ -222,7 +232,9 @@ class ValkeyK8sWorkload(WorkloadBase):
     @override
     def restart(self, service: str) -> None:
         try:
-            self.container.restart(service)
+            self.container.pebble.restart_services(
+                [service], timeout=PEBBLE_SERVICE_TIMEOUT_SECONDS
+            )
         except (
             pebble.ChangeError,
             pebble.ConnectionError,

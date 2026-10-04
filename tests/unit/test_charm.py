@@ -16,6 +16,7 @@ from src.literals import (
     PEER_RELATION,
     PRIMARY_NAME,
     STATUS_PEERS_RELATION,
+    VALKEY_KILL_DELAY,
     CharmUsers,
     StartState,
 )
@@ -62,6 +63,7 @@ def test_start_primary():
                 "user": CHARM_USER,
                 "group": CHARM_USER,
                 "startup": "enabled",
+                "kill-delay": VALKEY_KILL_DELAY,
             },
             SERVICE_SENTINEL: {
                 "override": "replace",

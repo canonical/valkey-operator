@@ -53,6 +53,19 @@ def test_static_overrides_land_in_rendered_dict():
     assert props["repl-backlog-size"] == "256mb"
 
 
+def test_repl_backlog_never_expires():
+    """A primary left without replicas must keep its backlog.
+
+    Freeing the backlog on repl-backlog-ttl expiry also rotates the replication
+    id and freezes master_repl_offset, which makes the on-disk RDB offset
+    useless for choosing the freshest snapshot after a full-cluster crash.
+    """
+    cm = _make_config_manager()
+    props = cm.get_config_properties(primary_endpoint="10.0.0.5")
+
+    assert props["repl-backlog-ttl"] == "0"
+
+
 @pytest.mark.parametrize("planned_units", [0, 1, 2, 3, 5])
 def test_min_replicas_to_write_is_static_one_in_file(planned_units):
     """min-replicas-to-write always ships as '1' in valkey.conf.

@@ -55,6 +55,8 @@ GCS_RELATION_NAME = "gcs-credentials"
 
 VALKEY_LOGS_SERVICE = "valkey-logs"
 SENTINEL_LOGS_SERVICE = "sentinel-logs"
+VALKEY_KILL_DELAY = "25s"
+PEBBLE_SERVICE_TIMEOUT_SECONDS = 60
 # azure-storage-integrator connection-protocol values that designate an https/http
 # Blob endpoint. abfs/abfss designate ADLS-Gen2 (*.dfs.*), served by the datalake
 # SDK rather than the Blob SDK, so they are rejected up front.

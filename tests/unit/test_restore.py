@@ -178,7 +178,7 @@ def test_k8s_start_skips_alive_check_when_disabled(mocker):
 
     wl.start("valkey", check_alive=False)
 
-    wl.container.start.assert_called_once_with("valkey")
+    wl.container.pebble.start_services.assert_called_once()
     alive.assert_not_called()
 
 
