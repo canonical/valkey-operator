@@ -157,6 +157,10 @@ class TLSManager(ManagerStatusProtocol):
         if ingress_ip := self.state.ingress_address:
             sans_ip.add(ingress_ip)
 
+        # The machine never sees its public IP (a 1:1 NAT), so network-get doesn't report it.
+        if (public_address := self.state.public_address) and self._is_ip_address(public_address):
+            sans_ip.add(public_address)
+
         return frozenset(sans_ip)
 
     def build_sans_dns(self) -> frozenset[str]:

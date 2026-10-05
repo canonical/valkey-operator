@@ -5,6 +5,7 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
+import subprocess
 from functools import cached_property
 
 import ops
@@ -211,6 +212,22 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             return None
 
         return str(address)
+
+    @property
+    def public_address(self) -> str | None:
+        """The unit's public address from Juju, which ops does not expose."""
+        try:
+            result = subprocess.run(
+                ["unit-get", "public-address"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return None
+
+        return result.stdout.strip() or None
 
     @property
     def hostname(self) -> str:

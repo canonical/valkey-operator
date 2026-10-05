@@ -73,6 +73,9 @@ def _reconcile_env() -> ExitStack:
         # unrelated update-status self-heal: it would otherwise drive the sentinel
         # CLI through the openssl stub above.
         patch("managers.sentinel.SentinelManager.reconcile_failover_suppression"),
+        # The SAN stubs above never match the certificate, so the TLS handler would reissue it
+        # a second time. test_tls.py tests that handler.
+        patch("events.tls.TLSEvents._reissue_certificate_if_sans_changed"),
     )
     stack = ExitStack()
     for p in patches:
