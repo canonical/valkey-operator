@@ -53,21 +53,10 @@ locals {
     valkey                   = module.valkey.application
   }
 
-  # Config keys the pinned data-integrator module accepts. Its config is a closed object that drops
-  # unknown keys. Refresh this list when the module ref is bumped.
+  # Valkey only uses data-integrator's prefix-name and entity-permissions
   data_integrator_config_allowed_keys = [
-    "consumer-group-prefix",
-    "database-name",
     "entity-permissions",
-    "entity-type",
-    "extra-group-roles",
-    "extra-user-roles",
-    "index-name",
-    "keyspace-name",
-    "mtls-cert",
     "prefix-name",
-    "requested-entities-secret",
-    "topic-name",
   ]
 
   model_uuid      = var.model.create ? juju_model.this[0].uuid : data.juju_model.this[0].uuid

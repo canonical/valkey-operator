@@ -17,10 +17,10 @@ The module follows the CC008 Charm Terraform Standards.
 
 ## Requirements
 
-| Name | Version |
-|------|---------|
-| terraform | >= 1.11 |
-| juju | >= 2.2.1 |
+| Name      | Version  |
+| --------- | -------- |
+| terraform | >= 1.11  |
+| juju      | >= 2.2.1 |
 
 ## Usage
 
@@ -153,14 +153,14 @@ The module takes passwords, private keys and object-store credentials as ephemer
 
 Each sensitive input is paired with a version number. The version controls creation, rotation, and removal. `count` cannot read the ephemeral credential, so the version is the switch:
 
-| Version | Credential | Result |
-|----------|------------|--------|
-| `0` (default) | unset | no secret |
-| `1` | set | secret created, revision 1 |
-| `2` | new value | in-place update, revision 2 |
-| `2` (unchanged) | unset | no changes |
-| `0` again | unset | secret and grant destroyed, nothing else touched |
-| `1` again | set | new secret, revision 1 |
+| Version         | Credential | Result                                           |
+| --------------- | ---------- | ------------------------------------------------ |
+| `0` (default)   | unset      | no secret                                        |
+| `1`             | set        | secret created, revision 1                       |
+| `2`             | new value  | in-place update, revision 2                      |
+| `2` (unchanged) | unset      | no changes                                       |
+| `0` again       | unset      | secret and grant destroyed, nothing else touched |
+| `1` again       | set        | new secret, revision 1                           |
 
 ```hcl
 # 1. Root module declares ephemeral variables to receive environment variables
@@ -206,40 +206,40 @@ The charm merges `system_users` over its current passwords. Removing a user from
 
 ## Inputs
 
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| azure_secret_key | Azure Storage Account key or connection string. Supply through TF_VAR_azure_secret_key or -var. | `string` | `null` | no |
-| azure_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| backup | Remote storage backup configuration. Deploys a bundled integrator under 'deploy' or consumes an existing integrator. | `object` | `{}` | no |
-| cos | COS configuration. Deploys the collector under `deploy` and connects it to COS, or connects Valkey to same-model COS apps. | `object` | `{}` | no |
-| data_integrator | Data Integrator charm. Omitted: deployed. `{}` or `{ deploy = null }` skips it. | `object` | `{ deploy = {} }` | no |
-| gcs_secret_key | GCP service-account JSON key for gcs-integrator. Supply through TF_VAR_gcs_secret_key or -var. | `string` | `null` | no |
-| gcs_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| juju_controller | Juju controller connection details. Ephemeral: supply at plan and at apply. | `object` | `null` | no |
-| ldap | LDAP authentication and certificate integrations. | `object` | `{}` | no |
-| logging_config | Logging configuration to apply to the model. Needs `model.create = true`. | `string` | `null` | no |
-| model | Juju model configuration (cloud, constraints, create, credential, name, owner). `cloud`, `constraints`, `credential`, `logging_config` and `proxy` need `create = true`. | `object` | `{ name = "valkey" }` | no |
-| offered_endpoints | Valkey provides endpoints to offer: `grafana-dashboard`, `metrics-endpoint` or `valkey-client`. Each offer is named `<app_name>-<endpoint>`. | `list(string)` | `[]` | no |
-| proxy | Proxy settings for the Juju model, with the keys `http`, `https` and `no-proxy`. Needs `model.create = true`. | `object` | `null` | no |
-| risk | Risk level for the solution (edge, beta, candidate, stable). | `string` | `"edge"` | no |
-| s3_access_key | AWS S3 Access key for s3-integrator. Supply through TF_VAR_s3_access_key or -var. | `string` | `null` | no |
-| s3_secret_key | AWS S3 Secret key for s3-integrator. Supply through TF_VAR_s3_secret_key or -var. | `string` | `null` | no |
-| s3_secret_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| system_users | Passwords for the charm's internal system users, keyed by username: `charmed-operator`, `charmed-replication`, `charmed-sentinel-operator`, `charmed-sentinel-peers`, `charmed-sentinel-valkey` or `charmed-stats`. Users left out keep their generated passwords. Supply through TF_VAR_system_users or -var. | `map(string)` | `null` | no |
-| system_users_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| tls | Client TLS. Set `client_certificates` to an external `tls-certificates` provider, and `certificate_transfer` to a CA provider for client mTLS. Each takes `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off. | `object` | `{}` | no |
-| tls_client_private_key | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var. | `string` | `null` | no |
-| tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate. | `number` | `0` | no |
-| valkey | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. `resources` must not override `valkey-image` if you need upgrades. Charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start. | `object` | `{}` | no |
+| Name                           | Description                                                                                                                                                                                                                                                                                                                         | Type           | Default               | Required |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | --------------------- | :------: |
+| azure_secret_key               | Azure Storage Account key or connection string. Supply through TF_VAR_azure_secret_key or -var.                                                                                                                                                                                                                                     | `string`       | `null`                |    no    |
+| azure_secret_version           | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                                             | `number`       | `0`                   |    no    |
+| backup                         | Remote storage backup configuration. Deploys a bundled integrator under 'deploy' or consumes an existing integrator.                                                                                                                                                                                                                | `object`       | `{}`                  |    no    |
+| cos                            | COS configuration. Deploys the collector under `deploy` and connects it to COS, or connects Valkey to same-model COS apps.                                                                                                                                                                                                          | `object`       | `{}`                  |    no    |
+| data_integrator                | Data Integrator charm. Omitted: deployed. `{}` or `{ deploy = null }` skips it.                                                                                                                                                                                                                                                     | `object`       | `{ deploy = {} }`     |    no    |
+| gcs_secret_key                 | GCP service-account JSON key for gcs-integrator. Supply through TF_VAR_gcs_secret_key or -var.                                                                                                                                                                                                                                      | `string`       | `null`                |    no    |
+| gcs_secret_version             | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                                             | `number`       | `0`                   |    no    |
+| juju_controller                | Juju controller connection details. Ephemeral: supply at plan and at apply.                                                                                                                                                                                                                                                         | `object`       | `null`                |    no    |
+| ldap                           | LDAP authentication and certificate integrations.                                                                                                                                                                                                                                                                                   | `object`       | `{}`                  |    no    |
+| logging_config                 | Logging configuration to apply to the model. Needs `model.create = true`.                                                                                                                                                                                                                                                           | `string`       | `null`                |    no    |
+| model                          | Juju model configuration (cloud, constraints, create, credential, name, owner). `cloud`, `constraints`, `credential`, `logging_config` and `proxy` need `create = true`.                                                                                                                                                            | `object`       | `{ name = "valkey" }` |    no    |
+| offered_endpoints              | Valkey provides endpoints to offer: `grafana-dashboard`, `metrics-endpoint` or `valkey-client`. Each offer is named `<app_name>-<endpoint>`.                                                                                                                                                                                        | `list(string)` | `[]`                  |    no    |
+| proxy                          | Proxy settings for the Juju model, with the keys `http`, `https` and `no-proxy`. Needs `model.create = true`.                                                                                                                                                                                                                       | `object`       | `null`                |    no    |
+| risk                           | Risk level for the solution (edge, beta, candidate, stable).                                                                                                                                                                                                                                                                        | `string`       | `"edge"`              |    no    |
+| s3_access_key                  | AWS S3 Access key for s3-integrator. Supply through TF_VAR_s3_access_key or -var.                                                                                                                                                                                                                                                   | `string`       | `null`                |    no    |
+| s3_secret_key                  | AWS S3 Secret key for s3-integrator. Supply through TF_VAR_s3_secret_key or -var.                                                                                                                                                                                                                                                   | `string`       | `null`                |    no    |
+| s3_secret_version              | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                                             | `number`       | `0`                   |    no    |
+| system_users                   | Passwords for the charm's internal system users, keyed by username: `charmed-operator`, `charmed-replication`, `charmed-sentinel-operator`, `charmed-sentinel-peers`, `charmed-sentinel-valkey` or `charmed-stats`. Users left out keep their generated passwords. Supply through TF_VAR_system_users or -var.                      | `map(string)`  | `null`                |    no    |
+| system_users_version           | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                                             | `number`       | `0`                   |    no    |
+| tls                            | Client TLS. Set `client_certificates` to an external `tls-certificates` provider, and `certificate_transfer` to a CA provider for client mTLS. Each takes `{ kind, name, endpoint, url, controller }`. Omitted: client TLS off.                                                                                                     | `object`       | `{}`                  |    no    |
+| tls_client_private_key         | Private key for client TLS certificates. Supply through TF_VAR_tls_client_private_key or -var.                                                                                                                                                                                                                                      | `string`       | `null`                |    no    |
+| tls_client_private_key_version | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                                             | `number`       | `0`                   |    no    |
+| valkey                         | Valkey charm configuration options. `config` must not set `system-users` or `tls-client-private-key`. `resources` must not override `valkey-image` if you need upgrades. Charm refresh only accepts the OCI image published with the charm revision, so a unit running another image is refused as incompatible and does not start. | `object`       | `{}`                  |    no    |
 
 ## Outputs
 
-| Name | Description | Type |
-|------|-------------|------|
-| components | All deployed applications, `null` when not deployed. Each entry is the module's `juju_application` object (name, charm channel/revision/base, units, config, ...). `opentelemetry_collector` is `{ name }` only, because its upstream module exposes `app_name` and no `application` output. | `object` |
-| credentials | Connection details as `valkey = { app_name, client_port, tls_port, sentinel_port, sentinel_tls_port, data_integrator_app }`. It holds no password, because data-integrator hands out client credentials. Run `juju run <data_integrator_app>/leader get-credentials` to get them. | `map(object)` |
-| metadata | Metadata of the product deployment (deployed_at, version). CC008 also lists `updated_at`. The module leaves it out because `timestamp()` would make every plan show a change. | `object` |
-| models | Map of model name to `{ model_uuid, components }`. `components` holds only deployed components, in the same shape as the `components` output. | `map(object)` |
-| offers | Map of offers exposed by this product module, keyed like `provides`, for example `valkey_client`. Each value is `{ kind = "offer", url }`, so it can be passed as a target to another module. | `map(object)` |
-| provides | Valkey provides endpoints, the charm module's `provides` map. | `map(object)` |
-| requires | Valkey requires endpoints, the charm module's `requires` map. | `map(object)` |
+| Name        | Description                                                                                                                                                                                                                                                                                  | Type          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| components  | All deployed applications, `null` when not deployed. Each entry is the module's `juju_application` object (name, charm channel/revision/base, units, config, ...). `opentelemetry_collector` is `{ name }` only, because its upstream module exposes `app_name` and no `application` output. | `object`      |
+| credentials | Connection details as `valkey = { app_name, client_port, tls_port, sentinel_port, sentinel_tls_port, data_integrator_app }`. It holds no password, because data-integrator hands out client credentials. Run `juju run <data_integrator_app>/leader get-credentials` to get them.            | `map(object)` |
+| metadata    | Metadata of the product deployment (deployed_at, version). CC008 also lists `updated_at`. The module leaves it out because `timestamp()` would make every plan show a change.                                                                                                                | `object`      |
+| models      | Map of model name to `{ model_uuid, components }`. `components` holds only deployed components, in the same shape as the `components` output.                                                                                                                                                | `map(object)` |
+| offers      | Map of offers exposed by this product module, keyed like `provides`, for example `valkey_client`. Each value is `{ kind = "offer", url }`, so it can be passed as a target to another module.                                                                                                | `map(object)` |
+| provides    | Valkey provides endpoints, the charm module's `provides` map.                                                                                                                                                                                                                                | `map(object)` |
+| requires    | Valkey requires endpoints, the charm module's `requires` map.                                                                                                                                                                                                                                | `map(object)` |

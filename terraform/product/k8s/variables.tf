@@ -201,7 +201,7 @@ variable "data_integrator" {
 
   validation {
     condition     = var.data_integrator.deploy == null || length(setsubtract(keys(var.data_integrator.deploy.config), local.data_integrator_config_allowed_keys)) == 0
-    error_message = "data_integrator.deploy.config accepts only: ${join(", ", local.data_integrator_config_allowed_keys)}."
+    error_message = "data_integrator.deploy.config accepts only Valkey keys: ${join(", ", local.data_integrator_config_allowed_keys)}."
   }
 }
 
