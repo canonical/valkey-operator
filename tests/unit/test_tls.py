@@ -18,9 +18,9 @@ from charmlibs.interfaces.tls_certificates import (
 )
 from ops import testing
 
-from common.exceptions import ValkeyTLSLoadError
+from common.exceptions import ValkeyTLSLoadError, ValkeyWorkloadCommandError
+from managers.tls import TLSManager
 from src.charm import ValkeyCharm
-from src.common.exceptions import ValkeyWorkloadCommandError
 from src.literals import (
     CLIENT_TLS_RELATION_NAME,
     INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
@@ -37,6 +37,9 @@ CONTAINER = "valkey"
 
 METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
+INTERNAL_CERTS_SECRET_LABEL = (
+    f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_CERTS_SECRET_LABEL_SUFFIX}"
+)
 
 
 def test_client_tls_relation_created():
@@ -1541,3 +1544,86 @@ def test_certificate_already_applied_without_peer_relation():
 
         assert charm.state.unit_server.model is None
         assert charm.tls_manager.certificate_already_applied(certificate) is False
+
+
+def _peer_created_state(secrets: set[testing.Secret] | None = None) -> testing.State:
+    peer_relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    return testing.State(
+        leader=True,
+        relations={peer_relation, status_peer_relation},
+        secrets=secrets or set(),
+        containers={testing.Container(name=CONTAINER, can_connect=True)},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+    )
+
+
+def _internal_ca(state: testing.State) -> tuple[str, str]:
+    content = state.get_secret(label=INTERNAL_CERTS_SECRET_LABEL).latest_content
+    assert content
+    return content["internal-ca-certificate"], content["internal-ca-private-key"]
+
+
+def test_peer_relation_created_generates_ca_once_when_missing():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _peer_created_state()
+
+    with (
+        patch(
+            "managers.tls.TLSManager.generate_ca_certificate",
+            autospec=True,
+            side_effect=TLSManager.generate_ca_certificate,
+        ) as generate_ca,
+        patch("managers.tls.TLSManager.create_and_store_self_signed_certificate"),
+    ):
+        ctx.run(ctx.on.relation_created(relation=state_in.get_relation(1)), state_in)
+
+    generate_ca.assert_called_once()
+
+
+def test_peer_relation_created_keeps_existing_ca():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+
+    # first run generates a real CA and stores it in the peer databag
+    first_in = _peer_created_state()
+    with patch("managers.tls.TLSManager.create_and_store_self_signed_certificate"):
+        first_out = ctx.run(ctx.on.relation_created(relation=first_in.get_relation(1)), first_in)
+    ca_before = _internal_ca(first_out)
+
+    # the event runs again, e.g. redelivered by Juju
+    with (
+        patch("managers.tls.TLSManager.generate_ca_certificate") as generate_ca,
+        patch("managers.tls.TLSManager.create_and_store_self_signed_certificate"),
+    ):
+        second_out = ctx.run(
+            ctx.on.relation_created(relation=first_out.get_relation(1)), first_out
+        )
+
+    generate_ca.assert_not_called()
+    assert _internal_ca(second_out) == ca_before
+
+
+def test_peer_relation_created_deferred_after_cert_failure_keeps_ca():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _peer_created_state()
+
+    # Pebble is not up yet, so storing the leader's own certificate fails and the event defers
+    with patch(
+        "managers.tls.TLSManager.create_and_store_self_signed_certificate",
+        side_effect=ValkeyWorkloadCommandError("socket not found"),
+    ):
+        first_out = ctx.run(ctx.on.relation_created(relation=state_in.get_relation(1)), state_in)
+    assert "valkey_peers_relation_created" in [e.name for e in first_out.deferred]
+    ca_before = _internal_ca(first_out)
+
+    # the deferred event is re-emitted before the next event, and this time storing succeeds.
+    # will_certificate_expire is pinned so only the handler under test can touch the CA
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire", return_value=False),
+        patch("managers.tls.TLSManager.create_and_store_self_signed_certificate") as create_certs,
+    ):
+        second_out = ctx.run(ctx.on.update_status(), first_out)
+
+    create_certs.assert_called_once()
+    assert "valkey_peers_relation_created" not in [e.name for e in second_out.deferred]
+    assert _internal_ca(second_out) == ca_before

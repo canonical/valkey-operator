@@ -91,7 +91,8 @@ class TLSEvents(ops.Object):
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
-        if self.charm.unit.is_leader():
+        # a deferred retry must reuse the CA that non-leaders may already have signed with
+        if self.charm.unit.is_leader() and not self.charm.state.cluster.internal_ca_certificate:
             self.charm.tls_manager.generate_ca_certificate()
 
         # in case a non-leader unit gets the event before the leader unit has processed it
