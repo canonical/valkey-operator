@@ -5,6 +5,7 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
+import socket
 import subprocess
 from functools import cached_property
 
@@ -231,7 +232,12 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
     @property
     def hostname(self) -> str:
-        """The hostname of the unit."""
+        """The hostname of the unit.
+
+        On Kubernetes this is the resolved pod DNS name, on VM it is the machine hostname.
+        """
+        if self.substrate == Substrate.VM:
+            return socket.gethostname()
         return self.get_unit_hostname(self.model.unit.name)
 
     @property
