@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 
 import charm_refresh
 
-from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyUpgradeError
+from common.exceptions import (
+    SentinelFailoverError,
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyUpgradeError,
+)
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -107,6 +111,28 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
 
         if not self.charm.sentinel_manager.all_sentinels_healthy():
             raise charm_refresh.PrecheckFailed("Not all Sentinels healthy, cannot upgrade")
+
+        # ensure the first unit to refresh is not the current primary
+        units_ordered = sorted(
+            [unit.unit_id for unit in self.charm.state.servers if unit.is_active]
+        )
+        if (
+            primary_ip
+            == [
+                unit.get_endpoint(self.charm.state.substrate)
+                for unit in self.charm.state.servers
+                if unit.unit_id == units_ordered[-1]
+            ][0]
+        ):
+            try:
+                logger.info(
+                    "Attempting failover because unit %s will be refreshed first",
+                    units_ordered[-1],
+                )
+                self.charm.sentinel_manager.failover()
+            except SentinelFailoverError as e:
+                logger.warning("Could not move primary: %s", e)
+                raise charm_refresh.PrecheckFailed("Could not move primary before upgrade")
 
 
 @dataclasses.dataclass(eq=False)
