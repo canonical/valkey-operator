@@ -370,6 +370,6 @@ class ValkeyVmWorkload(WorkloadBase):
         client = snap.SnapClient()
         for s in client.get_installed_snaps():
             if s["name"] == SNAP_NAME:
-                return str(s["version"])
+                return str(s["revision"])
 
         return ""

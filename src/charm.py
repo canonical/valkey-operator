@@ -148,10 +148,13 @@ class ValkeyCharm(ops.CharmBase):
             logger.debug("Scaled up units must go through start event")
             return
 
-        if not refresh.in_progress and self.workload.alive():
+        if not refresh.workload_allowed_to_start:
+            raise ValkeyUpgradeError("Workload not allowed to start")
+
+        if self.workload.alive():
             if not (
                 self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
-                and self.sentinel_manager.is_healthy
+                and self.sentinel_manager.is_healthy()
             ):
                 # to ensure the unit receives another Juju event
                 raise ValkeyUpgradeError("Workload not healthy yet")
