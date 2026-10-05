@@ -80,7 +80,7 @@ html_context = {
     # documentation source files and creating GitHub issues are added at the bottom of
     # each page.
     # TODO: Change to your documentation GitHub repository URL or leave empty.
-    "github_url": "https://github.com/canonical/charmed-valkey-operator/",
+    "github_url": "https://github.com/canonical/valkey-operator/",
     # Docs branch in the repo; used in links for viewing the source files
     "repo_default_branch": "main",
     # Docs location in the repo; used in links for viewing the source files
