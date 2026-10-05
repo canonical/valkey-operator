@@ -80,3 +80,4 @@ unmanaged
 venv
 CSRs
 CVEs
+SANs

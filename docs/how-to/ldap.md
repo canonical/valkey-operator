@@ -298,6 +298,10 @@ juju config valkey ldap-search-dn-attribute="mail"
 
 `````
 
+Additional configuration options are provided for customizing the LDAP parameters in Valkey:
+- `ldap-search-attribute`: entry attribute of the LDAP provider when searching for a username (default: `cn`)
+- `ldap-search-filter`: search filter used to filter LDAP directory entries (default: `objectClass=posixAccount`)
+
 ## Enable LDAP
 
 After completing all required configuration, integrate Valkey with the LDAP provider and with the
