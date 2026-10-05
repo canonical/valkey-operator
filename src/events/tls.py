@@ -246,6 +246,7 @@ class TLSEvents(ops.Object):
 
         self.charm.tls_manager.set_tls_state(TLSState.TLS)
         self.charm.unit.close_port("tcp", CLIENT_PORT)
+        self.charm.unit.close_port("tcp", SENTINEL_PORT)
 
         if self.charm.state.unit_server.is_started:
             logger.info("Restarting Sentinel")
