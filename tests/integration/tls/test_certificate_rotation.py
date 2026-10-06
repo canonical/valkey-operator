@@ -80,6 +80,21 @@ def rotated_ca(juju: jubilant.Juju) -> CARotation:
     }
     config_time = monotonic()
     juju.config(app=TLS_NAME, values=tls_config)
+
+    # An idle wait alone races here: the rotation starts on the provider
+    # so the units still look idle right after the config change.
+    # Wait for the rotated material to land first.
+    logger.info("Waiting for the rotated CA to be applied on the unit")
+    for attempt in Retrying(
+        stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(10), reraise=True
+    ):
+        with attempt:
+            download_client_certificate_from_unit(juju, APP_NAME)
+            with open(TLS_CA_FILE, "r") as ca_file:
+                assert ca_file.read() != old_ca, "Rotated CA not applied yet"
+            with open(TLS_CERT_FILE, "r") as cert_file:
+                assert cert_file.read() != old_certificate, "Rotated certificate not applied yet"
+
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
         timeout=DEPLOY_TIMEOUT_TLS_S,
