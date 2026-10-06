@@ -629,8 +629,6 @@ def test_config_changed_ip_change_no_tls_relation(vm_environment):
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
-        # The SAN stubs never match the certificate, so the TLS handler would reissue it again.
-        patch("events.tls.TLSEvents._reissue_certificate_if_sans_changed"),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()

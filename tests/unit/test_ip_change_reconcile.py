@@ -47,19 +47,19 @@ def _client_tls_relation() -> testing.Relation:
     )
 
 
-def _reconcile_env() -> ExitStack:
+def _reconcile_env(cert_ip: str = OLD_IP) -> ExitStack:
     """Patch the workload/manager side effects the address reconcile performs."""
     patches = (
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
         patch("managers.sentinel.SentinelManager.restart_service"),
-        # stands in for `openssl x509 -ext subjectAltName`: the on-disk SANs carry OLD_IP.
+        # stands in for `openssl x509 -ext subjectAltName`: the on-disk SANs carry cert_ip.
         # exec returns (stdout, stderr) -- the second element matters because other
         # update-status work unpacks both.
         patch(
             "workload_vm.ValkeyVmWorkload.exec",
-            return_value=(f"DNS:www.example.com, IP Address:{OLD_IP}", None),
+            return_value=(f"DNS:www.example.com, IP Address:{cert_ip}", None),
         ),
         patch("workload_vm.ValkeyVmWorkload.restart"),
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({NEW_IP})),
@@ -73,9 +73,6 @@ def _reconcile_env() -> ExitStack:
         # unrelated update-status self-heal: it would otherwise drive the sentinel
         # CLI through the openssl stub above.
         patch("managers.sentinel.SentinelManager.reconcile_failover_suppression"),
-        # The SAN stubs above never match the certificate, so the TLS handler would reissue it
-        # a second time. test_tls.py tests that handler.
-        patch("events.tls.TLSEvents._reissue_certificate_if_sans_changed"),
     )
     stack = ExitStack()
     for p in patches:
@@ -121,12 +118,12 @@ def test_update_status_regenerates_self_signed_certificate_when_ip_changed(vm_en
 
 
 def test_update_status_does_not_reconcile_when_ip_unchanged(vm_environment):
-    """A unit whose address is unchanged must not reconfigure or reissue certificates."""
+    """A unit whose address and SANs are unchanged must not reconfigure or reissue certificates."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation(private_ip=NEW_IP)})
 
     with (
-        _reconcile_env(),
+        _reconcile_env(cert_ip=NEW_IP),
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
@@ -137,6 +134,39 @@ def test_update_status_does_not_reconcile_when_ip_unchanged(vm_environment):
     mock_create_certificate.assert_not_called()
     mock_configure_auth.assert_not_called()
     assert not any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
+
+
+def test_update_status_regenerates_self_signed_certificate_when_sans_changed(vm_environment):
+    """An ingress address can change while the bind address stays, such as a new public IP."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation(private_ip=NEW_IP)})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "managers.tls.TLSManager.create_and_store_self_signed_certificate"
+        ) as mock_create_certificate,
+    ):
+        ctx.run(ctx.on.update_status(), state_in)
+
+    mock_create_certificate.assert_called_once()
+
+
+def test_update_status_refreshes_client_certificate_when_sans_changed(vm_environment):
+    """With a provider related, a SAN change without an IP change requests a new certificate."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation(private_ip=NEW_IP), _client_tls_relation()})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "managers.tls.TLSManager.create_and_store_self_signed_certificate"
+        ) as mock_create_certificate,
+    ):
+        ctx.run(ctx.on.update_status(), state_in)
+
+    assert any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
+    mock_create_certificate.assert_not_called()
 
 
 def test_update_status_does_not_reconcile_before_an_address_is_recorded(vm_environment):

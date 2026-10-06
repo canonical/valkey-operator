@@ -28,7 +28,6 @@ from literals import (
     PEER_RELATION,
     SENTINEL_PORT,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
-    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -377,34 +376,12 @@ class TLSEvents(ops.Object):
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
-        self._reissue_certificate_if_sans_changed(event)
-
-    def _reissue_certificate_if_sans_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Reissue the certificate when its SANs changed, such as after a public IP change.
-
-        Juju runs config-changed when a unit's addresses change. Without a client TLS provider,
-        only a started VM unit regenerates its self-signed certificate.
-        """
-        if not self.charm.state.client_tls_relation and not (
-            self.charm.state.substrate == Substrate.VM and self.charm.state.unit_server.is_started
+        if (
+            self.charm.state.client_tls_relation
+            and self.charm.tls_manager.certificate_sans_require_update()
         ):
-            return
-
-        try:
-            if not self.charm.tls_manager.certificate_sans_require_update():
-                return
-
-            logger.info("Certificate SANs changed, reissuing the certificate")
-            if self.charm.state.client_tls_relation:
-                self.refresh_tls_certificates_event.emit()
-                return
-
-            self.charm.tls_manager.create_and_store_self_signed_certificate()
-            tls_config = self.charm.config_manager.generate_tls_config()
-            self.charm.cluster_manager.reload_tls_settings(tls_config)
-        except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError) as e:
-            logger.error("Failed to reissue the certificate: %s", e)
-            event.defer()
+            logger.info("Configuration change for TLS, refresh TLS certificates")
+            self.refresh_tls_certificates_event.emit()
 
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""

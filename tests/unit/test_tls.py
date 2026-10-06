@@ -1659,10 +1659,7 @@ def vm_cert_mocks(vm_environment, mocker):
         "workload_vm.ValkeyVmWorkload.exec",
         return_value=("IP Address:127.1.1.1, DNS:valkey0", None),
     )
-    return (
-        mocker.patch("managers.tls.TLSManager.create_and_store_self_signed_certificate"),
-        mocker.patch("managers.cluster.ClusterManager.reload_tls_settings"),
-    )
+    return mocker.patch("managers.tls.TLSManager.create_and_store_self_signed_certificate")
 
 
 def test_build_sans_ip_adds_all_ingress_addresses_on_vm(vm_cert_mocks):
@@ -1686,14 +1683,15 @@ def test_build_sans_ip_ignores_unresolved_ingress_hostname_on_vm(vm_cert_mocks):
 
 
 def test_config_changed_regenerates_self_signed_certificate_when_ingress_address_added(
-    vm_cert_mocks,
+    vm_cert_mocks, mocker
 ):
-    create_certificate, reload_tls = vm_cert_mocks
+    mocker.patch("managers.auth.AuthManager.configure_auth")
+    mocker.patch("managers.config.ConfigManager.configure_services")
+    mocker.patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2")
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
 
     ctx.run(
         ctx.on.config_changed(), _vm_state({_vm_peer_relation()}, ["127.1.1.1", "203.0.113.7"])
     )
 
-    create_certificate.assert_called_once()
-    reload_tls.assert_called_once()
+    vm_cert_mocks.assert_called_once()

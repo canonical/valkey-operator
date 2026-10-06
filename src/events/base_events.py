@@ -461,16 +461,18 @@ class BaseEvents(ops.Object):
             # the address is first recorded on start; there is nothing to reconcile before that
             return True
 
-        if self.charm.state.bind_address == recorded_ip:
-            return True
-
         try:
+            # an ingress address, such as a public IP, can change while the bind address stays
+            sans_changed = self.charm.tls_manager.certificate_sans_require_update()
+            if self.charm.state.bind_address == recorded_ip and not sans_changed:
+                return True
+
             self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(
                 self.charm.sentinel_manager.get_primary_ip()
             )
 
-            if self.charm.tls_manager.certificate_sans_require_update():
+            if sans_changed:
                 if self.charm.state.client_tls_relation:
                     # the provider owns the certificate; converge once it signs the new one
                     self.charm.tls_events.refresh_tls_certificates_event.emit()
