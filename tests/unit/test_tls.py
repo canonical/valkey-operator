@@ -1629,10 +1629,16 @@ def test_peer_relation_created_deferred_after_cert_failure_keeps_ca():
     assert _internal_ca(second_out) == ca_before
 
 
-def _vm_state(relations: set) -> testing.State:
+def _vm_state(relations: set, ingress_addresses: list[str] | None = None) -> testing.State:
+    networks = (
+        {testing.Network(PEER_RELATION, ingress_addresses=ingress_addresses)}
+        if ingress_addresses
+        else set()
+    )
     return testing.State(
         leader=True,
         relations=relations,
+        networks=networks,
         containers={testing.Container(name=CONTAINER, can_connect=True)},
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
@@ -1649,37 +1655,45 @@ def _vm_peer_relation() -> testing.PeerRelation:
 @pytest.fixture
 def vm_cert_mocks(vm_environment, mocker):
     """Run on VM with a certificate on disk that only has the private IP."""
-    mocker.patch("workload_vm.ValkeyVmWorkload.exec", return_value=("IP Address:127.1.1.1", None))
+    mocker.patch(
+        "workload_vm.ValkeyVmWorkload.exec",
+        return_value=("IP Address:127.1.1.1, DNS:valkey0", None),
+    )
     return (
         mocker.patch("managers.tls.TLSManager.create_and_store_self_signed_certificate"),
         mocker.patch("managers.cluster.ClusterManager.reload_tls_settings"),
     )
 
 
-def test_build_sans_ip_adds_public_address_on_vm(vm_cert_mocks, mocker):
-    mocker.patch("core.cluster_state.ClusterState.public_address", "203.0.113.7")
+def test_build_sans_ip_adds_all_ingress_addresses_on_vm(vm_cert_mocks):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _vm_state({_vm_peer_relation()}, ["10.0.0.5", "203.0.113.7"])
 
-    with ctx(ctx.on.update_status(), _vm_state({_vm_peer_relation()})) as manager:
-        assert "203.0.113.7" in manager.charm.tls_manager.build_sans_ip()
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        assert manager.charm.tls_manager.build_sans_ip() == {
+            "127.1.1.1",
+            "10.0.0.5",
+            "203.0.113.7",
+        }
 
 
-def test_build_sans_ip_ignores_public_hostname_on_vm(vm_cert_mocks, mocker):
-    mocker.patch("core.cluster_state.ClusterState.public_address", "ec2-1-2-3-4.example.com")
+def test_build_sans_ip_ignores_unresolved_ingress_hostname_on_vm(vm_cert_mocks):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _vm_state({_vm_peer_relation()}, ["ec2-1-2-3-4.example.com", "10.0.0.5"])
 
-    with ctx(ctx.on.update_status(), _vm_state({_vm_peer_relation()})) as manager:
-        assert manager.charm.tls_manager.build_sans_ip() == {"127.1.1.1", "192.0.2.0"}
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        assert manager.charm.tls_manager.build_sans_ip() == {"127.1.1.1", "10.0.0.5"}
 
 
-def test_config_changed_regenerates_self_signed_certificate_when_public_address_changed(
-    vm_cert_mocks, mocker
+def test_config_changed_regenerates_self_signed_certificate_when_ingress_address_added(
+    vm_cert_mocks,
 ):
     create_certificate, reload_tls = vm_cert_mocks
-    mocker.patch("core.cluster_state.ClusterState.public_address", "203.0.113.7")
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
 
-    ctx.run(ctx.on.config_changed(), _vm_state({_vm_peer_relation()}))
+    ctx.run(
+        ctx.on.config_changed(), _vm_state({_vm_peer_relation()}, ["127.1.1.1", "203.0.113.7"])
+    )
 
     create_certificate.assert_called_once()
     reload_tls.assert_called_once()

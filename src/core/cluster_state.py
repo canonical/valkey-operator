@@ -6,7 +6,6 @@
 
 import logging
 import socket
-import subprocess
 from functools import cached_property
 
 import ops
@@ -202,33 +201,21 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
-    def ingress_address(self) -> str | None:
-        """The network ingress address from the peer relation."""
+    def ingress_addresses(self) -> list[str]:
+        """The network ingress IP addresses from the peer relation.
+
+        Hostnames that Juju could not resolve are skipped.
+        """
         if not (
             binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
         ):
             raise ValueError
 
-        if not (address := binding.network.ingress_address):
-            return None
-
-        return str(address)
-
-    @property
-    def public_address(self) -> str | None:
-        """The unit's public address from Juju, which ops does not expose."""
-        try:
-            result = subprocess.run(
-                ["unit-get", "public-address"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10,
-            )
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return None
-
-        return result.stdout.strip() or None
+        return [
+            str(address)
+            for address in binding.network.ingress_addresses
+            if not isinstance(address, str)
+        ]
 
     @property
     def hostname(self) -> str:
