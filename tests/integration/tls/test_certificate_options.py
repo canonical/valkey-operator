@@ -116,8 +116,8 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
     unit_name = next(iter(juju.status().get_units(APP_NAME)))
     expected_sans = config_value.replace("{unit}", unit_name.split("/")[-1])
 
-    # An idle wait has a race the new certificate comes back from the provider
-    #  and the units look idle
+    # Units can look idle before the provider returns the new certificate,
+    # so poll the certificate rather than trusting the idle wait.
     for attempt in Retrying(
         stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(10), reraise=True
     ):
