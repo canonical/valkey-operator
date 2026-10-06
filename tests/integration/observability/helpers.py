@@ -6,7 +6,6 @@
 
 import logging
 import re
-import shutil
 import subprocess
 
 import jubilant
@@ -109,11 +108,10 @@ def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
     """Configure VM units to resolve Kubernetes cluster.local domain names."""
     # The DNS pod's ClusterIP is not routable from the VM units (only routes through
     # kube-proxy on the cluster's own nodes), so resolve the pod IP directly instead.
-    # microk8s's CoreDNS deployment keeps the legacy "kube-dns" label; Canonical K8s (the
-    # `k8s` snap) labels it "coredns".
-    dns_label = "k8s-app=kube-dns" if shutil.which("microk8s") else "k8s-app=coredns"
+    # microk8s and GKE keep the legacy "kube-dns" label; Canonical K8s (the `k8s` snap) labels
+    # it "coredns".
     cmd = (
-        f"kubectl get pods -n kube-system -l {dns_label} "
+        "kubectl get pods -n kube-system -l 'k8s-app in (kube-dns,coredns)' "
         "-o jsonpath='{.items[0].status.podIP}' 2>/dev/null"
     )
     try:
@@ -124,13 +122,15 @@ def ensure_k8s_dns_resolution(juju: jubilant.Juju, app_name: str) -> None:
     dns_ip = dns_ip or "10.152.183.10"
     logger.info("Configuring K8s DNS on VM units using server: %s", dns_ip)
 
+    # The default route's interface: eth0 on LXD, ens4 on GCE.
+    iface = "$(ip route show default | awk '{print $5; exit}')"
     status = juju.status()
     for unit_name in status.apps[app_name].units:
         try:
             juju.ssh(
                 unit_name,
-                f"sudo resolvectl dns eth0 {dns_ip} && "
-                f"sudo resolvectl domain eth0 ~cluster.local && "
+                f"sudo resolvectl dns {iface} {dns_ip} && "
+                f"sudo resolvectl domain {iface} ~cluster.local && "
                 f"sudo resolvectl flush-caches && "
                 f"(sudo snap restart opentelemetry-collector 2>/dev/null || "
                 f"sudo systemctl restart snap.opentelemetry-collector.opentelemetry-collector "
