@@ -11,6 +11,7 @@ from typing import IO, BinaryIO, Protocol, runtime_checkable
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
+from literals import EXEC_TIMEOUT_S
 
 
 @runtime_checkable
@@ -168,12 +169,24 @@ class WorkloadBase(ABC):
 
     @abstractmethod
     def exec(
-        self, command: list[str], env: dict[str, str] | None = None
+        self,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        timeout: int = EXEC_TIMEOUT_S,
     ) -> tuple[str, str | None]:
         """Run a command on the workload substrate.
 
-        ``env`` entries are added to the process environment; use it for
-        secrets that must not appear on the command line.
+        Args:
+            command: The command and its arguments.
+            env: Entries added to the process environment, for secrets that must not
+                appear on the command line.
+            timeout: Seconds after which the command is killed.
+
+        Returns:
+            The command's stdout and stderr.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the command fails or times out.
         """
         pass
 

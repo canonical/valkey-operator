@@ -744,8 +744,9 @@ class BaseEvents(ops.Object):
             logger.info("Waiting for replica to be fully-synced before saving the dataset")
             self.charm.cluster_manager.wait_for_replica_fully_synced(primary_ip)
 
-        # stop valkey
+        # Raises if the save fails, so the hook errors and Juju retries it with the workload still up.
         self.charm.cluster_manager.save_dataset_before_shutdown()
+        # stop valkey
         try:
             self.charm.workload.stop()
         except ValkeyServicesCouldNotBeStoppedError as e:
