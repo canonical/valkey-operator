@@ -116,10 +116,13 @@ class ClusterManager(ManagerStatusProtocol):
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def is_replica_synced(self) -> bool:
+    def is_replica_synced(self, hostname: str | None = None) -> bool:
         """Check if the replica is synced with the primary."""
         client = self._get_valkey_client()
-        role_info = client.role(hostname=self.state.endpoint)
+        if not hostname:
+            hostname = self.state.endpoint
+
+        role_info = client.role(hostname)
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
         except IndexError as e:
@@ -217,16 +220,23 @@ class ClusterManager(ManagerStatusProtocol):
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def is_healthy(self, is_primary: bool = False, check_replica_sync: bool = True) -> bool:
+    def is_healthy(
+        self,
+        is_primary: bool = False,
+        check_replica_sync: bool = True,
+        hostname: str | None = None,
+    ) -> bool:
         """Check if a valkey instance is healthy."""
         client = self._get_valkey_client()
+        if not hostname:
+            hostname = self.state.endpoint
 
-        if not client.ping(hostname=self.state.endpoint):
+        if not client.ping(hostname):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
 
         try:
-            persistence_info = client.info_persistence(hostname=self.state.endpoint)
+            persistence_info = client.info_persistence(hostname)
         except ValkeyWorkloadCommandError as e:
             logger.error(e)
             return False
@@ -235,9 +245,23 @@ class ClusterManager(ManagerStatusProtocol):
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False
 
-        if not is_primary and check_replica_sync and not self.is_replica_synced():
+        if not is_primary and check_replica_sync and not self.is_replica_synced(hostname):
             logger.warning("Health check failed: Replica is not synced with primary.")
             return False
+
+        return True
+
+    def all_servers_healthy(self, primary_endpoint: str) -> bool:
+        """Check if all valkey servers are healthy."""
+        all_servers = [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
+
+        for server in all_servers:
+            if not self.is_healthy(is_primary=server == primary_endpoint, hostname=server):
+                return False
 
         return True
 

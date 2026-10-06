@@ -1,0 +1,13 @@
+# https://canonical-charm-refresh.readthedocs-hosted.com/latest/refresh-versions-toml/
+
+charm_major = 1
+workload = "9.0.4"
+
+[snap]
+name = "valkey-charmed"
+
+[snap.revisions]
+# amd64
+x86_64 = "183"
+# arm64
+aarch64 = "184"

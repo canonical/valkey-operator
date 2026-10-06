@@ -16,7 +16,7 @@ rules:
         codecov/codecov-action: ref-pin
   secrets-inherit:
     ignore:
-      - release.yaml:16
+      - release.yaml:27
       - ci.yaml:149
   self-repository:
     disable: true

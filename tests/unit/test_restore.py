@@ -767,6 +767,7 @@ def _passing_restore_guard(mocker):
     ev.charm.state.servers = [mocker.Mock(is_active=True)]
     ev.charm.sentinel_manager.get_primary_ip.return_value = "10.0.0.1"
     ev.charm.sentinel_manager.is_failover_in_progress.return_value = False
+    ev.charm.refresh_manager.refresh_in_progress = False
     return ev
 
 

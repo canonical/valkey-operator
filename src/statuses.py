@@ -44,6 +44,11 @@ class ClusterStatuses(Enum):
         message="Sentinel unhealthy",
     )
 
+    UNHEALTHY_AFTER_REFRESH = StatusObject(
+        status="blocked",
+        message="Health check failed after refresh",
+    )
+
 
 class StartStatuses(Enum):
     """Collection of possible statuses related to the service start."""

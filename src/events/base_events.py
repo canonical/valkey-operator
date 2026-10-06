@@ -154,6 +154,13 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        # avoid accidental start of scaled-up unit during refresh
+        # call goes through refresh manager to avoid unnecessary waits on VM
+        if not self.charm.refresh_manager.workload_allowed_to_start():
+            logger.warning("Refresh in progress, workload not allowed to start")
+            event.defer()
+            return
+
         try:
             primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:

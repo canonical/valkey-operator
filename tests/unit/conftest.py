@@ -2,7 +2,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from unittest.mock import PropertyMock
+from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 
@@ -56,3 +56,28 @@ def k8s_environment(monkeypatch):
 def vm_environment(monkeypatch):
     """Simulate a VM environment without Kubernetes environment variables."""
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def mock_refresh():
+    """Fixture to shunt refresh logic and events."""
+    refresh_mock = Mock()
+    refresh_mock.in_progress = False
+    refresh_mock.app_status_higher_priority = None
+    refresh_mock.unit_status_higher_priority = None
+    refresh_mock.unit_status_lower_priority.return_value = None
+    refresh_mock.next_unit_allowed_to_refresh = True
+    refresh_mock.workload_allowed_to_start = True
+
+    versions_mock = Mock()
+    versions_mock.charm = "v1/9.0.4"
+    versions_mock.workload = "9.0.4"
+
+    with (
+        patch("charm_refresh.Machines", Mock(return_value=refresh_mock)),
+        patch("events.refresh.MachinesValkeyRefresh", Mock(return_value=None)),
+        patch("charm_refresh.Kubernetes", Mock(return_value=refresh_mock)),
+        patch("events.refresh.K8sValkeyRefresh", Mock(return_value=None)),
+        patch("charm_refresh._main._RefreshVersions", Mock(return_value=versions_mock)),
+    ):
+        yield
