@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import jubilant
+from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import CharmUsers, Substrate
 from statuses import TLSStatuses
@@ -112,16 +113,23 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
         timeout=600,
     )
 
-    # this will download the client cert from application.units[0]
-    download_client_certificate_from_unit(juju, APP_NAME)
-    client_cert_sans = subprocess.getoutput(
-        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
-    )
     unit_name = next(iter(juju.status().get_units(APP_NAME)))
     expected_sans = config_value.replace("{unit}", unit_name.split("/")[-1])
-    assert expected_sans in client_cert_sans, (
-        f"expected sans {expected_sans} not found in certificate sans {client_cert_sans}"
-    )
+
+    # An idle wait has a race the new certificate comes back from the provider
+    #  and the units look idle
+    for attempt in Retrying(
+        stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(10), reraise=True
+    ):
+        with attempt:
+            # this will download the client cert from application.units[0]
+            download_client_certificate_from_unit(juju, APP_NAME)
+            client_cert_sans = subprocess.getoutput(
+                f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
+            )
+            assert expected_sans in client_cert_sans, (
+                f"expected sans {expected_sans} not found in certificate sans {client_cert_sans}"
+            )
     assert unit_name.replace("/", "") in client_cert_sans, "unit name not found in DNS SANs"
 
     logger.info("Resetting configuration for extra-sans")
@@ -131,13 +139,17 @@ def test_extra_sans_config_option(juju: jubilant.Juju) -> None:
         lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS)
     )
 
-    download_client_certificate_from_unit(juju, APP_NAME)
-    client_cert_sans = subprocess.getoutput(
-        f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
-    )
-    assert expected_sans not in client_cert_sans, (
-        f"sans value {expected_sans} found in certificate sans {client_cert_sans}"
-    )
+    for attempt in Retrying(
+        stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(10), reraise=True
+    ):
+        with attempt:
+            download_client_certificate_from_unit(juju, APP_NAME)
+            client_cert_sans = subprocess.getoutput(
+                f"openssl x509 -noout -ext subjectAltName -in {TLS_CERT_FILE}"
+            )
+            assert expected_sans not in client_cert_sans, (
+                f"sans value {expected_sans} found in certificate sans {client_cert_sans}"
+            )
 
     logger.info("Remove relation with %s", TLS_NAME)
     juju.remove_relation(f"{APP_NAME}:client-certificates", f"{TLS_NAME}:certificates")
@@ -156,11 +168,9 @@ def test_initialize_vault(juju: jubilant.Juju, substrate: Substrate) -> None:
     logger.info("Getting the Vault address")
     vault_units = juju.status().get_units(VAULT_NAME)
     vault_unit = next(iter(vault_units.values()))
-    vault_ip = (
-        juju.status().apps[VAULT_NAME].address
-        if substrate == Substrate.K8S
-        else vault_unit.public_address
-    )
+    # The unit address, not the Service's ClusterIP: pod IPs are reachable from outside the
+    # cluster on VPC-native clusters such as GKE, ClusterIPs are not.
+    vault_ip = vault_unit.address if substrate == Substrate.K8S else vault_unit.public_address
     secrets = juju.secrets()
 
     logger.info("Extracting Vault's CA certificate")
