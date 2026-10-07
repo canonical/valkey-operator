@@ -11,6 +11,7 @@
 # test_certificate_transfer             | yes        | no    | user/password    | different CA
 # test_mtls                             | yes        | yes   | user/password    | different CA
 # test_certificate_authentication       | yes        | yes   | via certificate  | different CA
+# test_remove_client_relations          | yes        | yes   | -                | different CA
 import logging
 
 import jubilant
@@ -24,6 +25,8 @@ from tests.integration.helpers import (
     TLS_CHANNEL,
     TLS_NAME,
     are_agents_idle,
+    are_apps_active_and_agents_idle,
+    download_client_certificate_from_unit,
     exec_valkey_cli,
     get_cluster_addresses,
     get_password,
@@ -551,3 +554,31 @@ def test_certificate_authentication(juju: jubilant.Juju) -> None:
     assert get_action.status == "completed", "Action should succeed"
     result = get_action.results["result"]
     assert result == TEST_VALUE
+
+
+def test_remove_client_relations(juju: jubilant.Juju) -> None:
+    """Remove every client relation and ensure Valkey cleans up the client users without error."""
+    logger.info("Remove the client relations")
+    juju.remove_relation(f"{APP_NAME}:valkey-client", f"{REQUIRER_V0_NAME}:valkey-client")
+    juju.remove_relation(f"{APP_NAME}:valkey-client", f"{REQUIRER_V1_NAME}:valkey-client")
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
+        error=lambda status: jubilant.any_error(status, APP_NAME),
+        timeout=600,
+    )
+
+    logger.info("Ensure every unit dropped the client users")
+    download_client_certificate_from_unit(juju, APP_NAME)
+    for address in get_cluster_addresses(juju, APP_NAME):
+        users = exec_valkey_cli(
+            hostname=address,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+            command="acl users",
+            tls_enabled=True,
+        ).stdout.split()
+        assert not [user for user in users if user.startswith("relation-")], (
+            f"Client users left on {address}: {users}"
+        )

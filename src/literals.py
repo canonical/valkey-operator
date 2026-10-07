@@ -10,7 +10,6 @@ CHARM = "valkey"
 CONTAINER = "valkey"
 
 SNAP_NAME = "valkey-charmed"
-SNAP_REVISIONS = {"x86_64": 183, "aarch64": 184}
 SNAP_LOGS_SLOT = f"{SNAP_NAME}:logs"
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
@@ -91,6 +90,9 @@ RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 # TIMEOUT for execs on the workload commands
 EXEC_TIMEOUT_S = 10
+# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, equal to the lock TTL.
+# 1 GB took about 12 s on a 100 MB/s disk, so 300 s covers roughly 30 GB.
+SAVE_TIMEOUT_S = 300
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380

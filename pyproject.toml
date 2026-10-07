@@ -29,6 +29,7 @@ google-cloud-storage = "^3.13"
 # Imported directly by the GCS backend for requests.RequestException.
 requests = ">=2.22"
 cosl = ">=0.0.53"
+charm-refresh = "^3.1.1.8"
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.8"
@@ -82,6 +83,12 @@ boto3 = "^1.40"
 mypy-boto3-s3 = "^1.40"
 azure-storage-blob = ">=12.19,<12.31"
 google-cloud-storage = "^3.13"
+
+[tool.poetry.group.build-refresh-version]
+optional = true
+
+[tool.poetry.group.build-refresh-version.dependencies]
+charm-refresh-build-version = "^0.4.2"
 
 [tool.coverage.run]
 branch = true

@@ -30,7 +30,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, ScaleDownState, StartState
+from literals import SAVE_TIMEOUT_S, CharmUsers, ScaleDownState, StartState
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
@@ -116,10 +116,13 @@ class ClusterManager(ManagerStatusProtocol):
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def is_replica_synced(self) -> bool:
+    def is_replica_synced(self, hostname: str | None = None) -> bool:
         """Check if the replica is synced with the primary."""
         client = self._get_valkey_client()
-        role_info = client.role(hostname=self.state.endpoint)
+        if not hostname:
+            hostname = self.state.endpoint
+
+        role_info = client.role(hostname)
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
         except IndexError as e:
@@ -217,16 +220,23 @@ class ClusterManager(ManagerStatusProtocol):
         retry=retry_if_result(lambda result: result is False),
         retry_error_callback=lambda _: False,
     )
-    def is_healthy(self, is_primary: bool = False, check_replica_sync: bool = True) -> bool:
+    def is_healthy(
+        self,
+        is_primary: bool = False,
+        check_replica_sync: bool = True,
+        hostname: str | None = None,
+    ) -> bool:
         """Check if a valkey instance is healthy."""
         client = self._get_valkey_client()
+        if not hostname:
+            hostname = self.state.endpoint
 
-        if not client.ping(hostname=self.state.endpoint):
+        if not client.ping(hostname):
             logger.warning("Health check failed: Valkey server did not respond to ping.")
             return False
 
         try:
-            persistence_info = client.info_persistence(hostname=self.state.endpoint)
+            persistence_info = client.info_persistence(hostname)
         except ValkeyWorkloadCommandError as e:
             logger.error(e)
             return False
@@ -235,9 +245,23 @@ class ClusterManager(ManagerStatusProtocol):
             logger.warning("Health check failed: Valkey server is still loading data.")
             return False
 
-        if not is_primary and check_replica_sync and not self.is_replica_synced():
+        if not is_primary and check_replica_sync and not self.is_replica_synced(hostname):
             logger.warning("Health check failed: Replica is not synced with primary.")
             return False
+
+        return True
+
+    def all_servers_healthy(self, primary_endpoint: str) -> bool:
+        """Check if all valkey servers are healthy."""
+        all_servers = [
+            unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
+
+        for server in all_servers:
+            if not self.is_healthy(is_primary=server == primary_endpoint, hostname=server):
+                return False
 
         return True
 
@@ -266,8 +290,28 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.config_set(ldap_config, hostname=self.state.endpoint)
 
+    def _is_bgsave_in_progress(self) -> bool:
+        """Check for a running background save, which makes SAVE fail.
+
+        Returns:
+            True if a BGSAVE is in progress or the state cannot be read from the reply.
+        """
+        client = self._get_valkey_client()
+        persistence = client.info_persistence(hostname=self.state.endpoint)
+        return persistence.get("rdb_bgsave_in_progress", "1") != "0"
+
     def _save_database_blocking(self) -> None:
-        """Run a synchronous save on the dataset and return when done, otherwise raise."""
+        """Wait out any running BGSAVE, then run a blocking save.
+
+        Raises:
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyWorkloadCommandError: If the save fails.
+        """
+        self._wait_until(
+            lambda: not self._is_bgsave_in_progress(),
+            SAVE_TIMEOUT_S,
+            "background save did not finish",
+        )
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
 
@@ -280,7 +324,15 @@ class ClusterManager(ManagerStatusProtocol):
         )
 
     def save_dataset_before_shutdown(self) -> None:
-        """Avoid a save-on-shutdown to be killed by Pebble, save and disable saving safely."""
+        """Save, then disable save-on-shutdown so Pebble cannot kill a shutdown save.
+
+        Nothing is changed before the save succeeds, so callers must not stop the workload on
+        failure and a retry is safe.
+
+        Raises:
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyWorkloadCommandError: If the save fails.
+        """
         logger.info("Save dataset to disk")
         self._save_database_blocking()
 

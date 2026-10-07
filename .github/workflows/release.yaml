@@ -11,24 +11,31 @@ on:
       - '**/*.md'
 
 jobs:
+  tag:
+    name: Create charm refresh compatibility version git tag
+    uses: canonical/data-platform-workflows/.github/workflows/tag_charm_edge.yaml@v42.1.0
+    with:
+      track: '9'
+    permissions:
+      contents: write  # Needed to create git tag
+
   ci-tests:
     name: Tests
+    needs:
+      - tag
     uses: ./.github/workflows/ci.yaml
     secrets: inherit
     permissions:
       contents: write  # Needed for Allure Report
 
   release:
-    strategy:
-      matrix:
-        charm:
-          - track: '9'
     name: Release charm
     needs:
+      - tag
       - ci-tests
     uses: canonical/data-platform-workflows/.github/workflows/release_charm_edge.yaml@v42.1.0
     with:
-      track: ${{ matrix.charm.track }}
+      track: ${{ needs.tag.outputs.track }}
       artifact-prefix: ${{ needs.ci-tests.outputs.artifact-prefix }}
       charmcraft-snap-revision: "8022"
     secrets:

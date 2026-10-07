@@ -91,7 +91,8 @@ class TLSEvents(ops.Object):
 
     def _on_peer_relation_created(self, event: ops.RelationCreatedEvent) -> None:
         """Set up self-signed certificates for peer TLS by default."""
-        if self.charm.unit.is_leader():
+        # a deferred retry must reuse the CA that non-leaders may already have signed with
+        if self.charm.unit.is_leader() and not self.charm.state.cluster.internal_ca_certificate:
             self.charm.tls_manager.generate_ca_certificate()
 
         # in case a non-leader unit gets the event before the leader unit has processed it
@@ -245,6 +246,7 @@ class TLSEvents(ops.Object):
 
         self.charm.tls_manager.set_tls_state(TLSState.TLS)
         self.charm.unit.close_port("tcp", CLIENT_PORT)
+        self.charm.unit.close_port("tcp", SENTINEL_PORT)
 
         if self.charm.state.unit_server.is_started:
             logger.info("Restarting Sentinel")
