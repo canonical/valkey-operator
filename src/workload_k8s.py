@@ -302,13 +302,16 @@ class ValkeyK8sWorkload(WorkloadBase):
 
     @override
     def exec(
-        self, command: list[str], env: dict[str, str] | None = None
+        self,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        timeout: int = EXEC_TIMEOUT_S,
     ) -> tuple[str, str | None]:
         try:
             process = self.container.exec(
                 command=command,
                 environment=env,
-                timeout=EXEC_TIMEOUT_S,
+                timeout=timeout,
             )
             return process.wait_output()
         except pebble.APIError as e:
