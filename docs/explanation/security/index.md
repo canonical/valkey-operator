@@ -106,6 +106,7 @@ Charmed Valkey provides native integration with the [Canonical Observability Sta
 To reduce the blast radius of infrastructure disruptions, the general recommendation is to deploy 
 COS and the observed application into separate environments, isolated from one another. 
 Refer to the [COS production deployments best practices](https://charmhub.io/topics/canonical-observability-stack/reference/best-practices) for more information.
+To set up the integration, see {ref}`how-to-monitoring`.
 
 ````{tab-set}
 ```{tab-item} VM
