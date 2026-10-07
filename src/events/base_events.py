@@ -216,6 +216,15 @@ class BaseEvents(ops.Object):
     # TODO check how to trigger if deferred without update status event
     def _on_unit_fully_started(self, event: UnitFullyStartedEvent) -> None:
         """Handle the unit-fully-started event."""
+        if not self.charm.workload.alive:
+            logger.warning("Services not running, attempting to start again")
+            try:
+                self.charm.workload.start()
+            except (ValkeyServicesFailedToStartError, ValkeyServiceNotAliveError) as e:
+                logger.error("Failed to start services: %s", e)
+                event.defer()
+                return
+
         if not self.charm.cluster_manager.is_healthy(
             is_primary=event.is_primary, check_replica_sync=False
         ):
