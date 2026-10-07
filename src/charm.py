@@ -10,15 +10,11 @@ import os
 import charm_refresh
 import ops
 import ops.log
+from charmlibs.rollingops import RollingOpsManager
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
-from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
-from common.exceptions import (
-    ValkeyServicesFailedToStartError,
-    ValkeyUpgradeError,
-    ValkeyWorkloadCommandError,
-)
-from common.locks import RestartLock
+from common.custom_events import TopologyChangedCharmEvents
+from common.exceptions import ValkeyUpgradeError
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
 from events.base_events import BaseEvents
@@ -27,7 +23,7 @@ from events.ldap import LDAPEvents
 from events.observability import ObservabilityEvents
 from events.refresh import K8sValkeyRefresh, MachinesValkeyRefresh
 from events.tls import TLSEvents
-from literals import CONTAINER, PEER_RELATION, Substrate
+from literals import CONTAINER, PEER_RELATION, ROLLINGOPS_PEER_RELATION, Substrate
 from managers.auth import AuthManager
 from managers.backup import BackupManager
 from managers.cluster import ClusterManager
@@ -49,7 +45,6 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 class ValkeyCharm(ops.CharmBase):
     """Charmed Operator for Valkey."""
 
-    restart_workload = ops.EventSource(RestartWorkloadEvent)
     # Overriding `on` with a custom CharmEvents subclass is the intended ops API;
     # pyright flags it only because `CharmBase.on` is declared as a property.
     on = TopologyChangedCharmEvents()  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
@@ -134,7 +129,12 @@ class ValkeyCharm(ops.CharmBase):
         self.ldap_events = LDAPEvents(self)
         self.observability_events = ObservabilityEvents(self)
 
-        self.framework.observe(self.restart_workload, self._on_restart_workload)
+        # --- ROLLING OPS ---
+        self.rollingops = RollingOpsManager(
+            self,
+            peer_relation_name=ROLLINGOPS_PEER_RELATION,
+            callback_targets={"restart": self.base_events.restart_workload},
+        )
 
         # ensure that post refresh handling is executed in EVERY hook
         self.post_refresh_handling(self.refresh)
@@ -189,71 +189,6 @@ class ValkeyCharm(ops.CharmBase):
 
         logger.info("Unit is healthy, allowing next unit to refresh")
         refresh.next_unit_allowed_to_refresh = True
-
-    def _on_restart_workload(self, event: RestartWorkloadEvent) -> None:
-        """Handle the restart_workload event."""
-        logger.info(
-            "Restarting workload Event. Restart Valkey: %s, Restart Sentinel: %s",
-            event.restart_valkey,
-            event.restart_sentinel,
-        )
-        if (
-            self.state.unit_server.is_backup_in_progress
-            or self.state.cluster.is_restore_in_progress
-        ):
-            logger.info("Backup/restore in progress on this unit; deferring restart_workload")
-            event.defer()
-            return
-        restart_lock = RestartLock(self.state)
-        restart_lock.request_lock()
-        if not restart_lock.is_held_by_this_unit:
-            logger.info("Waiting for lock to restart workload")
-            event.defer()
-            return
-
-        try:
-            if event.restart_valkey:
-                self.workload.restart(self.workload.valkey_service)
-            if event.restart_sentinel:
-                # if primary endpoint is given, write sentinel config
-                # this is necessary as Sentinel may rewrite its config file since the last write
-                if event.primary_endpoint != "":
-                    self.config_manager.set_sentinel_config_properties(
-                        primary_endpoint=event.primary_endpoint
-                    )
-                self.sentinel_manager.restart_service()
-        except (
-            ValkeyServicesFailedToStartError,
-            ValkeyWorkloadCommandError,
-        ) as e:
-            logger.error(e)
-            restart_lock.release_lock()
-            event.defer()
-            return
-
-        if event.restart_valkey and not self.cluster_manager.is_healthy(check_replica_sync=False):
-            self.state.unit_server.update({"is_valkey_healthy": False})
-            restart_lock.release_lock()
-            event.defer()
-            return
-        self.state.unit_server.update({"is_valkey_healthy": True})
-
-        if event.restart_valkey:
-            # CONFIG SET min-replicas-to-write does not survive the restart we
-            # just performed; the rendered file ships 1, so reassert the
-            # topology-correct runtime value (0 on < 3 active units) now that
-            # Valkey is back up and healthy, or a small cluster would be
-            # write-frozen until the next peer-relation event.
-            self.cluster_manager.reconcile_min_replicas_to_write()
-
-        if event.restart_sentinel and not self.sentinel_manager.is_healthy():
-            self.state.unit_server.update({"is_sentinel_healthy": False})
-            restart_lock.release_lock()
-            event.defer()
-            return
-
-        self.state.unit_server.update({"is_sentinel_healthy": True})
-        restart_lock.release_lock()
 
     def trigger_relation_change_if_required(self) -> None:
         """Trigger a peer-relation changed event if it is a single-unit deployment."""

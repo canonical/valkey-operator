@@ -210,7 +210,9 @@ class TLSEvents(ops.Object):
 
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.rollingops.request_async_lock(
+                    "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
+                )
                 self.charm.tls_manager.record_applied_certificate(cert)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
@@ -250,8 +252,13 @@ class TLSEvents(ops.Object):
 
         if self.charm.state.unit_server.is_started:
             logger.info("Restarting Sentinel")
-            self.charm.restart_workload.emit(
-                restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+            self.charm.rollingops.request_async_lock(
+                "restart",
+                kwargs={
+                    "restart_valkey": False,
+                    "restart_sentinel": True,
+                    "primary_endpoint": primary_ip,
+                },
             )
         self.charm.tls_manager.record_applied_certificate(cert)
         self.charm.trigger_relation_change_if_required()
@@ -323,8 +330,13 @@ class TLSEvents(ops.Object):
             return
 
         logger.info("Restarting Sentinel")
-        self.charm.restart_workload.emit(
-            restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+        self.charm.rollingops.request_async_lock(
+            "restart",
+            kwargs={
+                "restart_valkey": False,
+                "restart_sentinel": True,
+                "primary_endpoint": primary_ip,
+            },
         )
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
@@ -436,5 +448,7 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.rollingops.request_async_lock(
+                    "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
+                )
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)

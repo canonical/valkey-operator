@@ -413,6 +413,27 @@ files = [
 ops = ">=2.19,<4"
 
 [[package]]
+name = "charmlibs-rollingops"
+version = "1.1.4"
+description = "The charmlibs.rollingops package."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "charmlibs_rollingops-1.1.4-py3-none-any.whl", hash = "sha256:65e7970055ca2687ae94b2a8e335ad5a41f5c5dd42b0255ab94ea6eaf8944509"},
+    {file = "charmlibs_rollingops-1.1.4.tar.gz", hash = "sha256:7e708abd9fc603af2342413baa3ae8d985e42247511ac62bd69d07014e2bd930"},
+]
+
+[package.dependencies]
+charmlibs-interfaces-tls-certificates = ">=1.8.1"
+charmlibs-pathops = ">=1.2.1"
+dpcharmlibs-interfaces = ">=1.1.0"
+ops = ">=2.23.1,<4"
+pydantic = ">=2.12.5"
+shortuuid = ">=1.0.13"
+tenacity = "*"
+
+[[package]]
 name = "charmlibs-snap"
 version = "1.0.1.post0"
 description = "The charmlibs.snap package."
@@ -2278,6 +2299,18 @@ files = [
 ]
 
 [[package]]
+name = "shortuuid"
+version = "1.0.13"
+description = "A generator library for concise, unambiguous and URL-safe UUIDs."
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "shortuuid-1.0.13-py3-none-any.whl", hash = "sha256:a482a497300b49b4953e15108a7913244e1bb0d41f9d332f5e9925dba33a3c5a"},
+    {file = "shortuuid-1.0.13.tar.gz", hash = "sha256:3bb9cf07f606260584b1df46399c0b87dd84773e7b25912b7e391e30797c5e72"},
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -2587,4 +2620,4 @@ h11 = ">=0.16.0,<1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.14"
-content-hash = "8edc59fcdd492ca1d6f68957409c3264fd1a7f5f180a06fe0fcd44bf6abb944a"
+content-hash = "62e5d93560224119f11263468ec78258615bad79096be4e41ff90609b442ac76"

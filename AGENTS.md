@@ -21,8 +21,9 @@ environment variable.
   bypasses that model. Don't reach for it as an escape hatch.
 - NEVER call `workload.exec()` with raw CLI strings from managers — add a method to
   `ValkeyClient`/`SentinelClient` in `common/client.py` (the only place CLI commands are built).
-- NEVER restart services inline — emit `self.charm.restart_workload.emit(...)`; the handler in
-  `charm.py` acquires `RestartLock`, restarts, health-checks, and defers if unhealthy.
+- NEVER restart services inline — call `self.charm.rollingops.request_async_lock("restart", ...)`;
+  it queues a `restart` operation in `charmlibs-rollingops`, and `BaseEvents.restart_workload` runs
+  it once the lock is granted, health-checks, and returns `RETRY_RELEASE` if unhealthy.
 - NEVER hand-edit `lib/charms/*` — CI's `lib-check` fails the PR unless content matches the
   published Charmhub lib; update only via `charmcraft fetch-lib`.
 - A new `WorkloadBase` operation MUST be an `@abstractmethod` implemented in BOTH
@@ -43,7 +44,7 @@ environment variable.
   missing keys (default in the pydantic model). `9/edge` rolls unit-by-unit, so old and new always
   coexist — no flag day.
 - **Idempotency.** Handlers and manager ops MUST be safe to re-run and converge to the same state
-  (Juju redelivers events; `StartState`/`restart_workload` re-enter). Check-then-act before
+  (Juju redelivers events; `StartState` and rollingops callback retries re-enter). Check-then-act before
   mutating; never assume a step ran exactly once.
 - **Eventual consistency / self-healing.** Don't depend on a specific event firing. If a unit
   misses one (peer churn, leader change, restart, observer death, deferred hook), the next
@@ -114,8 +115,8 @@ juju deploy ./valkey_ubuntu@26.04-amd64.charm -n 3 \
 Dependency direction: `charm.py` → `events/` → `managers/` → `core/` + `workload_{vm,k8s}.py`.
 All paths below are under `src/`.
 
-- `charm.py` — thin wiring only: picks the workload by substrate, owns the `restart_workload`
-  event and the rolling-restart handler. Add nothing else here.
+- `charm.py` — thin wiring only: picks the workload by substrate, owns the `RollingOpsManager`.
+  Add nothing else here.
 - `core/` — state & data, NO behavior. `cluster_state.py`: `ClusterState`, the single source of
   truth (peer relations, networking, secrets). `models.py`: pydantic models over relation databags
   (`PeerAppModel`, `PeerUnitModel`; `RelationState.update()` DELETES keys whose value is falsy).
@@ -126,7 +127,7 @@ All paths below are under `src/`.
   primary/replicas Services and pod `role` labels. `backup.py`: RDB backup/restore policy.
   `tls.py`, `external_clients.py`, `topology.py` (observer subprocess lifecycle).
 - `events/` — ops.Objects that observe Juju events and ORCHESTRATE managers, no low-level logic.
-  `base_events.py`: startup state machine + scale-down. `tls.py`, `external_clients.py`.
+  `base_events.py`: startup state machine, scale-down and the rolling `restart` callback. `tls.py`, `external_clients.py`.
 - `workload_vm.py` — snap `valkey-charmed` (services `server`/`sentinel`, user `snap_daemon`,
   CLI `valkey-charmed.cli`). `workload_k8s.py` — Pebble in the `valkey` container (services
   valkey/sentinel/metrics-exporter, user `_daemon_`, CLI `valkey-cli`; owns the Pebble layer).
@@ -151,9 +152,10 @@ All paths below are under `src/`.
   + a secret-label suffix, which routes the value into a Juju secret (only the URI hits the
   databag). Copy that pattern for any new credential/key field — a bare `Field()` would write
   plaintext into relation data.
-- **Locks serialize cluster operations** (`common/locks.py`): `StartLock`/`RestartLock` are databag
-  locks arbitrated by the leader (`process()` grants to one unit at a time) — this is what makes
-  start/restart a safe rolling operation. `ScaleDownLock` is a distributed lock stored inside
+- **Locks serialize cluster operations** (`common/locks.py`): `StartLock` is a databag lock
+  arbitrated by the leader (`process()` grants to one unit at a time) — this is what makes start a
+  safe rolling operation. Restarts use `charmlibs-rollingops` (peer relation `rollingops-peers`).
+  `ScaleDownLock` is a distributed lock stored inside
   Valkey itself (`SET ... NX PX`, 5-min TTL) because it must survive the unit going away. Reuse
   these for any operation that must not run concurrently across units.
 - **Startup is a deferring state machine**, not a single function: `_on_start` emits
@@ -236,8 +238,8 @@ Any code touching addresses, file paths, services, or networking must handle bot
 - Repo/dir is `valkey-operator`; the charm `name` is `valkey`; `metadata.yaml`/`config.yaml`/
   `actions.yaml` are kept as separate files (not folded into `charmcraft.yaml`) for
   `data-platform-workflows` compatibility.
-- `lib/charms/` holds only the vendored `rolling_ops` lib, which is currently UNUSED (rolling
-  restart is the custom `restart_workload`/`RestartLock` path, not rolling_ops).
+- `lib/charms/` holds only the vendored `rolling_ops` lib, which is UNUSED (rolling restart goes
+  through the `charmlibs-rollingops` PyPI package).
 - Integration tests deploy a companion requirer-charm (`tests/integration/clients/requirer-charm/`,
   the "glide-runner") that drives continuous writes with `valkey-glide` to validate HA scenarios.
 

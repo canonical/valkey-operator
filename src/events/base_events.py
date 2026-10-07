@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import ops
+from charmlibs.rollingops import OperationResult
 
 from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
@@ -24,7 +25,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from common.locks import RestartLock, ScaleDownLock, StartLock
+from common.locks import ScaleDownLock, StartLock
 from literals import (
     ARCHIVE_STORAGE,
     CLIENT_PORT,
@@ -298,8 +299,7 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
-        for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
-            lock.process()
+        StartLock(self.charm.state).process()
 
         if not self.charm.state.unit_server.is_active:
             return
@@ -500,8 +500,75 @@ class BaseEvents(ops.Object):
                 "private_ip": self.charm.state.bind_address,
             }
         )
-        self.charm.restart_workload.emit()
+        self.charm.rollingops.request_async_lock("restart")
         return True
+
+    def restart_workload(
+        self,
+        restart_valkey: bool = True,
+        restart_sentinel: bool = True,
+        primary_endpoint: str = "",
+    ) -> OperationResult:
+        """Restart the workload once the rolling lock is granted to this unit.
+
+        Args:
+            restart_valkey: Whether to restart the Valkey service.
+            restart_sentinel: Whether to restart the Sentinel service.
+            primary_endpoint: Address of the primary. If set, Sentinel's config is rewritten
+                right before the restart, because Sentinel rewrites that file on its own.
+
+        Returns:
+            RELEASE once the restarted services are healthy, RETRY_RELEASE otherwise.
+        """
+        logger.info(
+            "Restarting workload. Restart Valkey: %s, Restart Sentinel: %s",
+            restart_valkey,
+            restart_sentinel,
+        )
+        if (
+            self.charm.state.unit_server.is_backup_in_progress
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
+            logger.info("Backup/restore in progress on this unit; retrying the restart later")
+            return OperationResult.RETRY_RELEASE
+
+        try:
+            if restart_valkey:
+                self.charm.workload.restart(self.charm.workload.valkey_service)
+            if restart_sentinel:
+                # if primary endpoint is given, write sentinel config
+                # this is necessary as Sentinel may rewrite its config file since the last write
+                if primary_endpoint != "":
+                    self.charm.config_manager.set_sentinel_config_properties(
+                        primary_endpoint=primary_endpoint
+                    )
+                self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error(e)
+            return OperationResult.RETRY_RELEASE
+
+        if restart_valkey and not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+            self.charm.state.unit_server.update({"is_valkey_healthy": False})
+            return OperationResult.RETRY_RELEASE
+        self.charm.state.unit_server.update({"is_valkey_healthy": True})
+
+        if restart_valkey:
+            # CONFIG SET min-replicas-to-write does not survive the restart we
+            # just performed; the rendered file ships 1, so reassert the
+            # topology-correct runtime value (0 on < 3 active units) now that
+            # Valkey is back up and healthy, or a small cluster would be
+            # write-frozen until the next peer-relation event.
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
+
+        if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+            return OperationResult.RETRY_RELEASE
+
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
+        return OperationResult.RELEASE
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
@@ -565,7 +632,9 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                    self.charm.rollingops.request_async_lock(
+                        "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
+                    )
                 # update the local unit admin password to match the leader
                 self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -630,7 +699,9 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                    self.charm.rollingops.request_async_lock(
+                        "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
+                    )
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]

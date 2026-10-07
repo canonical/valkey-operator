@@ -1921,18 +1921,6 @@ def test_storage_detaching_refuses_during_restore(mocker):
         ev._on_storage_detaching(mocker.Mock())
 
 
-def test_restart_workload_defers_during_restore(mocker):
-    from src.charm import ValkeyCharm
-
-    charm = ValkeyCharm.__new__(ValkeyCharm)
-    charm.state = mocker.Mock()
-    charm.state.unit_server.is_backup_in_progress = False
-    charm.state.cluster.is_restore_in_progress = True
-    event = mocker.Mock()
-    ValkeyCharm._on_restart_workload(charm, event)
-    event.defer.assert_called_once()
-
-
 def test_external_clients_prc_skips_during_restore(mocker):
     from src.events.external_clients import ExternalClientsEvents
 

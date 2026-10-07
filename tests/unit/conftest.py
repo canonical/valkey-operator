@@ -37,6 +37,12 @@ def mock_start_topology_observer(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_request_async_lock(mocker):
+    """Queue no rolling operation, tests assert on the returned mock instead."""
+    return mocker.patch("charmlibs.rollingops.RollingOpsManager.request_async_lock")
+
+
+@pytest.fixture(autouse=True)
 def tenacity_wait(mocker):
     mocker.patch("tenacity.nap.time")
 

@@ -38,6 +38,7 @@ TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
+ROLLINGOPS_PEER_RELATION = "rollingops-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 LDAP_CA_CERT_RELATION = "ldap-ca-cert"
