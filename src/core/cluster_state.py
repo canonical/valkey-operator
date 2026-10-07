@@ -193,10 +193,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         if not (
             binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
         ):
-            raise ValueError
+            raise ValueError("Network binding address not yet available")
 
         if not (address := binding.network.bind_address):
-            raise ValueError
+            raise ValueError("Network binding address not yet available")
 
         return str(address)
 
