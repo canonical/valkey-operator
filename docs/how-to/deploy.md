@@ -1,3 +1,4 @@
+(how-to-deploy)=
 # How to deploy
 
 This guide provides deployment instructions for Charmed Valkey. It supports both 

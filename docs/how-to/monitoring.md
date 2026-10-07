@@ -9,12 +9,12 @@ After you integrate the two, COS receives:
 - metrics from a [Redis exporter](https://github.com/oliver006/redis_exporter) that runs next to
   each Valkey unit
 - the Valkey and Sentinel logs
-- a Grafana dashboard and the {ref}`alert rules <how-to-monitoring-alert-rules>` that ship with the
+- a Grafana dashboard and the [alert rules](how-to-monitoring-alert-rules) that ship with the
   charm
 
 ## Prerequisites
 
-- You have deployed Charmed Valkey. See {doc}`deploy`.
+- You have deployed Charmed Valkey. See [How to deploy](how-to-deploy).
 - You have deployed COS Lite in a Kubernetes model. See
   [How to install COS](https://documentation.ubuntu.com/observability/latest/how-to/deploy-and-manage/install/).
 
@@ -45,7 +45,7 @@ juju integrate valkey:grafana-dashboard grafana
 juju integrate valkey:logging loki
 ```
 
-Then go to {ref}`how-to-monitoring-dashboard`. In the rest of this guide, `<valkey_model>` is
+Then go to [Open the Valkey dashboard](how-to-monitoring-dashboard). In the rest of this guide, `<valkey_model>` is
 `<cos_model>`.
 
 ## Offer the COS endpoints

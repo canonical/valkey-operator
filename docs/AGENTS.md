@@ -43,8 +43,9 @@ toctree, bad anchor) fails the build, not just a lint pass.
 ## File conventions
 
 - Reference labels use MyST anchor syntax `(label-name)=` on the line before a heading (e.g.
-  `(tutorial)=`, `(define-roles)=`), linked with `` {ref}`label-name` ``. Cross-doc links use
-  `` {doc}`text <path/to/page>` `` (see `index.md`).
+  `(tutorial)=`, `(define-roles)=`). Link to them with `[text](label-name)`, not with a file path
+  (`{doc}` or a relative `.md` link), because targets survive moving or renaming files. Give every
+  page you link to a label on its title (for example `(how-to-deploy)=`).
 - Wrap terms that trip the Vale spellcheck in `` {spellexception}`term` `` (see
   `manage-passwords.md`, `tls.md`) instead of adding one-off entries to `.custom_wordlist.txt`.
 - `reuse/links.txt` (RST hyperlink targets) and `reuse/substitutions.txt` (RST `replace::`
