@@ -90,7 +90,7 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         juju.run(
             refresh_order[0],
             "force-refresh-start",
-            params={"check-compatibility": False, "run-pre-refresh-checks": False},
+            params={"check-compatibility": False},
             wait=1200,
         )
 

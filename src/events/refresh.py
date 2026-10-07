@@ -117,7 +117,8 @@ class ValkeyRefresh(charm_refresh.CharmSpecificCommon, abc.ABC):
             [unit.unit_id for unit in self.charm.state.servers if unit.is_active]
         )
         if (
-            primary_ip
+            len(units_ordered) > 1
+            and primary_ip
             == [
                 unit.get_endpoint(self.charm.state.substrate)
                 for unit in self.charm.state.servers
