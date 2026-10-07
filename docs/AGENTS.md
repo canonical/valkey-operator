@@ -37,7 +37,7 @@ toctree, bad anchor) fails the build, not just a lint pass.
 - `tutorial.md` — the Tutorial, a single page (not a directory).
 - `how-to/` — task-oriented guides. Each guide needs an entry in the `how-to/index.md` toctree, or
   Sphinx will emit an "not included in any toctree" warning and fail `make html`.
-- `reference/` — currently only `contact.md`; there is no auto-generated reference content in this
+- `reference/` — `index.md`, `alert-rules.md` and `contact.md`; there is no auto-generated reference content in this
   charm (no `generate_statuses.py`-style build step) and no `explanation/` section yet.
 
 ## File conventions

@@ -20,10 +20,10 @@ integration interfaces, and lifecycle automation.
 
 ## In this documentation
 
-|                                                                                                        |                                                                                               |
-|--------------------------------------------------------------------------------------------------------| --------------------------------------------------------------------------------------------- |
-| [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to Valkey for new users </br>     | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
-| <!-- [Reference](/reference/index) </br> Technical information - specifications, APIs, architecture-->  | [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics |
+|                                                                                                    |                                                                                                      |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [Tutorial](/tutorial.md)</br>  Get started - a hands-on introduction to Valkey for new users </br> | [How-to guides](/how-to/index.md) </br> Step-by-step guides covering key operations and common tasks |
+| [Reference](/reference/index.md) </br> Technical information - specifications, APIs, architecture  | [Explanation](/explanation/index.md) </br> Concepts - discussion and clarification of key topics     |
 
 ## How this documentation is organised
 
@@ -66,5 +66,6 @@ Home <self>
 Tutorial <tutorial>
 /how-to/index
 /explanation/index
+Reference <reference/index>
 Contact <reference/contact>
 ```
