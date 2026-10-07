@@ -30,7 +30,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import CharmUsers, ScaleDownState, StartState
+from literals import SAVE_TIMEOUT_S, CharmUsers, ScaleDownState, StartState
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
@@ -290,8 +290,28 @@ class ClusterManager(ManagerStatusProtocol):
         client = self._get_valkey_client()
         client.config_set(ldap_config, hostname=self.state.endpoint)
 
+    def _is_bgsave_in_progress(self) -> bool:
+        """Check for a running background save, which makes SAVE fail.
+
+        Returns:
+            True if a BGSAVE is in progress or the state cannot be read from the reply.
+        """
+        client = self._get_valkey_client()
+        persistence = client.info_persistence(hostname=self.state.endpoint)
+        return persistence.get("rdb_bgsave_in_progress", "1") != "0"
+
     def _save_database_blocking(self) -> None:
-        """Run a synchronous save on the dataset and return when done, otherwise raise."""
+        """Wait out any running BGSAVE, then run a blocking save.
+
+        Raises:
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyWorkloadCommandError: If the save fails.
+        """
+        self._wait_until(
+            lambda: not self._is_bgsave_in_progress(),
+            SAVE_TIMEOUT_S,
+            "background save did not finish",
+        )
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
 
@@ -304,7 +324,15 @@ class ClusterManager(ManagerStatusProtocol):
         )
 
     def save_dataset_before_shutdown(self) -> None:
-        """Avoid a save-on-shutdown to be killed by Pebble, save and disable saving safely."""
+        """Save, then disable save-on-shutdown so Pebble cannot kill a shutdown save.
+
+        Nothing is changed before the save succeeds, so callers must not stop the workload on
+        failure and a retry is safe.
+
+        Raises:
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyWorkloadCommandError: If the save fails.
+        """
         logger.info("Save dataset to disk")
         self._save_database_blocking()
 

@@ -240,3 +240,14 @@ Any code touching addresses, file paths, services, or networking must handle bot
   restart is the custom `restart_workload`/`RestartLock` path, not rolling_ops).
 - Integration tests deploy a companion requirer-charm (`tests/integration/clients/requirer-charm/`,
   the "glide-runner") that drives continuous writes with `valkey-glide` to validate HA scenarios.
+
+## Terraform modules (CC008)
+
+- Terraform modules live under `terraform/` (`terraform/charm` for the charm module,
+  `terraform/product/k8s` and `terraform/product/vm` for product modules).
+- Module lifecycle is decoupled from charm releases. Releases use git tags formatted as
+  `tf-X.Y.Z` (major for breaking changes or resource renames, minor for new inputs or outputs,
+  patch for non-breaking bug fixes).
+- Product modules reference the charm module via relative paths (`../../charm`). Floating
+  references (such as branch names) are prohibited by CC008.
+

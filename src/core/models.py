@@ -381,13 +381,15 @@ class RelationState:
             )
             return
 
+        # Dicts and lists are stored as JSON strings, so an empty one is "{}" or "[]", not a
+        # deletion. Deleting the last field of a secret removes it, and a later write in the same
+        # hook would then try to remove it again and raise SecretNotFoundError.
+        items = {k: json.dumps(v) if isinstance(v, dict | list) else v for k, v in items.items()}
+
         delete_fields = [key for key in items if not items[key]]
         update_content = {k: items[k] for k in items if k not in delete_fields}
 
         for field, value in update_content.items():
-            # Dicts and lists are stored as JSON strings: hold that form, as a re-read would.
-            if isinstance(value, dict | list):
-                value = json.dumps(value)
             setattr(self.model, field.replace("-", "_"), value)
 
         for field in delete_fields:
@@ -395,11 +397,17 @@ class RelationState:
 
         self.data_interface.write_model(self.relation.id, self.model)
 
-        # Delete fields from the model by resetting them to their default values.
+        # Reset deleted fields in the cached model to their default value.
+        # Secret-backed fields reset to None.
         for field in delete_fields:
             name = field.replace("-", "_")
             if field_info := type(self.model).model_fields.get(name):
-                setattr(self.model, name, field_info.get_default(call_default_factory=True))
+                value = (
+                    None
+                    if field_info.exclude
+                    else field_info.get_default(call_default_factory=True)
+                )
+                setattr(self.model, name, value)
 
 
 @final

@@ -5,6 +5,7 @@
 """Objects representing the cluster state of Valkey."""
 
 import logging
+import socket
 from functools import cached_property
 
 import ops
@@ -200,21 +201,30 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
-    def ingress_address(self) -> str | None:
-        """The network ingress address from the peer relation."""
+    def ingress_addresses(self) -> list[str]:
+        """The network ingress IP addresses from the peer relation.
+
+        Hostnames that Juju could not resolve are skipped.
+        """
         if not (
             binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
         ):
             raise ValueError
 
-        if not (address := binding.network.ingress_address):
-            return None
-
-        return str(address)
+        return [
+            str(address)
+            for address in binding.network.ingress_addresses
+            if not isinstance(address, str)
+        ]
 
     @property
     def hostname(self) -> str:
-        """The hostname of the unit."""
+        """The hostname of the unit.
+
+        On Kubernetes this is the resolved pod DNS name, on VM it is the machine hostname.
+        """
+        if self.substrate == Substrate.VM:
+            return socket.gethostname()
         return self.get_unit_hostname(self.model.unit.name)
 
     @property

@@ -154,8 +154,7 @@ class TLSManager(ManagerStatusProtocol):
 
         sans_ip.add(self.state.bind_address)
 
-        if ingress_ip := self.state.ingress_address:
-            sans_ip.add(ingress_ip)
+        sans_ip.update(self.state.ingress_addresses)
 
         return frozenset(sans_ip)
 
@@ -181,9 +180,9 @@ class TLSManager(ManagerStatusProtocol):
             }
 
         sans_dns.add(self.state.unit_server.unit_name.replace("/", ""))
-        sans_dns.add(self.state.hostname)
 
         if self.state.substrate == Substrate.K8S:
+            sans_dns.add(self.state.hostname)
             primary_service = f"{self.state.model.app.name}-{K8sService.PRIMARY.value}"
             replicas_service = f"{self.state.model.app.name}-{K8sService.REPLICAS.value}"
             sans_dns.add(primary_service)

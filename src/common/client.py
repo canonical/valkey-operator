@@ -11,7 +11,15 @@ from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
-from literals import CLIENT_PORT, PRIMARY_NAME, SENTINEL_PORT, SENTINEL_TLS_PORT, TLS_PORT
+from literals import (
+    CLIENT_PORT,
+    EXEC_TIMEOUT_S,
+    PRIMARY_NAME,
+    SAVE_TIMEOUT_S,
+    SENTINEL_PORT,
+    SENTINEL_TLS_PORT,
+    TLS_PORT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +86,7 @@ class CliClient:
         command: list[str],
         hostname: str,
         json_output: bool = True,
+        timeout: int = EXEC_TIMEOUT_S,
     ) -> Any:
         """Execute a Valkey CLI command on the server.
 
@@ -85,6 +94,7 @@ class CliClient:
             command (list[str]): The CLI command to execute, as a list of arguments.
             hostname (str): The hostname to connect to.
             json_output (bool): Whether to parse the output as JSON.
+            timeout (int): Seconds after which the CLI process is killed.
 
         Returns:
             Any: The output from the command execution, parsed as JSON if requested.
@@ -95,7 +105,9 @@ class CliClient:
         cli_command = (
             self.build_command_prefix(json_output=json_output, hostname=hostname) + command
         )
-        output, error = self.workload.exec(cli_command, env={"VALKEYCLI_AUTH": self.password})
+        output, error = self.workload.exec(
+            cli_command, env={"VALKEYCLI_AUTH": self.password}, timeout=timeout
+        )
         output = output.strip()
         if error:
             logger.error(
@@ -289,8 +301,21 @@ class ValkeyClient(CliClient):
         self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
 
     def save(self, hostname: str) -> None:
-        """Run a synchronous (blocking) save for the dataset."""
-        self.exec_cli_command(["save"], hostname=hostname, json_output=False)
+        """Run a blocking save.
+
+        valkey-cli prints error replies on stdout with exit code 0, so the reply is checked.
+
+        Args:
+            hostname: The hostname to connect to.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails, times out, or the reply is not ``OK``.
+        """
+        reply = self.exec_cli_command(
+            ["save"], hostname=hostname, json_output=False, timeout=SAVE_TIMEOUT_S
+        )
+        if reply != "OK":
+            raise ValkeyWorkloadCommandError(f"SAVE failed on {hostname}: {reply}")
 
     def reset_client_connections(self, hostname: str) -> None:
         """Send a kill command to connected clients of types normal/pubsub.
