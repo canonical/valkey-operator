@@ -27,6 +27,7 @@ from tests.integration.upgrades.literals import (
 from ..helpers import (
     APP_NAME,
     DEPLOY_TIMEOUT_S,
+    IMAGE_RESOURCE,
     are_agents_idle,
     are_apps_active_and_agents_idle,
     get_cluster_addresses,
@@ -44,6 +45,7 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         num_units=NUM_UNITS,
         channel=CHARM_CHANNEL,
         revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
+        trust=True,
         config={"pause-after-unit-refresh": "all"},
     )
     juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
@@ -74,7 +76,11 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
     )
 
     logger.info("Initiate refresh")
-    juju.refresh(app=APP_NAME, path=charm)
+    juju.refresh(
+        app=APP_NAME,
+        path=charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+    )
 
     if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
         logger.info("Upgrade is blocked due to incompatibility")
@@ -167,7 +173,11 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
 
     # initiate the upgrade
     logger.info(f"Refresh Valkey to v{WORKLOAD_VERSION['target']}")
-    juju.refresh(app=APP_NAME, path=charm)
+    juju.refresh(
+        app=APP_NAME,
+        path=charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+    )
     logger.info("Wait for the refresh to initiate")
     sleep(90)
 
