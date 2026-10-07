@@ -16,15 +16,7 @@ from tests.integration.cw_helpers import (
     start_continuous_writes,
     stop_continuous_writes,
 )
-from tests.integration.upgrades.literals import (
-    CHARM_CHANNEL,
-    CHARM_REVISIONS_TO_DEPLOY,
-    GLIDE_RUNNER_NAME,
-    NUM_UNITS,
-    WORKLOAD_VERSION,
-)
-
-from ..helpers import (
+from tests.integration.helpers import (
     APP_NAME,
     DEPLOY_TIMEOUT_S,
     IMAGE_RESOURCE,
@@ -33,6 +25,12 @@ from ..helpers import (
     get_cluster_addresses,
     get_password,
     leader_unit_name,
+)
+from tests.integration.upgrades.literals import (
+    CHARM_CHANNEL,
+    CHARM_REVISIONS_TO_DEPLOY,
+    GLIDE_RUNNER_NAME,
+    NUM_UNITS,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,13 +44,12 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         channel=CHARM_CHANNEL,
         revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
         trust=True,
-        config={"pause-after-unit-refresh": "all"},
     )
     juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
 
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
-            status, APP_NAME, GLIDE_RUNNER_NAME, unit_count=NUM_UNITS, idle_period=30
+            status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
         ),
         timeout=DEPLOY_TIMEOUT_S,
     )
@@ -68,6 +65,12 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
     )
     start_continuous_writes(juju, clear=True)
 
+    # pre-refresh-check
+    leader_unit = leader_unit_name(juju)
+    logger.info("Running `pre-refresh-check` action")
+    pre_refresh_response = juju.run(leader_unit, "pre-refresh-check")
+    assert pre_refresh_response.return_code == 0, "action failed"
+
     # Refresh always happens from highest to lowest unit number
     refresh_order = sorted(
         juju.status().get_units(APP_NAME),
@@ -81,6 +84,8 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         path=charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
     )
+    logger.info("Wait for the refresh to initiate")
+    sleep(90)
 
     if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
         logger.info("Upgrade is blocked due to incompatibility")
@@ -143,7 +148,6 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
 
 def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
     """Refresh the charm and upgrade etcd, ensuring high availability while upgrading."""
-    juju.config(APP_NAME, {"pause-after-unit-refresh": "all"})
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
@@ -158,12 +162,6 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
     start_continuous_writes(juju, clear=True)
 
-    # pre-refresh-check
-    leader_unit = leader_unit_name(juju)
-    logger.info("Running `pre-refresh-check` action")
-    pre_refresh_response = juju.run(leader_unit, "pre-refresh-check")
-    assert pre_refresh_response.return_code == 0, "action failed"
-
     # Refresh always happens from highest to lowest unit number
     refresh_order = sorted(
         juju.status().get_units(APP_NAME),
@@ -172,7 +170,7 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
     # initiate the upgrade
-    logger.info(f"Refresh Valkey to v{WORKLOAD_VERSION['target']}")
+    logger.info("Refresh Valkey")
     juju.refresh(
         app=APP_NAME,
         path=charm,

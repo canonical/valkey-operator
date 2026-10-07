@@ -15,6 +15,7 @@ from statuses import AuthStatuses
 from tests.integration.clients.authentik import ENTRY_DN_ATTRIBUTE, provision_directory
 from tests.integration.helpers import (
     APP_NAME,
+    DATA_INTEGRATOR_NAME,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
@@ -40,7 +41,6 @@ LDAP_SERVER_NAME = "authentik-server"
 LDAP_WORKER_NAME = "authentik-worker"
 LDAP_PG_NAME = "postgresql-k8s"
 LDAP_INGRESS_NAME = "traefik-k8s"
-DATA_INTEGRATOR_NAME = "data-integrator"
 
 AUTHENTIK_CHANNEL = "latest/edge"
 # Every authentication costs Valkey an admin bind, a search and a user bind against the outpost,

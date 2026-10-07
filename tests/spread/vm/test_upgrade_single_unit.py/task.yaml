@@ -1,0 +1,7 @@
+summary: test_upgrade_single_unit.py
+environment:
+  TEST_MODULE: upgrades/test_upgrade_single_unit.py
+execute: |
+  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results

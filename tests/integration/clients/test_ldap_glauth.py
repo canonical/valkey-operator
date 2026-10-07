@@ -11,6 +11,7 @@ from literals import CharmUsers, Substrate
 from statuses import AuthStatuses
 from tests.integration.helpers import (
     APP_NAME,
+    DATA_INTEGRATOR_NAME,
     GLIDE_RUNNER_NAME,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
@@ -35,7 +36,6 @@ LDAP_NAME = "glauth-k8s"
 LDAP_UTILS_NAME = "glauth-utils"
 LDAP_PG_NAME = "postgresql-k8s"
 LDAP_INGRESS_NAME = "traefik-k8s"
-DATA_INTEGRATOR_NAME = "data-integrator"
 
 
 def test_build_and_deploy(

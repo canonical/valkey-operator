@@ -58,6 +58,7 @@ TLS_CHANNEL = "1/edge"
 TLS_CERT_FILE = "client.pem"
 TLS_KEY_FILE = "client.key"
 TLS_CA_FILE = "client_ca.pem"
+DATA_INTEGRATOR_NAME = "data-integrator"
 
 
 def does_status_match(
