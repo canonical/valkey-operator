@@ -257,7 +257,10 @@ class ValkeyVmWorkload(WorkloadBase):
 
     @override
     def exec(
-        self, command: list[str], env: dict[str, str] | None = None
+        self,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        timeout: int = EXEC_TIMEOUT_S,
     ) -> tuple[str, str | None]:
         try:
             output = subprocess.run(
@@ -265,7 +268,7 @@ class ValkeyVmWorkload(WorkloadBase):
                 check=True,
                 text=True,
                 capture_output=True,
-                timeout=EXEC_TIMEOUT_S,
+                timeout=timeout,
                 env={**os.environ, **env} if env else os.environ,
             )
             return output.stdout, output.stderr

@@ -92,6 +92,10 @@ def test_non_primary():
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.reset") as mock_reset,
         patch("common.client.ValkeyClient.role") as get_replica_offset,
+        patch(
+            "common.client.ValkeyClient.info_persistence",
+            return_value={"rdb_bgsave_in_progress": "0"},
+        ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
@@ -143,6 +147,10 @@ def test_non_primary_block_until_synced():
                 ["slave", "valkey-1.valkey-endpoints", 6380, "connected", 1108321968],
             ],
         ) as get_replica_offset,
+        patch(
+            "common.client.ValkeyClient.info_persistence",
+            return_value={"rdb_bgsave_in_progress": "0"},
+        ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
@@ -188,6 +196,10 @@ def test_primary():
         ) as mock_failover_in_progress,
         patch("common.client.SentinelClient.reset") as mock_reset,
         patch("common.client.ValkeyClient.role") as get_replica_offset,
+        patch(
+            "common.client.ValkeyClient.info_persistence",
+            return_value={"rdb_bgsave_in_progress": "0"},
+        ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
             "common.client.SentinelClient.sentinels_primary",
@@ -241,6 +253,10 @@ def test_last_leader_unit_going_down():
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
+        patch(
+            "common.client.ValkeyClient.info_persistence",
+            return_value={"rdb_bgsave_in_progress": "0"},
+        ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch("core.models.ValkeyCluster.update") as cluster_update,
         patch("ops.model.Application.planned_units", return_value=0),
