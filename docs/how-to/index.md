@@ -13,4 +13,5 @@ Manage passwords <manage-passwords>
 LDAP auth <ldap>
 TLS encryption <tls>
 Back up and restore <back-up-and-restore>
+Monitoring <monitoring>
 ```
