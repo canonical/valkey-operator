@@ -16,6 +16,7 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
 from common.exceptions import ValkeyUpgradeError
+from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
 from events.base_events import BaseEvents
@@ -29,6 +30,7 @@ from literals import (
     PEER_RELATION,
     ROLLINGOPS_BASE_DIR,
     ROLLINGOPS_PEER_RELATION,
+    SCALE_DOWN_LOCK_ID,
     Substrate,
 )
 from managers.auth import AuthManager
@@ -144,6 +146,7 @@ class ValkeyCharm(ops.CharmBase):
                 "restart": self.base_events.restart_workload,
                 "start": self.base_events.start_unit,
             },
+            sync_lock_targets={SCALE_DOWN_LOCK_ID: ValkeyScaleDownLockBackend(self)},
             base_dir=pathops.LocalPath(ROLLINGOPS_BASE_DIR),
         )
 

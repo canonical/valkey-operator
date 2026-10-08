@@ -154,8 +154,9 @@ All paths below are under `src/`.
   plaintext into relation data.
 - **Locks serialize cluster operations** (`common/locks.py`): start and restart use
   `charmlibs-rollingops` (peer relation `rollingops-peers`), which grants one unit at a time. Start
-  is the `start` operation, run by `BaseEvents.start_unit`. `ScaleDownLock` is a distributed lock
-  stored inside Valkey itself (`SET ... NX PX`, 5-min TTL) because it must survive the unit going
+  is the `start` operation, run by `BaseEvents.start_unit`. Scale down uses the rollingops sync
+  lock (`acquire_sync_lock("scale-down", ...)`), backed by `ValkeyScaleDownLockBackend`. It stores
+  the lock inside Valkey itself (`SET ... NX PX`, 5-min TTL) because it must survive the unit going
   away. Reuse these for any operation that must not run concurrently across units.
 - **Startup is a state machine driven by rollingops retries**, not a single function: `_on_start`
   checks the prerequisites (deferring if they fail), then queues the `start` operation. The

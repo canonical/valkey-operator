@@ -9,7 +9,13 @@ from ops import testing
 
 from charm import ValkeyCharm
 from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
-from literals import CONTAINER, PEER_RELATION, STATUS_PEERS_RELATION, ScaleDownState
+from literals import (
+    CONTAINER,
+    PEER_RELATION,
+    SCALE_DOWN_LOCK_TIMEOUT_S,
+    STATUS_PEERS_RELATION,
+    ScaleDownState,
+)
 from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
 
@@ -49,7 +55,7 @@ def test_other_unit_has_lock():
     )
 
     with (
-        patch("common.locks.ScaleDownLock.request_lock", return_value=False),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire", side_effect=TimeoutError),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
             side_effect=[
@@ -61,7 +67,7 @@ def test_other_unit_has_lock():
         # expect raised exception due to lock not being acquired
         with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
             ctx.run(ctx.on.storage_detaching(data_storage), state_in)
-        assert "RequestingLockTimedOutError" in str(exc_info.value)
+        assert "RollingOpsSyncLockError" in str(exc_info.value)
 
 
 def test_non_primary():
@@ -83,8 +89,8 @@ def test_non_primary():
             "core.cluster_state.ClusterState.bind_address",
             new_callable=PropertyMock(return_value="10.0.1.0"),
         ),
-        patch("common.locks.ScaleDownLock.request_lock", return_value=True),
-        patch("common.locks.ScaleDownLock.release_lock", return_value=True),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire") as mock_acquire,
+        patch("common.locks.ValkeyScaleDownLockBackend.release") as mock_release,
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
             return_value=("valkey-1", 6379),
@@ -105,6 +111,8 @@ def test_non_primary():
         ),
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
+        mock_acquire.assert_called_once_with(timeout=SCALE_DOWN_LOCK_TIMEOUT_S)
+        mock_release.assert_called_once_with()
         mock_stop.assert_called_once()
         mock_reset.assert_not_called()
         assert get_replica_offset.call_count == 2
@@ -131,8 +139,8 @@ def test_non_primary_block_until_synced():
             "core.cluster_state.ClusterState.bind_address",
             new_callable=PropertyMock(return_value="10.0.1.0"),
         ),
-        patch("common.locks.ScaleDownLock.request_lock", return_value=True),
-        patch("common.locks.ScaleDownLock.release_lock", return_value=True),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire"),
+        patch("common.locks.ValkeyScaleDownLockBackend.release"),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
             return_value=("valkey-1", 6379),
@@ -186,8 +194,8 @@ def test_primary():
             "core.cluster_state.ClusterState.bind_address",
             new_callable=PropertyMock(return_value="10.0.1.0"),
         ),
-        patch("common.locks.ScaleDownLock.request_lock", return_value=True),
-        patch("common.locks.ScaleDownLock.release_lock", return_value=True),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire"),
+        patch("common.locks.ValkeyScaleDownLockBackend.release"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.failover_primary_coordinated") as mock_failover,
@@ -222,6 +230,53 @@ def test_primary():
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
 
 
+def test_lock_is_released_after_the_unit_is_marked_going_away():
+    """Release keeps the lock for a retry unless the scale-down finished."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd"),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+    going_away_when_released = []
+
+    def release(backend):
+        going_away_when_released.append(backend.charm.state.unit_server.is_being_removed)
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire"),
+        patch("common.locks.ValkeyScaleDownLockBackend.release", autospec=True) as mock_release,
+        patch(
+            "common.client.SentinelClient.get_primary_addr_by_name",
+            return_value=("valkey-1", 6379),
+        ),
+        patch("workload_k8s.ValkeyK8sWorkload.stop"),
+        patch("common.client.ValkeyClient.role"),
+        patch(
+            "common.client.ValkeyClient.info_persistence",
+            return_value={"rdb_bgsave_in_progress": "0"},
+        ),
+        patch("common.client.ValkeyClient.save"),
+        patch(
+            "common.client.SentinelClient.sentinels_primary",
+            return_value=[{"ip": "valkey-0"}, {"ip": "valkey-2"}],
+        ),
+    ):
+        mock_release.side_effect = release
+        ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    assert going_away_when_released == [True]
+
+
 def test_last_leader_unit_going_down():
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
@@ -248,8 +303,8 @@ def test_last_leader_unit_going_down():
             "core.cluster_state.ClusterState.bind_address",
             new_callable=PropertyMock(return_value="10.0.1.0"),
         ),
-        patch("common.locks.ScaleDownLock.request_lock", return_value=True),
-        patch("common.locks.ScaleDownLock.release_lock", return_value=True),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire"),
+        patch("common.locks.ValkeyScaleDownLockBackend.release"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-0"),
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
@@ -289,7 +344,7 @@ def test_logs_storage_detaching_triggers_scaledown():
     )
 
     with (
-        patch("common.locks.ScaleDownLock.request_lock", return_value=False),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire", side_effect=TimeoutError),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
             side_effect=[
@@ -301,7 +356,7 @@ def test_logs_storage_detaching_triggers_scaledown():
         # reaching the lock request proves the handler ran for the logs storage
         with pytest.raises(testing.errors.UncaughtCharmError) as exc_info:
             ctx.run(ctx.on.storage_detaching(logs_storage), state_in)
-        assert "RequestingLockTimedOutError" in str(exc_info.value)
+        assert "RollingOpsSyncLockError" in str(exc_info.value)
 
 
 def test_repeat_detach_is_noop_once_going_away():
@@ -332,14 +387,14 @@ def test_repeat_detach_is_noop_once_going_away():
             "managers.sentinel.SentinelManager.get_primary_ip_for_scale_down",
             return_value="10.0.1.0",
         ) as mock_get_primary,
-        patch("common.locks.ScaleDownLock.request_lock") as mock_request_lock,
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire") as mock_acquire,
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
     ):
         ctx.run(ctx.on.storage_detaching(data_storage), state_in)
 
     # the guard returns before any scale-down work happens
     mock_get_primary.assert_not_called()
-    mock_request_lock.assert_not_called()
+    mock_acquire.assert_not_called()
     mock_stop.assert_not_called()
 
 

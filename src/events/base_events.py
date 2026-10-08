@@ -13,7 +13,6 @@ from charmlibs.rollingops import OperationResult
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
-    RequestingLockTimedOutError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
@@ -24,7 +23,6 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from common.locks import ScaleDownLock
 from literals import (
     ARCHIVE_STORAGE,
     CLIENT_PORT,
@@ -34,6 +32,8 @@ from literals import (
     LOG_STORAGE,
     METRICS_PORT,
     PEER_RELATION,
+    SCALE_DOWN_LOCK_ID,
+    SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     STARTING_STATES,
@@ -840,9 +840,6 @@ class BaseEvents(ops.Object):
 
     def _scale_down_unit(self) -> None:
         """Failover if needed, flush the dataset, and stop the workload."""
-        # get scale down lock
-        scale_down_lock = ScaleDownLock(self.charm)
-
         self.charm.status.set_running_status(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
             scope="unit",
@@ -850,17 +847,25 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
 
+        # without a primary there is nothing to coordinate with
         try:
-            primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
+            self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
             self._set_state_for_going_away()
             return
 
-        # blocks until the lock is acquired
-        if not scale_down_lock.request_lock(primary_ip=primary_ip):
-            raise RequestingLockTimedOutError("Failed to acquire scale down lock within timeout")
+        # blocks until the lock is acquired, a timeout raises and Juju retries the hook
+        with self.charm.rollingops.acquire_sync_lock(
+            SCALE_DOWN_LOCK_ID, timeout=SCALE_DOWN_LOCK_TIMEOUT_S
+        ):
+            self._scale_down_holding_lock()
 
+    def _scale_down_holding_lock(self) -> None:
+        """Failover if needed, flush the dataset, stop the workload and mark the unit going away.
+
+        The lock backend releases the lock after the unit is marked going away.
+        """
         self.charm.state.statuses.delete(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
             scope="unit",
@@ -914,11 +919,6 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
         )
-
-        try:
-            scale_down_lock.release_lock(primary_ip=primary_ip)
-        except ValkeyWorkloadCommandError:
-            logger.warning("Failed to release scale-down lock, will be released when TTL expires")
 
         self._set_state_for_going_away()
 

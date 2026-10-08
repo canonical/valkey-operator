@@ -94,9 +94,16 @@ RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 # TIMEOUT for execs on the workload commands
 EXEC_TIMEOUT_S = 10
-# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, equal to the lock TTL.
+# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, each. The scale-down
+# lock TTL is derived from it.
 # 1 GB took about 12 s on a 100 MB/s disk, so 300 s covers roughly 30 GB.
 SAVE_TIMEOUT_S = 300
+# A unit waits this long for the scale-down lock. The TTL covers the two bounded save steps
+# (BGSAVE wait and SAVE) plus a margin for the failover, so a slow holder keeps the lock.
+SCALE_DOWN_LOCK_TIMEOUT_S = 300
+SCALE_DOWN_LOCK_TTL_S = 3 * SAVE_TIMEOUT_S
+SCALE_DOWN_LOCK_RETRY_INTERVAL_S = 5
+SCALE_DOWN_LOCK_ID = "scale-down"
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
