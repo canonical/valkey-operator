@@ -155,13 +155,13 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
                 raise
 
     # wait for rollback to complete
-    assert_continuous_writes_increasing(juju)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
         ),
     )
 
+    assert_continuous_writes_increasing(juju)
     stats = stop_continuous_writes(juju)
 
     assert_continuous_writes_consistent(
