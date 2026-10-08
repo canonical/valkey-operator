@@ -6,27 +6,6 @@
 import ops
 
 
-class UnitFullyStartedEvent(ops.EventBase):
-    """Event that signals that the unit's has fully started.
-
-    This event will be deferred until:
-        The Sentinel service is running and was discovered by other units.
-        The Valkey service is running and the current node is in sync with the primary (if a replica).
-    """
-
-    def __init__(self, handle: ops.Handle, is_primary: bool = False):
-        super().__init__(handle)
-        self.is_primary = is_primary
-
-    def snapshot(self) -> dict[str, str]:
-        """Save the state of the event."""
-        return {"is_primary": str(self.is_primary)}
-
-    def restore(self, snapshot: dict[str, str]) -> None:
-        """Restore the state of the event."""
-        self.is_primary = snapshot.get("is_primary", "False") == "True"
-
-
 class TopologyChangedEvent(ops.EventBase):
     """A custom event for topology changes."""
 

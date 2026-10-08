@@ -4,20 +4,16 @@
 """Collection of locks for cluster operations."""
 
 import logging
-import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Protocol, override
 
 from tenacity import Retrying, stop_after_attempt, wait_fixed
 
 from common.client import ValkeyClient
-from core.cluster_state import ClusterState
 from literals import CharmUsers
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
-    from core.cluster_state import ClusterState
-    from core.models import ValkeyServer
 
 
 logger = logging.getLogger(__name__)
@@ -46,134 +42,6 @@ class Lockable(Protocol):
     def is_held_by_this_unit(self) -> bool:
         """Check if the local unit holds the lock."""
         raise NotImplementedError
-
-
-class DataBagLock(Lockable):
-    """Base class for locks."""
-
-    unit_request_lock_atr_name: str
-    member_with_lock_atr_name: str
-    lock_timestamp: str = "databaglock_timestamp"
-
-    def __init__(self, state: "ClusterState") -> None:
-        self.state = state
-
-    def __init_subclass__(cls) -> None:
-        """Initialize subclass attributes."""
-        super().__init_subclass__()
-        cls.lock_timestamp = cls.__name__.lower() + "_timestamp"
-
-    @property
-    def units_requesting_lock(self) -> list[str]:
-        """Get the list of units requesting the start lock."""
-        return [
-            unit.unit_name
-            for unit in self.state.servers
-            if unit.model and getattr(unit.model, self.unit_request_lock_atr_name, False)
-        ]
-
-    @property
-    def next_unit_to_give_lock(self) -> str | None:
-        """Get the next unit to give the start lock to."""
-        units_requesting_lock = self.units_requesting_lock
-        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            return self.state.unit_server.unit_name
-        return units_requesting_lock[0] if units_requesting_lock else None
-
-    @property
-    def unit_with_lock(self) -> "ValkeyServer | None":
-        """Get the unit that currently holds the start lock."""
-        return next(
-            (
-                unit
-                for unit in self.state.servers
-                if unit.unit_name
-                == getattr(self.state.cluster.model, self.member_with_lock_atr_name, "")
-            ),
-            None,
-        )
-
-    @property
-    @abstractmethod
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the lock has completed its operation."""
-        raise NotImplementedError
-
-    @property
-    def is_held_by_this_unit(self) -> bool:
-        """Check if the local unit holds the start lock."""
-        return self.state.unit_server.unit_name == getattr(
-            self.state.cluster.model, self.member_with_lock_atr_name, ""
-        )
-
-    def request_lock(self) -> bool:
-        """Request the lock for the local unit."""
-        if not self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            self.state.unit_server.update(
-                {
-                    self.unit_request_lock_atr_name: True,
-                    self.lock_timestamp: time.time(),
-                }
-            )
-        if self.state.unit_server.unit.is_leader():
-            logger.info(
-                "Leader unit requesting %s lock. Triggering lock request processing.",
-                self.name,
-            )
-            self.process()
-
-        return self.is_held_by_this_unit
-
-    def release_lock(self) -> bool:
-        """Release the lock from the local unit."""
-        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            self.state.unit_server.update(
-                {
-                    self.unit_request_lock_atr_name: False,
-                    self.lock_timestamp: time.time(),
-                }
-            )
-        if self.state.unit_server.unit.is_leader():
-            logger.info(
-                "Leader unit releasing %s lock. Triggering lock request processing.",
-                self.name,
-            )
-            self.process()
-
-        return True
-
-    def process(self) -> None:
-        """Process the lock requests and update the unit with the lock."""
-        if not self.state.unit_server.unit.is_leader():
-            logger.info("Only the leader can process lock requests.")
-            return
-
-        if self.is_lock_free_to_give:
-            next_unit = self.next_unit_to_give_lock
-            self.state.cluster.update({self.member_with_lock_atr_name: next_unit})
-            logger.debug("Gave %s to %s", self.name, next_unit)
-
-        if unit_with_lock := self.state.cluster.model[self.member_with_lock_atr_name]:
-            logger.debug("%s is currently held by %s", self.name, unit_with_lock)
-
-
-class StartLock(DataBagLock):
-    """Lock for starting operations."""
-
-    unit_request_lock_atr_name = "request_start_lock"
-    member_with_lock_atr_name = "start_member"
-
-    @property
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the start lock has completed its operation."""
-        if not self.state.cluster.model.start_member:
-            return True
-        starting_unit = self.unit_with_lock
-        return (
-            not starting_unit
-            or starting_unit.is_started
-            or not starting_unit.model.request_start_lock
-        )
 
 
 class ScaleDownLock(Lockable):

@@ -36,6 +36,9 @@ TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 
+# The non-root K8s charm user can write under /var/lib/juju but not /var/lib
+ROLLINGOPS_BASE_DIR = "/var/lib/juju/rollingops"
+
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
 ROLLINGOPS_PEER_RELATION = "rollingops-peers"
@@ -164,6 +167,14 @@ class StartState(StrEnum):
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     ERROR_ON_START = "error_on_start"
     STARTED = "started"
+
+
+# States after the services were started, while the unit waits to become healthy.
+STARTING_STATES = (
+    StartState.STARTING_WAITING_VALKEY.value,
+    StartState.STARTING_WAITING_SENTINEL.value,
+    StartState.STARTING_WAITING_REPLICA_SYNC.value,
+)
 
 
 class RestoreStep(StrEnum):

@@ -10,6 +10,7 @@ import os
 import charm_refresh
 import ops
 import ops.log
+from charmlibs import pathops
 from charmlibs.rollingops import RollingOpsManager
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
@@ -23,7 +24,13 @@ from events.ldap import LDAPEvents
 from events.observability import ObservabilityEvents
 from events.refresh import K8sValkeyRefresh, MachinesValkeyRefresh
 from events.tls import TLSEvents
-from literals import CONTAINER, PEER_RELATION, ROLLINGOPS_PEER_RELATION, Substrate
+from literals import (
+    CONTAINER,
+    PEER_RELATION,
+    ROLLINGOPS_BASE_DIR,
+    ROLLINGOPS_PEER_RELATION,
+    Substrate,
+)
 from managers.auth import AuthManager
 from managers.backup import BackupManager
 from managers.cluster import ClusterManager
@@ -133,7 +140,11 @@ class ValkeyCharm(ops.CharmBase):
         self.rollingops = RollingOpsManager(
             self,
             peer_relation_name=ROLLINGOPS_PEER_RELATION,
-            callback_targets={"restart": self.base_events.restart_workload},
+            callback_targets={
+                "restart": self.base_events.restart_workload,
+                "start": self.base_events.start_unit,
+            },
+            base_dir=pathops.LocalPath(ROLLINGOPS_BASE_DIR),
         )
 
         # ensure that post refresh handling is executed in EVERY hook

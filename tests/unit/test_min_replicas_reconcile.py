@@ -20,7 +20,6 @@ def _started_3_unit_state():
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": StartState.STARTED.value},
         peers_data={
             1: {"start-state": StartState.STARTED.value},

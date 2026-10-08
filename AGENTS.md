@@ -152,16 +152,17 @@ All paths below are under `src/`.
   + a secret-label suffix, which routes the value into a Juju secret (only the URI hits the
   databag). Copy that pattern for any new credential/key field — a bare `Field()` would write
   plaintext into relation data.
-- **Locks serialize cluster operations** (`common/locks.py`): `StartLock` is a databag lock
-  arbitrated by the leader (`process()` grants to one unit at a time) — this is what makes start a
-  safe rolling operation. Restarts use `charmlibs-rollingops` (peer relation `rollingops-peers`).
-  `ScaleDownLock` is a distributed lock stored inside
-  Valkey itself (`SET ... NX PX`, 5-min TTL) because it must survive the unit going away. Reuse
-  these for any operation that must not run concurrently across units.
-- **Startup is a deferring state machine**, not a single function: `_on_start` emits
-  `unit_fully_started`, which defers through `StartState` (`WAITING_FOR_PRIMARY_START` →
-  `STARTING_WAITING_VALKEY` → `..._SENTINEL` → `..._REPLICA_SYNC` → `STARTED`), persisted in
-  `PeerUnitModel.start_state`. Many handlers early-return unless `state.unit_server.is_active`.
+- **Locks serialize cluster operations** (`common/locks.py`): start and restart use
+  `charmlibs-rollingops` (peer relation `rollingops-peers`), which grants one unit at a time. Start
+  is the `start` operation, run by `BaseEvents.start_unit`. `ScaleDownLock` is a distributed lock
+  stored inside Valkey itself (`SET ... NX PX`, 5-min TTL) because it must survive the unit going
+  away. Reuse these for any operation that must not run concurrently across units.
+- **Startup is a state machine driven by rollingops retries**, not a single function: `_on_start`
+  checks the prerequisites (deferring if they fail), then queues the `start` operation. The
+  `start_unit` callback runs once the lock is granted and returns `RETRY_RELEASE` while it walks
+  through `StartState` (`WAITING_FOR_PRIMARY_START` → `STARTING_WAITING_VALKEY` → `..._SENTINEL` →
+  `..._REPLICA_SYNC` → `STARTED`), persisted in `PeerUnitModel.start_state`. Callbacks must not
+  defer. Many handlers early-return unless `state.unit_server.is_active`.
 - **The topology observer** is a long-lived subprocess the leader spawns
   (`TopologyManager.start_observer`). It watches Sentinel and on a primary change runs `juju-exec`
   to dispatch a custom `topology_changed` hook (handled in `events/external_clients.py` to

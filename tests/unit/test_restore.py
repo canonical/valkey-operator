@@ -1470,7 +1470,7 @@ def test_non_participant_unit_skips_restore_workflow(restore_managers):
     """
     from common.exceptions import ValkeyWorkloadCommandError
 
-    # StartLock is withheld during a restore, so this newcomer's Valkey is down;
+    # The start is retried during a restore, so this newcomer's Valkey is down.
     # is_primary() would raise -> broad except -> _fail_restore -> resume_failover.
     restore_managers.is_primary.side_effect = ValkeyWorkloadCommandError("not up")
     ctx, state = _restore_context_and_state(
