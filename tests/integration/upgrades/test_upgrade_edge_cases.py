@@ -3,7 +3,6 @@
 # See LICENSE file for licensing details.
 
 import logging
-from platform import machine
 from time import sleep
 
 import jubilant
@@ -30,8 +29,8 @@ from tests.integration.helpers import (
     leader_unit_name,
 )
 from tests.integration.upgrades.literals import (
+    CHARM_BASE,
     CHARM_CHANNEL,
-    CHARM_REVISIONS_TO_DEPLOY,
     GLIDE_RUNNER_NAME,
     NUM_UNITS,
 )
@@ -45,7 +44,7 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         APP_NAME,
         num_units=NUM_UNITS,
         channel=CHARM_CHANNEL,
-        revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
+        base=CHARM_BASE,
         config={"pause-after-unit-refresh": "all"},
         trust=True,
     )
@@ -127,7 +126,13 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
 
     logger.info("Continue refresh on the next units with `resume-refresh` action")
     resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
-    juju.run(resume_unit, "resume-refresh")
+    try:
+        juju.run(resume_unit, "resume-refresh")
+    except jubilant.TaskError as e:
+        if "terminated" in e.task.message:
+            logger.info("Unit already terminated before action completed")
+        else:
+            raise
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS)
@@ -197,11 +202,19 @@ def test_scale_up_during_upgrade(juju: jubilant.Juju, substrate: Substrate) -> N
         reverse=True,
     )
     resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[-1]
-    juju.run(resume_unit, "resume-refresh")
+    try:
+        juju.run(resume_unit, "resume-refresh")
+    except jubilant.TaskError as e:
+        if "terminated" in e.task.message:
+            logger.info("Unit already terminated before action completed")
+        else:
+            raise
 
     logger.info("Wait for upgrade to complete")
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=num_units)
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=num_units, idle_period=30
+        )
     )
 
     assert_continuous_writes_increasing(juju)

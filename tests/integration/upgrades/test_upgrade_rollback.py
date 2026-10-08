@@ -3,7 +3,6 @@
 # See LICENSE file for licensing details.
 
 import logging
-from platform import machine
 from time import sleep
 
 import jubilant
@@ -27,8 +26,8 @@ from tests.integration.helpers import (
     leader_unit_name,
 )
 from tests.integration.upgrades.literals import (
+    CHARM_BASE,
     CHARM_CHANNEL,
-    CHARM_REVISIONS_TO_DEPLOY,
     GLIDE_RUNNER_NAME,
     NUM_UNITS,
 )
@@ -42,7 +41,7 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         APP_NAME,
         num_units=NUM_UNITS,
         channel=CHARM_CHANNEL,
-        revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
+        base=CHARM_BASE,
         trust=True,
     )
     juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
@@ -140,14 +139,20 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         # if this is not run in a PR, the local built version is the same as the latest published
         # to roll back to the initially deployed version, we need to issue another rollback command
         logger.info("Rolling back to previous revision")
-        juju.refresh(app=APP_NAME, revision=CHARM_REVISIONS_TO_DEPLOY[machine()])
+        juju.refresh(app=APP_NAME, base=CHARM_BASE)
 
     juju.wait(lambda status: are_agents_idle(status, APP_NAME, idle_period=60))
 
     if "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message:
         logger.info("Continue refresh on all other units with `resume-refresh` action")
         resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
-        juju.run(resume_unit, "resume-refresh")
+        try:
+            juju.run(resume_unit, "resume-refresh")
+        except jubilant.TaskError as e:
+            if "terminated" in e.task.message:
+                logger.info("Unit already terminated before action completed")
+            else:
+                raise
 
     # wait for rollback to complete
     assert_continuous_writes_increasing(juju)
@@ -229,11 +234,19 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
 
     logger.info("Continue refresh on all other units with `resume-refresh` action")
     resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
-    juju.run(resume_unit, "resume-refresh")
+    try:
+        juju.run(resume_unit, "resume-refresh")
+    except jubilant.TaskError as e:
+        if "terminated" in e.task.message:
+            logger.info("Unit already terminated before action completed")
+        else:
+            raise
 
     # wait for upgrade to complete
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS)
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
+        )
     )
     assert_continuous_writes_increasing(juju)
 
