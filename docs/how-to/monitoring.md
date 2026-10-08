@@ -2,8 +2,8 @@
 
 # How to enable monitoring
 
-Charmed Valkey integrates with the
-[Canonical Observability Stack (COS)](https://charmhub.io/topics/canonical-observability-stack).
+This guide provides instructions for integrating Charmed Valkey with the
+[Canonical Observability Stack (COS)](https://documentation.ubuntu.com/observability/).
 After you integrate the two, COS receives:
 
 - metrics from a [Redis exporter](https://github.com/oliver006/redis_exporter) that runs next to
@@ -16,13 +16,13 @@ After you integrate the two, COS receives:
 
 - You have deployed Charmed Valkey. See [How to deploy](how-to-deploy).
 - You have deployed COS Lite in a Kubernetes model. See
-  [How to install COS](https://documentation.ubuntu.com/observability/latest/how-to/deploy-and-manage/install/).
+  [Deploy COS Lite using Terraform](https://documentation.ubuntu.com/observability/latest/tutorial/cos-lite-canonical-k8s-sandbox/#deploy-cos-lite-using-terraform).
 
-Deploy COS in its own model and, if you can, on its own controller. An outage in one then does not
-take down the other. See the
-[COS best practices](https://charmhub.io/topics/canonical-observability-stack/reference/best-practices).
+```{note}
+The [Best practice](https://documentation.ubuntu.com/observability/track-3.0/reference/topology/#deploy-in-isolation) is using a dedicated model for COS deployment.
+```
 
-This guide uses the following names:
+This guide uses the following placeholders:
 
 - `<cos_controller>` is the Kubernetes controller that hosts COS
 - `<cos_model>` is the model where COS (or COS Lite) runs
@@ -31,24 +31,20 @@ This guide uses the following names:
 - `valkey` is the name of the Charmed Valkey application. Replace it if you deployed it under
   another name.
 
-## Charmed Valkey and COS in the same model
+## Connection options
 
-Skip this section if COS runs in its own model, as recommended above.
+You can connect Charmed Valkey to COS in two ways:
 
-If Charmed Valkey runs on Kubernetes in the same model as COS, you do not need the offers or the
-collector. Integrate the COS applications with Charmed Valkey directly:
+- [Separate models](how-to-monitoring-separate-models) (recommended): COS runs in its own model.
+  Offers connect the two models and an OpenTelemetry Collector sends the data to COS.
+- [Same model](how-to-monitoring-same-model): Charmed Valkey runs on Kubernetes in the same model
+  as COS. You integrate the COS applications with Charmed Valkey directly.
 
-```shell
-juju switch <cos_controller>:<cos_model>
-juju integrate valkey:metrics-endpoint prometheus
-juju integrate valkey:grafana-dashboard grafana
-juju integrate valkey:logging loki
-```
+(how-to-monitoring-separate-models)=
 
-Then go to [Open the Valkey dashboard](how-to-monitoring-dashboard). In the rest of this guide, `<valkey_model>` is
-`<cos_model>`.
+## Separate models
 
-## Offer the COS endpoints
+### Offer the COS endpoints
 
 The COS Lite Terraform module creates the offers below for you. If you deployed COS Lite another
 way, create them from the COS model:
@@ -60,7 +56,7 @@ juju offer loki:logging loki-logging
 juju offer prometheus:receive-remote-write prometheus-receive-remote-write
 ```
 
-## Consume the offers
+### Consume the offers
 
 Switch to the Charmed Valkey model and consume the offers:
 
@@ -74,7 +70,7 @@ juju consume <cos_controller>:admin/<cos_model>.prometheus-receive-remote-write
 These URLs assume that the `admin` user owns the COS model. To list the exact URLs, run
 `juju find-offers <cos_controller>:`.
 
-## Deploy the OpenTelemetry Collector
+### Deploy the OpenTelemetry Collector
 
 The OpenTelemetry Collector reads metrics, logs, dashboards and alert rules from Charmed Valkey and
 sends them to COS.
@@ -214,6 +210,28 @@ valkey/2                        active    idle   10.1.0.204
 
 `````
 
+(how-to-monitoring-same-model)=
+
+## Same model
+
+```{note}
+Use this method only if Charmed Valkey runs on Kubernetes in the same model as COS. Otherwise, use
+[separate models](how-to-monitoring-separate-models).
+```
+
+In this setup you do not need the offers or the collector. Integrate the COS applications with
+Charmed Valkey directly:
+
+```shell
+juju switch <cos_controller>:<cos_model>
+juju integrate valkey:metrics-endpoint prometheus
+juju integrate valkey:grafana-dashboard grafana
+juju integrate valkey:logging loki
+```
+
+Next, follow the steps in [Open the Valkey dashboard](how-to-monitoring-dashboard). For the
+remainder of this guide, replace `<valkey_model>` with `<cos_model>`.
+
 (how-to-monitoring-dashboard)=
 
 ## Open the Valkey dashboard
@@ -233,13 +251,6 @@ url: http://<cos_ingress_address>/<cos_model>-grafana
 
 Open the URL and log in as `admin` with that password. Go to **Dashboards** and open the
 **Valkey** dashboard.
-
-Use the variables at the top of the dashboard to pick a data source, model, application and unit.
-The dashboard has one row, **Sentinel HA & Replication**. Its first four panels show the role of
-each unit, the number of connected replicas, the time since each replica last heard from the
-primary, and the replication offset. The other panels show uptime, connected and blocked clients,
-memory use, commands per second, key lookup hits and misses, network traffic, keys per database,
-expiring and non-expiring keys, expired and evicted keys, and time spent per command.
 
 ![The Valkey dashboard in Grafana for a three-unit deployment](images/monitoring-dashboard.png)
 
