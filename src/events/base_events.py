@@ -125,19 +125,14 @@ class BaseEvents(ops.Object):
 
     def _on_start(self, event: ops.StartEvent) -> None:
         """Handle the on start event."""
-        self.charm.state.unit_server.update(
-            {
-                "start_state": StartState.NOT_STARTED.value,
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
-        start_lock = StartLock(self.charm.state)
-
-        if not self.charm.workload.can_connect:
-            logger.warning("Workload not ready yet")
+        try:
+            self._ensure_workload_ready()
+        except (RuntimeError, ValueError) as e:
+            logger.warning(e)
             event.defer()
             return
+
+        start_lock = StartLock(self.charm.state)
 
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
@@ -384,17 +379,12 @@ class BaseEvents(ops.Object):
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
-        if not (self.charm.state.peer_relation and self.charm.workload.can_connect):
-            logger.info("Workload not ready")
+        try:
+            self._ensure_workload_ready()
+        except (RuntimeError, ValueError) as e:
+            logger.warning(e)
             event.defer()
             return
-
-        self.charm.state.unit_server.update(
-            {
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
 
         if not self.charm.unit.is_leader():
             return
@@ -447,6 +437,22 @@ class BaseEvents(ops.Object):
         )
         # update local unit admin password
         self.charm.auth_manager.update_local_valkey_admin_password()
+
+    def _ensure_workload_ready(self):
+        """Ensure the peer relation is available and the workload container is ready."""
+        if not self.charm.state.peer_relation:
+            raise RuntimeError("Peer relation not ready yet")
+
+        if not self.charm.workload.can_connect:
+            raise RuntimeError("Workload container not ready yet")
+
+        # this raises a ValueError if it fails
+        self.charm.state.unit_server.update(
+            {
+                "hostname": self.charm.state.hostname,
+                "private_ip": self.charm.state.bind_address,
+            }
+        )
 
     def _reconcile_unit_address(self) -> bool:
         """Reconfigure the unit and reissue its certificate after its address changed.
