@@ -37,14 +37,15 @@ toctree, bad anchor) fails the build, not just a lint pass.
 - `tutorial.md` — the Tutorial, a single page (not a directory).
 - `how-to/` — task-oriented guides. Each guide needs an entry in the `how-to/index.md` toctree, or
   Sphinx will emit an "not included in any toctree" warning and fail `make html`.
-- `reference/` — currently only `contact.md`; there is no auto-generated reference content in this
+- `reference/` — `index.md`, `alert-rules.md` and `contact.md`; there is no auto-generated reference content in this
   charm (no `generate_statuses.py`-style build step) and no `explanation/` section yet.
 
 ## File conventions
 
 - Reference labels use MyST anchor syntax `(label-name)=` on the line before a heading (e.g.
-  `(tutorial)=`, `(define-roles)=`), linked with `` {ref}`label-name` ``. Cross-doc links use
-  `` {doc}`text <path/to/page>` `` (see `index.md`).
+  `(tutorial)=`, `(define-roles)=`). Link to them with `[text](label-name)`, not with a file path
+  (`{doc}` or a relative `.md` link), because targets survive moving or renaming files. Give every
+  page you link to a label on its title (for example `(how-to-deploy)=`).
 - Wrap terms that trip the Vale spellcheck in `` {spellexception}`term` `` (see
   `manage-passwords.md`, `tls.md`) instead of adding one-off entries to `.custom_wordlist.txt`.
 - `reuse/links.txt` (RST hyperlink targets) and `reuse/substitutions.txt` (RST `replace::`
