@@ -130,12 +130,9 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        # the refresh handling already restarted the workload and checked its health
-        if (
-            self.charm.refresh_manager.refresh_in_progress
-            and self.charm.state.unit_server.is_started
-            and self.charm.workload.alive()
-        ):
+        # The refresh handling already restarted the workload and checked its health.
+        # We do not check refresh_in_progress as it is already false when the last unit starts.
+        if self.charm.state.unit_server.is_started and self.charm.workload.alive():
             logger.info("Unit restarted by the refresh, not starting it again")
             return
 
@@ -608,13 +605,19 @@ class BaseEvents(ops.Object):
                 right before the restart, because Sentinel rewrites that file on its own.
 
         Returns:
-            RELEASE once the restarted services are healthy, RETRY_RELEASE otherwise.
+            RELEASE once the restarted services are healthy or if the start flow has not started
+            the unit yet, RETRY_RELEASE otherwise.
         """
         logger.info(
             "Restarting workload. Restart Valkey: %s, Restart Sentinel: %s",
             restart_valkey,
             restart_sentinel,
         )
+
+        if not self.charm.state.unit_server.is_started:
+            logger.info("Unit not started yet, dropping the restart, the start applies the config")
+            return OperationResult.RELEASE
+
         if (
             self.charm.state.unit_server.is_backup_in_progress
             or self.charm.state.cluster.is_restore_in_progress

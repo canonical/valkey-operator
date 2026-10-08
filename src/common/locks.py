@@ -12,7 +12,7 @@ from tenacity import (
     Retrying,
     retry_if_exception_type,
     retry_if_result,
-    stop_after_attempt,
+    stop_before_delay,
     stop_never,
     wait_fixed,
 )
@@ -51,7 +51,7 @@ class ValkeyScaleDownLockBackend(SyncLockBackend):
 
     @override
     def acquire(self, timeout: int | None) -> None:
-        """Take the lock, retrying every few seconds until the timeout.
+        """Take the lock, retrying every few seconds without waiting past the timeout.
 
         Args:
             timeout: Seconds to keep trying, or None to keep trying indefinitely.
@@ -61,11 +61,7 @@ class ValkeyScaleDownLockBackend(SyncLockBackend):
         """
         retrying = Retrying(
             wait=wait_fixed(SCALE_DOWN_LOCK_RETRY_INTERVAL_S),
-            stop=(
-                stop_never
-                if timeout is None
-                else stop_after_attempt(max(1, timeout // SCALE_DOWN_LOCK_RETRY_INTERVAL_S))
-            ),
+            stop=stop_never if timeout is None else stop_before_delay(timeout),
             retry=retry_if_result(lambda acquired: not acquired)
             | retry_if_exception_type((ValkeyWorkloadCommandError, ValkeyCannotGetPrimaryIPError)),
             retry_error_callback=lambda _: False,
