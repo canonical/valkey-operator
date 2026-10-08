@@ -32,6 +32,12 @@ def mock_k8s_client(mocker):
 
 
 @pytest.fixture(autouse=True)
+def mock_snap_cache(mocker):
+    """Keep VM workload init off the real snapd and Snap Store."""
+    mocker.patch("workload_vm.snap.SnapCache")
+
+
+@pytest.fixture(autouse=True)
 def mock_start_topology_observer(mocker):
     mocker.patch("managers.topology.TopologyManager.start_observer")
 

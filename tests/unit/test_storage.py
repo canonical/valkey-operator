@@ -32,8 +32,7 @@ def test_k8s_workload_exposes_log_and_archive_dirs():
 
 
 def test_vm_workload_exposes_log_and_archive_dirs():
-    with patch("workload_vm.snap.SnapCache"):
-        wl = ValkeyVmWorkload()
+    wl = ValkeyVmWorkload()
     assert wl.log_dir.as_posix() == "/var/snap/valkey-charmed/common/var/log/valkey"
     assert wl.archive_dir.as_posix() == "/var/snap/valkey-charmed/common/var/backups/valkey"
 
@@ -98,10 +97,7 @@ def test_storage_attached_logs_chmods_only_on_vm(vm_environment):
         storages={logs},
         relations=_base_relations(),
     )
-    with (
-        patch("workload_vm.snap.SnapCache"),  # avoid flaky snap-store lookup in __init__
-        patch("workload_vm.ValkeyVmWorkload.exec") as mock_exec,
-    ):
+    with patch("workload_vm.ValkeyVmWorkload.exec") as mock_exec:
         ctx.run(ctx.on.storage_attached(logs), state_in)
     log_path = "/var/snap/valkey-charmed/common/var/log/valkey"
     mock_exec.assert_any_call(["chmod", "-R", "750", log_path])
