@@ -91,19 +91,19 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
     sleep(90)
 
     # versions will always be marked "incompatible" if refresh to a local version
-    # this will not be the case when the PR is released
-    # see: https://github.com/canonical/charm-refresh/blob/main/charm_refresh/_main.py#L182-L185
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS)
-    )
-
-    if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
+    if (
+        "incompatible" in juju.status().apps.get(APP_NAME).app_status.message
+        or "incompatible"
+        in juju.status().get_units(APP_NAME)[refresh_order[0]].workload_status.message
+    ):
         logger.info("Upgrade is blocked due to incompatibility")
 
         logger.info(f"Continue refresh on unit {refresh_order[0]}")
         logger.info("Running `force-refresh-start` action with check-compatibility=false")
         force_refresh_response = juju.run(
-            refresh_order[0], "force-refresh-start", {"check-compatibility": False}
+            refresh_order[0],
+            "force-refresh-start",
+            {"check-compatibility": False, "run-pre-refresh-checks": False},
         )
         assert force_refresh_response.return_code == 0, "action failed"
 
@@ -126,8 +126,8 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
     )
 
     logger.info("Continue refresh on the next units with `resume-refresh` action")
-    resume_refresh_response = juju.run(refresh_order[1], "resume-refresh")
-    assert resume_refresh_response.return_code == 0, "action failed"
+    resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
+    juju.run(resume_unit, "resume-refresh")
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS)
@@ -138,8 +138,8 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
     )
 
 
-def test_upgrade_remove_client(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None:
-    """Refresh the charm and remove a client relation while upgrading."""
+def test_remove_client_relation(juju: jubilant.Juju, substrate: Substrate) -> None:
+    """Remove a client relation while upgrading."""
     logger.info("Starting continuous writes")
     configure_cw_runner(
         juju,
@@ -148,13 +148,6 @@ def test_upgrade_remove_client(charm: str, juju: jubilant.Juju, substrate: Subst
         substrate=substrate,
     )
     start_continuous_writes(juju, clear=True)
-
-    # Refresh always happens from highest to lowest unit number
-    refresh_order = sorted(
-        juju.status().get_units(APP_NAME),
-        key=lambda unit_name: int(unit_name.split("/")[1]),
-        reverse=True,
-    )
 
     assert "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message, (
         "Refresh should wait for user to continue with `resume-refresh` action"
@@ -170,13 +163,45 @@ def test_upgrade_remove_client(charm: str, juju: jubilant.Juju, substrate: Subst
         "Refresh should wait for user to continue with `resume-refresh` action"
     )
 
+    assert_continuous_writes_increasing(juju)
+    stats = stop_continuous_writes(juju)
+
+    assert_continuous_writes_consistent(
+        endpoints=get_cluster_addresses(juju, APP_NAME),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
+        tls_enabled=True,
+    )
+
+
+def test_scale_up_during_upgrade(juju: jubilant.Juju, substrate: Substrate) -> None:
+    """Add a unit while upgrading."""
+    start_continuous_writes(juju, clear=True)
+    logger.info("Scale up while upgrade is in progress")
+    juju.add_unit(APP_NAME, num_units=1)
+    num_units = NUM_UNITS + 1
+    juju.wait(
+        lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=num_units)
+    )
+
+    assert "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message, (
+        "Refresh should wait for user to continue with `resume-refresh` action"
+    )
+
     logger.info("Continue refresh on the last units with `resume-refresh` action")
-    resume_refresh_response = juju.run(refresh_order[-1], "resume-refresh")
-    assert resume_refresh_response.return_code == 0, "action failed"
+    # Refresh always happens from highest to lowest unit number
+    refresh_order = sorted(
+        juju.status().get_units(APP_NAME),
+        key=lambda unit_name: int(unit_name.split("/")[1]),
+        reverse=True,
+    )
+    resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[-1]
+    juju.run(resume_unit, "resume-refresh")
 
     logger.info("Wait for upgrade to complete")
     juju.wait(
-        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=NUM_UNITS)
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, unit_count=num_units)
     )
 
     assert_continuous_writes_increasing(juju)

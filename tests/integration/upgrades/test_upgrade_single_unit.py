@@ -19,7 +19,6 @@ from tests.integration.helpers import (
     APP_NAME,
     DEPLOY_TIMEOUT_S,
     IMAGE_RESOURCE,
-    are_agents_idle,
     are_apps_active_and_agents_idle,
 )
 from tests.integration.upgrades.literals import (
@@ -81,19 +80,19 @@ def test_upgrade_single_unit(charm: str, juju: jubilant.Juju, substrate: Substra
     sleep(90)
 
     # versions will always be marked "incompatible" if refresh to a local version
-    # this will not be the case when the PR is released
-    # see: https://github.com/canonical/charm-refresh/blob/main/charm_refresh/_main.py#L182-L185
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS)
-    )
-
-    if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
+    if (
+        "incompatible" in juju.status().apps.get(APP_NAME).app_status.message
+        or "incompatible"
+        in juju.status().get_units(APP_NAME)[refresh_order[0]].workload_status.message
+    ):
         logger.info("Upgrade is blocked due to incompatibility")
 
         logger.info(f"Continue refresh on unit {refresh_order[0]}")
         logger.info("Running `force-refresh-start` action with check-compatibility=false")
         force_refresh_response = juju.run(
-            refresh_order[0], "force-refresh-start", {"check-compatibility": False}
+            refresh_order[0],
+            "force-refresh-start",
+            {"check-compatibility": False, "run-pre-refresh-checks": False},
         )
         assert force_refresh_response.return_code == 0, "action failed"
 

@@ -87,7 +87,12 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
     logger.info("Wait for the refresh to initiate")
     sleep(90)
 
-    if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
+    # versions will always be marked "incompatible" if refresh to a local version
+    if (
+        "incompatible" in juju.status().apps.get(APP_NAME).app_status.message
+        or "incompatible"
+        in juju.status().get_units(APP_NAME)[refresh_order[0]].workload_status.message
+    ):
         logger.info("Upgrade is blocked due to incompatibility")
 
         logger.info(f"Continue refresh on unit {refresh_order[0]}")
@@ -95,18 +100,20 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         juju.run(
             refresh_order[0],
             "force-refresh-start",
-            params={"check-compatibility": False},
+            params={"check-compatibility": False, "run-pre-refresh-checks": False},
             wait=1200,
         )
 
     # wait for the first refreshed unit to settle
     juju.wait(lambda status: are_agents_idle(status, APP_NAME, unit_count=NUM_UNITS))
 
+    # workaround until `workload_allowed_to_start` doesn't raise in `post_refresh_handling`
+    # needs to be published to Charmhub before this can be removed
+    previous_resource = "valkey-image=ghcr.io/canonical/valkey-charmed@sha256:0799c89a3a2e55ce3978d18f690a2659fdb9ca2da7e5ec1747ea34985307853c"
+    logger.info("Rolling back to previous revision")
     # in `juju refresh`, --switch and --revision are mutually exclusive
     # we can only roll back to the latest released revision from a local charm
-    refresh_cmd = (
-        f"refresh {APP_NAME} --model={juju.model} --switch {APP_NAME} --channel {CHARM_CHANNEL}"
-    )
+    refresh_cmd = f"refresh {APP_NAME} --model={juju.model} --switch {APP_NAME} --channel {CHARM_CHANNEL} --resource {previous_resource}"
     juju.cli(
         *refresh_cmd.split(),
         include_model=False,
@@ -114,18 +121,33 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
 
     juju.wait(lambda status: are_agents_idle(status, APP_NAME, idle_period=60))
 
-    if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
+    if (
+        "incompatible" in juju.status().apps.get(APP_NAME).app_status.message
+        or "incompatible"
+        in juju.status().get_units(APP_NAME)[refresh_order[0]].workload_status.message
+    ):
         # will be marked "incompatible" if rollback is not to the same revision as initially deployed
         logger.info("Rollback is blocked due to incompatibility")
 
         logger.info("Running `force-refresh-start` action with check-compatibility=false")
-        juju.run(refresh_order[0], "force-refresh-start", {"check-compatibility": False})
+        juju.run(
+            refresh_order[0],
+            "force-refresh-start",
+            {"check-compatibility": False, "check-workload-container": False},
+        )
     elif "Refreshing" in juju.status().apps.get(APP_NAME).app_status.message:
         # rolling back from local to published is only possible to the latest revision
         # if this is not run in a PR, the local built version is the same as the latest published
         # to roll back to the initially deployed version, we need to issue another rollback command
         logger.info("Rolling back to previous revision")
         juju.refresh(app=APP_NAME, revision=CHARM_REVISIONS_TO_DEPLOY[machine()])
+
+    juju.wait(lambda status: are_agents_idle(status, APP_NAME, idle_period=60))
+
+    if "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message:
+        logger.info("Continue refresh on all other units with `resume-refresh` action")
+        resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
+        juju.run(resume_unit, "resume-refresh")
 
     # wait for rollback to complete
     assert_continuous_writes_increasing(juju)
@@ -180,19 +202,19 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
     sleep(90)
 
     # versions will always be marked "incompatible" if refresh to a local version
-    # this will not be the case when the PR is released
-    # see: https://github.com/canonical/charm-refresh/blob/main/charm_refresh/_main.py#L182-L185
-    juju.wait(
-        lambda status: are_agents_idle(status, APP_NAME, idle_period=60, unit_count=NUM_UNITS)
-    )
-
-    if "incompatible" in juju.status().apps.get(APP_NAME).app_status.message:
+    if (
+        "incompatible" in juju.status().apps.get(APP_NAME).app_status.message
+        or "incompatible"
+        in juju.status().get_units(APP_NAME)[refresh_order[0]].workload_status.message
+    ):
         logger.info("Upgrade is blocked due to incompatibility")
 
         logger.info(f"Continue refresh on unit {refresh_order[0]}")
         logger.info("Running `force-refresh-start` action with check-compatibility=false")
         force_refresh_response = juju.run(
-            refresh_order[0], "force-refresh-start", {"check-compatibility": False}
+            refresh_order[0],
+            "force-refresh-start",
+            {"check-compatibility": False, "check-workload-container": False},
         )
         assert force_refresh_response.return_code == 0, "action failed"
 
@@ -206,8 +228,8 @@ def test_upgrade_to_local(charm: str, juju: jubilant.Juju, substrate: Substrate)
     )
 
     logger.info("Continue refresh on all other units with `resume-refresh` action")
-    resume_refresh_response = juju.run(refresh_order[1], "resume-refresh")
-    assert resume_refresh_response.return_code == 0, "action failed"
+    resume_unit = leader_unit_name(juju) if substrate == Substrate.K8S else refresh_order[1]
+    juju.run(resume_unit, "resume-refresh")
 
     # wait for upgrade to complete
     juju.wait(
