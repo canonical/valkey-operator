@@ -3,6 +3,7 @@
 # See LICENSE file for licensing details.
 
 import logging
+from platform import machine
 from time import sleep
 
 import jubilant
@@ -21,8 +22,8 @@ from tests.integration.helpers import (
     are_apps_active_and_agents_idle,
 )
 from tests.integration.upgrades.literals import (
-    CHARM_BASE,
     CHARM_CHANNEL,
+    CHARM_REVISIONS_TO_DEPLOY,
     GLIDE_RUNNER_NAME,
 )
 
@@ -37,7 +38,7 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         APP_NAME,
         num_units=NUM_UNITS,
         channel=CHARM_CHANNEL,
-        base=CHARM_BASE,
+        revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
         trust=True,
     )
     juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
