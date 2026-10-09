@@ -1,9 +1,11 @@
-# Refresh (upgrade)
+(how-to-refresh)=
+
+# How to refresh (upgrade)
 
 ```{admonition} Emergency stop button
 :class: attention
 Use `juju config <app name> pause-after-unit-refresh=all` to halt an in-progress refresh.
-Then, consider [rolling back](#roll-back)
+Then, consider [rolling back](how-to-refresh-roll-back)
 ```
 
 Charmed Valkey supports minor version in-place refresh via the [`juju refresh`](https://documentation.ubuntu.com/juju/3.6/reference/juju-cli/list-of-juju-cli-commands/refresh/#details) command.
@@ -29,6 +31,8 @@ In some of these cases, it may be possible to perform an out-of-place upgrade or
 * Major in-place downgrade
 * Any refresh from or to a non-stable version (e.g. 9/edge)
 
+(how-to-refresh-backup)=
+
 ## Create a backup
 
 See [](back-up-and-restore.md).
@@ -39,7 +43,7 @@ In the event that something goes wrong (e.g. the refresh fails, the new version 
 a database client is incompatible with the new version), you may want to quickly roll back.
 
 Prepare for this possibility by reading through the entire refresh documentation — with special attention to the 
-[](#halt-the-refresh) and [](#roll-back) sections — before starting the refresh.
+[](how-to-refresh-halt) and [](how-to-refresh-roll-back) sections — before starting the refresh.
 
 ## Review release notes
 
@@ -50,12 +54,14 @@ If the Valkey versions that you are refreshing from and to are different, refer 
 [upstream Valkey release notes](https://github.com/valkey-io/valkey/releases) to understand what changed and if 
 any action is required from you.
 
+(how-to-refresh-staging)=
+
 ## Test in a staging environment
 
 We recommend testing the entire refresh procedure in a staging environment before refreshing your production environment.
 
 In a staging environment, we also encourage you to simulate failure of the refresh and to practice recovery by restoring 
-from [the backup](#create-a-backup).
+from [the backup](how-to-refresh-backup).
 
 ## Check that clients are compatible
 
@@ -68,7 +74,7 @@ Tell your users when you will perform the refresh and remain in contact with the
 
 If possible, schedule a maintenance window during a period of low traffic.
 The duration of the refresh may depend on the size of your data and volume of traffic.
-To estimate the duration, we recommend [testing on a staging environment](#test-in-a-staging-environment).
+To estimate the duration, we recommend [testing on a staging environment](how-to-refresh-staging).
 
 ## Consider scaling up
 
@@ -81,6 +87,8 @@ To ensure that the cluster can handle all traffic during the refresh, consider s
 Charmed Valkey does also support scaling up while a refresh is in progress.
 ```
 
+(how-to-refresh-pre-check)=
+
 ## Pre-refresh check
 
 Run the `pre-refresh-check` action on the leader unit to prepare the application for refresh.
@@ -92,7 +100,9 @@ juju run valkey/leader pre-refresh-check
 If the action does not succeed, do not refresh.
 
 If the action succeeds, copy down the rollback command.
-Keep the command available in case you need to [roll back](#roll-back).
+Keep the command available in case you need to [roll back](how-to-refresh-roll-back).
+
+(how-to-refresh-manual-checks)=
 
 ## Configure `pause-after-unit-refresh`
 
@@ -145,6 +155,8 @@ Use `juju refresh` and specify the charm revision that you are refreshing to.
 juju refresh valkey --revision <your-target-revision>
 ```
 
+(how-to-refresh-halt)=
+
 ## Halt the refresh
 
 If something goes wrong, halt the refresh by running:
@@ -156,23 +168,25 @@ juju config valkey pause-after-unit-refresh=all
 In the command above, replace `valkey` with the name of the Juju application.
 
 Next, assess the situation and plan the recovery.
-Often, the safest recovery path is to [roll back](#roll-back).
+Often, the safest recovery path is to [roll back](how-to-refresh-roll-back).
 Consider [contacting us](https://matrix.to/#/#charmhub-data-platform:ubuntu.com).
+
+(how-to-refresh-roll-back)=
 
 ## Roll back
 
 If something went wrong, the safest recovery path is often to roll back to the original version.
 
-First, [halt the refresh](#halt-the-refresh).
+First, [halt the refresh](how-to-refresh-halt).
 
-Run the rollback command [you copied down earlier](#pre-refresh-check).
+Run the rollback command [you copied down earlier](how-to-refresh-pre-check).
 In most cases, the rollback command is also displayed in the application's status message in `juju status`.
 
 ### Resume the rollback
 
 If more than one unit was refreshed before the rollback was started and `pause-after-unit-refresh` 
 is set to `all` or `first`, your manual confirmation will be needed to complete the rollback.
-The procedure for the rollback is the same as described in [](#monitor-the-refresh).
+The procedure for the rollback is the same as described in [](how-to-refresh-monitor).
 
 ### Reflect
 
@@ -182,6 +196,8 @@ investigate what went wrong.
 If applicable, please file a [bug report](https://github.com/canonical/valkey-operator/issues).
 
 Once you understand what went wrong and have tested that it has been fixed, the refresh can be attempted again.
+
+(how-to-refresh-monitor)=
 
 ## Monitor the refresh
 
@@ -195,7 +211,7 @@ Follow the instructions in the status messages.
 If the application status or any of the unit statuses are `error`, your action may be required.
 Monitor `juju debug-log`.
 The error may have been a temporary issue.
-If the error persists, your action is required — consider [rolling back](#roll-back).
+If the error persists, your action is required — consider [rolling back](how-to-refresh-roll-back).
 
 Monitor the refresh until it successfully finishes.
 When the refresh completes, the application status will go from a message beginning with "Refreshing" 
@@ -210,7 +226,7 @@ The application status in `juju status` will instruct you when your confirmation
 Before running the `resume-refresh` action:
 * Wait until all the application's unit agent statuses are `idle`
 * Wait until all the refreshed units' workload statuses are `active`
-* Perform [manual checks](#configure-pause-after-unit-refresh) to ensure that everything is healthy
+* Perform [manual checks](how-to-refresh-manual-checks) to ensure that everything is healthy
 
 Example of running the `resume-refresh` action on unit 1:
 
