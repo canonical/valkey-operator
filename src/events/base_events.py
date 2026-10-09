@@ -137,13 +137,13 @@ class BaseEvents(ops.Object):
             logger.info("Unit restarted by the refresh, not starting it again")
             return
 
-        self.charm.state.unit_server.update(
-            {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
-        )
-
         if not self._start_conditions_met():
             event.defer()
             return
+
+        self.charm.state.unit_server.update(
+            {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
+        )
 
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
