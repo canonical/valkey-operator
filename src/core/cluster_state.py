@@ -7,8 +7,10 @@
 import logging
 import socket
 from functools import cached_property
+from typing import TYPE_CHECKING
 
 import ops
+from charmlibs.interfaces.tls_certificates import TLSCertificatesRequiresV4
 from data_platform_helpers.advanced_statuses.components import StatusesState
 from data_platform_helpers.advanced_statuses.protocol import StatusesStateProtocol
 from dpcharmlibs.interfaces import (
@@ -42,13 +44,16 @@ from literals import (
     Substrate,
 )
 
+if TYPE_CHECKING:
+    from charm import ValkeyCharm
+
 logger = logging.getLogger(__name__)
 
 
 class ClusterState(ops.Object, StatusesStateProtocol):
     """Global state object for the Valkey cluster."""
 
-    def __init__(self, charm: ops.CharmBase, substrate: Substrate):
+    def __init__(self, charm: "ValkeyCharm", substrate: Substrate):
         super().__init__(parent=charm, key="charm_state")
         self.charm = charm
         self.peer_app_interface = OpsPeerRepositoryInterface(
@@ -171,6 +176,11 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def client_tls_relation(self) -> ops.Relation | None:
         """Get the client certificates relation."""
         return self.model.get_relation(CLIENT_TLS_RELATION_NAME)
+
+    @property
+    def client_certificate(self) -> TLSCertificatesRequiresV4:
+        """The client TLS requirer built by `TLSEvents`."""
+        return self.charm.tls_events.client_certificate
 
     @property
     def external_client_relations(self) -> set[ops.Relation]:

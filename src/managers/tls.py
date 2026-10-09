@@ -14,9 +14,11 @@ from ipaddress import ip_address
 
 from charmlibs.interfaces.tls_certificates import (
     Certificate,
+    CertificateError,
     CertificateRequestAttributes,
     CertificateSigningRequest,
     PrivateKey,
+    ProviderCapabilities,
     ProviderCertificate,
 )
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -36,7 +38,7 @@ from literals import (
     TLSCARotationState,
     TLSState,
 )
-from statuses import CharmStatuses, TLSStatuses
+from statuses import TLS_ERROR_CODE_STATUSES, CharmStatuses, TLSStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,44 @@ class TLSManager(ManagerStatusProtocol):
         sans_ip.update(self.state.ingress_addresses)
 
         return frozenset(sans_ip)
+
+    def ip_sans_unsupported(self, capabilities: ProviderCapabilities | None) -> bool:
+        """Check whether the provider rejects IP SANs while our certificate needs some.
+
+        Args:
+            capabilities: The capabilities advertised by the provider, if any.
+
+        Returns:
+            True if the provider advertises no IP SAN support and IP SANs are needed.
+        """
+        return (
+            capabilities is not None
+            and capabilities.supports_ip_sans is False
+            and bool(self.build_sans_ip())
+        )
+
+    def build_certificate_requests(
+        self, capabilities: ProviderCapabilities | None
+    ) -> list[CertificateRequestAttributes]:
+        """Build the certificate requests to send to the provider.
+
+        Args:
+            capabilities: The capabilities advertised by the provider, if any.
+
+        Returns:
+            The unit certificate request, or an empty list if the provider rejects IP SANs.
+        """
+        if self.ip_sans_unsupported(capabilities):
+            logger.warning("TLS provider does not support IP SANs, not requesting a certificate")
+            return []
+
+        return [
+            CertificateRequestAttributes(
+                common_name=self.build_common_name(),
+                sans_ip=self.build_sans_ip(),
+                sans_dns=self.build_sans_dns(),
+            )
+        ]
 
     def build_sans_dns(self) -> frozenset[str]:
         """Build the SANs DNS for the TLS certificate.
@@ -476,6 +516,15 @@ class TLSManager(ManagerStatusProtocol):
 
         return False
 
+    def get_client_tls_request_error(self) -> CertificateError | None:
+        """Get the provider error for one of this unit's CSRs, if any."""
+        for csr in self.state.client_certificate.get_csrs_from_requirer_relation_data():
+            if error := self.state.client_certificate.get_request_error(
+                csr.certificate_signing_request
+            ):
+                return error.error
+        return None
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the TLS statuses."""
         status_list: list[StatusObject] = []
@@ -484,10 +533,12 @@ class TLSManager(ManagerStatusProtocol):
         if not self.state.cluster.model or not self.state.unit_server.model:
             return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
-        if (relation := self.state.client_tls_relation) and relation.data[relation.app].get(
-            "request_errors"
-        ):
-            status_list.append(TLSStatuses.CERTIFICATE_DENIED.value)
+        if error := self.get_client_tls_request_error():
+            status = TLS_ERROR_CODE_STATUSES.get(error.code, TLSStatuses.CERTIFICATE_DENIED)
+            status_list.append(status.value)
+
+        if self.ip_sans_unsupported(self.state.client_certificate.get_provider_capabilities()):
+            status_list.append(TLSStatuses.IP_SANS_NOT_SUPPORTED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
             status_list.append(TLSStatuses.ENABLING_CLIENT_TLS.value)
