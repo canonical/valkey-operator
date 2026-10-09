@@ -15,6 +15,7 @@ from src.literals import (
     METRICS_PORT,
     PEER_RELATION,
     PRIMARY_NAME,
+    RESTART_OPERATION_ID,
     ROLLINGOPS_PEER_RELATION,
     STATUS_PEERS_RELATION,
     CharmUsers,
@@ -562,7 +563,7 @@ def test_config_changed_leader_unit(mock_request_async_lock):
         mock_config_set.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
         secret_out = state_out.get_secret(
@@ -646,7 +647,7 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()
-        mock_request_async_lock.assert_called_once_with("restart")
+        mock_request_async_lock.assert_called_once_with(RESTART_OPERATION_ID, kwargs={})
 
 
 def test_change_password_secret_changed_non_leader_unit(mock_request_async_lock):
@@ -689,7 +690,7 @@ def test_change_password_secret_changed_non_leader_unit(mock_request_async_lock)
         mock_config_set.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
 

@@ -20,6 +20,13 @@ from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
 
 
+@pytest.fixture(autouse=True)
+def primary_reachable():
+    """Make the primary answer unless a test says otherwise."""
+    with patch("managers.cluster.ClusterManager.is_healthy", return_value=True) as is_healthy:
+        yield is_healthy
+
+
 def get_3_unit_peer_relation():
     return testing.PeerRelation(
         id=1,
@@ -396,6 +403,40 @@ def test_repeat_detach_is_noop_once_going_away():
     mock_get_primary.assert_not_called()
     mock_acquire.assert_not_called()
     mock_stop.assert_not_called()
+
+
+def test_unreachable_primary_skips_the_lock(primary_reachable):
+    """Sentinel keeps reporting a primary that is down, so the unit leaves without the lock."""
+    primary_reachable.return_value = False
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = get_3_unit_peer_relation()
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    data_storage = testing.Storage(name="data")
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model", type="lxd"),
+        relations={relation},
+        leader=True,
+        containers={container},
+        storages={data_storage},
+    )
+
+    with (
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock(return_value="10.0.1.0"),
+        ),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-1"),
+        patch("common.locks.ValkeyScaleDownLockBackend.acquire") as mock_acquire,
+    ):
+        state_out = ctx.run(ctx.on.storage_detaching(data_storage), state_in)
+
+    mock_acquire.assert_not_called()
+    primary_reachable.assert_called_once_with(
+        is_primary=True, check_replica_sync=False, hostname="valkey-1"
+    )
+    assert state_out.get_relation(relation.id).local_unit_data["scale-down-state"] == (
+        ScaleDownState.GOING_AWAY.value
+    )
 
 
 def test_cannot_get_primary_ip_leader():

@@ -17,6 +17,7 @@ from literals import (
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
     EXTERNAL_CLIENTS_RELATION,
     PEER_RELATION,
+    RESTART_OPERATION_ID,
     SENTINEL_PORT,
     STATUS_PEERS_RELATION,
 )
@@ -82,7 +83,7 @@ def test_add_new_client_user(mock_request_async_lock):
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
         relation = state_out.get_relation(client_relation.id)
@@ -154,7 +155,7 @@ def test_add_new_client_user_v0(mock_request_async_lock):
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
         relation = state_out.get_relation(client_relation.id)
@@ -378,7 +379,7 @@ def test_add_new_client_user_non_leader(mock_request_async_lock):
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
         assert state_out.get_relation(1).local_unit_data.get("client-user-epoch") != 0
@@ -495,7 +496,7 @@ def test_remove_client_user(mock_request_async_lock):
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
 
@@ -565,7 +566,7 @@ def test_relation_broken_non_leader(mock_request_async_lock):
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
 
@@ -630,7 +631,7 @@ def test_certificate_transfer_new_ca(mock_request_async_lock):
         rehash_ca_certs.assert_called_once()
         reload_tls.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
 
@@ -702,7 +703,7 @@ def test_certificate_transfer_ca_removed(mock_request_async_lock):
         rehash_ca_certs.assert_called_once()
         reload_tls.assert_called_once()
         mock_request_async_lock.assert_called_once_with(
-            "restart",
+            RESTART_OPERATION_ID,
             kwargs={"restart_valkey": False, "restart_sentinel": True},
         )
 

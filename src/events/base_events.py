@@ -8,7 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import ops
-from charmlibs.rollingops import OperationResult
+from charmlibs.rollingops import OperationResult, RollingOpsNoRelationError
 
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
@@ -36,6 +36,7 @@ from literals import (
     SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
+    START_OPERATION_ID,
     STARTING_STATES,
     TLS_PORT,
     CharmUsers,
@@ -162,7 +163,11 @@ class BaseEvents(ops.Object):
             return
 
         self.charm.state.unit_server.update({"start_state": StartState.WAITING_TO_START.value})
-        self.charm.rollingops.request_async_lock("start")
+        try:
+            self.charm.rollingops.request_async_lock(START_OPERATION_ID)
+        except RollingOpsNoRelationError:
+            logger.info("No rollingops peer relation yet, deferring the start")
+            event.defer()
 
     def _start_conditions_met(self) -> bool:
         """Check what must hold both when the start is requested and when the lock is granted.
@@ -207,6 +212,8 @@ class BaseEvents(ops.Object):
     def start_unit(self) -> OperationResult:
         """Start the workload once the rolling lock is granted to this unit.
 
+        This is the rollingops `start` callback.
+
         Returns:
             RELEASE once the unit is started and in sync, RETRY_RELEASE if it cannot start or is
             still waiting for the services, so that restarts can run in between.
@@ -221,7 +228,8 @@ class BaseEvents(ops.Object):
             logger.info("Restore in progress, retrying the start later")
             return OperationResult.RETRY_RELEASE
 
-        # a new request would otherwise be granted the lock before this unit gets it back
+        # RETRY_RELEASE hands the lock to queued starts first, so this keeps starts one at a time
+        # while restarts run in between
         if any(
             unit.model and unit.model.start_state in STARTING_STATES
             for unit in self.charm.state.servers
@@ -587,7 +595,7 @@ class BaseEvents(ops.Object):
                 "private_ip": self.charm.state.bind_address,
             }
         )
-        self.charm.rollingops.request_async_lock("restart")
+        self.charm.request_restart()
         return True
 
     def restart_workload(
@@ -597,6 +605,8 @@ class BaseEvents(ops.Object):
         primary_endpoint: str = "",
     ) -> OperationResult:
         """Restart the workload once the rolling lock is granted to this unit.
+
+        This is the rollingops `restart` callback.
 
         Args:
             restart_valkey: Whether to restart the Valkey service.
@@ -725,9 +735,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.rollingops.request_async_lock(
-                        "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
-                    )
+                    self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 # update the local unit admin password to match the leader
                 self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -792,9 +800,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.rollingops.request_async_lock(
-                        "restart", kwargs={"restart_valkey": False, "restart_sentinel": True}
-                    )
+                    self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -863,9 +869,17 @@ class BaseEvents(ops.Object):
 
         # without a primary there is nothing to coordinate with
         try:
-            self.charm.sentinel_manager.get_primary_ip_for_scale_down()
+            primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
+            self._set_state_for_going_away()
+            return
+
+        # Sentinel keeps reporting a primary that is down, and the lock lives on the primary
+        if not self.charm.cluster_manager.is_healthy(
+            is_primary=True, check_replica_sync=False, hostname=primary_ip
+        ):
+            logger.error("Primary %s is unreachable, scaling down without the lock", primary_ip)
             self._set_state_for_going_away()
             return
 

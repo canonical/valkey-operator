@@ -8,12 +8,17 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
-from charmlibs.rollingops import OperationResult
+from charmlibs.rollingops import OperationResult, RollingOpsNoRelationError
 from ops import testing
 
 from common.exceptions import ValkeyWorkloadCommandError
 from src.charm import ValkeyCharm
-from src.literals import PEER_RELATION, ROLLINGOPS_PEER_RELATION, StartState
+from src.literals import (
+    PEER_RELATION,
+    RESTART_OPERATION_ID,
+    ROLLINGOPS_PEER_RELATION,
+    StartState,
+)
 
 CONTAINER = "valkey"
 
@@ -49,7 +54,24 @@ def test_restart_callback_is_registered():
     """The lock-granted hook can find the restart callback."""
     with _charm() as charm:
         callbacks = charm.rollingops._peer_backend.callback_targets
-        assert callbacks["restart"] == charm.base_events.restart_workload
+        assert callbacks[RESTART_OPERATION_ID] == charm.base_events.restart_workload
+
+
+def test_request_restart_queues_the_restart_operation(mock_request_async_lock):
+    with _charm() as charm:
+        charm.request_restart(restart_valkey=False, restart_sentinel=True)
+
+    mock_request_async_lock.assert_called_once_with(
+        RESTART_OPERATION_ID, kwargs={"restart_valkey": False, "restart_sentinel": True}
+    )
+
+
+def test_request_restart_is_skipped_without_the_rollingops_relation(mock_request_async_lock):
+    """The relation is missing before relation-created and during teardown, neither needs one."""
+    mock_request_async_lock.side_effect = RollingOpsNoRelationError()
+
+    with _charm() as charm:
+        charm.request_restart()
 
 
 @pytest.mark.parametrize(
@@ -61,6 +83,24 @@ def test_restart_callback_retries_during_backup_or_restore(unit_data, app_data):
     with _charm(_state(unit_data=unit_data, app_data=app_data)) as charm:
         assert charm.base_events.restart_workload() == OperationResult.RETRY_RELEASE
         charm.workload.restart.assert_not_called()
+
+
+NOT_STARTED_STATES = [state for state in StartState if state != StartState.STARTED]
+
+
+@pytest.mark.parametrize("start_state", NOT_STARTED_STATES)
+def test_restart_callback_is_dropped_before_the_unit_is_started(start_state):
+    """The queued start renders the config and starts the services, so the restart is redundant.
+
+    It must return RELEASE, as RETRY_RELEASE would block the start queued behind it.
+    """
+    with (
+        _charm(_state(unit_data={"start-state": start_state.value})) as charm,
+        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
+    ):
+        assert charm.base_events.restart_workload() == OperationResult.RELEASE
+        charm.workload.restart.assert_not_called()
+        restart_sentinel.assert_not_called()
 
 
 def test_restart_callback_retries_when_restart_fails():

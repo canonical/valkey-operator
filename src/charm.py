@@ -6,12 +6,13 @@
 
 import logging
 import os
+from typing import Any
 
 import charm_refresh
 import ops
 import ops.log
 from charmlibs import pathops
-from charmlibs.rollingops import RollingOpsManager
+from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
@@ -28,9 +29,11 @@ from events.tls import TLSEvents
 from literals import (
     CONTAINER,
     PEER_RELATION,
+    RESTART_OPERATION_ID,
     ROLLINGOPS_BASE_DIR,
     ROLLINGOPS_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
+    START_OPERATION_ID,
     Substrate,
 )
 from managers.auth import AuthManager
@@ -143,8 +146,8 @@ class ValkeyCharm(ops.CharmBase):
             self,
             peer_relation_name=ROLLINGOPS_PEER_RELATION,
             callback_targets={
-                "restart": self.base_events.restart_workload,
-                "start": self.base_events.start_unit,
+                RESTART_OPERATION_ID: self.base_events.restart_workload,
+                START_OPERATION_ID: self.base_events.start_unit,
             },
             sync_lock_targets={SCALE_DOWN_LOCK_ID: ValkeyScaleDownLockBackend(self)},
             base_dir=pathops.LocalPath(ROLLINGOPS_BASE_DIR),
@@ -211,6 +214,20 @@ class ValkeyCharm(ops.CharmBase):
 
         logger.debug("Trigger a relation-changed event in a single-unit deployment")
         self.on[PEER_RELATION].relation_changed.emit(self.state.peer_relation)
+
+    def request_restart(self, **kwargs: Any) -> None:
+        """Queue a rolling restart of this unit.
+
+        Without the rollingops peer relation the unit is either not started yet, and its start
+        applies the config, or it is leaving, so the restart is skipped.
+
+        Args:
+            **kwargs: Arguments for `BaseEvents.restart_workload`.
+        """
+        try:
+            self.rollingops.request_async_lock(RESTART_OPERATION_ID, kwargs=kwargs)
+        except RollingOpsNoRelationError:
+            logger.warning("No rollingops peer relation, skipping the restart request")
 
 
 if __name__ == "__main__":
