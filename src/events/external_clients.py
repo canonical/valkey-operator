@@ -113,7 +113,8 @@ class ExternalClientsEvents(ops.Object):
                 if self.charm.state.unit_server.is_tls_enabled
                 else None
             )
-            version = self.charm.cluster_manager.get_version()
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            version = self.charm.cluster_manager.get_version(primary_ip)
         except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
             logger.error("Not ready to process client relation: %s", e)
             event.defer()
@@ -286,7 +287,8 @@ class ExternalClientsEvents(ops.Object):
             if self.charm.state.unit_server.is_tls_enabled
             else None
         )
-        version = self.charm.cluster_manager.get_version()
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        version = self.charm.cluster_manager.get_version(primary_ip)
 
         for relation in self.charm.state.external_client_relations:
             if not (responses := self.valkey_provides.responses(relation, ValkeyResponseModel)):

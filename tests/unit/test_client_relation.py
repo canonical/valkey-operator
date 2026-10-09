@@ -271,7 +271,7 @@ def test_client_request_failed():
 
     with (
         patch(
-            "managers.sentinel.SentinelManager.get_primary_ip",
+            "managers.sentinel.SentinelManager.get_primary_endpoint",
             side_effect=ValkeyCannotGetPrimaryIPError("error"),
         ),
     ):

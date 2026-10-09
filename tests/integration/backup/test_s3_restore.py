@@ -42,6 +42,7 @@ from tests.integration.helpers import (
     exec_valkey_cli,
     get_password,
     get_primary_ip,
+    leader_unit_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,14 +68,6 @@ def _wait_restore_active(juju: jubilant.Juju) -> None:
         delay=5,
         successes=3,
     )
-
-
-def _leader_unit_name(juju: jubilant.Juju) -> str:
-    """Return the unit name of the current Juju leader for the valkey app."""
-    for unit_name, unit in juju.status().apps[APP_NAME].units.items():
-        if unit.leader:
-            return unit_name
-    raise ValueError(f"No leader found in app {APP_NAME}")
 
 
 def _sentinel_down_after_ms(juju: jubilant.Juju) -> dict[str, int]:
@@ -196,7 +189,7 @@ def test_restore_disaster_recovery(
 
     _wait_restore_active(juju)
 
-    got = read_key(juju, _leader_unit_name(juju), "dr_key")
+    got = read_key(juju, leader_unit_name(juju), "dr_key")
     assert got == "dr-value", f"Expected 'dr-value' after DR restore, got {got!r}"
 
 
@@ -246,7 +239,7 @@ def test_corrupt_restore_keeps_cluster_and_failover(
     )
 
     # Old data must still be present (restore rolled back or never committed).
-    got = read_key(juju, _leader_unit_name(juju), "safe_key")
+    got = read_key(juju, leader_unit_name(juju), "safe_key")
     assert got == "safe-value", f"Old data lost after corrupt restore; got {got!r}"
 
     # _fail_restore must have resumed failover: every sentinel's
@@ -277,7 +270,7 @@ def _force_primary_off_leader(juju: jubilant.Juju, substrate: Substrate) -> tupl
     around that with patch_restart_delay(); this test only needs the primary moved,
     not a crash simulated, so it asks Sentinel directly.
     """
-    leader = _leader_unit_name(juju)
+    leader = leader_unit_name(juju)
     primary = get_primary_unit(juju, substrate)
     if primary == leader:
         exec_valkey_cli(
@@ -403,7 +396,7 @@ def test_restore_single_unit(
 
     _wait_restore_active(juju)
 
-    unit_name = _leader_unit_name(juju)
+    unit_name = leader_unit_name(juju)
     got = read_key(juju, unit_name, "single_unit_key")
     assert got == "original", f"Expected 'original' on {unit_name}, got {got!r}"
 

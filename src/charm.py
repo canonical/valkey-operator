@@ -166,7 +166,8 @@ class ValkeyCharm(ops.CharmBase):
             return
 
         if not refresh.workload_allowed_to_start:
-            raise ValkeyUpgradeError("Workload not allowed to start")
+            logger.debug("Workload not allowed to start")
+            return
 
         if self.workload.alive():
             if not (
