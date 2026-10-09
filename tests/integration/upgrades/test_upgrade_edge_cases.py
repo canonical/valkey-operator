@@ -120,6 +120,15 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS)
     )
 
+    logger.info("Starting continuous writes")
+    configure_cw_runner(
+        juju,
+        valkey_app=APP_NAME,
+        tls_enabled=True,
+        substrate=substrate,
+    )
+    start_continuous_writes(juju, clear=True)
+
     assert "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message, (
         "Refresh should wait for user to continue with `resume-refresh` action"
     )
@@ -140,6 +149,17 @@ def test_upgrade_enable_tls(charm: str, juju: jubilant.Juju, substrate: Substrat
 
     assert "resume-refresh" in juju.status().apps.get(APP_NAME).app_status.message, (
         "Refresh should wait for user to continue with `resume-refresh` action"
+    )
+
+    assert_continuous_writes_increasing(juju)
+    stats = stop_continuous_writes(juju)
+
+    assert_continuous_writes_consistent(
+        endpoints=get_cluster_addresses(juju, APP_NAME),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju, user=CharmUsers.VALKEY_ADMIN),
+        last_written_value=stats.last_written_value,
+        tls_enabled=True,
     )
 
 

@@ -108,6 +108,7 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
 
     # workaround until `workload_allowed_to_start` doesn't raise in `post_refresh_handling`
     # needs to be published to Charmhub before this can be removed
+    # TODO: remove in a follow-up PR
     previous_resource = "valkey-image=ghcr.io/canonical/valkey-charmed@sha256:0799c89a3a2e55ce3978d18f690a2659fdb9ca2da7e5ec1747ea34985307853c"
     logger.info("Rolling back to previous revision")
     # in `juju refresh`, --switch and --revision are mutually exclusive
