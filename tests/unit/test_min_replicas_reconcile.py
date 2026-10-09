@@ -4,12 +4,12 @@
 
 """Wiring tests: scale events reassert min-replicas-to-write at runtime."""
 
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
+from charmlibs.rollingops import OperationResult
 from ops import testing
 
 from src.charm import ValkeyCharm
-from src.common.custom_events import RestartWorkloadEvent
 from src.literals import PEER_RELATION, StartState
 
 CONTAINER = "valkey"
@@ -20,7 +20,6 @@ def _started_3_unit_state():
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": StartState.STARTED.value},
         peers_data={
             1: {"start-state": StartState.STARTED.value},
@@ -71,28 +70,16 @@ def test_restart_workload_reconciles_min_replicas():
     """A Valkey workload restart reasserts the runtime value.
 
     The file ships min-replicas-to-write=1, but CONFIG SET does not survive a
-    restart, so _on_restart_workload must reconcile once Valkey is healthy
+    restart, so restart_workload must reconcile once Valkey is healthy
     again or a small cluster would be write-frozen.
     """
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_3_unit_state()
 
-    event = MagicMock(spec=RestartWorkloadEvent)
-    event.restart_valkey = True
-    event.restart_sentinel = False
-    event.primary_endpoint = ""
-
     with ctx(ctx.on.update_status(), state_in) as manager:
         charm = manager.charm
         charm.workload.restart = MagicMock()
         with (
-            patch("common.locks.RestartLock.request_lock"),
-            patch("common.locks.RestartLock.release_lock"),
-            patch(
-                "common.locks.RestartLock.is_held_by_this_unit",
-                new_callable=PropertyMock,
-                return_value=True,
-            ),
             patch("managers.cluster.ClusterManager._save_database_blocking"),
             patch("managers.cluster.ClusterManager._disable_save_on_shutdown"),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
@@ -101,5 +88,8 @@ def test_restart_workload_reconciles_min_replicas():
                 "managers.cluster.ClusterManager.reconcile_min_replicas_to_write"
             ) as mock_reconcile,
         ):
-            charm._on_restart_workload(event)
+            result = charm.base_events.restart_workload(
+                restart_valkey=True, restart_sentinel=False
+            )
             mock_reconcile.assert_called_once()
+            assert result == OperationResult.RELEASE

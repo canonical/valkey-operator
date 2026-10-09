@@ -7,7 +7,7 @@ from time import sleep
 import jubilant
 import pytest
 
-from literals import CharmUsers, Substrate
+from literals import CONTAINER, SNAP_NAME, SNAP_SERVICE, CharmUsers, Substrate
 from tests.integration.cw_helpers import (
     assert_continuous_writes_consistent,
     assert_continuous_writes_increasing,
@@ -371,6 +371,47 @@ def test_scale_down_primary(juju: jubilant.Juju, substrate: Substrate, glide_run
 
 def test_scale_down_remove_application(juju: jubilant.Juju) -> None:
     """Make sure the application can be removed."""
+    juju.remove_application(APP_NAME)
+
+    juju.wait(
+        lambda status: APP_NAME not in status.apps,
+        timeout=600,
+        delay=5,
+    )
+
+
+def test_remove_application_with_valkey_stopped(
+    charm: str, juju: jubilant.Juju, substrate: Substrate
+) -> None:
+    """Make sure the application can be removed while every Valkey server is down.
+
+    Sentinel keeps reporting the stopped primary, so the units must not wait for a scale-down
+    lock they can never take.
+    """
+    juju.deploy(
+        charm,
+        resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
+        num_units=NUM_UNITS,
+        trust=True,
+    )
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
+        ),
+        timeout=1200,
+    )
+
+    for unit in juju.status().get_units(APP_NAME):
+        logger.info("Stopping Valkey on %s", unit)
+        if substrate == Substrate.K8S:
+            juju.exec(
+                f"PEBBLE_SOCKET=/charm/containers/{CONTAINER}/pebble.socket "
+                "/charm/bin/pebble stop valkey",
+                unit=unit,
+            )
+        else:
+            juju.exec(f"snap stop {SNAP_NAME}.{SNAP_SERVICE}", unit=unit)
+
     juju.remove_application(APP_NAME)
 
     juju.wait(

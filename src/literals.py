@@ -36,8 +36,12 @@ TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 
+# The non-root K8s charm user can write under /var/lib/juju but not /var/lib
+ROLLINGOPS_BASE_DIR = "/var/lib/juju/rollingops"
+
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
+ROLLINGOPS_PEER_RELATION = "rollingops-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 LDAP_CA_CERT_RELATION = "ldap-ca-cert"
@@ -90,9 +94,19 @@ RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 # TIMEOUT for execs on the workload commands
 EXEC_TIMEOUT_S = 10
-# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, equal to the lock TTL.
+# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, each. The scale-down
+# lock TTL is derived from it.
 # 1 GB took about 12 s on a 100 MB/s disk, so 300 s covers roughly 30 GB.
 SAVE_TIMEOUT_S = 300
+# A unit waits this long for the scale-down lock. The TTL covers the two bounded save steps
+# (BGSAVE wait and SAVE) plus a margin for the failover, so a slow holder keeps the lock.
+SCALE_DOWN_LOCK_TIMEOUT_S = 300
+SCALE_DOWN_LOCK_TTL_S = 3 * SAVE_TIMEOUT_S
+SCALE_DOWN_LOCK_RETRY_INTERVAL_S = 5
+SCALE_DOWN_LOCK_ID = "scale-down"
+# rollingops callback ids
+START_OPERATION_ID = "start"
+RESTART_OPERATION_ID = "restart"
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -163,6 +177,14 @@ class StartState(StrEnum):
     STARTING_WAITING_REPLICA_SYNC = "starting_waiting_replica_sync"
     ERROR_ON_START = "error_on_start"
     STARTED = "started"
+
+
+# States after the services were started, while the unit waits to become healthy.
+STARTING_STATES = (
+    StartState.STARTING_WAITING_VALKEY.value,
+    StartState.STARTING_WAITING_SENTINEL.value,
+    StartState.STARTING_WAITING_REPLICA_SYNC.value,
+)
 
 
 class RestoreStep(StrEnum):

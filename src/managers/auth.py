@@ -306,9 +306,7 @@ class AuthManager(ManagerStatusProtocol):
             self.set_sentinel_acl_file()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)
-            self.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
-            )
+            self.state.unit_server.update({"start_state": StartState.CONFIGURATION_ERROR.value})
             raise ValkeyConfigurationError("Failed to set configuration") from e
 
     def _get_ldap_app_statuses(self) -> list[StatusObject]:
