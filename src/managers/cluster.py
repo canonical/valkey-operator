@@ -265,10 +265,14 @@ class ClusterManager(ManagerStatusProtocol):
 
         return True
 
-    def get_version(self) -> str:
-        """Get the Valkey version from the server."""
+    def get_version(self, primary_endpoint: str) -> str:
+        """Get the Valkey version from the primary server."""
         client = self._get_valkey_client()
-        server_info = client.info_server(hostname=self.state.endpoint)
+        try:
+            server_info = client.info_server(hostname=primary_endpoint)
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Can't get server info: %s", e)
+            return ""
 
         return server_info["valkey_version"]
 
