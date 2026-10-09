@@ -214,6 +214,14 @@ def test_scale_up_during_upgrade(juju: jubilant.Juju, substrate: Substrate) -> N
         "Refresh should wait for user to continue with `resume-refresh` action"
     )
 
+    # update continuous writes endpoints after new unit was added
+    configure_cw_runner(
+        juju,
+        valkey_app=APP_NAME,
+        tls_enabled=True,
+        substrate=substrate,
+    )
+
     logger.info("Continue refresh on the last units with `resume-refresh` action")
     # Refresh always happens from highest to lowest unit number
     refresh_order = sorted(
