@@ -2,6 +2,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import json
 from hashlib import sha256
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,11 +11,10 @@ import pytest
 import yaml
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
-    CertificateDeniedEvent,
-    CertificateError,
+    CertificateRequestAttributes,
+    CertificateSigningRequest,
     PrivateKey,
     ProviderCertificate,
-    RequirerCertificateRequest,
 )
 from ops import testing
 
@@ -261,50 +261,149 @@ def test_client_tls_relation_broken_writing_internal_cert_fails():
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
 
-def test_client_certificate_denied():
-    csr = MagicMock("my_csr")
+def _make_csr() -> str:
+    attributes = CertificateRequestAttributes(common_name="valkey")
+    return str(CertificateSigningRequest.generate(attributes, PrivateKey.generate()))
 
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peer_relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "tls-client-state": "to-tls"},
-    )
-    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    client_tls_relation = testing.Relation(
-        id=3,
-        endpoint=CLIENT_TLS_RELATION_NAME,
-    )
-    requirer_certificate_request = RequirerCertificateRequest(
-        relation_id=3, certificate_signing_request=csr, is_ca=False
-    )
-    certificate_error = CertificateError(
-        code=101, name="IP not allowed", message="IP address not allowed"
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-    state_in = testing.State(
+
+def _client_tls_state(
+    *,
+    error_code: int | None = None,
+    error_on_own_csr: bool = True,
+    capabilities: dict | None = None,
+    extra_sans: str | None = None,
+) -> testing.State:
+    """Build a state whose client-certificates relation carries real provider data."""
+    own_csr = _make_csr()
+    failed_csr = own_csr if error_on_own_csr else _make_csr()
+    remote_app_data = {}
+    if error_code is not None:
+        error = {"code": error_code, "name": "error", "message": "provider free text"}
+        remote_app_data["request_errors"] = json.dumps([{"csr": failed_csr, "error": error}])
+    if capabilities is not None:
+        remote_app_data["capabilities"] = json.dumps(capabilities)
+    return testing.State(
         leader=True,
-        relations={peer_relation, status_peer_relation, client_tls_relation},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
-    with ctx(ctx.on.update_status(), state_in) as manager:
-        charm: ValkeyCharm = manager.charm
-        event = MagicMock(spec=CertificateDeniedEvent)
-
-        with (
-            patch(
-                "charmlibs.interfaces.tls_certificates.TLSCertificatesRequiresV4.get_csrs_from_requirer_relation_data",
-                return_value=[requirer_certificate_request],
+        relations={
+            testing.PeerRelation(
+                id=1,
+                endpoint=PEER_RELATION,
+                local_unit_data={"start-state": "started", "tls-client-state": "to-tls"},
             ),
-            patch("managers.tls.TLSManager.will_certificate_expire"),
-        ):
-            event.certificate_signing_request = csr
-            event.error = certificate_error
-            charm.tls_events._on_certificate_denied(event)
-            state_out = manager.run()
+            testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+            testing.Relation(
+                id=3,
+                endpoint=CLIENT_TLS_RELATION_NAME,
+                local_unit_data={
+                    "certificate_signing_requests": json.dumps(
+                        [{"certificate_signing_request": own_csr, "ca": False}]
+                    )
+                },
+                remote_app_data=remote_app_data,
+            ),
+        },
+        containers={testing.Container(name=CONTAINER, can_connect=True)},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+        config={"certificate-extra-sans": extra_sans} if extra_sans else {},
+    )
 
-            status_is(state_out, TLSStatuses.CERTIFICATE_DENIED.value)
+
+@pytest.mark.parametrize(
+    "error_code, expected",
+    [
+        (101, TLSStatuses.IP_SANS_NOT_SUPPORTED),
+        (102, TLSStatuses.DOMAIN_NOT_ALLOWED),
+        (103, TLSStatuses.WILDCARD_NOT_ALLOWED),
+        (201, TLSStatuses.PROVIDER_UNAVAILABLE),
+        (999, TLSStatuses.CERTIFICATE_DENIED),
+        (500, TLSStatuses.CERTIFICATE_DENIED),
+    ],
+)
+def test_client_certificate_denied(error_code, expected):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _client_tls_state(error_code=error_code)
+
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    assert status_is(state_out, expected.value)
+
+
+def test_client_certificate_denied_for_other_csr():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _client_tls_state(error_code=101, error_on_own_csr=False)
+
+    with patch("managers.tls.TLSManager.will_certificate_expire"):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    for status in (TLSStatuses.IP_SANS_NOT_SUPPORTED, TLSStatuses.CERTIFICATE_DENIED):
+        assert not status_is(state_out, status.value)
+
+
+def test_ip_sans_unsupported_on_vm_blocks_request(vm_environment):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _client_tls_state(capabilities={"supports_ip_sans": False})
+
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("workload_vm.ValkeyVmWorkload.exec", return_value=("", "")),
+        ctx(ctx.on.update_status(), state_in) as manager,
+    ):
+        capabilities = manager.charm.state.client_certificate.get_provider_capabilities()
+        assert manager.charm.tls_manager.build_certificate_requests(capabilities) == []
+        state_out = manager.run()
+
+    assert status_is(state_out, TLSStatuses.IP_SANS_NOT_SUPPORTED.value)
+
+
+@pytest.mark.parametrize(
+    "capabilities, extra_sans",
+    [
+        ({"supports_ip_sans": False}, None),
+        (None, None),
+        ({}, None),
+        ({"supports_ip_sans": True}, "10.0.0.1"),
+    ],
+)
+def test_certificate_request_sent_when_ip_sans_allowed(capabilities, extra_sans):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _client_tls_state(capabilities=capabilities, extra_sans=extra_sans)
+
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        ctx(ctx.on.update_status(), state_in) as manager,
+    ):
+        capabilities = manager.charm.state.client_certificate.get_provider_capabilities()
+        assert len(manager.charm.tls_manager.build_certificate_requests(capabilities)) == 1
+        state_out = manager.run()
+
+    assert not status_is(state_out, TLSStatuses.IP_SANS_NOT_SUPPORTED.value)
+
+
+@pytest.mark.parametrize(
+    "use_vm, extra_sans, blocked",
+    [(True, None, True), (False, "10.0.0.1", True), (False, None, False)],
+)
+def test_relation_changed_drops_csr_when_ip_sans_unsupported(
+    use_vm, extra_sans, blocked, monkeypatch
+):
+    if use_vm:
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _client_tls_state(capabilities={"supports_ip_sans": False}, extra_sans=extra_sans)
+    relation = state_in.get_relation(3)
+
+    with (
+        patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("workload_vm.ValkeyVmWorkload.exec", return_value=("", "")),
+    ):
+        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
+
+    csrs = json.loads(
+        state_out.get_relation(3).local_unit_data.get("certificate_signing_requests", "[]")
+    )
+    assert (len(csrs) == 0) is blocked
+    assert status_is(state_out, TLSStatuses.IP_SANS_NOT_SUPPORTED.value) is blocked
 
 
 def test_client_certificate_available():

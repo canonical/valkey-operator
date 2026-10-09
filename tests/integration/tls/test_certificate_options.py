@@ -64,7 +64,7 @@ def test_build_and_deploy(
         config={
             "pki_ca_common_name": "mydomain.com",
             "pki_allow_any_name": False,
-            "pki_allow_ip_sans": False,
+            "pki_allow_ip_sans": True,
         },
     )
     juju.integrate(f"{APP_NAME}:client-certificates", TLS_NAME)
@@ -271,12 +271,12 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
     juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30), timeout=600)
 
     logger.info("Integrate Valkey with Vault for client TLS")
-    logger.info("Certificate requests should be denied because Vault does not allow IP SANs")
+    logger.info("Certificate requests should be denied because Vault does not allow the domain")
     juju.integrate(f"{APP_NAME}:client-certificates", VAULT_NAME)
     juju.wait(
         lambda status: does_status_match(
             status,
-            expected_unit_statuses={APP_NAME: [TLSStatuses.CERTIFICATE_DENIED.value]},
+            expected_unit_statuses={APP_NAME: [TLSStatuses.DOMAIN_NOT_ALLOWED.value]},
             num_units={APP_NAME: NUM_UNITS},
         ),
         timeout=600,
@@ -297,6 +297,43 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
 
     logger.info("Removing TLS relation again")
     juju.remove_relation(f"{APP_NAME}:client-certificates", VAULT_NAME)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
+        timeout=600,
+    )
+
+
+def test_ip_sans_not_supported(juju: jubilant.Juju) -> None:
+    """Block the units when Vault does not allow IP SANs."""
+    logger.info("Configure Vault to allow any name but no IP SANs")
+    juju.config(VAULT_NAME, {"pki_allow_any_name": True, "pki_allow_ip_sans": False})
+    juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30), timeout=600)
+
+    logger.info("Add an IP SAN so the request carries one on K8s too")
+    juju.config(APP_NAME, {"certificate-extra-sans": "10.10.10.10"})
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
+        timeout=600,
+    )
+
+    logger.info("Integrate Valkey with Vault for client TLS")
+    juju.integrate(f"{APP_NAME}:client-certificates", VAULT_NAME)
+    juju.wait(
+        lambda status: does_status_match(
+            status,
+            expected_unit_statuses={APP_NAME: [TLSStatuses.IP_SANS_NOT_SUPPORTED.value]},
+            num_units={APP_NAME: NUM_UNITS},
+        ),
+        timeout=600,
+    )
+
+    logger.info("Removing TLS relation and resetting extra sans")
+    juju.remove_relation(f"{APP_NAME}:client-certificates", VAULT_NAME)
+    juju.config(APP_NAME, reset="certificate-extra-sans")
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
