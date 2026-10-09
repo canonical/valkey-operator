@@ -151,16 +151,16 @@ class TLSStatuses(Enum):
         status="blocked", message="Certificate request was denied, check logs for details"
     )
     IP_SANS_NOT_SUPPORTED = StatusObject(
-        status="blocked", message="TLS provider does not allow IP SANs"
+        status="blocked", message="TLS: IP SANs not allowed by provider"
     )
     DOMAIN_NOT_ALLOWED = StatusObject(
-        status="blocked", message="TLS provider does not allow the requested domains"
+        status="blocked", message="TLS: domains not allowed by provider"
     )
     WILDCARD_NOT_ALLOWED = StatusObject(
-        status="blocked", message="TLS provider does not allow wildcard SANs"
+        status="blocked", message="TLS: wildcards not allowed by provider"
     )
     PROVIDER_UNAVAILABLE = StatusObject(
-        status="blocked", message="TLS provider server not available"
+        status="blocked", message="TLS: provider server unavailable"
     )
 
 
