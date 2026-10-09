@@ -8,6 +8,6 @@ name = "valkey-charmed"
 
 [snap.revisions]
 # amd64
-x86_64 = "183"
+x86_64 = "204"
 # arm64
-aarch64 = "184"
+aarch64 = "203"
