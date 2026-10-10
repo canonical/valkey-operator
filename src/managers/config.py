@@ -102,6 +102,7 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["min-replicas-to-write"] = "1"
         if self.workload.total_memory_bytes() > _REPL_BACKLOG_MIN_RAM_BYTES:
             config_properties["repl-backlog-size"] = _REPL_BACKLOG_SIZE
+        config_properties["repl-backlog-ttl"] = "0"
 
         # replica related config
         replica_config = self._generate_replica_config(primary_endpoint=primary_endpoint)
