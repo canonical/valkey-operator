@@ -215,28 +215,26 @@ class BaseEvents(ops.Object):
         This is the rollingops `start` callback.
 
         Returns:
-            RELEASE once the unit is started and in sync, RETRY_RELEASE if it cannot start or is
-            still waiting for the services, so that restarts can run in between.
+            RELEASE once the unit is started and in sync, RETRY_HOLD if its services failed to
+            start or are not in sync yet, so no restart or other start runs in between,
+            RETRY_RELEASE if it cannot start yet.
         """
         if self.charm.state.unit_server.is_started:
             return OperationResult.RELEASE
 
+        # once the services are started, keep the lock until the unit is in sync
+        retry = (
+            OperationResult.RETRY_HOLD
+            if self.charm.state.unit_server.model.start_state in STARTING_STATES
+            else OperationResult.RETRY_RELEASE
+        )
+
         if not self._start_conditions_met():
-            return OperationResult.RETRY_RELEASE
+            return retry
 
         if self.charm.state.cluster.is_restore_in_progress:
             logger.info("Restore in progress, retrying the start later")
-            return OperationResult.RETRY_RELEASE
-
-        # RETRY_RELEASE hands the lock to queued starts first, so this keeps starts one at a time
-        # while restarts run in between
-        if any(
-            unit.model and unit.model.start_state in STARTING_STATES
-            for unit in self.charm.state.servers
-            if unit.unit_name != self.charm.state.unit_server.unit_name
-        ):
-            logger.info("Another unit is still starting, retrying the start later")
-            return OperationResult.RETRY_RELEASE
+            return retry
 
         if self.charm.state.unit_server.model.start_state in STARTING_STATES:
             primary_endpoint = self.charm.state.unit_server.model.start_primary_endpoint
@@ -250,13 +248,13 @@ class BaseEvents(ops.Object):
                 return OperationResult.RETRY_RELEASE
 
             if not self._start_workload(primary_endpoint):
-                return OperationResult.RETRY_RELEASE
+                return OperationResult.RETRY_HOLD
 
         if not self._is_started_and_in_sync(
             is_primary=primary_endpoint
             == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
         ):
-            return OperationResult.RETRY_RELEASE
+            return OperationResult.RETRY_HOLD
 
         self._finish_start()
         return OperationResult.RELEASE
@@ -616,7 +614,8 @@ class BaseEvents(ops.Object):
 
         Returns:
             RELEASE once the restarted services are healthy or if the start flow has not started
-            the unit yet, RETRY_RELEASE otherwise.
+            the unit yet, RETRY_RELEASE during a backup or restore, RETRY_HOLD otherwise, so no
+            other unit restarts or starts while this one is unhealthy.
         """
         logger.info(
             "Restarting workload. Restart Valkey: %s, Restart Sentinel: %s",
@@ -651,11 +650,11 @@ class BaseEvents(ops.Object):
             ValkeyWorkloadCommandError,
         ) as e:
             logger.error(e)
-            return OperationResult.RETRY_RELEASE
+            return OperationResult.RETRY_HOLD
 
         if restart_valkey and not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
             self.charm.state.unit_server.update({"is_valkey_healthy": False})
-            return OperationResult.RETRY_RELEASE
+            return OperationResult.RETRY_HOLD
         self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
         if restart_valkey:
@@ -668,7 +667,7 @@ class BaseEvents(ops.Object):
 
         if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
             self.charm.state.unit_server.update({"is_sentinel_healthy": False})
-            return OperationResult.RETRY_RELEASE
+            return OperationResult.RETRY_HOLD
 
         self.charm.state.unit_server.update({"is_sentinel_healthy": True})
         return OperationResult.RELEASE

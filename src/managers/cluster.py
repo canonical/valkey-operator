@@ -122,7 +122,12 @@ class ClusterManager(ManagerStatusProtocol):
         if not hostname:
             hostname = self.state.endpoint
 
-        role_info = client.role(hostname)
+        try:
+            role_info = client.role(hostname)
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not get the role information: %s", e)
+            return False
+
         try:
             return role_info[0] == "slave" and role_info[3] == "connected"
         except IndexError as e:

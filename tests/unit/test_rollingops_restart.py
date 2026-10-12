@@ -108,7 +108,7 @@ def test_restart_callback_retries_when_restart_fails():
         charm.workload.restart.side_effect = ValkeyWorkloadCommandError("boom")
         assert (
             charm.base_events.restart_workload(restart_valkey=True, restart_sentinel=False)
-            == OperationResult.RETRY_RELEASE
+            == OperationResult.RETRY_HOLD
         )
 
 
@@ -120,7 +120,7 @@ def test_restart_callback_retries_when_valkey_unhealthy():
     ):
         assert (
             charm.base_events.restart_workload(restart_valkey=True, restart_sentinel=False)
-            == OperationResult.RETRY_RELEASE
+            == OperationResult.RETRY_HOLD
         )
         update.assert_called_once_with({"is_valkey_healthy": False})
 
@@ -134,7 +134,7 @@ def test_restart_callback_retries_when_sentinel_unhealthy():
     ):
         assert (
             charm.base_events.restart_workload(restart_valkey=False, restart_sentinel=True)
-            == OperationResult.RETRY_RELEASE
+            == OperationResult.RETRY_HOLD
         )
         update.assert_called_with({"is_sentinel_healthy": False})
 
