@@ -374,10 +374,8 @@ class TLSEvents(ops.Object):
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
-        if (
-            self.charm.state.client_tls_relation
-            and self.charm.tls_manager.certificate_sans_require_update()
-        ):
+        # the cert on disk may be the self-signed one, so let the lib compare against its CSRs
+        if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
             self.refresh_tls_certificates_event.emit()
 

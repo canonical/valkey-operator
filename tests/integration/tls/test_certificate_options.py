@@ -305,8 +305,11 @@ def test_certificate_denied(juju: jubilant.Juju) -> None:
     )
 
 
-def test_ip_sans_not_supported(juju: jubilant.Juju) -> None:
-    """Block the units when Vault does not allow IP SANs."""
+def test_ip_sans_not_supported(juju: jubilant.Juju, substrate: Substrate) -> None:
+    """Block the units when Vault does not allow IP SANs.
+
+    On K8s, removing the IP SAN with the relation kept must get a Vault certificate.
+    """
     logger.info("Configure Vault to allow any name but no IP SANs")
     juju.config(VAULT_NAME, {"pki_allow_any_name": True, "pki_allow_ip_sans": False})
     juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30), timeout=600)
@@ -331,9 +334,34 @@ def test_ip_sans_not_supported(juju: jubilant.Juju) -> None:
         timeout=600,
     )
 
-    logger.info("Removing TLS relation and resetting extra sans")
-    juju.remove_relation(f"{APP_NAME}:client-certificates", VAULT_NAME)
+    logger.info("Reset extra sans while keeping the TLS relation")
     juju.config(APP_NAME, reset="certificate-extra-sans")
+
+    if substrate == Substrate.K8S:
+        logger.info("No IP SANs are needed on K8s now, so Vault should sign the certificate")
+        juju.wait(
+            lambda status: are_apps_active_and_agents_idle(
+                status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+            ),
+            timeout=600,
+        )
+        for attempt in Retrying(
+            stop=stop_after_delay(DEPLOY_TIMEOUT_TLS_S), wait=wait_fixed(10), reraise=True
+        ):
+            with attempt:
+                download_client_certificate_from_unit(juju, APP_NAME)
+                client_cert = subprocess.getoutput(
+                    f"openssl x509 -noout -issuer -ext subjectAltName -in {TLS_CERT_FILE}"
+                )
+                assert "mydomain.com" in client_cert, (
+                    f"certificate not issued by Vault: {client_cert}"
+                )
+                assert "IP Address" not in client_cert, (
+                    f"IP SAN found in certificate: {client_cert}"
+                )
+
+    logger.info("Removing TLS relation")
+    juju.remove_relation(f"{APP_NAME}:client-certificates", VAULT_NAME)
     juju.wait(
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, idle_period=30, unit_count=NUM_UNITS

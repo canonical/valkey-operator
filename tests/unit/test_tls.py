@@ -1487,41 +1487,6 @@ def test_set_extra_sans_config_option_special_chars():
     assert len(ctx.emitted_events) == 1
 
 
-def test_set_extra_sans_config_option_no_update():
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peer_relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "tls-client-state": "tls"},
-    )
-    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    client_tls_relation = testing.Relation(
-        id=3,
-        endpoint=CLIENT_TLS_RELATION_NAME,
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-    state_in = testing.State(
-        relations={peer_relation, status_peer_relation, client_tls_relation},
-        config={"certificate-extra-sans": "192.168.1.100, myhostname"},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
-
-    current_sans_value = (
-        "X509v3 Subject Alternative Name: \n    "
-        "DNS:myhostname, DNS:valkey0, DNS:valkey-0.valkey-endpoints, "
-        "DNS:valkey-primary, DNS:valkey-replicas, "
-        "IP Address:192.168.1.100"
-    )
-    with (
-        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
-        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
-    ):
-        ctx.run(ctx.on.config_changed(), state_in)
-        # no RefreshTLSCertificatesEvent must be emitted
-        assert len(ctx.emitted_events) == 1
-
-
 def test_client_tls_relation_broken_run_deferred_event():
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
