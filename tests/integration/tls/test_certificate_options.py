@@ -314,6 +314,16 @@ def test_ip_sans_not_supported(juju: jubilant.Juju, substrate: Substrate) -> Non
     juju.config(VAULT_NAME, {"pki_allow_any_name": True, "pki_allow_ip_sans": False})
     juju.wait(lambda status: are_agents_idle(status, VAULT_NAME, idle_period=30), timeout=600)
 
+    # Vault's chain stops at its intermediate CA, and Valkey only trusts chains up to a root
+    logger.info("Trust the root CA through certificate-transfer")
+    juju.integrate(f"{APP_NAME}:certificate-transfer", f"{TLS_NAME}:send-ca-cert")
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=NUM_UNITS
+        ),
+        timeout=600,
+    )
+
     logger.info("Add an IP SAN so the request carries one on K8s too")
     juju.config(APP_NAME, {"certificate-extra-sans": "10.10.10.10"})
     juju.wait(
@@ -333,10 +343,6 @@ def test_ip_sans_not_supported(juju: jubilant.Juju, substrate: Substrate) -> Non
         ),
         timeout=600,
     )
-
-    # Vault's chain stops at its intermediate CA, and Valkey only trusts chains up to a root
-    logger.info("Trust the root CA through certificate-transfer")
-    juju.integrate(f"{APP_NAME}:certificate-transfer", f"{TLS_NAME}:send-ca-cert")
 
     logger.info("Reset extra sans while keeping the TLS relation")
     juju.config(APP_NAME, reset="certificate-extra-sans")
