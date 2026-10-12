@@ -160,7 +160,7 @@ class TLSManager(ManagerStatusProtocol):
 
         return frozenset(sans_ip)
 
-    def ip_sans_unsupported(self, capabilities: ProviderCapabilities | None) -> bool:
+    def ip_sans_requested_unsupported(self, capabilities: ProviderCapabilities | None) -> bool:
         """Check whether the provider rejects IP SANs while our certificate needs some.
 
         Args:
@@ -186,7 +186,7 @@ class TLSManager(ManagerStatusProtocol):
         Returns:
             The unit certificate request, or an empty list if the provider rejects IP SANs.
         """
-        if self.ip_sans_unsupported(capabilities):
+        if self.ip_sans_requested_unsupported(capabilities):
             logger.warning("TLS provider does not support IP SANs, not requesting a certificate")
             return []
 
@@ -537,7 +537,9 @@ class TLSManager(ManagerStatusProtocol):
             status = TLS_ERROR_CODE_STATUSES.get(error.code, TLSStatuses.CERTIFICATE_DENIED)
             status_list.append(status.value)
 
-        if self.ip_sans_unsupported(self.state.client_certificate.get_provider_capabilities()):
+        if self.ip_sans_requested_unsupported(
+            self.state.client_certificate.get_provider_capabilities()
+        ):
             status_list.append(TLSStatuses.IP_SANS_NOT_SUPPORTED.value)
 
         if self.state.unit_server.tls_client_state == TLSState.TO_TLS:
