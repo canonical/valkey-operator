@@ -48,7 +48,9 @@ from tests.integration.helpers import (
     get_cluster_addresses,
     get_password,
     get_primary_ip,
+    get_storage_id,
     ping,
+    remove_number_units,
     wait_for_failover,
 )
 
@@ -107,11 +109,17 @@ def test_build_and_deploy(
     if existing_app(juju):
         return
 
+    storage = None
+    if substrate == Substrate.VM:
+        # a detachable volume, so a new unit can reuse it
+        juju.cli("create-storage-pool", "valkey-storage", "lxd")
+        storage = {"data": "valkey-storage,2G"}
     juju.deploy(
         charm,
         resources=IMAGE_RESOURCE if substrate == Substrate.K8S else None,
         num_units=NUM_UNITS,
         trust=True,
+        storage=storage,
     )
     juju.deploy(glide_runner_charm, GLIDE_RUNNER_NAME)
     juju.wait(
@@ -178,3 +186,45 @@ def test_corrupted_aof_on_primary_heals(juju: jubilant.Juju, substrate: Substrat
     _wait_active(juju)
 
     _assert_writes_consistent(juju)
+
+
+def test_reused_storage_keeps_writes_after_the_last_save(
+    juju: jubilant.Juju, substrate: Substrate
+) -> None:
+    """Writes after the removal's SAVE are only in the AOF, so a reused volume must load it."""
+    juju.config(APP_NAME, {"persistence-mode": "AOF"})
+    # a lone primary, so no failover can drop an acknowledged write
+    remove_number_units(juju, APP_NAME, num_units=2, substrate=substrate)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=1, idle_period=30
+        ),
+        timeout=DEPLOY_TIMEOUT_S,
+    )
+    unit = next(iter(juju.status().get_units(APP_NAME)))
+    storage_id = get_storage_id(juju, unit, "data")
+
+    configure_cw_runner(juju, valkey_app=APP_NAME, substrate=substrate)
+    start_continuous_writes(juju, clear=True, sleep_interval=0.05)
+    assert_continuous_writes_increasing(juju)
+    # writes keep coming while the removal saves dump.rdb and stops Valkey
+    remove_number_units(juju, APP_NAME, num_units=1, substrate=substrate)
+    juju.wait(lambda status: not status.get_units(APP_NAME), timeout=DEPLOY_TIMEOUT_S)
+    stats = stop_continuous_writes(juju)
+
+    juju.add_unit(APP_NAME, attach_storage=storage_id if substrate == Substrate.VM else None)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, unit_count=1, idle_period=30
+        ),
+        timeout=DEPLOY_TIMEOUT_S,
+    )
+
+    log = juju.cli("debug-log", "--replay", "--no-tail", "--include", APP_NAME)
+    assert "Loading the AOF on this storage" in log, "the new unit did not load the AOF"
+    assert_continuous_writes_consistent(
+        endpoints=get_cluster_addresses(juju, APP_NAME),
+        username=CharmUsers.VALKEY_ADMIN.value,
+        password=get_password(juju),
+        last_written_value=stats.last_written_value,
+    )
