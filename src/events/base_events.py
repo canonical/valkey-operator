@@ -293,7 +293,7 @@ class BaseEvents(ops.Object):
             for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
                 lock.process()
 
-        # after the lock grants, so waiting on an AOF rewrite never holds them up
+        # after the lock grants, so an AOF rewrite wait can't delay them
         if self.charm.state.unit_server.is_started:
             # reassert min-replicas-to-write to match the (possibly changed) topology
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
@@ -398,7 +398,7 @@ class BaseEvents(ops.Object):
         if not self.charm.unit.is_leader():
             return
 
-        # the old leader may have missed the config-changed that stores it
+        # the old leader may have missed the config-changed
         self._store_persistence_config()
 
         if self.charm.state.unit_server.is_active:
@@ -577,12 +577,12 @@ class BaseEvents(ops.Object):
         persistence = self.charm.state.cluster.persistence_config
         settings = self.charm.config_manager.persistence_settings(persistence)
         if self.charm.state.unit_server.applied_persistence_config == persistence:
-            # a failed switch that was then reverted can leave the new settings on live
+            # a reverted failed switch can leave the new settings live
             try:
                 if self.charm.cluster_manager.is_live_persistence(settings):
                     return
             except ValkeyWorkloadCommandError:
-                # a server that is down restarts on the rendered file, which already matches
+                # a down server restarts on the rendered file, which matches
                 return
 
         try:
@@ -646,10 +646,17 @@ class BaseEvents(ops.Object):
                 primary = self.charm.sentinel_manager.get_primary_ip()
             if primary == self.charm.state.endpoint:
                 raise SentinelFailoverError("Sentinel still reports this unit as primary")
+            # healing from a down primary leaves this unit empty and promotable (DA291)
+            if not self.charm.cluster_manager.is_healthy(is_primary=True, hostname=primary):
+                raise ValkeyClusterNotReadyError(f"The primary {primary} is not healthy")
             # rendered before the AOF moves, so an auto-restart comes back as a replica
             self.charm.config_manager.set_config_properties(primary_endpoint=primary)
             self.charm.cluster_manager.archive_corrupted_aof()
-        except (SentinelFailoverError, ValkeyCannotGetPrimaryIPError) as e:
+        except (
+            SentinelFailoverError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyClusterNotReadyError,
+        ) as e:
             logger.error("Cannot heal the corrupted AOF: %s", e)
             self.charm.status.set_running_status(
                 PersistenceStatuses.AOF_CORRUPTED.value,
@@ -673,8 +680,7 @@ class BaseEvents(ops.Object):
             scope="unit",
             component=self.charm.cluster_manager.name,
         )
-        if unit.is_started:
-            self.charm.restart_workload.emit(restart_valkey=True, restart_sentinel=False)
+        # no restart: the service manager already restarts the server, a second one aborts its sync
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""

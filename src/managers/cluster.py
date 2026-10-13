@@ -425,7 +425,7 @@ class ClusterManager(ManagerStatusProtocol):
         )
 
     def is_live_persistence(self, settings: dict[str, str]) -> bool:
-        """Whether the running server already uses these persistence settings.
+        """Whether the running server uses these persistence settings.
 
         Raises:
             ValkeyWorkloadCommandError: If the settings can't be read.
@@ -434,17 +434,17 @@ class ClusterManager(ManagerStatusProtocol):
         return live == settings
 
     def save_before_restart(self) -> None:
-        """Save a running server that keeps no persistence, so a restart does not empty it.
+        """Save a running server in None mode, so a restart doesn't empty it.
 
         Raises:
             ValkeyClusterNotReadyError: If a BGSAVE is still running after ``DATASET_IO_TIMEOUT_S``.
             ValkeyWorkloadCommandError: If the save fails.
         """
         persistence = self.state.unit_server.applied_persistence_config
-        # no applied settings means the RDB defaults, and those save on shutdown
+        # no applied settings means the RDB defaults, which save on shutdown
         if not persistence or persistence.rdb_enabled or persistence.aof_enabled:
             return
-        # a server that is down or loading holds nothing a save could keep
+        # a down or loading server has nothing to save
         if not self._get_valkey_client().ping(self.state.endpoint):
             return
         logger.info("Save dataset to disk before the restart, persistence-mode is None")
@@ -508,19 +508,19 @@ class ClusterManager(ManagerStatusProtocol):
         )
 
     def archive_corrupted_aof(self) -> None:
-        """Copy the whole AOF dir to the archive slot, replacing the previous copy, then delete it.
+        """Copy the AOF dir to the archive slot, replacing the old copy, then delete it.
 
         Raises:
             ValkeyWorkloadCommandError: If the copy or the delete fails.
         """
         aof_dir = self.workload.working_dir / AOF_DIR_NAME
         archive = self.workload.archive_dir / AOF_CORRUPT_ARCHIVE_NAME
-        # the previous copy goes first, the archive volume may only fit one
+        # the archive volume may only fit one copy
         self.workload.remove_dir(archive)
         try:
             self.workload.copy_dir(aof_dir, archive)
         except ValkeyWorkloadCommandError:
-            # a partial copy would pass for a complete one
+            # a partial copy would look complete
             self.workload.remove_dir(archive)
             raise
         self.workload.remove_dir(aof_dir)

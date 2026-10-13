@@ -405,7 +405,7 @@ class WorkloadBase(ABC):
 
     @abstractmethod
     def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
-        """Copy a directory with its content, also across partitions.
+        """Copy a directory tree, also across partitions.
 
         Raises:
             ValkeyWorkloadCommandError: If the copy fails.

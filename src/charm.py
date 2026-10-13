@@ -215,7 +215,7 @@ class ValkeyCharm(ops.CharmBase):
 
         try:
             if event.restart_valkey:
-                # DA290: a planned restart keeps the data in every mode, None included
+                # DA290: a planned restart keeps the data, None mode included
                 self.cluster_manager.save_before_restart()
                 self.workload.restart(self.workload.valkey_service)
             if event.restart_sentinel:

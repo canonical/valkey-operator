@@ -329,11 +329,11 @@ class PersistenceConfig(BaseModel):
     @field_validator("rdb_save_points")
     @classmethod
     def _require_save_point_pairs(cls, value: str, info: ValidationInfo) -> str:
-        # DA290 only reads the save points in the RDB modes
+        # only the RDB modes use save points
         if info.data.get("mode") not in (PersistenceMode.RDB, PersistenceMode.RDB_AOF):
             return value
         parts = value.split()
-        # isdecimal alone also accepts non-ASCII digits, which Valkey can't parse
+        # isdecimal also accepts non-ASCII digits, which Valkey rejects
         if not parts or len(parts) % 2 or not all(p.isascii() and p.isdecimal() for p in parts):
             raise ValueError("rdb-save-points must be pairs of <seconds> <changes> integers")
         if any(int(seconds) == 0 for seconds in parts[::2]):

@@ -157,10 +157,10 @@ class ConfigManager(ManagerStatusProtocol):
         return config_properties
 
     def _initial_persistence(self) -> PersistenceConfig:
-        """Return the settings for a unit that has applied none, the RDB defaults by default.
+        """Return the settings for a unit that has applied none.
 
-        The stored AOF mode wins only when the storage holds an AOF newer than dump.rdb, so a
-        reused volume loads its AOF and an AOF left from an earlier AOF period does not.
+        It returns the RDB defaults unless the AOF on disk is newer than dump.rdb, so a reused
+        volume loads its AOF and a stale AOF from an earlier AOF period doesn't.
         """
         stored = self.state.cluster.persistence_config
         aof_dir = self.workload.working_dir / AOF_DIR_NAME

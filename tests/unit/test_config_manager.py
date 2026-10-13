@@ -181,7 +181,7 @@ def test_explicit_settings_override_the_applied_ones():
     ],
 )
 def test_reused_aof_loads_only_when_newest(has_manifest, has_dump, aof_newer, appendonly):
-    """A unit with nothing applied renders the stored AOF mode only for an AOF that is newest."""
+    """With nothing applied, the stored AOF mode renders only when the AOF is newest."""
     cm = _make_config_manager()
     cm.state.cluster.persistence_config = PersistenceConfig(mode=PersistenceMode.AOF)
     cm.workload.working_dir = PurePosixPath("/var/lib/valkey")

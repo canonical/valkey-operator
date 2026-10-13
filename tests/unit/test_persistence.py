@@ -51,7 +51,7 @@ def test_mode_flags(mode, rdb, aof):
 
 @pytest.mark.parametrize("mode", ["AOF", "None"])
 def test_save_points_are_ignored_outside_the_rdb_modes(mode):
-    """DA290 only reads rdb-save-points in the RDB modes, so a bad value can't block AOF or None."""
+    """A bad rdb-save-points can't block AOF or None, which don't use it."""
     persistence = PersistenceConfig.from_charm_config(
         {"persistence-mode": mode, "rdb-save-points": "900"}
     )
@@ -69,7 +69,7 @@ def test_save_points_are_ignored_outside_the_rdb_modes(mode):
         {"rdb-save-points": "0 1"},
         {"rdb-save-points": "900 -1"},
         {"rdb-save-points": "900 one"},
-        # Arabic-Indic digits pass str.isdecimal, Valkey only parses ASCII ones
+        # Arabic-Indic digits pass isdecimal, but Valkey rejects them
         {"rdb-save-points": "\u0669\u0660\u0660 \u0661"},
         {"aof-appendfsync": "sometimes"},
     ],
@@ -260,7 +260,7 @@ def _applied(state_out, relation) -> PersistenceConfig | None:
 
 @pytest.mark.parametrize("live_matches", [True, False])
 def test_reconcile_skips_only_when_applied_and_live(live_matches):
-    """An applied mode is reapplied when the live server drifted, as after a reverted switch."""
+    """The applied mode is applied again when the live server drifted."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_unit_state(
         {"persistence-config": AOF_JSON}, {"applied-persistence-config": AOF_JSON}
@@ -396,7 +396,7 @@ def test_failed_reconcile_does_not_defer_relation_changed():
 
 
 def test_new_leader_stores_the_config():
-    """A leadership change can miss the config-changed that stores the settings."""
+    """A new leader stores the config, since the old one may have missed config-changed."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation, state_in = _started_unit_state({}, {})
     state_in = replace(state_in, leader=True, config={"persistence-mode": "AOF"})
@@ -409,7 +409,7 @@ def test_new_leader_stores_the_config():
 
 
 def test_leader_grants_locks_before_the_reconcile():
-    """A long AOF rewrite wait in the reconcile must not hold up the start and restart locks."""
+    """The leader grants the locks before an AOF rewrite wait can delay them."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation, state_in = _started_unit_state(
         {"persistence-config": AOF_JSON}, {}, peers_data={1: {}}
@@ -541,6 +541,7 @@ def _run_heal(
     primary_ips: list[str],
     force_failover_error: Exception | None = None,
     archive_error: Exception | None = None,
+    primary_healthy: bool = True,
 ):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_unit_state({}, {})
@@ -559,6 +560,7 @@ def _run_heal(
         patch(
             "managers.cluster.ClusterManager.archive_corrupted_aof", side_effect=archive_error
         ) as archive,
+        patch("managers.cluster.ClusterManager.is_healthy", return_value=primary_healthy),
         patch("events.base_events.BaseEvents.reconcile_persistence"),
         patch("src.charm.ValkeyCharm._on_restart_workload", autospec=True) as restart,
     ):
@@ -567,13 +569,14 @@ def _run_heal(
 
 
 def test_heal_resyncs_a_replica_from_the_primary():
-    """Sentinel already failed over: render as replica, move the AOF aside, restart."""
+    """Sentinel already failed over: render as replica and archive, with no charm restart."""
     _, failover, render, archive, restart = _run_heal([NEW_PRIMARY])
 
     failover.assert_not_called()
     render.assert_called_once_with(primary_endpoint=NEW_PRIMARY)
     archive.assert_called_once()
-    restart.assert_called_once()
+    # a second restart would abort the full sync
+    restart.assert_not_called()
 
 
 def test_heal_forces_a_failover_when_still_primary():
@@ -597,8 +600,18 @@ def test_heal_blocks_without_a_healthy_peer():
     assert status_is(state_out, PersistenceStatuses.AOF_CORRUPTED.value)
 
 
+def test_heal_waits_for_a_primary_that_answers():
+    """No heal from a down primary, which would leave this unit empty and promotable."""
+    state_out, _, render, archive, restart = _run_heal([NEW_PRIMARY], primary_healthy=False)
+
+    render.assert_not_called()
+    archive.assert_not_called()
+    restart.assert_not_called()
+    assert status_is(state_out, PersistenceStatuses.AOF_CORRUPTED.value)
+
+
 def test_heal_shows_a_status_when_the_move_fails():
-    """A failed move leaves the unit down, so it shows a status and the next update-status retries."""
+    """A failed archive shows a status, and the next update-status retries."""
     state_out, _, _, _, restart = _run_heal(
         [NEW_PRIMARY], archive_error=ValkeyWorkloadCommandError("mv failed")
     )
