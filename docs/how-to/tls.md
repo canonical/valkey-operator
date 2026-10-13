@@ -230,6 +230,11 @@ If it is required to include the unit number of each unit, this can be done by u
 placeholder. For example, a configuration of `certificate-extra-sans="valkey{unit}.my-external-domain.com"` 
 would result in `valkey0.my-external-domain.com` as an additional SAN in the TLS certificates for unit `valkey/0`.
 
+### Provider rejects the certificate request
+
+If the TLS provider cannot issue the certificate, the unit goes into `blocked` status. The provider's own error message is in the unit logs (`juju debug-log --include valkey/0`).
+
+
 ## Disable TLS
 
 In general, to disable encryption with TLS, remove the relation between Valkey and 
