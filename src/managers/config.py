@@ -17,8 +17,11 @@ from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from core.models import PersistenceConfig
 from literals import (
+    AOF_DIR_NAME,
+    AOF_MANIFEST_NAME,
     CLIENT_PORT,
     PRIMARY_NAME,
+    RDB_FILE_NAME,
     SENTINEL_DOWN_AFTER_MS,
     SENTINEL_LOG_FILE,
     SENTINEL_PORT,
@@ -110,7 +113,9 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["repl-diskless-load"] = "on-empty-db"
         # only the persistence reconcile renders new settings, other renders keep what is live
         persistence = (
-            persistence or self.state.unit_server.applied_persistence_config or PersistenceConfig()
+            persistence
+            or self.state.unit_server.applied_persistence_config
+            or self._initial_persistence()
         )
         for key, value in self.persistence_settings(persistence).items():
             # a missing `save` line falls back to Valkey's own save points, so write `save ""`
@@ -150,6 +155,27 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["tracking-table-max-keys"] = "1000000"
 
         return config_properties
+
+    def _initial_persistence(self) -> PersistenceConfig:
+        """Return the settings for a unit that has applied none, the RDB defaults by default.
+
+        The stored AOF mode wins only when the storage holds an AOF newer than dump.rdb, so a
+        reused volume loads its AOF and an AOF left from an earlier AOF period does not.
+        """
+        stored = self.state.cluster.persistence_config
+        aof_dir = self.workload.working_dir / AOF_DIR_NAME
+        dump = self.workload.working_dir / RDB_FILE_NAME
+        if (
+            stored.aof_enabled
+            and self.workload.path_exists(aof_dir / AOF_MANIFEST_NAME)
+            and (
+                not self.workload.path_exists(dump)
+                or self.workload.has_files_newer_than(aof_dir, dump)
+            )
+        ):
+            logger.info("Loading the AOF on this storage, it is newer than dump.rdb")
+            return stored
+        return PersistenceConfig()
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""

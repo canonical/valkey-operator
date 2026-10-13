@@ -4,6 +4,8 @@
 
 """Unit tests for the persistence modes (DA290)."""
 
+from dataclasses import replace
+from pathlib import PurePosixPath
 from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
@@ -47,6 +49,16 @@ def test_mode_flags(mode, rdb, aof):
     assert (persistence.rdb_enabled, persistence.aof_enabled) == (rdb, aof)
 
 
+@pytest.mark.parametrize("mode", ["AOF", "None"])
+def test_save_points_are_ignored_outside_the_rdb_modes(mode):
+    """DA290 only reads rdb-save-points in the RDB modes, so a bad value can't block AOF or None."""
+    persistence = PersistenceConfig.from_charm_config(
+        {"persistence-mode": mode, "rdb-save-points": "900"}
+    )
+
+    assert persistence.mode == mode
+
+
 @pytest.mark.parametrize(
     "config",
     [
@@ -57,6 +69,8 @@ def test_mode_flags(mode, rdb, aof):
         {"rdb-save-points": "0 1"},
         {"rdb-save-points": "900 -1"},
         {"rdb-save-points": "900 one"},
+        # Arabic-Indic digits pass str.isdecimal, Valkey only parses ASCII ones
+        {"rdb-save-points": "\u0669\u0660\u0660 \u0661"},
         {"aof-appendfsync": "sometimes"},
     ],
 )
@@ -244,17 +258,24 @@ def _applied(state_out, relation) -> PersistenceConfig | None:
     return PersistenceConfig.model_validate_json(unit_data["applied-persistence-config"])
 
 
-def test_reconcile_skips_when_already_applied():
-    """Nothing runs when the unit already applied the stored settings."""
+@pytest.mark.parametrize("live_matches", [True, False])
+def test_reconcile_skips_only_when_applied_and_live(live_matches):
+    """An applied mode is reapplied when the live server drifted, as after a reverted switch."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_unit_state(
         {"persistence-config": AOF_JSON}, {"applied-persistence-config": AOF_JSON}
     )
 
-    with patch("managers.cluster.ClusterManager.enable_new_persistence") as enable:
+    with (
+        patch("managers.cluster.ClusterManager.is_live_persistence", return_value=live_matches),
+        patch("managers.cluster.ClusterManager.enable_new_persistence") as enable,
+        patch("managers.cluster.ClusterManager.disable_old_persistence"),
+        patch("managers.config.ConfigManager.set_config_properties"),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="10.0.0.9"),
+    ):
         ctx.run(ctx.on.update_status(), state_in)
 
-    enable.assert_not_called()
+    assert enable.called is not live_matches
 
 
 def test_reconcile_turns_new_on_renders_then_turns_old_off():
@@ -374,6 +395,48 @@ def test_failed_reconcile_does_not_defer_relation_changed():
     assert not [e for e in state_out.deferred if "BaseEvents" in e.owner]
 
 
+def test_new_leader_stores_the_config():
+    """A leadership change can miss the config-changed that stores the settings."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation, state_in = _started_unit_state({}, {})
+    state_in = replace(state_in, leader=True, config={"persistence-mode": "AOF"})
+
+    with patch("events.base_events.BaseEvents._ensure_workload_ready"):
+        state_out = ctx.run(ctx.on.leader_elected(), state_in)
+
+    app_data = state_out.get_relation(relation.id).local_app_data
+    assert PersistenceConfig.model_validate_json(app_data["persistence-config"]).mode == "AOF"
+
+
+def test_leader_grants_locks_before_the_reconcile():
+    """A long AOF rewrite wait in the reconcile must not hold up the start and restart locks."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation, state_in = _started_unit_state(
+        {"persistence-config": AOF_JSON}, {}, peers_data={1: {}}
+    )
+    order = []
+
+    with (
+        patch(
+            "common.locks.StartLock.process",
+            autospec=True,
+            side_effect=lambda _: order.append("start"),
+        ),
+        patch(
+            "common.locks.RestartLock.process",
+            autospec=True,
+            side_effect=lambda _: order.append("restart"),
+        ),
+        patch(
+            "events.base_events.BaseEvents.reconcile_persistence",
+            side_effect=lambda: order.append("reconcile"),
+        ),
+    ):
+        ctx.run(ctx.on.relation_changed(relation, remote_unit=1), replace(state_in, leader=True))
+
+    assert order == ["start", "restart", "reconcile"]
+
+
 def test_config_set_raises_on_an_error_reply():
     """valkey-cli prints a refused CONFIG SET on stdout with exit code 0."""
     workload = MagicMock()
@@ -397,6 +460,28 @@ def test_shutdown_save_waits_for_aof_rewrite(mocker):
     cm.save_dataset_before_shutdown()
 
     assert [entry[0] for entry in order.mock_calls] == ["idle", "idle", "save"]
+
+
+@pytest.mark.parametrize(
+    "applied,running,saved",
+    [
+        (None, True, False),
+        (PersistenceConfig(mode=PersistenceMode.RDB), True, False),
+        (PersistenceConfig(mode=PersistenceMode.AOF), True, False),
+        (PersistenceConfig(mode=PersistenceMode.NONE), False, False),
+        (PersistenceConfig(mode=PersistenceMode.NONE), True, True),
+    ],
+)
+def test_save_before_restart(mocker, applied, running, saved):
+    """Only a running server in None mode saves before a restart."""
+    cm, client = _cluster_manager(mocker)
+    cm.state.unit_server.applied_persistence_config = applied
+    client.ping.return_value = running
+    save = mocker.patch.object(cm, "_save_database_blocking")
+
+    cm.save_before_restart()
+
+    assert save.called is saved
 
 
 START = "oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo"
@@ -428,11 +513,35 @@ def test_is_aof_corrupted(mocker, reply, manifest_exists, log, corrupted):
         cm.workload.read_file_tail.assert_not_called()
 
 
+@pytest.mark.parametrize("copy_fails", [False, True])
+def test_archive_deletes_the_aof_only_after_a_complete_copy(mocker, copy_fails):
+    """A failed copy leaves no partial archive and keeps the AOF on the data volume."""
+    cm, _ = _cluster_manager(mocker)
+    cm.workload.working_dir = PurePosixPath("/data")
+    cm.workload.archive_dir = PurePosixPath("/archive")
+    if copy_fails:
+        cm.workload.copy_dir.side_effect = ValkeyWorkloadCommandError("No space left on device")
+
+    if copy_fails:
+        with pytest.raises(ValkeyWorkloadCommandError):
+            cm.archive_corrupted_aof()
+    else:
+        cm.archive_corrupted_aof()
+
+    removed = [c.args[0].as_posix() for c in cm.workload.remove_dir.call_args_list]
+    archive = "/archive/appendonlydir.corrupt"
+    assert removed == ([archive, archive] if copy_fails else [archive, "/data/appendonlydir"])
+
+
 OWN_ENDPOINT = "10.0.0.1"
 NEW_PRIMARY = "10.0.0.9"
 
 
-def _run_heal(primary_ips: list[str], force_failover_error: Exception | None = None):
+def _run_heal(
+    primary_ips: list[str],
+    force_failover_error: Exception | None = None,
+    archive_error: Exception | None = None,
+):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_unit_state({}, {})
     with (
@@ -447,7 +556,9 @@ def _run_heal(primary_ips: list[str], force_failover_error: Exception | None = N
             "managers.sentinel.SentinelManager.force_failover", side_effect=force_failover_error
         ) as failover,
         patch("managers.config.ConfigManager.set_config_properties") as render,
-        patch("managers.cluster.ClusterManager.archive_corrupted_aof") as archive,
+        patch(
+            "managers.cluster.ClusterManager.archive_corrupted_aof", side_effect=archive_error
+        ) as archive,
         patch("events.base_events.BaseEvents.reconcile_persistence"),
         patch("src.charm.ValkeyCharm._on_restart_workload", autospec=True) as restart,
     ):
@@ -484,3 +595,13 @@ def test_heal_blocks_without_a_healthy_peer():
     archive.assert_not_called()
     restart.assert_not_called()
     assert status_is(state_out, PersistenceStatuses.AOF_CORRUPTED.value)
+
+
+def test_heal_shows_a_status_when_the_move_fails():
+    """A failed move leaves the unit down, so it shows a status and the next update-status retries."""
+    state_out, _, _, _, restart = _run_heal(
+        [NEW_PRIMARY], archive_error=ValkeyWorkloadCommandError("mv failed")
+    )
+
+    restart.assert_not_called()
+    assert status_is(state_out, PersistenceStatuses.AOF_HEAL_FAILED.value)

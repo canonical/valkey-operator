@@ -43,6 +43,8 @@ def _make_config_manager(planned_units: int = 3) -> ConfigManager:
     # Default RAM is well above the 1 GiB gate; the RAM-gated test overrides
     # this on a per-case basis.
     workload.total_memory_bytes.return_value = 2 * 1024**3
+    # no AOF or dump.rdb on the storage
+    workload.path_exists.return_value = False
 
     return ConfigManager(state=state, workload=workload)
 
@@ -167,6 +169,28 @@ def test_explicit_settings_override_the_applied_ones():
     )
 
     assert props["appendonly"] == "yes"
+
+
+@pytest.mark.parametrize(
+    "has_manifest,has_dump,aof_newer,appendonly",
+    [
+        (True, True, True, "yes"),
+        (True, False, False, "yes"),
+        (True, True, False, "no"),
+        (False, True, False, "no"),
+    ],
+)
+def test_reused_aof_loads_only_when_newest(has_manifest, has_dump, aof_newer, appendonly):
+    """A unit with nothing applied renders the stored AOF mode only for an AOF that is newest."""
+    cm = _make_config_manager()
+    cm.state.cluster.persistence_config = PersistenceConfig(mode=PersistenceMode.AOF)
+    cm.workload.working_dir = PurePosixPath("/var/lib/valkey")
+    cm.workload.path_exists.side_effect = lambda path: (
+        has_manifest if path.name == "appendonly.aof.manifest" else has_dump
+    )
+    cm.workload.has_files_newer_than.return_value = aof_newer
+
+    assert cm.get_config_properties(primary_endpoint="10.0.0.5")["appendonly"] == appendonly
 
 
 def test_invalid_persistence_config_blocks_the_app():

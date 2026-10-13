@@ -14,6 +14,7 @@ from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import RestartWorkloadEvent, TopologyChangedCharmEvents
 from common.exceptions import (
+    ValkeyClusterNotReadyError,
     ValkeyServicesFailedToStartError,
     ValkeyUpgradeError,
     ValkeyWorkloadCommandError,
@@ -214,6 +215,8 @@ class ValkeyCharm(ops.CharmBase):
 
         try:
             if event.restart_valkey:
+                # DA290: a planned restart keeps the data in every mode, None included
+                self.cluster_manager.save_before_restart()
                 self.workload.restart(self.workload.valkey_service)
             if event.restart_sentinel:
                 # if primary endpoint is given, write sentinel config
@@ -224,6 +227,7 @@ class ValkeyCharm(ops.CharmBase):
                     )
                 self.sentinel_manager.restart_service()
         except (
+            ValkeyClusterNotReadyError,
             ValkeyServicesFailedToStartError,
             ValkeyWorkloadCommandError,
         ) as e:

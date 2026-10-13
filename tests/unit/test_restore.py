@@ -1953,7 +1953,7 @@ def test_primary_restores_with_rdb_settings_then_reapplies_persistence(restore_m
     order = []
     mocker.patch(
         "managers.config.ConfigManager.set_config_properties",
-        side_effect=lambda **kwargs: order.append(("render", kwargs.get("persistence"))),
+        side_effect=lambda **kwargs: order.append(("render", kwargs["persistence"].mode)),
     )
     restore_managers.restore_on_primary.side_effect = lambda: order.append("restore")
     mocker.patch(
@@ -1975,5 +1975,5 @@ def test_primary_restores_with_rdb_settings_then_reapplies_persistence(restore_m
 
     state_out = ctx.run(ctx.on.update_status(), state)
 
-    assert order == [("render", None), "restore", "reconcile"]
+    assert order == [("render", PersistenceMode.RDB), "restore", "reconcile"]
     assert "applied-persistence-config" not in _peer_unit_data(state_out)

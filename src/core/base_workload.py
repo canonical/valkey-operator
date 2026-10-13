@@ -376,6 +376,17 @@ class WorkloadBase(ABC):
         """
         return self.exec(["tail", "-n", str(lines), path.as_posix()])[0]
 
+    def has_files_newer_than(
+        self, directory: pathops.PathProtocol, reference: pathops.PathProtocol
+    ) -> bool:
+        """Whether any file under a directory was modified after a reference file.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the check cannot run.
+        """
+        command = ["find", directory.as_posix(), "-type", "f", "-newer", reference.as_posix()]
+        return bool(self.exec(command)[0].strip())
+
     @abstractmethod
     def push_data_file(
         self,
@@ -390,6 +401,15 @@ class WorkloadBase(ABC):
     @abstractmethod
     def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
         """Rename a file within the data dir."""
+        pass
+
+    @abstractmethod
+    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        """Copy a directory with its content, also across partitions.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the copy fails.
+        """
         pass
 
     @abstractmethod

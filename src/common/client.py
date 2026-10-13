@@ -325,6 +325,14 @@ class ValkeyClient(CliClient):
                 f"CONFIG SET {', '.join(config_settings)} refused on {hostname}"
             )
 
+    def config_get(self, keys: list[str], hostname: str) -> dict[str, str]:
+        """Read config values from a Valkey server.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails.
+        """
+        return self.exec_cli_command(["CONFIG", "GET", *keys], hostname=hostname)
+
     def save(self, hostname: str) -> None:
         """Run a blocking save.
 

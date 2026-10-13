@@ -67,6 +67,11 @@ class PersistenceStatuses(Enum):
         message="Corrupted AOF, no healthy unit to resync from",
         running="async",
     )
+    AOF_HEAL_FAILED = StatusObject(
+        status="maintenance",
+        message="Corrupted AOF, healing failed, retrying",
+        running="async",
+    )
 
 
 class StartStatuses(Enum):

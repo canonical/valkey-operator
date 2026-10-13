@@ -289,19 +289,18 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
-        # reassert min-replicas-to-write to match the (possibly changed) topology
+        if self.charm.unit.is_leader():
+            for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
+                lock.process()
+
+        # after the lock grants, so waiting on an AOF rewrite never holds them up
         if self.charm.state.unit_server.is_started:
+            # reassert min-replicas-to-write to match the (possibly changed) topology
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
             self.charm.metrics_manager.reconcile()
             self.reconcile_persistence()
 
-        if not self.charm.unit.is_leader():
-            return
-
-        for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
-            lock.process()
-
-        if not self.charm.state.unit_server.is_active:
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
             return
 
         try:
@@ -398,6 +397,9 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the old leader may have missed the config-changed that stores it
+        self._store_persistence_config()
 
         if self.charm.state.unit_server.is_active:
             try:
@@ -573,10 +575,16 @@ class BaseEvents(ops.Object):
         the waits and update-status already retries.
         """
         persistence = self.charm.state.cluster.persistence_config
-        if self.charm.state.unit_server.applied_persistence_config == persistence:
-            return
-
         settings = self.charm.config_manager.persistence_settings(persistence)
+        if self.charm.state.unit_server.applied_persistence_config == persistence:
+            # a failed switch that was then reverted can leave the new settings on live
+            try:
+                if self.charm.cluster_manager.is_live_persistence(settings):
+                    return
+            except ValkeyWorkloadCommandError:
+                # a server that is down restarts on the rendered file, which already matches
+                return
+
         try:
             # resolved first, so a server switched live always gets its file rendered to match
             primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
@@ -626,6 +634,11 @@ class BaseEvents(ops.Object):
         try:
             if not self.charm.cluster_manager.is_aof_corrupted():
                 return
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Cannot check the AOF: %s", e)
+            return
+
+        try:
             primary = self.charm.sentinel_manager.get_primary_ip()
             if primary == self.charm.state.endpoint:
                 logger.warning("The primary has a corrupted AOF, forcing a failover")
@@ -647,6 +660,12 @@ class BaseEvents(ops.Object):
             return
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to heal the corrupted AOF: %s", e)
+            self.charm.status.set_running_status(
+                PersistenceStatuses.AOF_HEAL_FAILED.value,
+                scope="unit",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
             return
 
         self.charm.state.statuses.delete(

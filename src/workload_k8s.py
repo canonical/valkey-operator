@@ -268,6 +268,22 @@ class ValkeyK8sWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
+    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        try:
+            self.container.exec(
+                command=["cp", "-a", src.as_posix(), dest.as_posix()],
+                timeout=DATASET_IO_TIMEOUT_S,
+            ).wait()
+        except (
+            pebble.ExecError,
+            pebble.ChangeError,
+            pebble.ConnectionError,
+            pebble.APIError,
+            pebble.TimeoutError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+
+    @override
     def check_aof(self, manifest: pathops.PathProtocol) -> bool:
         try:
             self.container.exec(

@@ -28,7 +28,13 @@ from common.exceptions import (
     ValkeyRestoreError,
     ValkeyWorkloadCommandError,
 )
-from core.models import AzureStorageParameters, BackupCredentials, GCSParameters, S3Parameters
+from core.models import (
+    AzureStorageParameters,
+    BackupCredentials,
+    GCSParameters,
+    PersistenceConfig,
+    S3Parameters,
+)
 from literals import (
     AZURE_RELATION_NAME,
     BACKUP_CREDENTIAL_FIELDS,
@@ -606,7 +612,9 @@ class BackupEvents(ops.Object):
         # Valkey ignores dump.rdb while AOF is on, so restart on the RDB defaults and let the
         # persistence reconcile switch AOF back on from the loaded data
         self.charm.state.unit_server.update({"applied_persistence_config": None})
-        self.charm.config_manager.set_config_properties(primary_endpoint=self.charm.state.endpoint)
+        self.charm.config_manager.set_config_properties(
+            primary_endpoint=self.charm.state.endpoint, persistence=PersistenceConfig()
+        )
         try:
             self.charm.backup_manager.restore_on_primary()
             self.charm.cluster_manager.wait_until_loaded(RESTORE_LOAD_TIMEOUT_S)
