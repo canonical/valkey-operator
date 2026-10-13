@@ -21,9 +21,10 @@ environment variable.
   bypasses that model. Don't reach for it as an escape hatch.
 - NEVER call `workload.exec()` with raw CLI strings from managers — add a method to
   `ValkeyClient`/`SentinelClient` in `common/client.py` (the only place CLI commands are built).
-- NEVER restart services inline — call `self.charm.rollingops.request_async_lock("restart", ...)`;
+- NEVER restart services inline — call `self.charm.request_restart(...)`;
   it queues a `restart` operation in `charmlibs-rollingops`, and `BaseEvents.restart_workload` runs
-  it once the lock is granted, health-checks, and returns `RETRY_RELEASE` if unhealthy.
+  it once the lock is granted, health-checks, and returns `RETRY_HOLD` if unhealthy, keeping the
+  lock until it recovers.
 - NEVER hand-edit `lib/charms/*` — CI's `lib-check` fails the PR unless content matches the
   published Charmhub lib; update only via `charmcraft fetch-lib`.
 - A new `WorkloadBase` operation MUST be an `@abstractmethod` implemented in BOTH
@@ -160,9 +161,10 @@ All paths below are under `src/`.
   away. Reuse these for any operation that must not run concurrently across units.
 - **Startup is a state machine driven by rollingops retries**, not a single function: `_on_start`
   checks the prerequisites (deferring if they fail), then queues the `start` operation. The
-  `start_unit` callback runs once the lock is granted and returns `RETRY_RELEASE` while it walks
-  through `StartState` (`WAITING_FOR_PRIMARY_START` → `STARTING_WAITING_VALKEY` → `..._SENTINEL` →
-  `..._REPLICA_SYNC` → `STARTED`), persisted in `PeerUnitModel.start_state`. Callbacks must not
+  `start_unit` callback runs once the lock is granted. It returns `RETRY_RELEASE` while it cannot
+  start yet and `RETRY_HOLD` once its services are started, so no restart or other start runs until
+  it is in sync. It walks through `StartState` (`WAITING_FOR_PRIMARY_START` →
+  `STARTING_WAITING_VALKEY` → `..._SENTINEL` → `..._REPLICA_SYNC` → `STARTED`), persisted in `PeerUnitModel.start_state`. Callbacks must not
   defer. Many handlers early-return unless `state.unit_server.is_active`.
 - **The topology observer** is a long-lived subprocess the leader spawns
   (`TopologyManager.start_observer`). It watches Sentinel and on a primary change runs `juju-exec`
