@@ -272,7 +272,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self, service: str | None = None) -> bool:
+    def alive(self, service: str | None = None) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
             for service_name in services:
@@ -339,7 +339,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         targets = (
             (service,)
             if service

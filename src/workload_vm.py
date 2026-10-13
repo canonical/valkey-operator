@@ -12,10 +12,10 @@ import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from pathlib import Path
 from typing import BinaryIO, override
 
-import tomllib
 from charmlibs import pathops, snap
 from tenacity import (
     Retrying,
@@ -298,7 +298,7 @@ class ValkeyVmWorkload(WorkloadBase):
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self, service: str | None = None) -> bool:
+    def alive(self, service: str | None = None) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
             return all(bool(self.valkey.services[s]["active"]) for s in services)
@@ -335,7 +335,7 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         services = [service] if service else [SNAP_SERVICE, SNAP_SENTINEL_SERVICE]
         try:
             self.valkey.stop(services=services)
