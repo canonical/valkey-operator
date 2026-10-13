@@ -141,6 +141,8 @@ def test_persistence_keys_follow_the_applied_mode(mode, save, appendonly, del_sy
     assert props["save"] == save
     assert props["appendonly"] == appendonly
     assert props["rdb-del-sync-files"] == del_sync_files
+    # None mode saves on SIGTERM, the other modes follow their save points
+    assert props["shutdown-on-sigterm"] == ("save" if mode == PersistenceMode.NONE else "default")
     assert props["appendfsync"] == "everysec"
     assert props["aof-timestamp-enabled"] == "yes"
 

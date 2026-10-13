@@ -220,8 +220,9 @@ def test_reused_storage_keeps_writes_after_the_last_save(
         timeout=DEPLOY_TIMEOUT_S,
     )
 
-    log = juju.cli("debug-log", "--replay", "--no-tail", "--include", APP_NAME)
-    assert "Loading the AOF on this storage" in log, "the new unit did not load the AOF"
+    new_unit = next(iter(juju.status().get_units(APP_NAME)))
+    log = juju.cli("debug-log", "--replay", "--no-tail", "--include", new_unit)
+    assert "Loading the AOF on this storage" in log, f"{new_unit} did not load the AOF"
     assert_continuous_writes_consistent(
         endpoints=get_cluster_addresses(juju, APP_NAME),
         username=CharmUsers.VALKEY_ADMIN.value,

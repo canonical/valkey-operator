@@ -176,12 +176,14 @@ AOF_SETTINGS = {
     "appendonly": "yes",
     "appendfsync": "everysec",
     "rdb-del-sync-files": "no",
+    "shutdown-on-sigterm": "default",
 }
 RDB_SETTINGS = {
     "save": "900 1",
     "appendonly": "no",
     "appendfsync": "everysec",
     "rdb-del-sync-files": "no",
+    "shutdown-on-sigterm": "default",
 }
 
 
@@ -195,7 +197,7 @@ def test_rdb_to_aof_keeps_rdb_on_until_disable(mocker):
 
     assert client.config_set.call_args_list == [
         call({"appendonly": "yes"}, hostname="10.0.0.1"),
-        call({"appendfsync": "everysec"}, hostname="10.0.0.1"),
+        call({"appendfsync": "everysec", "shutdown-on-sigterm": "default"}, hostname="10.0.0.1"),
     ]
 
     client.config_set.reset_mock()
@@ -217,7 +219,10 @@ def test_aof_to_rdb_saves_rdb_and_keeps_aof_on_until_disable(mocker):
     cm.enable_new_persistence(RDB_SETTINGS)
 
     assert order.mock_calls == [
-        call.config_set({"appendfsync": "everysec", "save": "900 1"}, hostname="10.0.0.1"),
+        call.config_set(
+            {"appendfsync": "everysec", "shutdown-on-sigterm": "default", "save": "900 1"},
+            hostname="10.0.0.1",
+        ),
         call.save(),
     ]
 
@@ -259,11 +264,19 @@ def _applied(state_out, relation) -> PersistenceConfig | None:
 
 
 @pytest.mark.parametrize("live_matches", [True, False])
-def test_reconcile_skips_only_when_applied_and_live(live_matches):
+@pytest.mark.parametrize(
+    "stored",
+    # AOF mode doesn't use save points, so this edit changes no Valkey setting
+    [
+        AOF_JSON,
+        PersistenceConfig(mode=PersistenceMode.AOF, rdb_save_points="60 1").model_dump_json(),
+    ],
+)
+def test_reconcile_skips_only_when_applied_and_live(live_matches, stored):
     """The applied mode is applied again when the live server drifted."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     _, state_in = _started_unit_state(
-        {"persistence-config": AOF_JSON}, {"applied-persistence-config": AOF_JSON}
+        {"persistence-config": stored}, {"applied-persistence-config": AOF_JSON}
     )
 
     with (
@@ -462,28 +475,6 @@ def test_shutdown_save_waits_for_aof_rewrite(mocker):
     assert [entry[0] for entry in order.mock_calls] == ["idle", "idle", "save"]
 
 
-@pytest.mark.parametrize(
-    "applied,running,saved",
-    [
-        (None, True, False),
-        (PersistenceConfig(mode=PersistenceMode.RDB), True, False),
-        (PersistenceConfig(mode=PersistenceMode.AOF), True, False),
-        (PersistenceConfig(mode=PersistenceMode.NONE), False, False),
-        (PersistenceConfig(mode=PersistenceMode.NONE), True, True),
-    ],
-)
-def test_save_before_restart(mocker, applied, running, saved):
-    """Only a running server in None mode saves before a restart."""
-    cm, client = _cluster_manager(mocker)
-    cm.state.unit_server.applied_persistence_config = applied
-    client.ping.return_value = running
-    save = mocker.patch.object(cm, "_save_database_blocking")
-
-    cm.save_before_restart()
-
-    assert save.called is saved
-
-
 START = "oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo"
 READY = "Ready to accept connections tls"
 FATAL = "Bad file format reading the append only file appendonly.aof.3.incr.aof: make a backup"
@@ -528,9 +519,14 @@ def test_archive_deletes_the_aof_only_after_a_complete_copy(mocker, copy_fails):
     else:
         cm.archive_corrupted_aof()
 
-    removed = [c.args[0].as_posix() for c in cm.workload.remove_dir.call_args_list]
+    removed = [
+        c.args[0].as_posix()
+        for c in cm.workload.mock_calls
+        if c[0] in ("remove_dir", "remove_file")
+    ]
     archive = "/archive/appendonlydir.corrupt"
-    assert removed == ([archive, archive] if copy_fails else [archive, "/data/appendonlydir"])
+    deleted = [archive, "/data/appendonlydir/appendonly.aof.manifest", "/data/appendonlydir"]
+    assert removed == ([archive, archive] if copy_fails else deleted)
 
 
 OWN_ENDPOINT = "10.0.0.1"

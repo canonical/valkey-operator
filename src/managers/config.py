@@ -67,6 +67,8 @@ class ConfigManager(ManagerStatusProtocol):
             "appendonly": "yes" if persistence.aof_enabled else "no",
             "appendfsync": persistence.aof_appendfsync.value,
             "rdb-del-sync-files": "no" if any_persistence else "yes",
+            # None mode has no save points, so this makes a planned stop (SIGTERM) save (DA290)
+            "shutdown-on-sigterm": "default" if any_persistence else "save",
         }
 
     def get_config_properties(

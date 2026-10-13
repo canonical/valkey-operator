@@ -576,7 +576,9 @@ class BaseEvents(ops.Object):
         """
         persistence = self.charm.state.cluster.persistence_config
         settings = self.charm.config_manager.persistence_settings(persistence)
-        if self.charm.state.unit_server.applied_persistence_config == persistence:
+        applied = self.charm.state.unit_server.applied_persistence_config
+        # compare Valkey settings, so editing an option the mode doesn't use reapplies nothing
+        if applied and self.charm.config_manager.persistence_settings(applied) == settings:
             # a reverted failed switch can leave the new settings live
             try:
                 if self.charm.cluster_manager.is_live_persistence(settings):

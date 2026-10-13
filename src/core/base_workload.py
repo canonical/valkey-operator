@@ -11,7 +11,7 @@ from typing import IO, BinaryIO, Protocol, runtime_checkable
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import EXEC_TIMEOUT_S
+from literals import AOF_TEMP_FILE_PREFIX, EXEC_TIMEOUT_S
 
 
 @runtime_checkable
@@ -379,12 +379,14 @@ class WorkloadBase(ABC):
     def has_files_newer_than(
         self, directory: pathops.PathProtocol, reference: pathops.PathProtocol
     ) -> bool:
-        """Whether any file under a directory was modified after a reference file.
+        """Whether a file under a directory, temp files excluded, is newer than a reference.
 
         Raises:
             ValkeyWorkloadCommandError: If the check cannot run.
         """
+        # Valkey doesn't load temp files, such as the incr file of an unfinished rewrite
         command = ["find", directory.as_posix(), "-type", "f", "-newer", reference.as_posix()]
+        command += ["!", "-name", f"{AOF_TEMP_FILE_PREFIX}*"]
         return bool(self.exec(command)[0].strip())
 
     @abstractmethod

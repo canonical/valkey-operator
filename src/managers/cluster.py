@@ -390,7 +390,12 @@ class ClusterManager(ManagerStatusProtocol):
 
         rdb_on = {"save": settings["save"]} if settings["save"] else {}
         client.config_set(
-            {"appendfsync": settings["appendfsync"], **rdb_on}, hostname=self.state.endpoint
+            {
+                "appendfsync": settings["appendfsync"],
+                "shutdown-on-sigterm": settings["shutdown-on-sigterm"],
+                **rdb_on,
+            },
+            hostname=self.state.endpoint,
         )
 
         # once the file says appendonly no, a restart loads dump.rdb, so make it current first
@@ -432,23 +437,6 @@ class ClusterManager(ManagerStatusProtocol):
         """
         live = self._get_valkey_client().config_get(list(settings), self.state.endpoint)
         return live == settings
-
-    def save_before_restart(self) -> None:
-        """Save a running server in None mode, so a restart doesn't empty it.
-
-        Raises:
-            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``DATASET_IO_TIMEOUT_S``.
-            ValkeyWorkloadCommandError: If the save fails.
-        """
-        persistence = self.state.unit_server.applied_persistence_config
-        # no applied settings means the RDB defaults, which save on shutdown
-        if not persistence or persistence.rdb_enabled or persistence.aof_enabled:
-            return
-        # a down or loading server has nothing to save
-        if not self._get_valkey_client().ping(self.state.endpoint):
-            return
-        logger.info("Save dataset to disk before the restart, persistence-mode is None")
-        self._save_database_blocking()
 
     def save_dataset_before_shutdown(self) -> None:
         """Save, then disable save-on-shutdown so Pebble cannot kill a shutdown save.
@@ -523,6 +511,9 @@ class ClusterManager(ManagerStatusProtocol):
             # a partial copy would look complete
             self.workload.remove_dir(archive)
             raise
+        # Delete the manifest first. If the rest then fails partway, Valkey ignores the leftover
+        # files, so the unit doesn't look corrupted again and the archive keeps its full copy.
+        self.workload.remove_file(aof_dir / AOF_MANIFEST_NAME)
         self.workload.remove_dir(aof_dir)
         logger.warning("Moved the corrupted AOF to %s", archive)
 

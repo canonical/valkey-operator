@@ -98,6 +98,7 @@ DEFAULT_RDB_SAVE_POINTS = "900 1 300 100 60 10000"
 # Valkey's multi-part AOF layout inside the data dir (appenddirname and its manifest)
 AOF_DIR_NAME = "appendonlydir"
 AOF_MANIFEST_NAME = "appendonly.aof.manifest"
+AOF_TEMP_FILE_PREFIX = "temp-"
 RDB_FILE_NAME = "dump.rdb"
 # One archive slot for the last corrupted AOF a self-heal moved aside
 AOF_CORRUPT_ARCHIVE_NAME = "appendonlydir.corrupt"

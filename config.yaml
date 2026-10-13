@@ -92,10 +92,10 @@ options:
     default: "900 1 300 100 60 10000"
     description: |
       When to save a point-in-time snapshot (RDB file) of the dataset, as pairs of
-      "<seconds> <changes>". Valkey saves when the given number of seconds elapsed and at least
-      the given number of writes happened. The default saves every 900 seconds after at least 1
-      write, every 300 seconds after at least 100 writes and every 60 seconds after at least
-      10000 writes. Only used when persistence-mode is "RDB" or "RDB+AOF".
+      "<seconds> <changes>". Valkey saves once that many seconds have passed and at least that
+      many writes happened since the last save. The default saves every 900 seconds after at
+      least 1 write, every 300 seconds after at least 100 writes and every 60 seconds after at
+      least 10000 writes. Only used when persistence-mode is "RDB" or "RDB+AOF".
 
   aof-appendfsync:
     type: string
