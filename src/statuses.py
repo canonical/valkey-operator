@@ -8,6 +8,7 @@ This module defines various status enums that represent the state of the charm,
 
 from enum import Enum
 
+from charmlibs.interfaces.tls_certificates import CertificateRequestErrorCode
 from data_platform_helpers.advanced_statuses.models import StatusObject
 
 
@@ -149,6 +150,26 @@ class TLSStatuses(Enum):
     CERTIFICATE_DENIED = StatusObject(
         status="blocked", message="Certificate request was denied, check logs for details"
     )
+    IP_SANS_NOT_SUPPORTED = StatusObject(
+        status="blocked", message="TLS: IP SANs not allowed by provider"
+    )
+    DOMAIN_NOT_ALLOWED = StatusObject(
+        status="blocked", message="TLS: domains not allowed by provider"
+    )
+    WILDCARD_NOT_ALLOWED = StatusObject(
+        status="blocked", message="TLS: wildcards not allowed by provider"
+    )
+    PROVIDER_UNAVAILABLE = StatusObject(
+        status="blocked", message="TLS: provider server unavailable"
+    )
+
+
+TLS_ERROR_CODE_STATUSES: dict[int, TLSStatuses] = {
+    CertificateRequestErrorCode.IP_NOT_ALLOWED: TLSStatuses.IP_SANS_NOT_SUPPORTED,
+    CertificateRequestErrorCode.DOMAIN_NOT_ALLOWED: TLSStatuses.DOMAIN_NOT_ALLOWED,
+    CertificateRequestErrorCode.WILDCARD_NOT_ALLOWED: TLSStatuses.WILDCARD_NOT_ALLOWED,
+    CertificateRequestErrorCode.SERVER_NOT_AVAILABLE: TLSStatuses.PROVIDER_UNAVAILABLE,
+}
 
 
 class ExternalClientsStatuses(Enum):
