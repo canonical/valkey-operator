@@ -9,7 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.models import PersistenceConfig
+from literals import PersistenceMode
 from managers.config import ConfigManager
+from statuses import CharmStatuses, PersistenceStatuses
 
 
 def _make_config_manager(planned_units: int = 3) -> ConfigManager:
@@ -27,6 +30,9 @@ def _make_config_manager(planned_units: int = 3) -> ConfigManager:
     state.unit_server.tls_client_state = None
     state.unit_server.model.client_cert_ready = False
     state.charm.app.planned_units.return_value = planned_units
+    # a unit that never applied persistence settings renders the RDB defaults
+    state.unit_server.applied_persistence_config = None
+    state.config = {}
 
     workload = MagicMock()
     workload.acl_file.as_posix.return_value = "/var/lib/valkey/users.acl"
@@ -112,3 +118,68 @@ def test_sentinel_logfile_points_to_logs_volume(mocker):
     mocker.patch.object(cm, "generate_sentinel_tls_config", return_value={})
     props = cm.get_sentinel_config_properties(primary_endpoint="10.0.0.5")
     assert props["logfile"] == "/var/log/valkey/sentinel.log"
+
+
+@pytest.mark.parametrize(
+    "mode,save,appendonly,del_sync_files",
+    [
+        (PersistenceMode.RDB, "900 1 300 100 60 10000", "no", "no"),
+        (PersistenceMode.AOF, '""', "yes", "no"),
+        (PersistenceMode.RDB_AOF, "900 1 300 100 60 10000", "yes", "no"),
+        (PersistenceMode.NONE, '""', "no", "yes"),
+    ],
+)
+def test_persistence_keys_follow_the_applied_mode(mode, save, appendonly, del_sync_files):
+    """valkey.conf carries DA290's settings for the mode the unit applied."""
+    cm = _make_config_manager()
+    cm.state.unit_server.applied_persistence_config = PersistenceConfig(mode=mode)
+
+    props = cm.get_config_properties(primary_endpoint="10.0.0.5")
+
+    assert props["save"] == save
+    assert props["appendonly"] == appendonly
+    assert props["rdb-del-sync-files"] == del_sync_files
+    assert props["appendfsync"] == "everysec"
+    assert props["aof-timestamp-enabled"] == "yes"
+
+
+def test_unapplied_unit_renders_rdb_defaults():
+    """A unit that never applied the settings renders RDB, even if AOF is stored for the app.
+
+    Only the reconcile may switch AOF on, because a restart into AOF without an AOF on disk
+    starts empty.
+    """
+    cm = _make_config_manager()
+    cm.state.cluster.persistence_config = PersistenceConfig(mode=PersistenceMode.AOF)
+
+    props = cm.get_config_properties(primary_endpoint="10.0.0.5")
+
+    assert props["appendonly"] == "no"
+    assert props["save"] == "900 1 300 100 60 10000"
+
+
+def test_explicit_settings_override_the_applied_ones():
+    """The reconcile renders the new settings before it records them."""
+    cm = _make_config_manager()
+
+    props = cm.get_config_properties(
+        primary_endpoint="10.0.0.5", persistence=PersistenceConfig(mode=PersistenceMode.AOF)
+    )
+
+    assert props["appendonly"] == "yes"
+
+
+def test_invalid_persistence_config_blocks_the_app():
+    """An invalid option surfaces a blocked app status."""
+    cm = _make_config_manager()
+    cm.state.config = {"persistence-mode": "aof"}
+
+    assert PersistenceStatuses.INVALID_CONFIG.value in cm.get_statuses(scope="app")
+
+
+def test_valid_persistence_config_keeps_the_app_active():
+    """A valid config adds no status."""
+    cm = _make_config_manager()
+    cm.state.config = {"persistence-mode": "AOF"}
+
+    assert cm.get_statuses(scope="app") == [CharmStatuses.ACTIVE_IDLE.value]

@@ -8,16 +8,19 @@ import logging
 from typing import TYPE_CHECKING
 
 import ops
+from pydantic import ValidationError
 
 from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
     RequestingLockTimedOutError,
+    SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
     ValkeyCannotGetPrimaryIPError,
+    ValkeyClusterNotReadyError,
     ValkeyConfigurationError,
     ValkeyServiceNotAliveError,
     ValkeyServicesCouldNotBeStoppedError,
@@ -25,6 +28,7 @@ from common.exceptions import (
     ValkeyWorkloadCommandError,
 )
 from common.locks import RestartLock, ScaleDownLock, StartLock
+from core.models import PersistenceConfig
 from literals import (
     ARCHIVE_STORAGE,
     CLIENT_PORT,
@@ -43,7 +47,7 @@ from literals import (
     Substrate,
     TLSState,
 )
-from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses
+from statuses import CharmStatuses, ClusterStatuses, PersistenceStatuses, ScaleDownStatuses
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
@@ -289,6 +293,7 @@ class BaseEvents(ops.Object):
         if self.charm.state.unit_server.is_started:
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
             self.charm.metrics_manager.reconcile()
+            self.reconcile_persistence()
 
         if not self.charm.unit.is_leader():
             return
@@ -358,11 +363,16 @@ class BaseEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
+        self._heal_corrupted_aof()
+
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
             return
 
         self.charm.metrics_manager.reconcile()
+
+        if not self.charm.state.cluster.is_restore_in_progress:
+            self.reconcile_persistence()
 
         # runs before the leader check (any unit's address can change) and is not
         # deferred: update-status repeats on its own
@@ -511,6 +521,10 @@ class BaseEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
+        if self.charm.unit.is_leader():
+            # needs no unit address, so a deferred address reconcile must not delay it
+            self._store_persistence_config()
+
         if not self._reconcile_unit_address():
             # config-changed does not repeat on its own, so the reconcile must be retried
             event.defer()
@@ -518,6 +532,11 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the leader gets no relation-changed for its own app databag write
+        state = self.charm.state
+        if state.unit_server.is_started and not state.cluster.is_restore_in_progress:
+            self.reconcile_persistence()
 
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
@@ -536,6 +555,107 @@ class BaseEvents(ops.Object):
                 self.charm.topology_manager.restart_observer()
             except (ValkeyWorkloadCommandError, ValueError) as e:
                 logger.error("Failed to restart topology observer: %s", e)
+
+    def _store_persistence_config(self) -> None:
+        """Store valid persistence settings for all units, keep the last valid ones otherwise."""
+        try:
+            persistence = PersistenceConfig.from_charm_config(self.charm.config)
+        except ValidationError as e:
+            logger.error("Invalid persistence config, keeping the last valid settings: %s", e)
+            return
+
+        self.charm.state.cluster.update({"persistence_config": persistence})
+
+    def reconcile_persistence(self) -> None:
+        """Move this unit to the stored persistence settings if it has not applied them yet.
+
+        Failures are logged, never deferred, because a replay would block every later hook on
+        the waits and update-status already retries.
+        """
+        persistence = self.charm.state.cluster.persistence_config
+        if self.charm.state.unit_server.applied_persistence_config == persistence:
+            return
+
+        settings = self.charm.config_manager.persistence_settings(persistence)
+        try:
+            # resolved first, so a server switched live always gets its file rendered to match
+            primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
+            logger.info("Applying persistence mode %s", persistence.mode)
+            # new on, file, old off: whatever valkey.conf names on a restart is still current
+            self.charm.cluster_manager.enable_new_persistence(settings)
+            self.charm.config_manager.set_config_properties(
+                primary_endpoint=primary_endpoint, persistence=persistence
+            )
+            self.charm.cluster_manager.disable_old_persistence(settings)
+        except (
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyClusterNotReadyError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Failed to apply the persistence settings: %s", e)
+            self.charm.status.set_running_status(
+                PersistenceStatuses.NOT_APPLIED.value,
+                scope="unit",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
+            return
+
+        self.charm.state.statuses.delete(
+            PersistenceStatuses.NOT_APPLIED.value,
+            scope="unit",
+            component=self.charm.cluster_manager.name,
+        )
+        self.charm.state.unit_server.update({"applied_persistence_config": persistence})
+
+    def _heal_corrupted_aof(self) -> None:
+        """Rebuild a unit whose AOF is corrupted with a full sync from the primary (DA290).
+
+        A primary that Sentinel has not failed over yet gets a forced failover first.
+        """
+        unit = self.charm.state.unit_server
+        # a unit that never launched Valkey cannot have crashed on its AOF
+        if (
+            not unit.model
+            or unit.model.start_state == StartState.NOT_STARTED.value
+            or self.charm.state.cluster.is_restore_in_progress
+            or unit.model.scale_down_state != ScaleDownState.NO_SCALE_DOWN.value
+        ):
+            return
+
+        try:
+            if not self.charm.cluster_manager.is_aof_corrupted():
+                return
+            primary = self.charm.sentinel_manager.get_primary_ip()
+            if primary == self.charm.state.endpoint:
+                logger.warning("The primary has a corrupted AOF, forcing a failover")
+                self.charm.sentinel_manager.force_failover()
+                primary = self.charm.sentinel_manager.get_primary_ip()
+            if primary == self.charm.state.endpoint:
+                raise SentinelFailoverError("Sentinel still reports this unit as primary")
+            # rendered before the AOF moves, so an auto-restart comes back as a replica
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary)
+            self.charm.cluster_manager.archive_corrupted_aof()
+        except (SentinelFailoverError, ValkeyCannotGetPrimaryIPError) as e:
+            logger.error("Cannot heal the corrupted AOF: %s", e)
+            self.charm.status.set_running_status(
+                PersistenceStatuses.AOF_CORRUPTED.value,
+                scope="unit",
+                component_name=self.charm.cluster_manager.name,
+                statuses_state=self.charm.state.statuses,
+            )
+            return
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Failed to heal the corrupted AOF: %s", e)
+            return
+
+        self.charm.state.statuses.delete(
+            PersistenceStatuses.AOF_CORRUPTED.value,
+            scope="unit",
+            component=self.charm.cluster_manager.name,
+        )
+        if unit.is_started:
+            self.charm.restart_workload.emit(restart_valkey=True, restart_sentinel=False)
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""

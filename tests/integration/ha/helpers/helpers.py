@@ -691,6 +691,24 @@ def patch_restart_delay(
             pebble_patch_restart_delay(juju, unit_name, delay=delay, ensure_replan=True)
 
 
+def run_in_workload(juju: jubilant.Juju, unit_name: str, script: str, substrate: Substrate) -> str:
+    """Run a shell script where the Valkey data lives and return its output.
+
+    Raises:
+        AssertionError: If the script fails on K8s (jubilant raises on VM).
+    """
+    if substrate == Substrate.VM:
+        return juju.exec(script, unit=unit_name).stdout
+
+    config.load_kube_config()
+    kube_client = client.api.core_v1_api.CoreV1Api()
+    returncode, output = _pod_exec(
+        kube_client, juju.model, unit_name.replace("/", "-"), "valkey", ["sh", "-c", script]
+    )
+    assert returncode == 0, f"Script failed on {unit_name}: rc={returncode}, output={output!r}"
+    return output
+
+
 def reboot_unit(juju: jubilant.Juju, unit_name: str, substrate: Substrate) -> None:
     """Reboot a unit."""
     if substrate == Substrate.VM:

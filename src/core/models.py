@@ -7,7 +7,7 @@
 import base64
 import json
 import logging
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any, final
 
 import ops
@@ -38,10 +38,13 @@ from literals import (
     AZURE_HTTPS_PROTOCOLS,
     AZURE_REJECTED_PROTOCOLS,
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
+    DEFAULT_RDB_SAVE_POINTS,
     GCS_STORAGE_CLASSES,
     INTERNAL_CERTS_SECRET_LABEL_SUFFIX,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
+    AppendFsync,
     CharmUsers,
+    PersistenceMode,
     RestoreStep,
     ScaleDownState,
     StartState,
@@ -301,6 +304,49 @@ class GCSParameters(BaseModel):
 BackupCredentials = S3Parameters | AzureStorageParameters | GCSParameters
 
 
+class PersistenceConfig(BaseModel):
+    """Validated persistence settings, from the charm config or the peer databags."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: PersistenceMode = PersistenceMode.RDB
+    rdb_save_points: str = DEFAULT_RDB_SAVE_POINTS
+    aof_appendfsync: AppendFsync = AppendFsync.EVERYSEC
+
+    @classmethod
+    def from_charm_config(cls, config: Mapping[str, Any]) -> "PersistenceConfig":
+        """Build the settings from the charm config options.
+
+        Raises:
+            ValidationError: If any persistence option is invalid.
+        """
+        return cls(
+            mode=config.get("persistence-mode", PersistenceMode.RDB),
+            rdb_save_points=config.get("rdb-save-points", DEFAULT_RDB_SAVE_POINTS),
+            aof_appendfsync=config.get("aof-appendfsync", AppendFsync.EVERYSEC),
+        )
+
+    @field_validator("rdb_save_points")
+    @classmethod
+    def _require_save_point_pairs(cls, value: str) -> str:
+        parts = value.split()
+        if not parts or len(parts) % 2 or not all(part.isdecimal() for part in parts):
+            raise ValueError("rdb-save-points must be pairs of <seconds> <changes> integers")
+        if any(int(seconds) == 0 for seconds in parts[::2]):
+            raise ValueError("rdb-save-points seconds must be greater than 0")
+        return " ".join(parts)
+
+    @property
+    def rdb_enabled(self) -> bool:
+        """Whether this mode writes RDB snapshots."""
+        return self.mode in (PersistenceMode.RDB, PersistenceMode.RDB_AOF)
+
+    @property
+    def aof_enabled(self) -> bool:
+        """Whether this mode writes an append-only file."""
+        return self.mode in (PersistenceMode.AOF, PersistenceMode.RDB_AOF)
+
+
 class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 
@@ -326,6 +372,7 @@ class PeerAppModel(PeerModel):
     restore_instruction: str = Field(default="")
     restore_participants: str = Field(default="")
     sentinel_reset_required: bool = Field(default=False)
+    persistence_config: PersistenceConfig | None = Field(default=None)
 
 
 class PeerUnitModel(PeerModel):
@@ -353,6 +400,7 @@ class PeerUnitModel(PeerModel):
     ldap_enabled: bool = Field(default=False)
     ldap_user_epoch: float | int = Field(default=0)
     ldap_sync_failed: bool = Field(default=False)
+    applied_persistence_config: PersistenceConfig | None = Field(default=None)
 
 
 class RelationState:
@@ -458,6 +506,11 @@ class ValkeyServer(RelationState):
     def is_backup_in_progress(self) -> bool:
         """Check if a backup is currently being uploaded by this unit."""
         return bool(self.model.backup_id) if self.model else False
+
+    @property
+    def applied_persistence_config(self) -> PersistenceConfig | None:
+        """The persistence settings this unit last applied, or None if it never applied any."""
+        return self.model.applied_persistence_config if self.model else None
 
     @property
     def restore_step(self) -> RestoreStep:
@@ -640,6 +693,13 @@ class ValkeyCluster(RelationState):
         if not self.model or not self.model.restore_participants:
             return []
         return self.model.restore_participants.split(",")
+
+    @property
+    def persistence_config(self) -> PersistenceConfig:
+        """The last valid persistence settings, or the defaults if none were stored."""
+        if not self.model or not self.model.persistence_config:
+            return PersistenceConfig()
+        return self.model.persistence_config
 
     @property
     def internal_users_credentials(self) -> dict[str, str]:

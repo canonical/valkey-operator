@@ -4,7 +4,14 @@
 
 """Unit tests for ValkeyVmWorkload.total_memory_bytes per-unit RAM detection."""
 
+import subprocess
+from pathlib import PurePosixPath
+
+import pytest
+from charmlibs import pathops
+
 import workload_vm
+from common.exceptions import ValkeyWorkloadCommandError
 from workload_vm import ValkeyVmWorkload
 
 
@@ -121,3 +128,43 @@ def test_sysconf_path_is_gone():
     import inspect
 
     assert "sysconf" not in inspect.getsource(workload_vm)
+
+
+@pytest.mark.parametrize("returncode,valid", [(0, True), (1, False)])
+def test_check_aof_maps_exit_codes(monkeypatch, returncode, valid):
+    """Exit code 0 means valid and 1 means truncated or corrupted."""
+
+    def fake_run(command, **kwargs):
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, command, output="AOF is not valid")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(workload_vm.subprocess, "run", fake_run)
+
+    assert _vm_workload({}).check_aof(PurePosixPath("/data/appendonly.aof.manifest")) is valid
+
+
+def test_check_aof_raises_when_the_check_cannot_run(monkeypatch):
+    """Any other exit code is a failed check, never a corrupted AOF."""
+
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(127, command)
+
+    monkeypatch.setattr(workload_vm.subprocess, "run", fake_run)
+
+    with pytest.raises(ValkeyWorkloadCommandError):
+        _vm_workload({}).check_aof(PurePosixPath("/data/appendonly.aof.manifest"))
+
+
+def test_remove_dir_removes_the_tree_and_ignores_a_missing_dir(tmp_path):
+    """The archive slot is emptied with its content, and an empty slot is not an error."""
+    archive = tmp_path / "appendonlydir.corrupt"
+    (archive / "nested").mkdir(parents=True)
+    (archive / "appendonly.aof.1.incr.aof").write_text("*1\r\n")
+    (archive / "nested" / "file").write_text("x")
+    workload = _vm_workload({})
+
+    workload.remove_dir(pathops.LocalPath(archive))
+    workload.remove_dir(pathops.LocalPath(archive))
+
+    assert not archive.exists()

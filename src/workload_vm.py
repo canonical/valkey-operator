@@ -36,11 +36,13 @@ from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ARCHIVE_STORAGE_PATH,
     DATA_STORAGE_PATH,
+    DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
     SNAP_ACL_FILE,
+    SNAP_CHECK_AOF_CLI,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
@@ -254,6 +256,25 @@ class ValkeyVmWorkload(WorkloadBase):
             shutil.move(src.as_posix(), dest.as_posix())
         except OSError as e:
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        try:
+            subprocess.run(
+                [SNAP_CHECK_AOF_CLI, manifest.as_posix()],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=DATASET_IO_TIMEOUT_S,
+            )
+        except subprocess.CalledProcessError as e:
+            if e.returncode != 1:
+                raise ValkeyWorkloadCommandError(e)
+            logger.warning("valkey-check-aof found an invalid AOF: %s", e.stdout)
+            return False
+        except (subprocess.TimeoutExpired, OSError) as e:
+            raise ValkeyWorkloadCommandError(e)
+        return True
 
     @override
     def exec(

@@ -30,7 +30,20 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import SAVE_TIMEOUT_S, CharmUsers, ScaleDownState, StartState
+from literals import (
+    AOF_CORRUPT_ARCHIVE_NAME,
+    AOF_DIR_NAME,
+    AOF_LOAD_FATAL_LOG_LINES,
+    AOF_MANIFEST_NAME,
+    DATASET_IO_TIMEOUT_S,
+    VALKEY_LOG_FILE,
+    VALKEY_LOG_TAIL_LINES,
+    VALKEY_READY_LOG_LINE,
+    VALKEY_START_LOG_LINE,
+    CharmUsers,
+    ScaleDownState,
+    StartState,
+)
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
@@ -308,16 +321,100 @@ class ClusterManager(ManagerStatusProtocol):
         """Wait out any running BGSAVE, then run a blocking save.
 
         Raises:
-            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``DATASET_IO_TIMEOUT_S``.
             ValkeyWorkloadCommandError: If the save fails.
         """
         self._wait_until(
             lambda: not self._is_bgsave_in_progress(),
-            SAVE_TIMEOUT_S,
+            DATASET_IO_TIMEOUT_S,
             "background save did not finish",
         )
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
+
+    def _is_aof_rewrite_idle(self) -> bool:
+        """Whether no AOF rewrite is running or scheduled."""
+        info = self._get_valkey_client().info_persistence(hostname=self.state.endpoint)
+        return (
+            info.get("aof_rewrite_in_progress") == "0" and info.get("aof_rewrite_scheduled") == "0"
+        )
+
+    def _is_aof_on(self) -> bool:
+        """Whether AOF is on and its first rewrite finished, so a complete AOF is on disk."""
+        info = self._get_valkey_client().info_persistence(hostname=self.state.endpoint)
+        return (
+            info.get("aof_enabled") == "1"
+            and info.get("aof_rewrite_in_progress") == "0"
+            and info.get("aof_rewrite_scheduled") == "0"
+        )
+
+    def _save_in_background(self) -> None:
+        """Run a BGSAVE and wait for it, without blocking clients like SAVE does.
+
+        Raises:
+            ValkeyClusterNotReadyError: If a child process or the BGSAVE does not finish in time.
+            ValkeyWorkloadCommandError: If the BGSAVE fails.
+        """
+        self._wait_until(
+            lambda: self._is_aof_rewrite_idle() and not self._is_bgsave_in_progress(),
+            DATASET_IO_TIMEOUT_S,
+            "a background child process did not finish",
+        )
+        client = self._get_valkey_client()
+        client.bgsave(hostname=self.state.endpoint)
+        self._wait_until(
+            lambda: not self._is_bgsave_in_progress(),
+            DATASET_IO_TIMEOUT_S,
+            "BGSAVE did not finish",
+        )
+        info = client.info_persistence(hostname=self.state.endpoint)
+        if info.get("rdb_last_bgsave_status") != "ok":
+            raise ValkeyWorkloadCommandError("BGSAVE failed")
+
+    def enable_new_persistence(self, settings: dict[str, str]) -> None:
+        """Turn on, without a restart, the persistence the new settings add.
+
+        The old settings stay on, so the persistence the current valkey.conf names stays current.
+
+        Args:
+            settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
+
+        Raises:
+            ValkeyClusterNotReadyError: If an AOF rewrite or a BGSAVE does not finish in time.
+            ValkeyWorkloadCommandError: If a command fails.
+        """
+        client = self._get_valkey_client()
+        if settings["appendonly"] == "yes":
+            client.config_set({"appendonly": "yes"}, hostname=self.state.endpoint)
+            self._wait_until(self._is_aof_on, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish")
+
+        rdb_on = {"save": settings["save"]} if settings["save"] else {}
+        client.config_set(
+            {"appendfsync": settings["appendfsync"], **rdb_on}, hostname=self.state.endpoint
+        )
+
+        # once the file says appendonly no, a restart loads dump.rdb, so make it current first
+        aof_on = client.info_persistence(hostname=self.state.endpoint).get("aof_enabled") == "1"
+        if settings["appendonly"] == "no" and settings["save"] and aof_on:
+            self._save_in_background()
+
+    def disable_old_persistence(self, settings: dict[str, str]) -> None:
+        """Turn off, without a restart, the old persistence the new settings drop.
+
+        Call it only once valkey.conf names the new settings, so a restart loads current data.
+
+        Args:
+            settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the server refuses the settings.
+        """
+        off = {"rdb-del-sync-files": settings["rdb-del-sync-files"]}
+        if not settings["save"]:
+            off["save"] = ""
+        if settings["appendonly"] == "no":
+            off["appendonly"] = "no"
+        self._get_valkey_client().config_set(off, hostname=self.state.endpoint)
 
     def _disable_save_on_shutdown(self) -> None:
         """Set the configured shutdown option to 'no save' temporarily, will not persist a restart."""
@@ -334,10 +431,15 @@ class ClusterManager(ManagerStatusProtocol):
         failure and a retry is safe.
 
         Raises:
-            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyClusterNotReadyError: If an AOF rewrite or a BGSAVE is still running after
+                ``DATASET_IO_TIMEOUT_S``.
             ValkeyWorkloadCommandError: If the save fails.
         """
         logger.info("Save dataset to disk")
+        # DA290: never stop Valkey mid-rewrite, the fields read 0 when AOF is off
+        self._wait_until(
+            self._is_aof_rewrite_idle, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish"
+        )
         self._save_database_blocking()
 
         try:
@@ -359,6 +461,36 @@ class ClusterManager(ManagerStatusProtocol):
         except pebble.ConnectionError as e:
             logger.error("Error cleaning up inconsistent dump files: %s", e)
             raise ValkeyWorkloadCommandError("Error cleaning up inconsistent dump files") from e
+
+    def is_aof_corrupted(self) -> bool:
+        """Whether the local server is down because its last start failed to load the AOF.
+
+        A LOADING reply means Valkey has not decided yet, so only a silent server gets checked.
+        """
+        if self._get_valkey_client().ping_reply(self.state.endpoint) is not None:
+            return False
+        manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
+        log_file = self.workload.log_dir / VALKEY_LOG_FILE
+        if not self.workload.path_exists(manifest) or not self.workload.path_exists(log_file):
+            return False
+        # TODO: go back to valkey-check-aof once a Valkey 9.0 release with valkey-io/valkey#4739
+        # reaches the Ubuntu archive. Until then it rejects every healthy AOF with an RDB base.
+        log_tail = self.workload.read_file_tail(log_file, VALKEY_LOG_TAIL_LINES)
+        last_start = log_tail.rpartition(VALKEY_START_LOG_LINE)[2]
+        return VALKEY_READY_LOG_LINE not in last_start and any(
+            line in last_start for line in AOF_LOAD_FATAL_LOG_LINES
+        )
+
+    def archive_corrupted_aof(self) -> None:
+        """Move the whole AOF dir to the archive slot, replacing the previous copy.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the move fails.
+        """
+        archive = self.workload.archive_dir / AOF_CORRUPT_ARCHIVE_NAME
+        self.workload.remove_dir(archive)
+        self.workload.move_file(self.workload.working_dir / AOF_DIR_NAME, archive)
+        logger.warning("Moved the corrupted AOF to %s", archive)
 
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""

@@ -10,10 +10,12 @@ from pathlib import Path
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
+from pydantic import ValidationError
 
 from common.exceptions import ValkeyConfigurationError, ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from core.models import PersistenceConfig
 from literals import (
     CLIENT_PORT,
     PRIMARY_NAME,
@@ -28,7 +30,7 @@ from literals import (
     Substrate,
     TLSState,
 )
-from statuses import CharmStatuses
+from statuses import CharmStatuses, PersistenceStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,28 @@ class ConfigManager(ManagerStatusProtocol):
         self.state = state  # pyright: ignore[reportIncompatibleVariableOverride]
         self.workload = workload
 
-    def get_config_properties(self, primary_endpoint: str) -> dict[str, str]:
+    @staticmethod
+    def persistence_settings(persistence: PersistenceConfig) -> dict[str, str]:
+        """Map persistence settings to Valkey config keys.
+
+        An empty ``save`` disables RDB snapshots.
+        """
+        any_persistence = persistence.rdb_enabled or persistence.aof_enabled
+        return {
+            "save": persistence.rdb_save_points if persistence.rdb_enabled else "",
+            "appendonly": "yes" if persistence.aof_enabled else "no",
+            "appendfsync": persistence.aof_appendfsync.value,
+            "rdb-del-sync-files": "no" if any_persistence else "yes",
+        }
+
+    def get_config_properties(
+        self, primary_endpoint: str, persistence: PersistenceConfig | None = None
+    ) -> dict[str, str]:
         """Assemble the config properties.
 
         Args:
             primary_endpoint: Endpoint of the current primary unit.
+            persistence: Persistence settings to render, the unit's applied ones by default.
 
         Returns:
             Dictionary of properties to be written to the config file.
@@ -89,7 +108,15 @@ class ConfigManager(ManagerStatusProtocol):
 
         # DA261 backup-safety overrides
         config_properties["repl-diskless-load"] = "on-empty-db"
-        config_properties["save"] = "900 1 300 100 60 10000"
+        # only the persistence reconcile renders new settings, other renders keep what is live
+        persistence = (
+            persistence or self.state.unit_server.applied_persistence_config or PersistenceConfig()
+        )
+        for key, value in self.persistence_settings(persistence).items():
+            # a missing `save` line falls back to Valkey's own save points, so write `save ""`
+            config_properties[key] = value or '""'
+        # DA290 AOF setting that differs from Valkey's default
+        config_properties["aof-timestamp-enabled"] = "yes"
         config_properties["maxmemory-policy"] = "noeviction"
         config_properties["min-replicas-max-lag"] = "10"
         # min-replicas-to-write gates writes on having an in-sync replica. The
@@ -141,11 +168,15 @@ class ConfigManager(ManagerStatusProtocol):
             replica_config["replicaof"] = f"{primary_endpoint} {TLS_PORT}"
         return replica_config
 
-    def set_config_properties(self, primary_endpoint: str) -> None:
+    def set_config_properties(
+        self, primary_endpoint: str, persistence: PersistenceConfig | None = None
+    ) -> None:
         """Write the config properties to the config file."""
         logger.debug("Writing configuration")
         self.workload.write_config_file(
-            config=self.get_config_properties(primary_endpoint=primary_endpoint)
+            config=self.get_config_properties(
+                primary_endpoint=primary_endpoint, persistence=persistence
+            )
         )
 
     def generate_tls_config(self) -> dict[str, str]:
@@ -355,5 +386,11 @@ class ConfigManager(ManagerStatusProtocol):
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the config manager's statuses."""
         status_list: list[StatusObject] = []
+
+        if scope == "app":
+            try:
+                PersistenceConfig.from_charm_config(self.state.config)
+            except ValidationError:
+                status_list.append(PersistenceStatuses.INVALID_CONFIG.value)
 
         return status_list if status_list else [CharmStatuses.ACTIVE_IDLE.value]

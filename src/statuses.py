@@ -50,6 +50,25 @@ class ClusterStatuses(Enum):
     )
 
 
+class PersistenceStatuses(Enum):
+    """Collection of possible statuses related to persistence."""
+
+    INVALID_CONFIG = StatusObject(
+        status="blocked",
+        message="Invalid persistence config, keeping the last valid settings",
+    )
+    NOT_APPLIED = StatusObject(
+        status="maintenance",
+        message="Persistence settings failed to apply, retrying",
+        running="async",
+    )
+    AOF_CORRUPTED = StatusObject(
+        status="blocked",
+        message="Corrupted AOF, no healthy unit to resync from",
+        running="async",
+    )
+
+
 class StartStatuses(Enum):
     """Collection of possible statuses related to the service start."""
 

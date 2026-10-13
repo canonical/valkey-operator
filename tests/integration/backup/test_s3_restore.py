@@ -34,7 +34,10 @@ from tests.integration.backup.helpers import (
     read_key,
     write_key,
 )
-from tests.integration.ha.helpers.helpers import get_unit_name_from_primary_ip
+from tests.integration.ha.helpers.helpers import (
+    get_unit_name_from_primary_ip,
+    send_process_control_signal,
+)
 from tests.integration.helpers import (
     APP_NAME,
     are_apps_active_and_agents_idle,
@@ -43,6 +46,7 @@ from tests.integration.helpers import (
     get_password,
     get_primary_ip,
     leader_unit_name,
+    ping,
 )
 
 logger = logging.getLogger(__name__)
@@ -404,3 +408,54 @@ def test_restore_single_unit(
     write_key(juju, "single_unit_post_restore", "ok")
     got = read_key(juju, unit_name, "single_unit_post_restore")
     assert got == "ok", f"Single unit not writable after restore; got {got!r}"
+
+
+@pytest.mark.abort_on_fail
+def test_restore_with_aof(
+    charm: str,
+    juju: jubilant.Juju,
+    microceph: dict,
+    s3_bucket,
+    substrate: Substrate,
+) -> None:
+    """Restore on an AOF cluster, then restart the primary and keep the restored data."""
+    deploy_and_relate_s3(juju, charm, substrate, microceph)
+    juju.config(APP_NAME, {"persistence-mode": "AOF"})
+    _wait_restore_active(juju)
+
+    write_key(juju, "aof_restore_key", "original")
+    task = juju.run(f"{APP_NAME}/leader", "create-backup")
+    assert task.success, task.stderr
+    backup_id = task.results["backup-id"]
+    write_key(juju, "aof_restore_key", "mutated")
+
+    task = juju.run(f"{APP_NAME}/leader", "restore", {"backup-id": backup_id})
+    assert task.success, task.stderr
+    _wait_restore_active(juju)
+    for unit_name in juju.status().apps[APP_NAME].units:
+        got = read_key(juju, unit_name, "aof_restore_key")
+        assert got == "original", f"Expected 'original' on {unit_name}, got {got!r}"
+
+    # a restart loads only the AOF, so the restored data must be in it by now
+    for attempt in Retrying(stop=stop_after_delay(300), wait=wait_fixed(10), reraise=True):
+        with attempt:
+            info = exec_valkey_cli(
+                get_primary_ip(juju, APP_NAME),
+                username=CharmUsers.VALKEY_ADMIN.value,
+                password=get_password(juju),
+                command="info persistence",
+            ).stdout
+            assert "aof_enabled:1" in info and "aof_rewrite_in_progress:0" in info
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    primary_unit = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
+    send_process_control_signal(primary_unit, juju.model, "SIGTERM", "valkey-server", substrate)
+    # the VM service restarts 20 s after a crash, so wait for Valkey itself, not only Juju
+    for attempt in Retrying(stop=stop_after_delay(300), wait=wait_fixed(5), reraise=True):
+        with attempt:
+            assert ping(primary_ip, CharmUsers.VALKEY_ADMIN.value, get_password(juju))
+    _wait_restore_active(juju)
+    got = read_key(juju, primary_unit, "aof_restore_key")
+    assert got == "original", f"Expected 'original' after the restart, got {got!r}"
+
+    juju.config(APP_NAME, reset=["persistence-mode"])
+    _wait_restore_active(juju)

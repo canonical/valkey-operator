@@ -146,6 +146,7 @@ def test_start_primary():
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
         patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
         patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("events.base_events.BaseEvents.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
         assert state_out.unit_status == ActiveStatus()
@@ -385,6 +386,7 @@ def test_update_status_leader_unit():
     with (
         patch("managers.tls.TLSManager.will_certificate_expire"),
         patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+        patch("events.base_events.BaseEvents.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
@@ -407,6 +409,7 @@ def test_update_status_non_leader_unit():
     with (
         patch("managers.tls.TLSManager.will_certificate_expire"),
         patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+        patch("events.base_events.BaseEvents.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
@@ -629,6 +632,7 @@ def test_config_changed_ip_change_no_tls_relation(vm_environment):
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
+        patch("events.base_events.BaseEvents.reconcile_persistence"),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()

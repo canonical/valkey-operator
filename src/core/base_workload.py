@@ -311,6 +311,24 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def remove_dir(self, path: pathops.PathProtocol) -> None:
+        """Remove a directory with its content, doing nothing if it is absent.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the removal fails.
+        """
+        try:
+            if not path.exists():
+                return
+            for child in path.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    self.remove_dir(child)
+                else:
+                    child.unlink()
+            path.rmdir()
+        except (OSError, pathops.PebbleConnectionError) as e:
+            raise ValkeyWorkloadCommandError(e)
+
     def make_dir(self, path: pathops.PathProtocol, exist_ok: bool = False) -> None:
         """Create a directory at the given path, translating filesystem/Pebble errors to ValkeyWorkloadCommandError."""
         try:
@@ -350,6 +368,14 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def read_file_tail(self, path: pathops.PathProtocol, lines: int) -> str:
+        """Return the last lines of a text file, without reading the whole file.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the file cannot be read.
+        """
+        return self.exec(["tail", "-n", str(lines), path.as_posix()])[0]
+
     @abstractmethod
     def push_data_file(
         self,
@@ -364,4 +390,16 @@ class WorkloadBase(ABC):
     @abstractmethod
     def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
         """Rename a file within the data dir."""
+        pass
+
+    @abstractmethod
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        """Run valkey-check-aof, without --fix, against an AOF manifest.
+
+        Returns:
+            True if the AOF is valid, False if it is truncated or corrupted.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the check could not run.
+        """
         pass

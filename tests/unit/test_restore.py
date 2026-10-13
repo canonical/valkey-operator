@@ -17,8 +17,8 @@ Two layers, on purpose:
 
 import pytest
 
-from src.core.models import PeerAppModel, PeerUnitModel
-from src.literals import RestoreStep
+from src.core.models import PeerAppModel, PeerUnitModel, PersistenceConfig
+from src.literals import PersistenceMode, RestoreStep
 
 # ── models / enums (pure) ────────────────────────────────────────────────────
 
@@ -1942,3 +1942,38 @@ def test_external_clients_prc_skips_during_restore(mocker):
     ev.charm.state.cluster.is_restore_in_progress = True
     ev._on_peer_relation_changed(mocker.Mock())
     ev.charm.sentinel_manager.reconcile_k8s_services.assert_not_called()
+
+
+def test_primary_restores_with_rdb_settings_then_reapplies_persistence(restore_managers, mocker):
+    """The primary loads the restored RDB with AOF off, then the reconcile turns AOF back on.
+
+    With appendonly yes Valkey ignores dump.rdb, so the applied settings are cleared and the
+    RDB defaults rendered before the restart.
+    """
+    order = []
+    mocker.patch(
+        "managers.config.ConfigManager.set_config_properties",
+        side_effect=lambda **kwargs: order.append(("render", kwargs.get("persistence"))),
+    )
+    restore_managers.restore_on_primary.side_effect = lambda: order.append("restore")
+    mocker.patch(
+        "events.base_events.BaseEvents.reconcile_persistence",
+        side_effect=lambda: order.append("reconcile"),
+    )
+    ctx, state = _restore_context_and_state(
+        app_data={
+            "restore-id": "2026-05-13T10:00:00Z",
+            "restore-instruction": RestoreStep.RESTORE.value,
+            "restore-participants": "valkey/0",
+        },
+        unit_data={
+            "applied-persistence-config": PersistenceConfig(
+                mode=PersistenceMode.AOF
+            ).model_dump_json()
+        },
+    )
+
+    state_out = ctx.run(ctx.on.update_status(), state)
+
+    assert order == [("render", None), "restore", "reconcile"]
+    assert "applied-persistence-config" not in _peer_unit_data(state_out)
