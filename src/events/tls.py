@@ -11,7 +11,6 @@ import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateDeniedEvent,
-    CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
 )
 
@@ -50,13 +49,7 @@ class TLSEvents(ops.Object):
         self.client_certificate = TLSCertificatesRequiresV4(
             self.charm,
             CLIENT_TLS_RELATION_NAME,
-            certificate_requests=[
-                CertificateRequestAttributes(
-                    common_name=self.charm.tls_manager.build_common_name(),
-                    sans_ip=self.charm.tls_manager.build_sans_ip(),
-                    sans_dns=self.charm.tls_manager.build_sans_dns(),
-                ),
-            ],
+            certificate_requests=self.charm.tls_manager.build_certificate_requests,
             private_key=self.charm.tls_manager.get_client_tls_private_key(),
             refresh_events=[self.refresh_tls_certificates_event],
         )
@@ -262,7 +255,12 @@ class TLSEvents(ops.Object):
             csr.certificate_signing_request
             for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
         ]:
-            logger.error("Certificate request was denied: %s", event.error.message)
+            logger.error(
+                "Certificate request was denied: code=%s name=%s message=%s",
+                event.error.code,
+                event.error.name,
+                event.error.message,
+            )
             return
 
         logger.warning(
@@ -376,10 +374,8 @@ class TLSEvents(ops.Object):
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
-        if (
-            self.charm.state.client_tls_relation
-            and self.charm.tls_manager.certificate_sans_require_update()
-        ):
+        # the cert on disk may be the self-signed one, so let the lib compare against its CSRs
+        if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
             self.refresh_tls_certificates_event.emit()
 
