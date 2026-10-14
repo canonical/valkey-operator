@@ -215,19 +215,16 @@ class BaseEvents(ops.Object):
         This is the rollingops `start` callback.
 
         Returns:
-            RELEASE once the unit is started and in sync, RETRY_HOLD if its services failed to
-            start or are not in sync yet, so no restart or other start runs in between,
-            RETRY_RELEASE if it cannot start yet.
+            RELEASE once the unit is started and in sync, RETRY_HOLD while its started services
+            are not in sync yet, so no restart or other start runs in between, RETRY_RELEASE if
+            it cannot start the services yet.
         """
         if self.charm.state.unit_server.is_started:
             return OperationResult.RELEASE
 
         # once the services are started, keep the lock until the unit is in sync
-        retry = (
-            OperationResult.RETRY_HOLD
-            if self.charm.state.unit_server.model.start_state in STARTING_STATES
-            else OperationResult.RETRY_RELEASE
-        )
+        starting = self.charm.state.unit_server.model.start_state in STARTING_STATES
+        retry = OperationResult.RETRY_HOLD if starting else OperationResult.RETRY_RELEASE
 
         if not self._start_conditions_met():
             return retry
@@ -236,7 +233,7 @@ class BaseEvents(ops.Object):
             logger.info("Restore in progress, retrying the start later")
             return retry
 
-        if self.charm.state.unit_server.model.start_state in STARTING_STATES:
+        if starting:
             primary_endpoint = self.charm.state.unit_server.model.start_primary_endpoint
         else:
             primary_endpoint = self._get_primary_endpoint_for_start()
@@ -248,7 +245,7 @@ class BaseEvents(ops.Object):
                 return OperationResult.RETRY_RELEASE
 
             if not self._start_workload(primary_endpoint):
-                return OperationResult.RETRY_HOLD
+                return OperationResult.RETRY_RELEASE
 
         if not self._is_started_and_in_sync(
             is_primary=primary_endpoint
@@ -879,6 +876,10 @@ class BaseEvents(ops.Object):
             is_primary=True, check_replica_sync=False, hostname=primary_ip
         ):
             logger.error("Primary %s is unreachable, scaling down without the lock", primary_ip)
+            # a dead local Valkey has nothing to save, and must not block the removal
+            if self.charm.cluster_manager.is_healthy(is_primary=True, check_replica_sync=False):
+                self.charm.cluster_manager.save_dataset_before_shutdown()
+            self._stop_workload()
             self._set_state_for_going_away()
             return
 
@@ -937,7 +938,12 @@ class BaseEvents(ops.Object):
 
         # Raises if the save fails, so the hook errors and Juju retries it with the workload still up.
         self.charm.cluster_manager.save_dataset_before_shutdown()
-        # stop valkey
+        self._stop_workload()
+
+        self._set_state_for_going_away()
+
+    def _stop_workload(self) -> None:
+        """Stop the services and reset the start state."""
         try:
             self.charm.workload.stop()
         except ValkeyServicesCouldNotBeStoppedError as e:
@@ -946,8 +952,6 @@ class BaseEvents(ops.Object):
         self.charm.state.unit_server.update(
             {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
         )
-
-        self._set_state_for_going_away()
 
     def _set_state_for_going_away(self) -> None:
         """Set the state to going away when the unit is going down."""

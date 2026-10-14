@@ -405,9 +405,15 @@ def test_repeat_detach_is_noop_once_going_away():
     mock_stop.assert_not_called()
 
 
-def test_unreachable_primary_skips_the_lock(primary_reachable):
-    """Sentinel keeps reporting a primary that is down, so the unit leaves without the lock."""
-    primary_reachable.return_value = False
+@pytest.mark.parametrize("local_healthy", [True, False])
+def test_unreachable_primary_skips_the_lock(primary_reachable, local_healthy):
+    """Sentinel keeps reporting a primary that is down, so the unit leaves without the lock.
+
+    A healthy local Valkey still saves its dataset, a dead one is only stopped.
+    """
+    primary_reachable.side_effect = lambda **kwargs: (
+        local_healthy if "hostname" not in kwargs else False
+    )
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = get_3_unit_peer_relation()
     container = testing.Container(name=CONTAINER, can_connect=True)
@@ -427,13 +433,14 @@ def test_unreachable_primary_skips_the_lock(primary_reachable):
         ),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="valkey-1"),
         patch("common.locks.ValkeyScaleDownLockBackend.acquire") as mock_acquire,
+        patch("managers.cluster.ClusterManager.save_dataset_before_shutdown") as mock_save,
+        patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_storage), state_in)
 
     mock_acquire.assert_not_called()
-    primary_reachable.assert_called_once_with(
-        is_primary=True, check_replica_sync=False, hostname="valkey-1"
-    )
+    assert mock_save.called == local_healthy
+    mock_stop.assert_called_once()
     assert state_out.get_relation(relation.id).local_unit_data["scale-down-state"] == (
         ScaleDownState.GOING_AWAY.value
     )
