@@ -15,6 +15,7 @@ from ops import pebble
 from tenacity import (
     Retrying,
     retry,
+    retry_if_not_exception_type,
     retry_if_result,
     stop_after_attempt,
     stop_after_delay,
@@ -25,6 +26,7 @@ from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
     ValkeyClusterNotReadyError,
+    ValkeyServerRestartedError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
@@ -211,21 +213,64 @@ class ClusterManager(ManagerStatusProtocol):
         self._wait_until(self.is_replica_synced, timeout_s, "replica did not resync")
         logger.info("restore.wait: replica resynced")
 
-    def _wait_until(self, condition: Callable[[], bool], timeout_s: int, failure: str) -> None:
+    def _wait_until(
+        self,
+        condition: Callable[[], bool],
+        timeout_s: int,
+        failure: str,
+        run_id: str | None = None,
+    ) -> None:
         """Poll ``condition`` every 5s for up to ``timeout_s``; raise NotReady on timeout.
 
         A raising ``condition`` (e.g. the CLI can't connect yet) is retried like
-        a False one; the last error is chained onto the timeout exception.
+        a False one; the last error is chained onto the timeout exception. With
+        ``run_id``, the wait also fails on the first poll after a Valkey restart.
+        A restart kills the rewrite or BGSAVE being waited on, and the new process
+        reports idle defaults, so waiting longer can't help.
+
+        Raises:
+            ValkeyServerRestartedError: If Valkey restarted since ``run_id`` was read.
+            ValkeyClusterNotReadyError: If ``condition`` is not met within ``timeout_s``.
         """
         try:
             for attempt in Retrying(
-                stop=stop_after_delay(timeout_s), wait=wait_fixed(5), reraise=True
+                stop=stop_after_delay(timeout_s),
+                wait=wait_fixed(5),
+                retry=retry_if_not_exception_type(ValkeyServerRestartedError),
+                reraise=True,
             ):
                 with attempt:
-                    if not condition():
+                    met = condition()
+                    # check after the condition, so a restart before or during that read fails here
+                    if run_id:
+                        self._check_not_restarted(run_id)
+                    if not met:
                         raise ValkeyClusterNotReadyError("condition not met yet")
+        except ValkeyServerRestartedError:
+            raise
         except Exception as e:  # tenacity reraises the last attempt's error
             raise ValkeyClusterNotReadyError(f"{failure} within {timeout_s}s") from e
+
+    def _run_id(self) -> str:
+        """Return the ID of the running Valkey process, which changes on every restart.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the server can't be queried or the reply has no run_id.
+        """
+        info = self._get_valkey_client().info_server(hostname=self.state.endpoint)
+        if not (run_id := info.get("run_id")):
+            raise ValkeyWorkloadCommandError("INFO server reply has no run_id")
+        return run_id
+
+    def _check_not_restarted(self, run_id: str) -> None:
+        """Raise if Valkey restarted since the caller read ``run_id``.
+
+        Raises:
+            ValkeyServerRestartedError: If the process ID changed.
+            ValkeyWorkloadCommandError: If the server can't be queried.
+        """
+        if self._run_id() != run_id:
+            raise ValkeyServerRestartedError("Valkey restarted during a persistence switch")
 
     @retry(
         wait=wait_fixed(5),
@@ -348,10 +393,14 @@ class ClusterManager(ManagerStatusProtocol):
             and info.get("aof_rewrite_scheduled") == "0"
         )
 
-    def _save_in_background(self) -> None:
+    def _save_in_background(self, run_id: str) -> None:
         """Run a BGSAVE and wait for it, without blocking clients like SAVE does.
 
+        Args:
+            run_id: The Valkey process ID the switch started on.
+
         Raises:
+            ValkeyServerRestartedError: If Valkey restarts before the BGSAVE is confirmed.
             ValkeyClusterNotReadyError: If a child process or the BGSAVE does not finish in time.
             ValkeyWorkloadCommandError: If the BGSAVE fails.
         """
@@ -359,6 +408,7 @@ class ClusterManager(ManagerStatusProtocol):
             lambda: self._is_aof_rewrite_idle() and not self._is_bgsave_in_progress(),
             DATASET_IO_TIMEOUT_S,
             "a background child process did not finish",
+            run_id=run_id,
         )
         client = self._get_valkey_client()
         client.bgsave(hostname=self.state.endpoint)
@@ -366,8 +416,11 @@ class ClusterManager(ManagerStatusProtocol):
             lambda: not self._is_bgsave_in_progress(),
             DATASET_IO_TIMEOUT_S,
             "BGSAVE did not finish",
+            run_id=run_id,
         )
         info = client.info_persistence(hostname=self.state.endpoint)
+        # a restarted server reports ok whatever happened to our BGSAVE
+        self._check_not_restarted(run_id)
         if info.get("rdb_last_bgsave_status") != "ok":
             raise ValkeyWorkloadCommandError("BGSAVE failed")
 
@@ -380,13 +433,18 @@ class ClusterManager(ManagerStatusProtocol):
             settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
 
         Raises:
+            ValkeyServerRestartedError: If Valkey restarts during an AOF rewrite or a BGSAVE.
             ValkeyClusterNotReadyError: If an AOF rewrite or a BGSAVE does not finish in time.
             ValkeyWorkloadCommandError: If a command fails.
         """
         client = self._get_valkey_client()
+        # a restart reloads valkey.conf and loses the CONFIG SET changes below
+        run_id = self._run_id()
         if settings["appendonly"] == "yes":
             client.config_set({"appendonly": "yes"}, hostname=self.state.endpoint)
-            self._wait_until(self._is_aof_on, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish")
+            self._wait_until(
+                self._is_aof_on, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish", run_id=run_id
+            )
 
         rdb_on = {"save": settings["save"]} if settings["save"] else {}
         client.config_set(
@@ -401,7 +459,7 @@ class ClusterManager(ManagerStatusProtocol):
         # once the file says appendonly no, a restart loads dump.rdb, so make it current first
         aof_on = client.info_persistence(hostname=self.state.endpoint).get("aof_enabled") == "1"
         if settings["appendonly"] == "no" and settings["save"] and aof_on:
-            self._save_in_background()
+            self._save_in_background(run_id)
 
     def disable_old_persistence(self, settings: dict[str, str]) -> None:
         """Turn off, without a restart, the old persistence the new settings drop.

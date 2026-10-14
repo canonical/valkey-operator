@@ -6,7 +6,7 @@
 
 from dataclasses import replace
 from pathlib import PurePosixPath
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from unittest.mock import ANY, MagicMock, PropertyMock, call, patch
 
 import pytest
 from ops import testing
@@ -17,6 +17,7 @@ from common.exceptions import (
     SentinelFailoverError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyClusterNotReadyError,
+    ValkeyServerRestartedError,
     ValkeyWorkloadCommandError,
 )
 from core.models import PersistenceConfig
@@ -223,7 +224,7 @@ def test_aof_to_rdb_saves_rdb_and_keeps_aof_on_until_disable(mocker):
             {"appendfsync": "everysec", "shutdown-on-sigterm": "default", "save": "900 1"},
             hostname="10.0.0.1",
         ),
-        call.save(),
+        call.save(ANY),
     ]
 
     client.config_set.reset_mock()
@@ -232,6 +233,43 @@ def test_aof_to_rdb_saves_rdb_and_keeps_aof_on_until_disable(mocker):
     client.config_set.assert_called_once_with(
         {"rdb-del-sync-files": "no", "appendonly": "no"}, hostname="10.0.0.1"
     )
+
+
+def test_aof_wait_fails_at_once_when_valkey_restarts(mocker):
+    """A restart during the AOF rewrite loses the runtime appendonly, so the wait fails at once."""
+    cm, client = _cluster_manager(mocker)
+    mocker.patch("managers.cluster.DATASET_IO_TIMEOUT_S", 1)
+    client.info_server.side_effect = [{"run_id": "before"}, {"run_id": "after"}]
+    client.info_persistence.return_value = {
+        "aof_enabled": "0",
+        "aof_rewrite_in_progress": "0",
+        "aof_rewrite_scheduled": "0",
+    }
+
+    with pytest.raises(ValkeyServerRestartedError):
+        cm.enable_new_persistence(AOF_SETTINGS)
+
+
+def test_bgsave_wait_fails_when_valkey_restarts(mocker):
+    """A restarted server reports no BGSAVE and a default ok status, which prove nothing."""
+    cm, client = _cluster_manager(mocker)
+    mocker.patch("managers.cluster.DATASET_IO_TIMEOUT_S", 1)
+    client.info_server.side_effect = [
+        {"run_id": "before"},
+        {"run_id": "before"},
+        ValkeyWorkloadCommandError("Connection refused"),
+        {"run_id": "after"},
+    ]
+    client.info_persistence.return_value = {
+        "aof_enabled": "1",
+        "aof_rewrite_in_progress": "0",
+        "aof_rewrite_scheduled": "0",
+        "rdb_bgsave_in_progress": "0",
+        "rdb_last_bgsave_status": "ok",
+    }
+
+    with pytest.raises(ValkeyServerRestartedError):
+        cm.enable_new_persistence(RDB_SETTINGS)
 
 
 def _started_unit_state(app_data: dict, unit_data: dict, peers_data: dict | None = None):

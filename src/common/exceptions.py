@@ -48,6 +48,10 @@ class ValkeyClusterNotReadyError(Exception):
     """Raised when the cluster does not reach a ready state within a bounded wait."""
 
 
+class ValkeyServerRestartedError(ValkeyClusterNotReadyError):
+    """Raised when Valkey restarts during a wait, which ends the operation the wait polls."""
+
+
 class SentinelFailoverError(Exception):
     """Custom Exception if triggering sentinel failover fails."""
 
