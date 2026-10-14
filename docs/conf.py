@@ -63,7 +63,7 @@ html_context = {
     # TODO: Change to your product website URL, dropping the 'https://' prefix (e.g.,
     #       'ubuntu.com/lxd'). If there's no such website, remove the {{ product_page }}
     #       link from the _templates/header.html file.
-    "product_page": "https://canonical.com/data/valkey",
+    "product_page": "canonical.com/data/valkey",
     # Product tag image; the orange part of your logo, shown in the page header
     # TODO: To add a tag image, uncomment and update as needed.
     # 'product_tag': '_static/tag.png',
