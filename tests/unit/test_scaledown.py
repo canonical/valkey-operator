@@ -476,12 +476,14 @@ def test_cannot_get_primary_ip_leader():
             "managers.sentinel.SentinelManager.get_primary_ip",
             side_effect=ValkeyCannotGetPrimaryIPError("errored out"),
         ),
+        patch("managers.cluster.ClusterManager.save_dataset_before_shutdown") as mock_save,
         patch("workload_k8s.ValkeyK8sWorkload.stop") as mock_stop,
         patch("core.models.ValkeyCluster.update") as cluster_update,
         patch("ops.model.Application.planned_units", return_value=0),
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
-        mock_stop.assert_not_called()
+        mock_save.assert_called_once()
+        mock_stop.assert_called_once()
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
         cluster_update.assert_called_once_with(
             {"internal_ca_certificate": None, "internal_ca_private_key": None}

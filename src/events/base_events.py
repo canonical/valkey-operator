@@ -649,18 +649,17 @@ class BaseEvents(ops.Object):
             logger.error(e)
             return OperationResult.RETRY_HOLD
 
-        if restart_valkey and not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
-            self.charm.state.unit_server.update({"is_valkey_healthy": False})
-            return OperationResult.RETRY_HOLD
-        self.charm.state.unit_server.update({"is_valkey_healthy": True})
-
         if restart_valkey:
+            if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+                self.charm.state.unit_server.update({"is_valkey_healthy": False})
+                return OperationResult.RETRY_HOLD
             # CONFIG SET min-replicas-to-write does not survive the restart we
             # just performed; the rendered file ships 1, so reassert the
             # topology-correct runtime value (0 on < 3 active units) now that
             # Valkey is back up and healthy, or a small cluster would be
             # write-frozen until the next peer-relation event.
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
+        self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
         if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
             self.charm.state.unit_server.update({"is_sentinel_healthy": False})
@@ -868,7 +867,7 @@ class BaseEvents(ops.Object):
             primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
-            self._set_state_for_going_away()
+            self._leave_without_coordination()
             return
 
         # Sentinel keeps reporting a primary that is down, and the lock lives on the primary
@@ -876,11 +875,7 @@ class BaseEvents(ops.Object):
             is_primary=True, check_replica_sync=False, hostname=primary_ip
         ):
             logger.error("Primary %s is unreachable, scaling down without the lock", primary_ip)
-            # a dead local Valkey has nothing to save, and must not block the removal
-            if self.charm.cluster_manager.is_healthy(is_primary=True, check_replica_sync=False):
-                self.charm.cluster_manager.save_dataset_before_shutdown()
-            self._stop_workload()
-            self._set_state_for_going_away()
+            self._leave_without_coordination()
             return
 
         # blocks until the lock is acquired, a timeout raises and Juju retries the hook
@@ -912,7 +907,7 @@ class BaseEvents(ops.Object):
             primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
-            self._set_state_for_going_away()
+            self._leave_without_coordination()
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
@@ -940,6 +935,14 @@ class BaseEvents(ops.Object):
         self.charm.cluster_manager.save_dataset_before_shutdown()
         self._stop_workload()
 
+        self._set_state_for_going_away()
+
+    def _leave_without_coordination(self) -> None:
+        """Save the dataset if the local Valkey answers, then stop and mark the unit going away."""
+        # a dead local Valkey has nothing to save, and must not block the removal
+        if self.charm.cluster_manager.is_healthy(is_primary=True, check_replica_sync=False):
+            self.charm.cluster_manager.save_dataset_before_shutdown()
+        self._stop_workload()
         self._set_state_for_going_away()
 
     def _stop_workload(self) -> None:
