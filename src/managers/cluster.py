@@ -481,7 +481,7 @@ class ClusterManager(ManagerStatusProtocol):
 
         A LOADING reply means Valkey has not decided yet, so only a silent server gets checked.
         """
-        if self._get_valkey_client().ping_reply(self.state.endpoint) is not None:
+        if self._get_valkey_client().is_responding(self.state.endpoint):
             return False
         manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
         log_file = self.workload.log_dir / VALKEY_LOG_FILE

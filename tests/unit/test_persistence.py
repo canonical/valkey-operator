@@ -481,26 +481,26 @@ FATAL = "Bad file format reading the append only file appendonly.aof.3.incr.aof:
 
 
 @pytest.mark.parametrize(
-    "reply,manifest_exists,log,corrupted",
+    "responding,manifest_exists,log,corrupted",
     [
-        ("PONG", True, f"{START}\n{FATAL}", False),
-        ("LOADING Valkey is loading the dataset in memory", True, f"{START}\n{FATAL}", False),
-        (None, False, f"{START}\n{FATAL}", False),
+        # a PONG or a LOADING reply
+        (True, True, f"{START}\n{FATAL}", False),
+        (False, False, f"{START}\n{FATAL}", False),
         # down between restarts, the last start was fine
-        (None, True, f"{START}\n{READY}", False),
-        (None, True, f"{START}\n{FATAL}\n{START}\n{READY}", False),
-        (None, True, f"{START}\n{READY}\n{START}\n{FATAL}", True),
+        (False, True, f"{START}\n{READY}", False),
+        (False, True, f"{START}\n{FATAL}\n{START}\n{READY}", False),
+        (False, True, f"{START}\n{READY}\n{START}\n{FATAL}", True),
     ],
 )
-def test_is_aof_corrupted(mocker, reply, manifest_exists, log, corrupted):
+def test_is_aof_corrupted(mocker, responding, manifest_exists, log, corrupted):
     """Only a silent server whose last start logged a fatal AOF error counts as corrupted."""
     cm, client = _cluster_manager(mocker)
-    client.ping_reply.return_value = reply
+    client.is_responding.return_value = responding
     cm.workload.path_exists.return_value = manifest_exists
     cm.workload.read_file_tail.return_value = log
 
     assert cm.is_aof_corrupted() is corrupted
-    if reply is not None:
+    if responding:
         cm.workload.read_file_tail.assert_not_called()
 
 
@@ -535,7 +535,7 @@ NEW_PRIMARY = "10.0.0.9"
 
 def _run_heal(
     primary_ips: list[str],
-    force_failover_error: Exception | None = None,
+    failover_error: Exception | None = None,
     archive_error: Exception | None = None,
     primary_healthy: bool = True,
 ):
@@ -550,7 +550,7 @@ def _run_heal(
         patch("managers.cluster.ClusterManager.is_aof_corrupted", return_value=True),
         patch("managers.sentinel.SentinelManager.get_primary_ip", side_effect=primary_ips),
         patch(
-            "managers.sentinel.SentinelManager.force_failover", side_effect=force_failover_error
+            "managers.sentinel.SentinelManager.failover", side_effect=failover_error
         ) as failover,
         patch("managers.config.ConfigManager.set_config_properties") as render,
         patch(
@@ -579,7 +579,7 @@ def test_heal_forces_a_failover_when_still_primary():
     """Sentinel still names this unit: force the failover, then heal as a replica."""
     _, failover, render, archive, _ = _run_heal([OWN_ENDPOINT, NEW_PRIMARY])
 
-    failover.assert_called_once()
+    failover.assert_called_once_with(force=True)
     render.assert_called_once_with(primary_endpoint=NEW_PRIMARY)
     archive.assert_called_once()
 
@@ -587,7 +587,7 @@ def test_heal_forces_a_failover_when_still_primary():
 def test_heal_blocks_without_a_healthy_peer():
     """No replica to promote: block and keep the AOF in place."""
     state_out, _, render, archive, restart = _run_heal(
-        [OWN_ENDPOINT], force_failover_error=SentinelFailoverError("NOGOODSLAVE")
+        [OWN_ENDPOINT], failover_error=SentinelFailoverError("NOGOODSLAVE")
     )
 
     render.assert_not_called()

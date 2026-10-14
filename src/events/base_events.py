@@ -644,7 +644,7 @@ class BaseEvents(ops.Object):
             primary = self.charm.sentinel_manager.get_primary_ip()
             if primary == self.charm.state.endpoint:
                 logger.warning("The primary has a corrupted AOF, forcing a failover")
-                self.charm.sentinel_manager.force_failover()
+                self.charm.sentinel_manager.failover(force=True)
                 primary = self.charm.sentinel_manager.get_primary_ip()
             if primary == self.charm.state.endpoint:
                 raise SentinelFailoverError("Sentinel still reports this unit as primary")
@@ -658,19 +658,16 @@ class BaseEvents(ops.Object):
             SentinelFailoverError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyClusterNotReadyError,
+            ValkeyWorkloadCommandError,
         ) as e:
             logger.error("Cannot heal the corrupted AOF: %s", e)
-            self.charm.status.set_running_status(
-                PersistenceStatuses.AOF_CORRUPTED.value,
-                scope="unit",
-                component_name=self.charm.cluster_manager.name,
-                statuses_state=self.charm.state.statuses,
+            status = (
+                PersistenceStatuses.AOF_HEAL_FAILED
+                if isinstance(e, ValkeyWorkloadCommandError)
+                else PersistenceStatuses.AOF_CORRUPTED
             )
-            return
-        except ValkeyWorkloadCommandError as e:
-            logger.error("Failed to heal the corrupted AOF: %s", e)
             self.charm.status.set_running_status(
-                PersistenceStatuses.AOF_HEAL_FAILED.value,
+                status.value,
                 scope="unit",
                 component_name=self.charm.cluster_manager.name,
                 statuses_state=self.charm.state.statuses,

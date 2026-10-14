@@ -258,13 +258,6 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
-    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
-        try:
-            shutil.copytree(src.as_posix(), dest.as_posix())
-        except OSError as e:
-            raise ValkeyWorkloadCommandError(e)
-
-    @override
     def check_aof(self, manifest: pathops.PathProtocol) -> bool:
         try:
             subprocess.run(

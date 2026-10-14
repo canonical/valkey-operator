@@ -156,19 +156,17 @@ class ValkeyClient(CliClient):
         except ValkeyWorkloadCommandError:
             return False
 
-    def ping_reply(self, hostname: str) -> str | None:
-        """Ping the server and return its raw reply, such as PONG or a LOADING error.
+    def is_responding(self, hostname: str) -> bool:
+        """Whether the server answers a ping at all, a LOADING error included.
 
         Args:
             hostname: The hostname to connect to.
-
-        Returns:
-            The reply, or None if the server did not answer.
         """
         try:
-            return self.exec_cli_command(["ping"], hostname=hostname, json_output=False)
+            self.exec_cli_command(["ping"], hostname=hostname, json_output=False)
         except ValkeyWorkloadCommandError:
-            return None
+            return False
+        return True
 
     def info_persistence(self, hostname: str) -> dict[str, str]:
         """Get the persistence information of the Valkey server.
