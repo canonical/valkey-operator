@@ -940,7 +940,9 @@ class BaseEvents(ops.Object):
     def _leave_without_coordination(self) -> None:
         """Save the dataset if the local Valkey answers, then stop and mark the unit going away."""
         # a dead local Valkey has nothing to save, and must not block the removal
-        if self.charm.cluster_manager.is_healthy(is_primary=True, check_replica_sync=False):
+        if self.charm.cluster_manager.is_healthy(
+            is_primary=True, check_replica_sync=False
+        ) or self.charm.workload.alive(service=self.charm.workload.valkey_service):
             self.charm.cluster_manager.save_dataset_before_shutdown()
         self._stop_workload()
         self._set_state_for_going_away()
