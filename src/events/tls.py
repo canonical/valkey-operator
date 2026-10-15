@@ -310,6 +310,10 @@ class TLSEvents(ops.Object):
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
             self.charm.trigger_relation_change_if_required()
+        else:
+            # the enable step never completed, so leaving to-tls keeps the plain ports open
+            self.charm.tls_manager.set_cert_state(is_ready=False)
+            self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
 
         try:
             self.charm.tls_manager.create_and_store_self_signed_certificate()
