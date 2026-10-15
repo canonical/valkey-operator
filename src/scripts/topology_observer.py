@@ -10,8 +10,6 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 
-from valkey.sentinel import MasterNotFoundError, Sentinel
-
 from literals import (
     PRIMARY_NAME,
     TOPOLOGY_OBSERVER_LOG_BACKUPS,
@@ -62,6 +60,9 @@ def main() -> None:
     )
 
     try:
+        # imported after logging is set up so a broken venv gets logged
+        from valkey.sentinel import MasterNotFoundError, Sentinel
+
         # handle the stop signal for a graceful stop of the subscription client
         signal.signal(signal.SIGTERM, handle_stop_signal)
 
@@ -82,14 +83,11 @@ def main() -> None:
             else None,
         }
 
-        primary_name = ""
-        previous_primary = ""
+        # only updated once the charm has been told, so a failed dispatch is retried
+        notified_primary = ""
 
         while continue_running:
             time.sleep(1)
-
-            if primary_name != "":
-                previous_primary = primary_name
 
             sentinel = Sentinel(
                 sentinels=addresses,
@@ -103,16 +101,23 @@ def main() -> None:
                 logging.error("Failed to discover primary: %s", e)
                 continue
 
-            if previous_primary == "" or primary_name == previous_primary:
+            if notified_primary == "":
+                notified_primary = primary_name
+                continue
+
+            if primary_name == notified_primary:
                 continue
 
             logging.info(
-                "Primary change detected: previously %s, now %s", previous_primary, primary_name
+                "Primary change detected: previously %s, now %s", notified_primary, primary_name
             )
             try:
                 dispatch(unit_name, charm_dir)
             except subprocess.CalledProcessError as e:
                 logging.error("Error when dispatching Juju event: %s: %s", e, e.stderr)
+                continue
+
+            notified_primary = primary_name
 
         else:
             logging.info("Gracefully stopping observer")

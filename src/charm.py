@@ -16,7 +16,7 @@ from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
-from common.exceptions import ValkeyUpgradeError
+from common.exceptions import ValkeyUpgradeError, ValkeyWorkloadCommandError
 from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -169,41 +169,38 @@ class ValkeyCharm(ops.CharmBase):
             logger.debug("Workload not allowed to start")
             return
 
-        if self.workload.alive():
-            if not (
-                self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
-                and self.sentinel_manager.is_healthy()
-            ):
-                # to ensure the unit receives another Juju event
-                raise ValkeyUpgradeError("Workload not healthy yet")
+        if not self.workload.alive():
+            logger.info("Restarting workload")
+            if self.app.planned_units() == 1:
+                # there is no other sentinel to query
+                primary_ip = self.state.unit_server.get_endpoint(self.state.substrate)
+            else:
+                primary_ip = self.sentinel_manager.get_primary_ip()
+            self.auth_manager.configure_auth()
+            self.config_manager.configure_services(primary_ip)
+            self.metrics_manager.reconcile()
+            self.workload.start()
 
-            logger.info("Unit is healthy, allowing next unit to refresh")
-            refresh.next_unit_allowed_to_refresh = True
-            return
+            # config sets min-replicas-to-write=1; reassert the correct value now the server is up
+            self.cluster_manager.reconcile_min_replicas_to_write()
+            if self.unit.is_leader() and self.state.substrate == Substrate.K8S:
+                self.sentinel_manager.set_pod_labels()
 
-        logger.info("Restarting workload")
-        if self.app.planned_units() == 1:
-            # there is no other sentinel to query
-            primary_ip = self.state.unit_server.get_endpoint(self.state.substrate)
-        else:
-            primary_ip = self.sentinel_manager.get_primary_ip()
-        self.auth_manager.configure_auth()
-        self.config_manager.configure_services(primary_ip)
-        self.metrics_manager.reconcile()
-        self.workload.start()
+            logger.info("Confirming health after upgrade")
 
-        # config sets min-replicas-to-write=1; reassert the correct value now the server is up
-        self.cluster_manager.reconcile_min_replicas_to_write()
-        if self.unit.is_leader() and self.state.substrate == Substrate.K8S:
-            self.sentinel_manager.set_pod_labels()
-
-        logger.info("Confirming health after upgrade")
         if not (
             self.cluster_manager.is_healthy(is_primary=self.cluster_manager.is_primary())
             and self.sentinel_manager.is_healthy()
         ):
             # to ensure the unit receives another Juju event
             raise ValkeyUpgradeError("Workload not healthy yet")
+
+        if self.unit.is_leader():
+            # the observer process survives a VM charm refresh, restart it to run the new code
+            try:
+                self.topology_manager.restart_observer()
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                logger.error("Failed to restart topology observer: %s", e)
 
         logger.info("Unit is healthy, allowing next unit to refresh")
         refresh.next_unit_allowed_to_refresh = True

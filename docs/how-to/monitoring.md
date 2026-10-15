@@ -318,6 +318,33 @@ Both files rotate daily, or earlier once one passes 200M. Rotated files are kept
 
 `````
 
+``````{important}
+For production environments, use a logs volume of at least 8G. Set it when you deploy:
+
+`````{tab-set}
+:sync-group: substrate
+
+````{tab-item} VM
+:sync: vm
+
+```shell
+juju deploy valkey --channel 9/edge -n 3 --storage logs=8G
+```
+
+````
+
+````{tab-item} K8s
+:sync: k8s
+
+```shell
+juju deploy valkey --channel 9/edge -n 3 --storage logs=8G --trust
+```
+
+````
+
+`````
+``````
+
 ## Query the metrics endpoint
 
 The exporter serves metrics on port `9121` at `/metrics`. It connects to Valkey over TLS as the
