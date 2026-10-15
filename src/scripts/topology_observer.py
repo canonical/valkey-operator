@@ -31,7 +31,12 @@ def dispatch(unit_name: str, charm_dir: str) -> None:
     juju_run_command = "/usr/bin/juju-exec"
     dispatch_command = f"JUJU_DISPATCH_PATH=hooks/{custom_event} {charm_dir}/dispatch"
 
-    subprocess.run([juju_run_command, "-u", unit_name, dispatch_command], check=True)
+    subprocess.run(
+        [juju_run_command, "-u", unit_name, dispatch_command],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def handle_stop_signal(signum, frame) -> None:
@@ -107,7 +112,7 @@ def main() -> None:
             try:
                 dispatch(unit_name, charm_dir)
             except subprocess.CalledProcessError as e:
-                logging.error("Error when dispatching Juju event: %s", e)
+                logging.error("Error when dispatching Juju event: %s: %s", e, e.stderr)
 
         else:
             logging.info("Gracefully stopping observer")
