@@ -45,6 +45,7 @@ from src.literals import (
     DATA_STORAGE,
     GCS_RELATION_NAME,
     PEER_RELATION,
+    ROLLINGOPS_PEER_RELATION,
     S3_RELATION_NAME,
     STATUS_PEERS_RELATION,
 )
@@ -1181,7 +1182,10 @@ BACKUP_ID = "2026-05-13T10:00:00Z"
 def _backup_context_and_state(*, leader=True, relations=(), secrets=(), unit_data=None, peer=True):
     """Build a Context + State with the peer relations and the given storage relations."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peers = {testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)}
+    peers = {
+        testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+        testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION),
+    }
     if peer:
         peers.add(
             testing.PeerRelation(

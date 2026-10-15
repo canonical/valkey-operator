@@ -1470,7 +1470,7 @@ def test_non_participant_unit_skips_restore_workflow(restore_managers):
     """
     from common.exceptions import ValkeyWorkloadCommandError
 
-    # StartLock is withheld during a restore, so this newcomer's Valkey is down;
+    # The start is retried during a restore, so this newcomer's Valkey is down.
     # is_primary() would raise -> broad except -> _fail_restore -> resume_failover.
     restore_managers.is_primary.side_effect = ValkeyWorkloadCommandError("not up")
     ctx, state = _restore_context_and_state(
@@ -1919,18 +1919,6 @@ def test_storage_detaching_refuses_during_restore(mocker):
 
     with pytest.raises(Exception):  # ValkeyBackupInProgressError or a restore-specific error
         ev._on_storage_detaching(mocker.Mock())
-
-
-def test_restart_workload_defers_during_restore(mocker):
-    from src.charm import ValkeyCharm
-
-    charm = ValkeyCharm.__new__(ValkeyCharm)
-    charm.state = mocker.Mock()
-    charm.state.unit_server.is_backup_in_progress = False
-    charm.state.cluster.is_restore_in_progress = True
-    event = mocker.Mock()
-    ValkeyCharm._on_restart_workload(charm, event)
-    event.defer.assert_called_once()
 
 
 def test_external_clients_prc_skips_during_restore(mocker):

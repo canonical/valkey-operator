@@ -47,6 +47,8 @@ peers:
     interface: status_peers
   refresh-v-three:
     interface: refresh
+  rollingops-peers:
+    interface: rollingops-peers
 
 provides:
   valkey-client:

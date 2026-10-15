@@ -24,7 +24,12 @@ from core.models import PersistenceConfig
 from literals import AppendFsync, PersistenceMode
 from managers.cluster import ClusterManager
 from src.charm import ValkeyCharm
-from src.literals import PEER_RELATION, STATUS_PEERS_RELATION, StartState
+from src.literals import (
+    PEER_RELATION,
+    ROLLINGOPS_PEER_RELATION,
+    STATUS_PEERS_RELATION,
+    StartState,
+)
 from src.statuses import PersistenceStatuses
 
 from .helpers import status_is
@@ -283,7 +288,11 @@ def _started_unit_state(app_data: dict, unit_data: dict, peers_data: dict | None
     status_peers = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     state = testing.State(
         leader=False,
-        relations={relation, status_peers},
+        relations={
+            relation,
+            status_peers,
+            testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION),
+        },
         containers={testing.Container(name="valkey", can_connect=True)},
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
@@ -459,35 +468,6 @@ def test_new_leader_stores_the_config():
     assert PersistenceConfig.model_validate_json(app_data["persistence-config"]).mode == "AOF"
 
 
-def test_leader_grants_locks_before_the_reconcile():
-    """The leader grants the locks before an AOF rewrite wait can delay them."""
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation, state_in = _started_unit_state(
-        {"persistence-config": AOF_JSON}, {}, peers_data={1: {}}
-    )
-    order = []
-
-    with (
-        patch(
-            "common.locks.StartLock.process",
-            autospec=True,
-            side_effect=lambda _: order.append("start"),
-        ),
-        patch(
-            "common.locks.RestartLock.process",
-            autospec=True,
-            side_effect=lambda _: order.append("restart"),
-        ),
-        patch(
-            "events.base_events.BaseEvents.reconcile_persistence",
-            side_effect=lambda: order.append("reconcile"),
-        ),
-    ):
-        ctx.run(ctx.on.relation_changed(relation, remote_unit=1), replace(state_in, leader=True))
-
-    assert order == ["start", "restart", "reconcile"]
-
-
 def test_config_set_raises_on_an_error_reply():
     """valkey-cli prints a refused CONFIG SET on stdout with exit code 0."""
     workload = MagicMock()
@@ -596,7 +576,7 @@ def _run_heal(
         ) as archive,
         patch("managers.cluster.ClusterManager.is_healthy", return_value=primary_healthy),
         patch("events.base_events.BaseEvents.reconcile_persistence"),
-        patch("src.charm.ValkeyCharm._on_restart_workload", autospec=True) as restart,
+        patch("src.charm.ValkeyCharm.request_restart") as restart,
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
     return state_out, failover, render, archive, restart
