@@ -200,12 +200,12 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "startup": "enabled",
                 },
                 # Pebble reruns this oneshot on a fixed 1m backoff (delay = limit). The sleep keeps
-                # it up past Pebble's 1s okay-delay, or the start fails with "exited quickly".
+                # it up past Pebble's 1s okay-delay, and the exit code surfaces logrotate failures.
                 self.logrotate_service: {
                     "override": "replace",
                     "summary": "Rotate Valkey and Sentinel logs",
                     "command": f"sh -c '/usr/sbin/logrotate -s {logrotate_state} {logrotate_conf}"
-                    "; sleep 1'",
+                    "; rc=$?; sleep 5; exit $rc'",
                     "user": self.user,
                     "group": self.user,
                     "startup": "enabled",

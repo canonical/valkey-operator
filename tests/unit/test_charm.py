@@ -100,7 +100,7 @@ def test_start_primary():
                 "override": "replace",
                 "summary": "Rotate Valkey and Sentinel logs",
                 "command": "sh -c '/usr/sbin/logrotate -s /var/lib/valkey/logrotate.status "
-                "/var/lib/valkey/logrotate.conf; sleep 1'",
+                "/var/lib/valkey/logrotate.conf; rc=$?; sleep 5; exit $rc'",
                 "user": CHARM_USER,
                 "group": CHARM_USER,
                 "startup": "enabled",
