@@ -22,6 +22,7 @@ from common.exceptions import (
     ValkeyServiceNotAliveError,
     ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
+    ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
 from common.locks import RestartLock, ScaleDownLock, StartLock
@@ -262,6 +263,10 @@ class BaseEvents(ops.Object):
         if self.charm.state.substrate == Substrate.K8S:
             self.charm.unit.open_port("tcp", METRICS_PORT)
 
+        if not self._apply_client_tls_after_start():
+            event.defer()
+            return
+
         # ensure to run all operations depending on peer-relation changed (might have been deferred
         # before start and not run again if only 1 unit, e.g. set pod labels, publish client data)
         self.charm.trigger_relation_change_if_required()
@@ -324,6 +329,38 @@ class BaseEvents(ops.Object):
             self.charm.topology_manager.restart_observer()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to restart topology observer: %s", e)
+
+    def _apply_client_tls_after_start(self) -> bool:
+        """Close the plain ports if client TLS was enabled after the unit wrote its config.
+
+        Returns:
+            bool: False if applying the config failed and must be retried.
+        """
+        if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
+            return True
+
+        try:
+            if self.charm.config_manager.is_plain_port_closed():
+                # the unit wrote its config after the switch, nothing to apply
+                return True
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+            tls_config = self.charm.config_manager.generate_tls_config()
+            self.charm.cluster_manager.reload_tls_settings(tls_config)
+        except (
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyTLSLoadError,
+            ValkeyWorkloadCommandError,
+            ValueError,
+        ) as e:
+            logger.error("Failed to apply the client TLS config after start: %s", e)
+            return False
+
+        # rewrites sentinel.conf with the plain port closed
+        self.charm.restart_workload.emit(
+            restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+        )
+        return True
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""
@@ -479,11 +516,6 @@ class BaseEvents(ops.Object):
             sans_changed = self.charm.tls_manager.certificate_sans_require_update()
             if self.charm.state.bind_address == recorded_ip and not sans_changed:
                 return True
-
-            if self.charm.state.unit_server.is_tls_transitioning:
-                # a restart mid-transition can close the plain port or load a rotating cert early
-                logger.info("TLS transition in progress, retrying the address reconcile later")
-                return False
 
             self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(

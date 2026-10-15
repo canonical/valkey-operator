@@ -242,6 +242,12 @@ class TLSEvents(ops.Object):
         self.charm.unit.close_port("tcp", SENTINEL_PORT)
 
         if self.charm.state.unit_server.is_started:
+            try:
+                self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+            except (ValkeyWorkloadCommandError, ValueError) as e:
+                # shortcut: a restart before the next config write reopens the plain port.
+                # Raising would roll back the TLS state with the port already closed.
+                logger.error("Failed to write the Valkey config with the plain port closed: %s", e)
             logger.info("Restarting Sentinel")
             self.charm.restart_workload.emit(
                 restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
@@ -311,7 +317,7 @@ class TLSEvents(ops.Object):
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
             self.charm.trigger_relation_change_if_required()
         else:
-            # the enable step never completed, so leaving to-tls keeps the plain ports open
+            # enable never finished, leave to-tls so the unit isn't stuck transitioning
             self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
 
@@ -393,9 +399,8 @@ class TLSEvents(ops.Object):
             return
 
         logger.info("Enabling client TLS in Valkey")
-        primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-        tls_config = self.charm.config_manager.generate_tls_config()
+        # runtime only, the config file follows once the state is TLS
+        tls_config = self.charm.config_manager.generate_tls_config() | {"port": "0"}
         self.charm.cluster_manager.reload_tls_settings(tls_config)
 
     def _orchestrate_ca_rotation(self) -> None:

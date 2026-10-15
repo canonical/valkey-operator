@@ -329,7 +329,7 @@ class ExternalClientsEvents(ops.Object):
     def _on_ca_available(self, event: CertificatesAvailableEvent) -> None:
         """Handle the CA certificates available event."""
         if self.charm.state.unit_server.is_tls_transitioning:
-            # a TLS reload mid-transition can close the plain port or load a rotating cert early
+            # a reload mid-transition can load a rotating cert early
             logger.info("TLS transition in progress, deferring CA update")
             event.defer()
             return
@@ -363,7 +363,7 @@ class ExternalClientsEvents(ops.Object):
     def _on_ca_removed(self, event: CertificatesRemovedEvent) -> None:
         """Handle the CA certificates removed event."""
         if self.charm.state.unit_server.is_tls_transitioning:
-            # a TLS reload mid-transition can close the plain port or load a rotating cert early
+            # a reload mid-transition can load a rotating cert early
             logger.info("TLS transition in progress, deferring CA update")
             event.defer()
             return

@@ -162,13 +162,22 @@ class ConfigManager(ManagerStatusProtocol):
         }
 
         if (
-            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            self.state.unit_server.tls_client_state == TLSState.TLS
             and self.state.unit_server.model.client_cert_ready
         ):
             # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            # the enable step closes it at runtime first
             tls_config["port"] = "0"
 
         return tls_config
+
+    def is_plain_port_closed(self) -> bool:
+        """Check whether the Valkey config file on disk has the plain port closed.
+
+        Returns:
+            bool: True if the config file sets `port 0`.
+        """
+        return "port 0" in self.workload.read_file(self.workload.config_file).splitlines()
 
     def generate_sentinel_tls_config(self) -> dict[str, str]:
         """Return the TLS configuration for sentinel based on the current state."""
@@ -184,10 +193,11 @@ class ConfigManager(ManagerStatusProtocol):
         }
 
         if (
-            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            self.state.unit_server.tls_client_state == TLSState.TLS
             and self.state.unit_server.model.client_cert_ready
         ):
             # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            # Sentinel applies it on its restart after the switch
             tls_config["port"] = "0"
 
         return tls_config
