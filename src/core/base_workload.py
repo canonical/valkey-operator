@@ -108,7 +108,6 @@ class WorkloadBase(ABC):
     valkey_service: str
     sentinel_service: str
     metrics_service: str
-    logrotate_service: str
     cli: str
     user: str
 

@@ -336,14 +336,8 @@ class ConfigManager(ManagerStatusProtocol):
         template = pathops.LocalPath(WORKING_DIR / "config-template/logrotate.conf")
         config = template.read_text().format(log_dir=self.workload.log_dir.as_posix())
 
-        # logrotate ignores group- or world-writable configs and, when not root, foreign-owned ones
-        self.workload.write_file(
-            config,
-            self.workload.logrotate_config_file,
-            mode=0o644,
-            user=self.workload.user,
-            group=self.workload.user,
-        )
+        # logrotate skips group- or world-writable configs and, when non-root, foreign-owned ones
+        self.workload.write_file(config, self.workload.logrotate_config_file, mode=0o644)
 
     def configure_services(self, primary_endpoint: str) -> None:
         """Start Valkey and Sentinel services.
