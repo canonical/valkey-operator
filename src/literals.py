@@ -97,10 +97,9 @@ EXEC_TIMEOUT_S = 10
 # Bound for one pass over the whole dataset on disk (SAVE, BGSAVE, AOF rewrite, valkey-check-aof).
 # The scale-down lock TTL is derived from it. A 1 GB SAVE took about 12 s on a 100 MB/s disk.
 DATASET_IO_TIMEOUT_S = 300
-# A unit waits this long for the scale-down lock. The TTL covers the two bounded save steps
-# (BGSAVE wait and SAVE) plus a margin for the failover, so a slow holder keeps the lock.
+# Scale-down lock wait. The TTL covers the AOF rewrite and BGSAVE waits, SAVE and failover.
 SCALE_DOWN_LOCK_TIMEOUT_S = 300
-SCALE_DOWN_LOCK_TTL_S = 3 * DATASET_IO_TIMEOUT_S
+SCALE_DOWN_LOCK_TTL_S = 4 * DATASET_IO_TIMEOUT_S
 SCALE_DOWN_LOCK_RETRY_INTERVAL_S = 5
 SCALE_DOWN_LOCK_ID = "scale-down"
 # rollingops callback ids
