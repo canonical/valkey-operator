@@ -179,7 +179,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -242,7 +242,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -269,7 +269,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -348,7 +348,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error storing CA certificates for external clients: %s", e)
             event.defer()
@@ -369,7 +369,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error removing CA certificates for external clients: %s", e)
             event.defer()

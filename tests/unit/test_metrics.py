@@ -16,6 +16,7 @@ from literals import (
     METRICS_PORT,
     METRICS_SERVICE,
     PEER_RELATION,
+    ROLLINGOPS_PEER_RELATION,
     TLS_PORT,
     CharmUsers,
 )
@@ -37,7 +38,7 @@ def base_state():
     return testing.State(
         leader=True,
         containers=[container],
-        relations=[peer_relation],
+        relations=[peer_relation, testing.PeerRelation(id=2, endpoint=ROLLINGOPS_PEER_RELATION)],
     )
 
 
@@ -77,7 +78,7 @@ def test_exporter_env_rendered_vm(vm_environment):
     )
     state = testing.State(
         leader=True,
-        relations=[peer_relation],
+        relations=[peer_relation, testing.PeerRelation(id=2, endpoint=ROLLINGOPS_PEER_RELATION)],
     )
     state = ctx.run(ctx.on.leader_elected(), state)
 

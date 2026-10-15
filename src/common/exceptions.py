@@ -72,10 +72,6 @@ class NotAllDepartingSentinelsStoppedError(Exception):
     """Custom Exception if not all departing Sentinels have already been stopped."""
 
 
-class RequestingLockTimedOutError(Exception):
-    """Custom Exception if requesting a lock times out."""
-
-
 class ValkeyCertificatesNotReadyError(Exception):
     """Custom Exception if not all units have stored the TLS certificates."""
 
