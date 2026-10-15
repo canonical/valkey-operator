@@ -36,6 +36,8 @@ SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 LOGROTATE_STATE_FILE = "var/lib/valkey/logrotate.status"
 
 TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
+TOPOLOGY_OBSERVER_LOG_MAX_BYTES = 10 * 1024**2
+TOPOLOGY_OBSERVER_LOG_BACKUPS = 3
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 

@@ -16,7 +16,6 @@ from core.cluster_state import ClusterState
 from literals import (
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
-    TOPOLOGY_OBSERVER_LOG_FILENAME,
     TOPOLOGY_OBSERVER_PID_FILENAME,
     TOPOLOGY_OBSERVER_TLS_CA_FILENAME,
     CharmUsers,
@@ -34,11 +33,6 @@ class TopologyManager:
     def __init__(self, state: ClusterState, workload: WorkloadBase):
         self.state = state
         self.workload = workload
-
-    @property
-    def _log_file_path(self) -> Path:
-        """Return the path to the topology observer log file."""
-        return self.state.charm.charm_dir / TOPOLOGY_OBSERVER_LOG_FILENAME
 
     @property
     def _tls_ca_file_path(self) -> Path:
@@ -106,9 +100,9 @@ class TopologyManager:
                 self.state.unit_server.unit_name,
                 self.state.charm.charm_dir,
             ],
-            # File shouldn't close
-            stdout=open(self._log_file_path.as_posix(), "a"),  # noqa: SIM115
-            stderr=subprocess.STDOUT,
+            # The observer writes its own rotating log file.
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             env=env,
         ).pid
 
