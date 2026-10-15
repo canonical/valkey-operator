@@ -7,9 +7,7 @@ workload = "9.0.4"
 name = "valkey-charmed"
 
 [snap.revisions]
-# TODO(DPE-10294): bump to the 9.0/edge revisions once canonical/valkey-artifacts#33 is
-# merged and released. These come from the 9.0/edge/pr-33 branch and add the logrotate app.
 # amd64
-x86_64 = "214"
+x86_64 = "220"
 # arm64
-aarch64 = "213"
+aarch64 = "219"
