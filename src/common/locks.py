@@ -1,205 +1,43 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Collection of locks for cluster operations."""
+"""Synchronous locks for cluster operations, used through charmlibs-rollingops."""
 
 import logging
-import time
-from abc import abstractmethod
-from typing import TYPE_CHECKING, Protocol, override
+from typing import TYPE_CHECKING, override
 
-from tenacity import Retrying, stop_after_attempt, wait_fixed
+from charmlibs.rollingops import SyncLockBackend
+from tenacity import (
+    RetryCallState,
+    Retrying,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_before_delay,
+    stop_never,
+    wait_fixed,
+)
 
 from common.client import ValkeyClient
-from core.cluster_state import ClusterState
-from literals import CharmUsers
+from common.exceptions import ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError
+from literals import SCALE_DOWN_LOCK_RETRY_INTERVAL_S, SCALE_DOWN_LOCK_TTL_S, CharmUsers
 
 if TYPE_CHECKING:
     from charm import ValkeyCharm
-    from core.cluster_state import ClusterState
-    from core.models import ValkeyServer
 
 
 logger = logging.getLogger(__name__)
 
 
-class Lockable(Protocol):
-    """Protocol for lockable operations."""
+class ValkeyScaleDownLockBackend(SyncLockBackend):
+    """Scale-down lock stored in Valkey, so that it outlives the unit going away.
 
-    @property
-    def name(self) -> str:
-        """Get the name of the lock."""
-        return self.__class__.__name__.lower()
-
-    @abstractmethod
-    def request_lock(self) -> bool:
-        """Request the lock for the local unit."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def release_lock(self) -> bool:
-        """Release the lock from the local unit."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def is_held_by_this_unit(self) -> bool:
-        """Check if the local unit holds the lock."""
-        raise NotImplementedError
-
-
-class DataBagLock(Lockable):
-    """Base class for locks."""
-
-    unit_request_lock_atr_name: str
-    member_with_lock_atr_name: str
-    lock_timestamp: str = "databaglock_timestamp"
-
-    def __init__(self, state: "ClusterState") -> None:
-        self.state = state
-
-    def __init_subclass__(cls) -> None:
-        """Initialize subclass attributes."""
-        super().__init_subclass__()
-        cls.lock_timestamp = cls.__name__.lower() + "_timestamp"
-
-    @property
-    def units_requesting_lock(self) -> list[str]:
-        """Get the list of units requesting the start lock."""
-        return [
-            unit.unit_name
-            for unit in self.state.servers
-            if unit.model and getattr(unit.model, self.unit_request_lock_atr_name, False)
-        ]
-
-    @property
-    def next_unit_to_give_lock(self) -> str | None:
-        """Get the next unit to give the start lock to."""
-        units_requesting_lock = self.units_requesting_lock
-        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            return self.state.unit_server.unit_name
-        return units_requesting_lock[0] if units_requesting_lock else None
-
-    @property
-    def unit_with_lock(self) -> "ValkeyServer | None":
-        """Get the unit that currently holds the start lock."""
-        return next(
-            (
-                unit
-                for unit in self.state.servers
-                if unit.unit_name
-                == getattr(self.state.cluster.model, self.member_with_lock_atr_name, "")
-            ),
-            None,
-        )
-
-    @property
-    @abstractmethod
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the lock has completed its operation."""
-        raise NotImplementedError
-
-    @property
-    def is_held_by_this_unit(self) -> bool:
-        """Check if the local unit holds the start lock."""
-        return self.state.unit_server.unit_name == getattr(
-            self.state.cluster.model, self.member_with_lock_atr_name, ""
-        )
-
-    def request_lock(self) -> bool:
-        """Request the lock for the local unit."""
-        if not self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            self.state.unit_server.update(
-                {
-                    self.unit_request_lock_atr_name: True,
-                    self.lock_timestamp: time.time(),
-                }
-            )
-        if self.state.unit_server.unit.is_leader():
-            logger.info(
-                "Leader unit requesting %s lock. Triggering lock request processing.",
-                self.name,
-            )
-            self.process()
-
-        return self.is_held_by_this_unit
-
-    def release_lock(self) -> bool:
-        """Release the lock from the local unit."""
-        if self.state.unit_server.model[self.unit_request_lock_atr_name]:
-            self.state.unit_server.update(
-                {
-                    self.unit_request_lock_atr_name: False,
-                    self.lock_timestamp: time.time(),
-                }
-            )
-        if self.state.unit_server.unit.is_leader():
-            logger.info(
-                "Leader unit releasing %s lock. Triggering lock request processing.",
-                self.name,
-            )
-            self.process()
-
-        return True
-
-    def process(self) -> None:
-        """Process the lock requests and update the unit with the lock."""
-        if not self.state.unit_server.unit.is_leader():
-            logger.info("Only the leader can process lock requests.")
-            return
-
-        if self.is_lock_free_to_give:
-            next_unit = self.next_unit_to_give_lock
-            self.state.cluster.update({self.member_with_lock_atr_name: next_unit})
-            logger.debug("Gave %s to %s", self.name, next_unit)
-
-        if unit_with_lock := self.state.cluster.model[self.member_with_lock_atr_name]:
-            logger.debug("%s is currently held by %s", self.name, unit_with_lock)
-
-
-class StartLock(DataBagLock):
-    """Lock for starting operations."""
-
-    unit_request_lock_atr_name = "request_start_lock"
-    member_with_lock_atr_name = "start_member"
-
-    @property
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the start lock has completed its operation."""
-        if not self.state.cluster.model.start_member:
-            return True
-        starting_unit = self.unit_with_lock
-        return (
-            not starting_unit
-            or starting_unit.is_started
-            or not starting_unit.model.request_start_lock
-        )
-
-
-class RestartLock(DataBagLock):
-    """Lock for restart operations."""
-
-    unit_request_lock_atr_name = "request_restart_lock"
-    member_with_lock_atr_name = "restart_member"
-
-    @property
-    def is_lock_free_to_give(self) -> bool:
-        """Check if the unit with the restart lock has completed its operation."""
-        if not self.state.cluster.model.restart_member:
-            return True
-        restarting_unit = self.unit_with_lock
-        return not restarting_unit or not restarting_unit.model.request_restart_lock
-
-
-class ScaleDownLock(Lockable):
-    """Lock for scale down operations.
-
-    This will use valkey to store the lock state and will check if the unit with the lock has completed its scale down operation
+    The key expires after the TTL, which clears the lock if the unit never releases it.
     """
 
     def __init__(self, charm: "ValkeyCharm") -> None:
         self.charm = charm
-        self.lock_key = f"scale_down_lock_{self.charm.app.name}"
+        self.lock_key = f"scale_down_lock_{charm.app.name}"
+        self._acquired = False
 
     @property
     def client(self) -> ValkeyClient:
@@ -211,101 +49,91 @@ class ScaleDownLock(Lockable):
             workload=self.charm.workload,
         )
 
-    def get_unit_with_lock(self, primary_ip: str | None = None) -> str | None:
-        """Get the unit that currently holds the start lock."""
-        return self.client.get(
-            primary_ip or self.charm.sentinel_manager.get_primary_ip(), self.lock_key
-        )
-
     @override
-    def request_lock(self, timeout: int | None = None, primary_ip: str | None = None) -> bool:
-        """Request the lock for the local unit.
-
-        This method will keep trying to acquire the lock until it is acquired or until the timeout is reached (if provided).
+    def acquire(self, timeout: int | None) -> None:
+        """Take the lock, retrying every few seconds without waiting past the timeout.
 
         Args:
-            timeout (int | None): The maximum time to keep trying to acquire the lock, in seconds. If None, it will keep trying indefinitely.
-            primary_ip (str | None): The primary IP to use for the lock. If None, it will get the current primary IP from the sentinel manager.
+            timeout: Seconds to keep trying, or None to keep trying indefinitely.
+
+        Raises:
+            TimeoutError: If the lock could not be taken within the timeout.
+        """
+        retrying = Retrying(
+            wait=wait_fixed(SCALE_DOWN_LOCK_RETRY_INTERVAL_S),
+            stop=stop_never if timeout is None else stop_before_delay(timeout),
+            retry=retry_if_result(lambda acquired: not acquired)
+            | retry_if_exception_type((ValkeyWorkloadCommandError, ValkeyCannotGetPrimaryIPError)),
+            retry_error_callback=lambda _: False,
+            after=self._log_failed_attempt,
+        )
+        if not retrying(self._try_acquire):
+            raise TimeoutError(f"Could not take the scale-down lock within {timeout} s")
+
+    def _try_acquire(self) -> bool:
+        """Make one attempt, looking the primary up again in case of a failover.
 
         Returns:
-            bool: True if the lock was acquired, False if the timeout was reached before acquiring the lock.
+            True once this unit holds the lock or no lock is needed, False if another unit
+            holds it.
         """
-        logger.debug(
-            "%s is requesting %s lock.", self.charm.state.unit_server.unit_name, self.name
-        )
-        primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
-        if self.get_unit_with_lock(primary_ip) == self.charm.state.unit_server.unit_name:
-            logger.debug(
-                "%s already holds %s lock. No need to request it again.",
-                self.charm.state.unit_server.unit_name,
-                self.name,
-            )
+        unit_name = self.charm.state.unit_server.unit_name
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        if self.client.get(primary_ip, self.lock_key) == unit_name:
+            logger.debug("%s already holds the scale-down lock.", unit_name)
+            self._acquired = True
             return True
 
         if len(self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)) == 1:
-            logger.debug("Last unit in the cluster scaling down. Lock will be skipped.")
+            logger.debug("Last unit in the cluster scaling down, skipping the lock.")
             return True
 
-        number_of_retries = min(timeout // 5 if timeout else 1, 1)
-
-        for attempt in Retrying(
-            wait=wait_fixed(5),
-            stop=stop_after_attempt(number_of_retries),
-            retry_error_callback=lambda _: False,
-            after=lambda retry_state: logger.info(
-                "%s failed to acquire %s lock on attempt %d. Retrying in 5 seconds.",
-                self.charm.state.unit_server.unit_name,
-                self.name,
-                retry_state.attempt_number,
-            ),
-        ):
-            with attempt:
-                # update the primary ip in case a failover happens when we are waiting to acquire the lock
-                primary_ip = self.charm.sentinel_manager.get_primary_ip()
-                if self.client.set(
-                    hostname=primary_ip,
-                    key=self.lock_key,
-                    value=self.charm.state.unit_server.unit_name,
-                    additional_args=[
-                        "NX",
-                        "PX",
-                        str(
-                            5 * 60 * 1000
-                        ),  # Set the lock with a TTL of 5 minutes to prevent deadlocks
-                    ],
-                ):
-                    logger.debug(
-                        "%s acquired %s lock.", self.charm.state.unit_server.unit_name, self.name
-                    )
-                    return True
-
-        return False
-
-    @property
-    def is_held_by_this_unit(self) -> bool:
-        """Check if the local unit holds the lock."""
-        unit_with_lock = self.get_unit_with_lock()
-        return (
-            unit_with_lock is not None and unit_with_lock == self.charm.state.unit_server.unit_name
+        self._acquired = self.client.set(
+            hostname=primary_ip,
+            key=self.lock_key,
+            value=unit_name,
+            additional_args=["NX", "PX", str(SCALE_DOWN_LOCK_TTL_S * 1000)],
         )
+        return self._acquired
 
-    def release_lock(self, primary_ip: str | None = None) -> bool:
-        """Release the lock from the local unit."""
-        primary_ip = primary_ip or self.charm.sentinel_manager.get_primary_ip()
-        if (
-            self.client.delifeq(
-                hostname=primary_ip,
-                key=self.lock_key,
-                value=self.charm.state.unit_server.unit_name,
-            )
-            == "1"
-        ):
-            logger.debug("%s released %s lock.", self.charm.state.unit_server.unit_name, self.name)
-            return True
+    def _log_failed_attempt(self, retry_state: RetryCallState) -> None:
+        """Log a failed attempt with its error, if it raised one.
 
-        logger.warning(
-            "%s failed to release %s lock. It may not have held the lock or it may have already been released.",
+        Args:
+            retry_state: The state of the retried call.
+        """
+        error = retry_state.outcome.exception() if retry_state.outcome else None
+        logger.info(
+            "%s failed to take the scale-down lock on attempt %d, error: %s",
             self.charm.state.unit_server.unit_name,
-            self.name,
+            retry_state.attempt_number,
+            error,
         )
-        return False
+
+    @override
+    def release(self) -> None:
+        """Delete the key if this unit holds it and the scale-down finished.
+
+        If the scale-down failed, Juju retries the hook, so the lock is kept until then or
+        until it expires. A failure to delete is only logged, because the TTL clears the key.
+        """
+        if not self._acquired:
+            return
+
+        unit_name = self.charm.state.unit_server.unit_name
+        if not self.charm.state.unit_server.is_being_removed:
+            logger.warning("Scale-down did not finish, keeping the lock for the retry.")
+            return
+
+        try:
+            deleted = self.client.delifeq(
+                hostname=self.charm.sentinel_manager.get_primary_ip(),
+                key=self.lock_key,
+                value=unit_name,
+            )
+        except (ValkeyWorkloadCommandError, ValkeyCannotGetPrimaryIPError):
+            logger.warning("Failed to release the scale-down lock, it expires with its TTL.")
+            return
+
+        if deleted != "1":
+            logger.warning("%s did not hold the scale-down lock when releasing it.", unit_name)

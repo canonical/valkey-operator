@@ -203,7 +203,7 @@ class TLSEvents(ops.Object):
 
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.record_applied_certificate(cert)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
@@ -249,8 +249,10 @@ class TLSEvents(ops.Object):
                 # Raising would roll back the TLS state with the port already closed.
                 logger.error("Failed to write the Valkey config with the plain port closed: %s", e)
             logger.info("Restarting Sentinel")
-            self.charm.restart_workload.emit(
-                restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+            self.charm.request_restart(
+                restart_valkey=False,
+                restart_sentinel=True,
+                primary_endpoint=primary_ip,
             )
         self.charm.tls_manager.record_applied_certificate(cert)
         self.charm.trigger_relation_change_if_required()
@@ -331,7 +333,7 @@ class TLSEvents(ops.Object):
             return
 
         logger.info("Restarting Sentinel")
-        self.charm.restart_workload.emit(
+        self.charm.request_restart(
             restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
         )
 
@@ -441,5 +443,5 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)
