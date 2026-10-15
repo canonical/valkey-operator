@@ -432,11 +432,19 @@ class BaseEvents(ops.Object):
                 # the unit wrote its config after the switch, nothing to apply
                 return True
             primary_ip = self.charm.sentinel_manager.get_primary_ip()
-            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
+            # inline: start holds the lock, and rollingops drops a nested request_restart
+            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
+            self.charm.sentinel_manager.restart_service()
+            if not self.charm.sentinel_manager.is_healthy():
+                logger.warning("Sentinel is not healthy after the client TLS restart")
+                return False
+            # last, so a failed step reruns instead of hitting the skip check
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         except (
             ValkeyCannotGetPrimaryIPError,
+            ValkeyServicesFailedToStartError,
             ValkeyTLSLoadError,
             ValkeyWorkloadCommandError,
             ValueError,
@@ -444,10 +452,6 @@ class BaseEvents(ops.Object):
             logger.error("Failed to apply the client TLS config after start: %s", e)
             return False
 
-        # rewrites sentinel.conf with the plain port closed
-        self.charm.request_restart(
-            restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
-        )
         return True
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
