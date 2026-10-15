@@ -7,6 +7,7 @@
 import logging
 from pathlib import Path
 
+from charmlibs import pathops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -330,6 +331,20 @@ class ConfigManager(ManagerStatusProtocol):
             group=self.workload.user,
         )
 
+    def set_logrotate_config(self) -> None:
+        """Write the logrotate config for the Valkey and Sentinel logs."""
+        template = pathops.LocalPath(WORKING_DIR / "config-template/logrotate.conf")
+        config = template.read_text().format(log_dir=self.workload.log_dir.as_posix())
+
+        # logrotate ignores group- or world-writable configs and, when not root, foreign-owned ones
+        self.workload.write_file(
+            config,
+            self.workload.logrotate_config_file,
+            mode=0o644,
+            user=self.workload.user,
+            group=self.workload.user,
+        )
+
     def configure_services(self, primary_endpoint: str) -> None:
         """Start Valkey and Sentinel services.
 
@@ -339,6 +354,7 @@ class ConfigManager(ManagerStatusProtocol):
         try:
             self.set_config_properties(primary_endpoint=primary_endpoint)
             self.set_sentinel_config_properties(primary_endpoint=primary_endpoint)
+            self.set_logrotate_config()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)
             self.state.unit_server.update(

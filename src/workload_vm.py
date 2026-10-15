@@ -38,6 +38,8 @@ from literals import (
     DATA_STORAGE_PATH,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
+    LOGROTATE_CONFIG_FILE,
+    LOGROTATE_SERVICE,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
     SNAP_ACL_FILE,
@@ -123,6 +125,9 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / DATA_STORAGE_PATH
         self.log_dir = self.root_dir / SNAP_COMMON_PATH / LOG_STORAGE_PATH
+        self.logrotate_config_file = (
+            self.root_dir / SNAP_CURRENT_PATH / "etc/valkey" / LOGROTATE_CONFIG_FILE
+        )
         self.archive_dir = self.root_dir / SNAP_COMMON_PATH / ARCHIVE_STORAGE_PATH
         self.lib_dir = self.root_dir / f"snap/{SNAP_NAME}/current/usr/lib/valkey/modules"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
@@ -130,6 +135,7 @@ class ValkeyVmWorkload(WorkloadBase):
         self.valkey_service = SNAP_SERVICE
         self.sentinel_service = SNAP_SENTINEL_SERVICE
         self.metrics_service = METRICS_SERVICE
+        self.logrotate_service = LOGROTATE_SERVICE
         self.metrics_env_file = self.root_dir / SNAP_CURRENT_PATH / METRICS_EXPORTER_ENV_FILE
         self.cli = f"{SNAP_NAME}.cli"
         self.user = "snap_daemon"
@@ -205,6 +211,9 @@ class ValkeyVmWorkload(WorkloadBase):
         services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
             self.valkey.start(services=services)
+            if not service:
+                # Enable the logrotate timer so it survives reboots.
+                self.valkey.start(services=[self.logrotate_service], enable=True)
         except snap.SnapError as e:
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e

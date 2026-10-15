@@ -100,6 +100,7 @@ class WorkloadBase(ABC):
     sentinel_acl_file: pathops.PathProtocol
     working_dir: pathops.PathProtocol
     log_dir: pathops.PathProtocol
+    logrotate_config_file: pathops.PathProtocol
     archive_dir: pathops.PathProtocol
     lib_dir: pathops.PathProtocol
     tls_dir: pathops.PathProtocol
@@ -107,6 +108,7 @@ class WorkloadBase(ABC):
     valkey_service: str
     sentinel_service: str
     metrics_service: str
+    logrotate_service: str
     cli: str
     user: str
 

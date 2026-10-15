@@ -30,6 +30,7 @@ SERVICE_METRIC_EXPORTER = "metrics-exporter"
 SERVICE_SENTINEL = "sentinel"
 SERVICE_VALKEY_LOGS = "valkey-logs"
 SERVICE_SENTINEL_LOGS = "sentinel-logs"
+SERVICE_LOGROTATE = "logrotate"
 
 
 internal_passwords_secret = testing.Secret(
@@ -94,6 +95,18 @@ def test_start_primary():
                 "user": CHARM_USER,
                 "group": CHARM_USER,
                 "startup": "enabled",
+            },
+            SERVICE_LOGROTATE: {
+                "override": "replace",
+                "summary": "Rotate Valkey and Sentinel logs",
+                "command": "sh -c '/usr/sbin/logrotate -s /var/lib/valkey/logrotate.status "
+                "/var/lib/valkey/logrotate.conf; sleep 1'",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "enabled",
+                "backoff-delay": "1m0s",
+                "backoff-factor": 1,
+                "backoff-limit": "1m0s",
             },
         }
     }
