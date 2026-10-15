@@ -3,7 +3,7 @@
 
 Valkey keeps its dataset in memory. The `persistence-mode` config option decides what Valkey also writes to disk.
 
-| Mode            | What Valkey writes                                                          | Use it when                                                                         |
+| Mode            | What Valkey writes to disk                                                  | Use it when                                                                         |
 | --------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `RDB` (default) | A point-in-time snapshot (`dump.rdb`) at the intervals in `rdb-save-points` | Losing the writes since the last snapshot is acceptable                             |
 | `AOF`           | An append-only file with every write, flushed per `aof-appendfsync`         | Losing about one second of writes is acceptable, with the default `aof-appendfsync` |
@@ -11,7 +11,9 @@ Valkey keeps its dataset in memory. The `persistence-mode` config option decides
 | `None`          | Nothing during normal operation                                             | The data is a cache you can rebuild                                                 |
 
 ```{warning}
-In `None` mode, a crash of the primary can wipe the data on every unit, not only on the one that crashed. Valkey restarts after about 1 second on Kubernetes and 20 seconds on machines before Sentinel's 30-second window to fail it over runs out. If that happens it comes back as the primary, empty or with an old snapshot, and the replicas copy that dataset. Only use `None` for data you can rebuild.
+When `persistence-mode` is set to `None`, a primary crash can cause data loss on all units, including replicas. Use this setting only for data you can rebuild.
+
+Valkey restarts after approximately `1` second on Kubernetes and `20` seconds on machines: before Sentinel’s 30-second failover window expires. If it restarts before failover, it resumes as the primary with an empty dataset or an older snapshot. Replicas then synchronize with the primary, replacing their data with that dataset.
 ```
 
 ## Change the mode
