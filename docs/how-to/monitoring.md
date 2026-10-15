@@ -1,6 +1,6 @@
 (how-to-monitoring)=
 
-# How to enable monitoring
+# How to enable monitoring and logging
 
 This guide provides instructions for integrating Charmed Valkey with the
 [Canonical Observability Stack (COS)](https://documentation.ubuntu.com/observability/).
@@ -11,6 +11,8 @@ After you integrate the two, COS receives:
 - the Valkey and Sentinel logs
 - a Grafana dashboard and the [alert rules](reference-alert-rules) that ship with the
   charm
+
+It also shows where each unit keeps its log files and how they rotate.
 
 ## Prerequisites
 
@@ -284,6 +286,10 @@ total 32
 -rw-r--r-- 1 snap_daemon snap_daemon 23722 Oct  7 04:13 valkey.log
 ```
 
+Both files rotate daily, or earlier once one passes 200M. Rotated files are kept for up to 10 days,
+14 files at most. All but the newest are gzipped, so the names are `valkey.log.1`,
+`valkey.log.2.gz`, and so on.
+
 ````
 
 ````{tab-item} K8s
@@ -303,6 +309,10 @@ drwxrws--- 2 root     170  16384 Oct  7 03:55 lost+found
 -rw-r--r-- 1 _daemon_ 170    743 Oct  7 03:57 sentinel.log
 -rw-r--r-- 1 _daemon_ 170 602834 Oct  7 04:14 valkey.log
 ```
+
+Both files rotate daily, or earlier once one passes 200M. Rotated files are kept for up to 10 days,
+14 files at most. All but the newest are gzipped, so the names are `valkey.log.1`,
+`valkey.log.2.gz`, and so on.
 
 ````
 
