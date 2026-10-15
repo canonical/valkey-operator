@@ -351,9 +351,7 @@ class ConfigManager(ManagerStatusProtocol):
             self.set_logrotate_config()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to set configuration properties: %s", e)
-            self.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value, "request_start_lock": False}
-            )
+            self.state.unit_server.update({"start_state": StartState.CONFIGURATION_ERROR.value})
             raise ValkeyConfigurationError("Failed to set configuration") from e
 
     @property

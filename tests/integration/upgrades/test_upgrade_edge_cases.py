@@ -7,6 +7,7 @@ from platform import machine
 from time import sleep
 
 import jubilant
+import pytest
 
 from src.literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
@@ -201,6 +202,8 @@ def test_remove_client_relation(juju: jubilant.Juju, substrate: Substrate) -> No
     )
 
 
+# TODO: re-enable once a released revision with rollingops exists to upgrade from.
+@pytest.mark.skip(reason="An old-revision leader never grants the rollingops lock")
 def test_scale_up_during_upgrade(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Add a unit while upgrading."""
     start_continuous_writes(juju, clear=True)
