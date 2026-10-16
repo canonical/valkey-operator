@@ -427,7 +427,10 @@ class BaseEvents(ops.Object):
             if self.charm.config_manager.is_plain_port_closed():
                 # the unit wrote its config after the switch, nothing to apply
                 return True
-            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            # falls back to this unit when it bootstraps the cluster, no started unit to ask
+            if (primary_ip := self._get_primary_endpoint_for_start()) is None:
+                logger.warning("Primary IP not available yet, retrying the client TLS apply")
+                return False
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
             # inline: start holds the lock, and rollingops drops a nested request_restart
@@ -439,7 +442,6 @@ class BaseEvents(ops.Object):
             # last, so a failed step reruns instead of hitting the skip check
             self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         except (
-            ValkeyCannotGetPrimaryIPError,
             ValkeyServicesFailedToStartError,
             ValkeyTLSLoadError,
             ValkeyWorkloadCommandError,
