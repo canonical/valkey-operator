@@ -73,6 +73,7 @@ class BaseEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_departed, self._on_peer_relation_departed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
@@ -460,6 +461,16 @@ class BaseEvents(ops.Object):
             self.charm.topology_manager.start_observer()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to start topology observer: %s", e)
+
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Restart the topology observer so it runs the new charm code."""
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
+            return
+
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
