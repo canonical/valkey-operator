@@ -159,6 +159,7 @@ def test_start_primary(lock_granted_immediately):
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
@@ -168,6 +169,7 @@ def test_start_primary(lock_granted_immediately):
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.SentinelClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
         patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
@@ -296,6 +298,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 side_effect=ValkeyWorkloadCommandError("errored out"),
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -324,6 +327,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 return_value=[{"ip": "10.0.1.1"}, {"ip": "10.0.1.2"}],
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -346,6 +350,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -367,6 +372,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
