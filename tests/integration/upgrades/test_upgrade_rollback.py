@@ -8,7 +8,6 @@ from platform import machine
 from time import sleep
 
 import jubilant
-import pytest
 
 from src.literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
@@ -36,14 +35,6 @@ from tests.integration.upgrades.literals import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# TODO: re-enable once 9/edge has two revisions with rollingops.
-@pytest.fixture(autouse=True)
-def skip_on_vm(substrate: Substrate):
-    """Skip on VM until 9/edge has two revisions with rollingops."""
-    if substrate == Substrate.VM:
-        pytest.skip("Needs two 9/edge revisions with rollingops")
 
 
 def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str) -> None:
@@ -130,6 +121,13 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
     refresh_cmd = (
         f"refresh {APP_NAME} --model={juju.model} --switch {APP_NAME} --channel {CHARM_CHANNEL}"
     )
+    # pin the image the channel ships, since Juju keeps the uploaded one
+    if substrate == Substrate.K8S:
+        channel_resources = json.loads(
+            juju.cli("charm-resources", APP_NAME, "--channel", CHARM_CHANNEL, "--format", "json")
+        )
+        for resource in channel_resources:
+            refresh_cmd += f" --resource {resource['name']}={resource['revision']}"
     juju.cli(
         *refresh_cmd.split(),
         include_model=False,

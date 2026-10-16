@@ -7,7 +7,6 @@ from platform import machine
 from time import sleep
 
 import jubilant
-import pytest
 
 from src.literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
@@ -38,14 +37,6 @@ from tests.integration.upgrades.literals import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# TODO: re-enable once 9/edge has two revisions with rollingops.
-@pytest.fixture(autouse=True)
-def skip_on_vm(substrate: Substrate):
-    """Skip on VM until 9/edge has two revisions with rollingops."""
-    if substrate == Substrate.VM:
-        pytest.skip("Needs two 9/edge revisions with rollingops")
 
 
 def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str) -> None:

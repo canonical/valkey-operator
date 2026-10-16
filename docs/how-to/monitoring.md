@@ -387,16 +387,16 @@ The output has several hundred lines. On the primary, part of it looks like this
 ```text
 # HELP redis_up Information about the Redis instance
 # TYPE redis_up gauge
-redis_up{instance_role="master"} 1
+redis_up 1
 # HELP redis_connected_slaves connected_slaves metric
 # TYPE redis_connected_slaves gauge
-redis_connected_slaves{instance_role="master"} 2
+redis_connected_slaves 2
 # HELP redis_connected_clients connected_clients metric
 # TYPE redis_connected_clients gauge
-redis_connected_clients{instance_role="master"} 7
+redis_connected_clients 7
 # HELP redis_memory_used_bytes memory_used_bytes metric
 # TYPE redis_memory_used_bytes gauge
-redis_memory_used_bytes{instance_role="master"} 1.92476e+06
+redis_memory_used_bytes 1.92476e+06
 ```
 
 `redis_up` is `1` when the exporter reaches Valkey and `0` when it does not.
