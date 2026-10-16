@@ -185,12 +185,18 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
             self.charm.tls_manager.write_certificate(cert, private_key)  # pyright: ignore[reportArgumentType]
             self.charm.tls_manager.set_cert_state(is_ready=True)
+            # the start applies TLS to an unstarted unit. A started one whose config still has
+            # the plain port didn't finish the enable
+            enable_finished = tls_state == TLSState.TLS and (
+                not self.charm.state.unit_server.is_started
+                or self.charm.config_manager.is_plain_port_closed()
+            )
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to store certificate: %s", e)
             event.defer()
             return
 
-        if tls_state == TLSState.TLS:
+        if enable_finished:
             logger.info("Refreshing TLS certificates in Valkey")
             try:
                 if rotate_ca:
@@ -245,9 +251,10 @@ class TLSEvents(ops.Object):
             try:
                 self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
             except (ValkeyWorkloadCommandError, ValueError) as e:
-                # shortcut: a restart before the next config write reopens the plain port.
-                # Raising would roll back the TLS state with the port already closed.
+                # stay in TLS: the CLI uses the plain port in to-tls, and it is already closed
                 logger.error("Failed to write the Valkey config with the plain port closed: %s", e)
+                event.defer()
+                return
             logger.info("Restarting Sentinel")
             self.charm.request_restart(
                 restart_valkey=False,

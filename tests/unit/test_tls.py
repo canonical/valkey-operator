@@ -854,6 +854,7 @@ def test_new_client_ca_single_unit():
             patch("charmlibs.pathops.ContainerPath.write_text"),
             patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
             patch("managers.tls.TLSManager.rehash_ca_certificates"),
+            patch("managers.config.ConfigManager.is_plain_port_closed", return_value=True),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("workload_k8s.ValkeyK8sWorkload.restart"),
@@ -919,6 +920,7 @@ def test_new_client_ca_rotation_started():
             patch("charmlibs.pathops.ContainerPath.write_text"),
             patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
             patch("managers.tls.TLSManager.rehash_ca_certificates"),
+            patch("managers.config.ConfigManager.is_plain_port_closed", return_value=True),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         ):
             event.certificate = certificate.certificate
