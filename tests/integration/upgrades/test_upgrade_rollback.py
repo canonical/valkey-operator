@@ -2,6 +2,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import json
 import logging
 from platform import machine
 from time import sleep
@@ -78,6 +79,13 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         reverse=True,
     )
 
+    # Juju keeps the uploaded image on later refreshes, so the K8s rollback passes the original one
+    # https://canonical-charm-refresh.readthedocs-hosted.com/latest/user-experience/status/#unknown-workload
+    original_image = None
+    if substrate == Substrate.K8S:
+        resources = json.loads(juju.cli("resources", APP_NAME, "--format", "json"))["resources"]
+        original_image = {resource["name"]: resource["revision"] for resource in resources}
+
     logger.info("Initiate refresh")
     juju.refresh(
         app=APP_NAME,
@@ -139,7 +147,11 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         # if this is not run in a PR, the local built version is the same as the latest published
         # to roll back to the initially deployed version, we need to issue another rollback command
         logger.info("Rolling back to previous revision")
-        juju.refresh(app=APP_NAME, revision=CHARM_REVISIONS_TO_DEPLOY[machine()])
+        juju.refresh(
+            app=APP_NAME,
+            revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
+            resources=original_image,
+        )
 
     logger.info("Wait for the rollback to initiate")
     sleep(90)
