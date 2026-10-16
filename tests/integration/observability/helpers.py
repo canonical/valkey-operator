@@ -90,13 +90,15 @@ def is_integrated(juju: jubilant.Juju, app_name: str, endpoint: str, target_app:
 
 
 def assert_redis_up_and_single_primary(metrics_by_unit: dict[str, str]) -> None:
-    """Assert all units report redis_up 1 and exactly one unit reports instance_role="master"."""
+    """Assert all units report redis_up 1 and exactly one unit reports role="master"."""
     master_count = 0
     for unit_name, metrics_output in metrics_by_unit.items():
         assert re.search(r"^redis_up(?:\{[^}]*\})?\s+1", metrics_output, re.MULTILINE), (
             f"Expected 'redis_up 1' on {unit_name}, got:\n{metrics_output[:500]}"
         )
-        if re.search(r'redis_up\{[^}]*instance_role="master"[^}]*\}\s+1', metrics_output):
+        if re.search(
+            r'^redis_instance_info\{[^}]*\brole="master"[^}]*\}\s+1', metrics_output, re.MULTILINE
+        ):
             master_count += 1
 
     assert master_count == 1, (

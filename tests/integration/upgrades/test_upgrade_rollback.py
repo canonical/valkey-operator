@@ -2,12 +2,12 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import json
 import logging
 from platform import machine
 from time import sleep
 
 import jubilant
-import pytest
 
 from src.literals import CharmUsers, Substrate
 from tests.integration.cw_helpers import (
@@ -35,14 +35,6 @@ from tests.integration.upgrades.literals import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# TODO: re-enable once 9/edge has two revisions with rollingops.
-@pytest.fixture(autouse=True)
-def skip_on_vm(substrate: Substrate):
-    """Skip on VM until 9/edge has two revisions with rollingops."""
-    if substrate == Substrate.VM:
-        pytest.skip("Needs two 9/edge revisions with rollingops")
 
 
 def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str) -> None:
@@ -87,6 +79,13 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         reverse=True,
     )
 
+    # Juju keeps the uploaded image on later refreshes, so the K8s rollback passes the original one
+    # https://canonical-charm-refresh.readthedocs-hosted.com/latest/user-experience/status/#unknown-workload
+    original_image = None
+    if substrate == Substrate.K8S:
+        resources = json.loads(juju.cli("resources", APP_NAME, "--format", "json"))["resources"]
+        original_image = {resource["name"]: resource["revision"] for resource in resources}
+
     logger.info("Initiate refresh")
     juju.refresh(
         app=APP_NAME,
@@ -122,6 +121,13 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
     refresh_cmd = (
         f"refresh {APP_NAME} --model={juju.model} --switch {APP_NAME} --channel {CHARM_CHANNEL}"
     )
+    # pin the image the channel ships, since Juju keeps the uploaded one
+    if substrate == Substrate.K8S:
+        channel_resources = json.loads(
+            juju.cli("charm-resources", APP_NAME, "--channel", CHARM_CHANNEL, "--format", "json")
+        )
+        for resource in channel_resources:
+            refresh_cmd += f" --resource {resource['name']}={resource['revision']}"
     juju.cli(
         *refresh_cmd.split(),
         include_model=False,
@@ -148,7 +154,11 @@ def test_rollback(charm: str, juju: jubilant.Juju, substrate: Substrate) -> None
         # if this is not run in a PR, the local built version is the same as the latest published
         # to roll back to the initially deployed version, we need to issue another rollback command
         logger.info("Rolling back to previous revision")
-        juju.refresh(app=APP_NAME, revision=CHARM_REVISIONS_TO_DEPLOY[machine()])
+        juju.refresh(
+            app=APP_NAME,
+            revision=CHARM_REVISIONS_TO_DEPLOY[machine()],
+            resources=original_image,
+        )
 
     logger.info("Wait for the rollback to initiate")
     sleep(90)
