@@ -73,6 +73,7 @@ class BaseEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_departed, self._on_peer_relation_departed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
@@ -141,9 +142,7 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        self.charm.state.unit_server.update(
-            {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
-        )
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
@@ -233,9 +232,7 @@ class BaseEvents(ops.Object):
             logger.info("Restore in progress, retrying the start later")
             return retry
 
-        if starting:
-            primary_endpoint = self.charm.state.unit_server.model.start_primary_endpoint
-        else:
+        if not starting:
             primary_endpoint = self._get_primary_endpoint_for_start()
             if primary_endpoint is None:
                 logger.info("Primary IP not available yet, retrying the start later")
@@ -247,10 +244,7 @@ class BaseEvents(ops.Object):
             if not self._start_workload(primary_endpoint):
                 return OperationResult.RETRY_RELEASE
 
-        if not self._is_started_and_in_sync(
-            is_primary=primary_endpoint
-            == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-        ):
+        if not self._is_started_and_in_sync():
             return OperationResult.RETRY_HOLD
 
         self._finish_start()
@@ -279,26 +273,28 @@ class BaseEvents(ops.Object):
             return False
 
         self.charm.state.unit_server.update(
-            {
-                "start_state": StartState.STARTING_WAITING_VALKEY.value,
-                "start_primary_endpoint": primary_endpoint,
-            }
+            {"start_state": StartState.STARTING_WAITING_VALKEY.value}
         )
         return True
 
-    def _is_started_and_in_sync(self, is_primary: bool) -> bool:
+    def _is_started_and_in_sync(self) -> bool:
         """Check the started services, recording the start state the unit is still waiting in.
-
-        Args:
-            is_primary: Whether this unit is the primary.
 
         Returns:
             True once Valkey and Sentinel are healthy and a replica is discovered and synced.
         """
-        if not self.charm.cluster_manager.is_healthy(
-            is_primary=is_primary, check_replica_sync=False
-        ):
+        if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
             logger.warning("Unit is not healthy after start, waiting for Valkey.")
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            )
+            return False
+
+        # read the role live: Sentinel may have promoted this unit since it started
+        try:
+            is_primary = self.charm.cluster_manager.is_primary()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read the Valkey role, waiting for Valkey: %s", e)
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_VALKEY.value}
             )
@@ -459,6 +455,16 @@ class BaseEvents(ops.Object):
             self.charm.topology_manager.start_observer()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to start topology observer: %s", e)
+
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Restart the topology observer so it runs the new charm code."""
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
+            return
+
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
 
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
@@ -953,9 +959,7 @@ class BaseEvents(ops.Object):
         except ValkeyServicesCouldNotBeStoppedError as e:
             logger.error("Could not stop Valkey services cleanly: %s", e)
 
-        self.charm.state.unit_server.update(
-            {"start_state": StartState.NOT_STARTED.value, "start_primary_endpoint": ""}
-        )
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
     def _set_state_for_going_away(self) -> None:
         """Set the state to going away when the unit is going down."""

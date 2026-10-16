@@ -38,6 +38,8 @@ from literals import (
     DATA_STORAGE_PATH,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
+    LOGROTATE_CRON_FILE,
+    LOGROTATE_VM_CONFIG_FILE,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
     SNAP_ACL_FILE,
@@ -123,6 +125,8 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / DATA_STORAGE_PATH
         self.log_dir = self.root_dir / SNAP_COMMON_PATH / LOG_STORAGE_PATH
+        self.logrotate_config_file = self.root_dir / LOGROTATE_VM_CONFIG_FILE
+        self.logrotate_cron_file = self.root_dir / LOGROTATE_CRON_FILE
         self.archive_dir = self.root_dir / SNAP_COMMON_PATH / ARCHIVE_STORAGE_PATH
         self.lib_dir = self.root_dir / f"snap/{SNAP_NAME}/current/usr/lib/valkey/modules"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
@@ -208,6 +212,14 @@ class ValkeyVmWorkload(WorkloadBase):
         except snap.SnapError as e:
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
+
+        if not service:
+            # the snap ships no logrotate, so use the host's
+            self.write_file(
+                f"* * * * * root /usr/sbin/logrotate {self.logrotate_config_file}\n",
+                self.logrotate_cron_file,
+                mode=0o644,
+            )
 
         # A service can start then die immediately; when check_alive, poll the
         # whole set (all-services start) or check the one service, matching k8s.

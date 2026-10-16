@@ -100,6 +100,7 @@ class WorkloadBase(ABC):
     sentinel_acl_file: pathops.PathProtocol
     working_dir: pathops.PathProtocol
     log_dir: pathops.PathProtocol
+    logrotate_config_file: pathops.PathProtocol
     archive_dir: pathops.PathProtocol
     lib_dir: pathops.PathProtocol
     tls_dir: pathops.PathProtocol
