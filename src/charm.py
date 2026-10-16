@@ -16,7 +16,7 @@ from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
-from common.exceptions import ValkeyUpgradeError, ValkeyWorkloadCommandError
+from common.exceptions import ValkeyUpgradeError
 from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -194,13 +194,6 @@ class ValkeyCharm(ops.CharmBase):
         ):
             # to ensure the unit receives another Juju event
             raise ValkeyUpgradeError("Workload not healthy yet")
-
-        if self.unit.is_leader():
-            # the observer process survives a VM charm refresh, restart it to run the new code
-            try:
-                self.topology_manager.restart_observer()
-            except (ValkeyWorkloadCommandError, ValueError) as e:
-                logger.error("Failed to restart topology observer: %s", e)
 
         logger.info("Unit is healthy, allowing next unit to refresh")
         refresh.next_unit_allowed_to_refresh = True
