@@ -245,11 +245,14 @@ class BaseEvents(ops.Object):
             if not self._start_workload(primary_endpoint):
                 return OperationResult.RETRY_RELEASE
 
+        # first, so a retry reaches it even when its Sentinel restart failed
+        if not self._apply_client_tls_after_start():
+            return OperationResult.RETRY_HOLD
+
         if not self._is_started_and_in_sync():
             return OperationResult.RETRY_HOLD
 
-        if not self._finish_start():
-            return OperationResult.RETRY_HOLD
+        self._finish_start()
         return OperationResult.RELEASE
 
     def _start_workload(self, primary_endpoint: str) -> bool:
@@ -325,14 +328,11 @@ class BaseEvents(ops.Object):
 
         return True
 
-    def _finish_start(self) -> bool:
+    def _finish_start(self) -> None:
         """Run the repeatable post-start steps, then mark the unit started.
 
         The peer relation handlers triggered at the end skip units that are not started, so
         STARTED is written right before them and not after.
-
-        Returns:
-            False if applying the client TLS config failed and the start must be retried.
         """
         # the rendered config ships min-replicas-to-write=1; reassert the
         # topology-correct runtime value now the server is up, as CONFIG SET
@@ -347,9 +347,6 @@ class BaseEvents(ops.Object):
         if self.charm.state.substrate == Substrate.K8S:
             self.charm.unit.open_port("tcp", METRICS_PORT)
 
-        if not self._apply_client_tls_after_start():
-            return False
-
         logger.info("Services started")
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
 
@@ -358,13 +355,12 @@ class BaseEvents(ops.Object):
         self.charm.trigger_relation_change_if_required()
 
         if not self.charm.unit.is_leader():
-            return True
+            return
 
         try:
             self.charm.topology_manager.start_observer()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to start topology observer: %s", e)
-        return True
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
@@ -427,7 +423,7 @@ class BaseEvents(ops.Object):
             if self.charm.config_manager.is_plain_port_closed():
                 # the unit wrote its config after the switch, nothing to apply
                 return True
-            # falls back to this unit when it bootstraps the cluster, no started unit to ask
+            # a bootstrapping leader falls back to itself
             if (primary_ip := self._get_primary_endpoint_for_start()) is None:
                 logger.warning("Primary IP not available yet, retrying the client TLS apply")
                 return False
@@ -439,7 +435,7 @@ class BaseEvents(ops.Object):
             if not self.charm.sentinel_manager.is_healthy():
                 logger.warning("Sentinel is not healthy after the client TLS restart")
                 return False
-            # last, so a failed step reruns instead of hitting the skip check
+            # last: the skip check reads this file, so any failed step reruns
             self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
         except (
             ValkeyServicesFailedToStartError,
