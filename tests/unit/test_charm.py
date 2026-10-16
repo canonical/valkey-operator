@@ -32,6 +32,7 @@ SERVICE_METRIC_EXPORTER = "metrics-exporter"
 SERVICE_SENTINEL = "sentinel"
 SERVICE_VALKEY_LOGS = "valkey-logs"
 SERVICE_SENTINEL_LOGS = "sentinel-logs"
+SERVICE_LOGROTATE = "logrotate"
 
 
 ROLLINGOPS_RELATION = testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION)
@@ -110,6 +111,18 @@ def test_start_primary(lock_granted_immediately):
                 "group": CHARM_USER,
                 "startup": "enabled",
             },
+            SERVICE_LOGROTATE: {
+                "override": "replace",
+                "summary": "Rotate Valkey and Sentinel logs",
+                "command": "sh -c '/usr/sbin/logrotate -s /var/lib/valkey/logrotate.status "
+                "/var/lib/valkey/logrotate.conf; rc=$?; sleep 5; exit $rc'",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "enabled",
+                "backoff-delay": "1m0s",
+                "backoff-factor": 1,
+                "backoff-limit": "1m0s",
+            },
         }
     }
 
@@ -127,9 +140,7 @@ def test_start_primary(lock_granted_immediately):
         "REDIS_EXPORTER_TLS_SERVER_NAME": "valkey-0.valkey-endpoints",
         "REDIS_EXPORTER_WEB_LISTEN_ADDRESS": f"0.0.0.0:{METRICS_PORT}",
         "REDIS_EXPORTER_INCL_SYSTEM_METRICS": "true",
-        "REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL": "true",
         "REDIS_EXPORTER_INCL_CONFIG_METRICS": "false",
-        "REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT": "true",
     }
 
     # start event
