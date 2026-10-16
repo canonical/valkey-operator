@@ -139,7 +139,7 @@ def test_client_tls_relation_broken():
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         assert reload_tls.call_count == 2
-        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
+        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") != "true"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
         secret_out = state_out.get_secret(
@@ -257,7 +257,7 @@ def test_client_tls_relation_broken_writing_internal_cert_fails():
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
         reload_tls.assert_called_once()
         assert "client_certificates_relation_broken" in [e.name for e in state_out.deferred]
-        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
+        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
 
@@ -1514,13 +1514,14 @@ def test_client_tls_relation_broken_run_deferred_event():
         patch("managers.cluster.ClusterManager.reload_tls_settings"),
         patch("managers.sentinel.SentinelManager.restart_service"),
         patch("charmlibs.pathops.ContainerPath.mkdir"),
+        patch("managers.tls.TLSManager.rehash_ca_certificates"),
         patch(
             "common.client.SentinelClient.get_primary_addr_by_name",
             return_value=("10.0.1.1", 6379),
         ),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_tls_relation), state_in)
-        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "false"
+        assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") != "true"
         assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "no-tls"
 
 

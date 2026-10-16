@@ -320,14 +320,12 @@ class TLSEvents(ops.Object):
                 event.defer()
                 return
 
-            self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
             self.charm.unit.open_port("tcp", CLIENT_PORT)
             self.charm.unit.open_port("tcp", SENTINEL_PORT)
             self.charm.trigger_relation_change_if_required()
         else:
             # enable never finished, leave to-tls so the unit isn't stuck transitioning
-            self.charm.tls_manager.set_cert_state(is_ready=False)
             self.charm.tls_manager.set_tls_state(TLSState.NO_TLS)
 
         try:
@@ -339,6 +337,8 @@ class TLSEvents(ops.Object):
             event.defer()
             return
 
+        # cleared only once nothing can defer: a re-run skips units without a client cert
+        self.charm.tls_manager.set_cert_state(is_ready=False)
         logger.info("Restarting Sentinel")
         self.charm.request_restart(
             restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
