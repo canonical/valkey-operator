@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import pathlib
 import re
@@ -60,20 +61,15 @@ class _CountingReader:
     """
 
     def __init__(self, stream: IO[bytes], head_size: int = 16):
-        self._stream = stream
         self._head_size = head_size
         self.head = b""
         self.bytes_read = 0
+        # Pebble (K8s) and the unbuffered VM pipe return a few KB per read(), but the
+        # SDKs size uploads by read(n). BufferedReader.read(n) waits for n bytes or EOF.
+        self._stream = io.BufferedReader(cast("io.RawIOBase", stream))
 
     def read(self, size: int = -1) -> bytes:
-        # Pebble returns one websocket message per read, and SDKs take a short read as EOF.
-        buf = bytearray()
-        while size < 0 or len(buf) < size:
-            part = self._stream.read(size - len(buf) if size >= 0 else -1)
-            if not part:
-                break
-            buf += part
-        chunk = bytes(buf)
+        chunk = self._stream.read(size)
         self.bytes_read += len(chunk)
         if len(self.head) < self._head_size:
             self.head += chunk[: self._head_size - len(self.head)]
