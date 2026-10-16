@@ -66,7 +66,14 @@ class _CountingReader:
         self.bytes_read = 0
 
     def read(self, size: int = -1) -> bytes:
-        chunk = self._stream.read(size)
+        # Pebble returns one websocket message per read, and SDKs take a short read as EOF.
+        buf = bytearray()
+        while size < 0 or len(buf) < size:
+            part = self._stream.read(size - len(buf) if size >= 0 else -1)
+            if not part:
+                break
+            buf += part
+        chunk = bytes(buf)
         self.bytes_read += len(chunk)
         if len(self.head) < self._head_size:
             self.head += chunk[: self._head_size - len(self.head)]
