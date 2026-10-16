@@ -14,6 +14,10 @@ SNAP_LOGS_SLOT = f"{SNAP_NAME}:logs"
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
 METRICS_SERVICE = "metrics-exporter"
+LOGROTATE_SERVICE = "logrotate"
+LOGROTATE_CONFIG_FILE = "logrotate.conf"
+LOGROTATE_VM_CONFIG_FILE = "etc/logrotate.d/charmed-valkey"
+LOGROTATE_CRON_FILE = "etc/cron.d/charmed-valkey"
 SNAP_COMMON_PATH = f"var/snap/{SNAP_NAME}/common"
 SNAP_CURRENT_PATH = f"var/snap/{SNAP_NAME}/current"
 SNAP_CONFIG_FILE = "etc/valkey/valkey.conf"
@@ -31,8 +35,11 @@ CONFIG_FILE = "var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
 SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
+LOGROTATE_STATE_FILE = "var/lib/valkey/logrotate.status"
 
 TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
+TOPOLOGY_OBSERVER_LOG_MAX_BYTES = 10 * 1024**2
+TOPOLOGY_OBSERVER_LOG_BACKUPS = 3
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 
