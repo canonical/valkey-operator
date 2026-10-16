@@ -40,6 +40,14 @@ from tests.integration.upgrades.literals import (
 logger = logging.getLogger(__name__)
 
 
+# TODO: re-enable once 9/edge has two revisions with rollingops.
+@pytest.fixture(autouse=True)
+def skip_on_vm(substrate: Substrate):
+    """Skip on VM until 9/edge has two revisions with rollingops."""
+    if substrate == Substrate.VM:
+        pytest.skip("Needs two 9/edge revisions with rollingops")
+
+
 def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: str) -> None:
     """Deploy the charm with the previous version."""
     juju.deploy(
@@ -202,8 +210,6 @@ def test_remove_client_relation(juju: jubilant.Juju, substrate: Substrate) -> No
     )
 
 
-# TODO: re-enable once a released revision with rollingops exists to upgrade from.
-@pytest.mark.skip(reason="An old-revision leader never grants the rollingops lock")
 def test_scale_up_during_upgrade(juju: jubilant.Juju, substrate: Substrate) -> None:
     """Add a unit while upgrading."""
     start_continuous_writes(juju, clear=True)
