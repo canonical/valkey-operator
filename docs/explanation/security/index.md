@@ -106,18 +106,19 @@ Charmed Valkey provides native integration with the [Canonical Observability Sta
 To reduce the blast radius of infrastructure disruptions, the general recommendation is to deploy 
 COS and the observed application into separate environments, isolated from one another. 
 Refer to the [COS production deployments best practices](https://charmhub.io/topics/canonical-observability-stack/reference/best-practices) for more information.
-To set up the integration, see [How to enable monitoring](how-to-monitoring).
+To set up the integration, see [How to enable monitoring and logging](how-to-monitoring).
 
 ````{tab-set}
 ```{tab-item} VM
 :sync: vm
 Logging is enabled by default. The logs are stored in the `/var/snap/valkey-charmed/common/var/log/valkey` 
-directory of the Valkey container.
+directory of the Valkey container. They are rotated daily and kept for up to 10 days.
 ```
 
 ```{tab-item} K8s
 :sync: k8s
 Logging is enabled by default. The logs are stored in the `/var/log/valkey` directory of the Valkey container.
+They are rotated daily and kept for up to 10 days.
 ```
 ```` 
 

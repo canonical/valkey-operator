@@ -32,6 +32,7 @@ SERVICE_METRIC_EXPORTER = "metrics-exporter"
 SERVICE_SENTINEL = "sentinel"
 SERVICE_VALKEY_LOGS = "valkey-logs"
 SERVICE_SENTINEL_LOGS = "sentinel-logs"
+SERVICE_LOGROTATE = "logrotate"
 
 
 ROLLINGOPS_RELATION = testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION)
@@ -110,6 +111,18 @@ def test_start_primary(lock_granted_immediately):
                 "group": CHARM_USER,
                 "startup": "enabled",
             },
+            SERVICE_LOGROTATE: {
+                "override": "replace",
+                "summary": "Rotate Valkey and Sentinel logs",
+                "command": "sh -c '/usr/sbin/logrotate -s /var/lib/valkey/logrotate.status "
+                "/var/lib/valkey/logrotate.conf; rc=$?; sleep 5; exit $rc'",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "enabled",
+                "backoff-delay": "1m0s",
+                "backoff-factor": 1,
+                "backoff-limit": "1m0s",
+            },
         }
     }
 
@@ -127,9 +140,7 @@ def test_start_primary(lock_granted_immediately):
         "REDIS_EXPORTER_TLS_SERVER_NAME": "valkey-0.valkey-endpoints",
         "REDIS_EXPORTER_WEB_LISTEN_ADDRESS": f"0.0.0.0:{METRICS_PORT}",
         "REDIS_EXPORTER_INCL_SYSTEM_METRICS": "true",
-        "REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL": "true",
         "REDIS_EXPORTER_INCL_CONFIG_METRICS": "false",
-        "REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT": "true",
     }
 
     # start event
@@ -148,6 +159,7 @@ def test_start_primary(lock_granted_immediately):
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
@@ -157,6 +169,7 @@ def test_start_primary(lock_granted_immediately):
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.SentinelClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
         patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
@@ -286,6 +299,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 side_effect=ValkeyWorkloadCommandError("errored out"),
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -314,6 +328,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 return_value=[{"ip": "10.0.1.1"}, {"ip": "10.0.1.2"}],
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -336,6 +351,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
@@ -357,6 +373,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(

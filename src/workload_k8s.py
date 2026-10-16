@@ -32,6 +32,9 @@ from literals import (
     DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
+    LOGROTATE_CONFIG_FILE,
+    LOGROTATE_SERVICE,
+    LOGROTATE_STATE_FILE,
     METRICS_SERVICE,
     SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
@@ -128,6 +131,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         # todo: update this path once directories in the rock are complying with the standard
         self.working_dir = self.root_dir / DATA_STORAGE_PATH
         self.log_dir = self.root_dir / LOG_STORAGE_PATH
+        self.logrotate_config_file = self.root_dir / "var/lib/valkey" / LOGROTATE_CONFIG_FILE
         self.archive_dir = self.root_dir / ARCHIVE_STORAGE_PATH
         self.lib_dir = self.root_dir / "usr/lib/valkey/modules"
         self.tls_dir = self.root_dir / "var/lib/valkey/tls"
@@ -135,6 +139,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         self.valkey_service = "valkey"
         self.sentinel_service = "sentinel"
         self.metrics_service = METRICS_SERVICE
+        self.logrotate_service = LOGROTATE_SERVICE
         self.valkey_logs_service = VALKEY_LOGS_SERVICE
         self.sentinel_logs_service = SENTINEL_LOGS_SERVICE
         self.cli = "valkey-cli"
@@ -149,6 +154,8 @@ class ValkeyK8sWorkload(WorkloadBase):
     @property
     def pebble_layer(self) -> pebble.Layer:
         """Create the Pebble configuration layer for Valkey."""
+        logrotate_state = (self.root_dir / LOGROTATE_STATE_FILE).as_posix()
+        logrotate_conf = self.logrotate_config_file.as_posix()
         layer_config: pebble.LayerDict = {
             "summary": "Valkey layer",
             "description": "Valkey layer",
@@ -194,6 +201,20 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "group": self.user,
                     "startup": "enabled",
                 },
+                # Pebble reruns this oneshot on a fixed 1m backoff (delay = limit). The sleep keeps
+                # it up past Pebble's 1s okay-delay, and the exit code surfaces logrotate failures.
+                self.logrotate_service: {
+                    "override": "replace",
+                    "summary": "Rotate Valkey and Sentinel logs",
+                    "command": f"sh -c '/usr/sbin/logrotate -s {logrotate_state} {logrotate_conf}"
+                    "; rc=$?; sleep 5; exit $rc'",
+                    "user": self.user,
+                    "group": self.user,
+                    "startup": "enabled",
+                    "backoff-delay": "1m0s",
+                    "backoff-factor": 1,
+                    "backoff-limit": "1m0s",
+                },
             },
         }
         return pebble.Layer(layer_config)
@@ -211,6 +232,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                     self.metrics_service,
                     self.valkey_logs_service,
                     self.sentinel_logs_service,
+                    self.logrotate_service,
                 )
         except (
             pebble.ChangeError,
@@ -371,6 +393,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 self.metrics_service,
                 self.valkey_logs_service,
                 self.sentinel_logs_service,
+                self.logrotate_service,
             )
         )
         try:
