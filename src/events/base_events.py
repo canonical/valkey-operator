@@ -17,6 +17,7 @@ from common.exceptions import (
     SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
+    ValkeyAOFArchiveNoSpaceError,
     ValkeyBackupInProgressError,
     ValkeyCannotGetPrimaryIPError,
     ValkeyClusterNotReadyError,
@@ -831,6 +832,9 @@ class BaseEvents(ops.Object):
 
         try:
             if not self.charm.cluster_manager.is_aof_corrupted():
+                # clear a stale status after a hand fix, not while LOADING: it can still crash
+                if self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+                    self._clear_aof_statuses()
                 return
         except ValkeyWorkloadCommandError as e:
             logger.error("Cannot check the AOF: %s", e)
@@ -847,35 +851,55 @@ class BaseEvents(ops.Object):
             # healing from a down primary leaves this unit empty and promotable (DA291)
             if not self.charm.cluster_manager.is_healthy(is_primary=True, hostname=primary):
                 raise ValkeyClusterNotReadyError(f"The primary {primary} is not healthy")
-            # rendered before the AOF goes, so an auto-restart comes back as a replica
+            # rendered before the AOF moves, so an auto-restart comes back as a replica
             self.charm.config_manager.set_config_properties(primary_endpoint=primary)
-            self.charm.cluster_manager.delete_corrupted_aof()
+            self.charm.cluster_manager.archive_corrupted_aof()
         except (
             SentinelFailoverError,
+            ValkeyAOFArchiveNoSpaceError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyClusterNotReadyError,
             ValkeyWorkloadCommandError,
         ) as e:
             logger.error("Cannot heal the corrupted AOF: %s", e)
-            status = (
-                PersistenceStatuses.AOF_HEAL_FAILED
-                if isinstance(e, ValkeyWorkloadCommandError)
-                else PersistenceStatuses.AOF_CORRUPTED
-            )
             self.charm.status.set_running_status(
-                status.value,
+                self._aof_heal_status(e).value,
                 scope="unit",
                 component_name=self.charm.cluster_manager.name,
                 statuses_state=self.charm.state.statuses,
             )
             return
 
-        self.charm.state.statuses.delete(
-            PersistenceStatuses.AOF_CORRUPTED.value,
-            scope="unit",
-            component=self.charm.cluster_manager.name,
-        )
+        self._clear_aof_statuses()
         # no restart: the service manager already restarts the server, a second one aborts its sync
+
+    @staticmethod
+    def _aof_heal_status(error: Exception) -> PersistenceStatuses:
+        """Pick the status for a failed heal.
+
+        Args:
+            error: The exception the heal raised.
+
+        Returns:
+            The status to show on the unit.
+        """
+        # once a human frees space, the next update-status retries
+        if isinstance(error, ValkeyAOFArchiveNoSpaceError):
+            return PersistenceStatuses.AOF_ARCHIVE_NO_SPACE
+        if isinstance(error, ValkeyWorkloadCommandError):
+            return PersistenceStatuses.AOF_HEAL_FAILED
+        return PersistenceStatuses.AOF_CORRUPTED
+
+    def _clear_aof_statuses(self) -> None:
+        """Clear the corrupted-AOF statuses."""
+        for status in (
+            PersistenceStatuses.AOF_CORRUPTED,
+            PersistenceStatuses.AOF_ARCHIVE_NO_SPACE,
+            PersistenceStatuses.AOF_HEAL_FAILED,
+        ):
+            self.charm.state.statuses.delete(
+                status.value, scope="unit", component=self.charm.cluster_manager.name
+            )
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""

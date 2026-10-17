@@ -69,6 +69,12 @@ class PersistenceStatuses(Enum):
         action="Restore a backup",
         running="async",
     )
+    AOF_ARCHIVE_NO_SPACE = StatusObject(
+        status="blocked",
+        message="Corrupted AOF, the archive volume has no room for it",
+        action="Free space on the archive volume",
+        running="async",
+    )
     AOF_HEAL_FAILED = StatusObject(
         status="maintenance",
         message="Corrupted AOF, healing failed, retrying, check logs for details",

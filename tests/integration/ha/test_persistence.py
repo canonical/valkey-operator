@@ -14,7 +14,9 @@ import jubilant
 from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import (
+    AOF_CORRUPT_ARCHIVE_NAME,
     AOF_DIR_NAME,
+    ARCHIVE_STORAGE_PATH,
     DATA_STORAGE_PATH,
     SNAP_COMMON_PATH,
     CharmUsers,
@@ -171,16 +173,19 @@ def test_corrupted_aof_on_primary_heals(juju: jubilant.Juju, substrate: Substrat
     )
     send_process_control_signal(primary_unit, juju.model, "SIGKILL", "valkey-server", substrate)
 
+    archive = f"{_workload_dir(substrate, ARCHIVE_STORAGE_PATH)}/{AOF_CORRUPT_ARCHIVE_NAME}"
     with fast_forward(juju):
         wait_for_failover(
             juju, APP_NAME, old_primary_ip=primary_ip, unit_count=NUM_UNITS, timeout=900
         )
-        # the heal runs on a later update-status than the failover and deletes the bad AOF
+        # the heal runs on a later update-status than the failover. It deletes the corrupted
+        # AOF only after a full copy, and the AOF rebuilt by the resync has no GARBAGE.
+        healed = (
+            f"grep -qs GARBAGE {archive}/*.incr.aof && ! grep -qs GARBAGE {aof_dir}/*.incr.aof"
+        )
         for attempt in Retrying(stop=stop_after_delay(600), wait=wait_fixed(10), reraise=True):
             with attempt:
-                run_in_workload(
-                    juju, primary_unit, f"! grep -qs GARBAGE {aof_dir}/*.incr.aof", substrate
-                )
+                run_in_workload(juju, primary_unit, healed, substrate)
     patch_restart_delay(juju, unit_name=primary_unit, delay=None, substrate=substrate)
     _wait_active(juju)
 

@@ -121,6 +121,7 @@ AOF_DIR_NAME = "appendonlydir"
 AOF_MANIFEST_NAME = "appendonly.aof.manifest"
 RDB_FILE_NAME = "dump.rdb"
 # One archive slot for the last corrupted AOF a self-heal moved aside
+AOF_CORRUPT_ARCHIVE_NAME = "appendonlydir.corrupt"
 SNAP_CHECK_AOF_CLI = f"{SNAP_NAME}.check-aof"
 CHECK_AOF_CLI = "valkey-check-aof"
 # Valkey log lines around a start attempt, and the ones it logs before exiting on a corrupted AOF

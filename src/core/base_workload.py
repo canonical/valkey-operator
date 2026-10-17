@@ -11,7 +11,7 @@ from typing import IO, BinaryIO, Protocol, runtime_checkable
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import EXEC_TIMEOUT_S
+from literals import DATASET_IO_TIMEOUT_S, EXEC_TIMEOUT_S
 
 
 @runtime_checkable
@@ -319,6 +319,32 @@ class WorkloadBase(ABC):
             ValkeyWorkloadCommandError: If the removal fails.
         """
         self.exec(["rm", "-rf", path.as_posix()])
+
+    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        """Copy a directory tree, also across partitions.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the copy fails.
+        """
+        self.exec(["cp", "-a", src.as_posix(), dest.as_posix()], timeout=DATASET_IO_TIMEOUT_S)
+
+    def disk_usage(self, path: pathops.PathProtocol) -> int:
+        """Return the bytes a file or directory tree uses on disk.
+
+        Raises:
+            ValkeyWorkloadCommandError: If ``du`` fails.
+        """
+        stdout, _ = self.exec(["du", "-sB1", path.as_posix()], timeout=DATASET_IO_TIMEOUT_S)
+        return int(stdout.split()[0])
+
+    def free_space(self, path: pathops.PathProtocol) -> int:
+        """Return the bytes available on the filesystem that holds the path.
+
+        Raises:
+            ValkeyWorkloadCommandError: If ``df`` fails.
+        """
+        stdout, _ = self.exec(["df", "--output=avail", "-B1", path.as_posix()])
+        return int(stdout.split()[-1])
 
     def make_dir(self, path: pathops.PathProtocol, exist_ok: bool = False) -> None:
         """Create a directory at the given path, translating filesystem/Pebble errors to ValkeyWorkloadCommandError."""

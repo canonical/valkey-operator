@@ -25,6 +25,7 @@ from tenacity import (
 from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
+    ValkeyAOFArchiveNoSpaceError,
     ValkeyClusterNotReadyError,
     ValkeyServerRestartedError,
     ValkeyTLSLoadError,
@@ -33,6 +34,7 @@ from common.exceptions import (
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
+    AOF_CORRUPT_ARCHIVE_NAME,
     AOF_DIR_NAME,
     AOF_LOAD_FATAL_LOG_LINES,
     AOF_MANIFEST_NAME,
@@ -563,17 +565,35 @@ class ClusterManager(ManagerStatusProtocol):
             line in last_start for line in AOF_LOAD_FATAL_LOG_LINES
         )
 
-    def delete_corrupted_aof(self) -> None:
-        """Delete the AOF dir so the server can start and full-sync from the primary.
+    def archive_corrupted_aof(self) -> None:
+        """Copy the AOF dir to the archive slot, replacing the old copy, then delete it.
 
         Raises:
-            ValkeyWorkloadCommandError: If the delete fails.
+            ValkeyAOFArchiveNoSpaceError: If the archive volume has no room for the copy.
+            ValkeyWorkloadCommandError: If the space check, the copy or a delete fails.
         """
         aof_dir = self.workload.working_dir / AOF_DIR_NAME
-        # without the manifest Valkey ignores leftover files if the rest fails partway
+        archive = self.workload.archive_dir / AOF_CORRUPT_ARCHIVE_NAME
+        needed = self.workload.disk_usage(aof_dir)
+        free = self.workload.free_space(self.workload.archive_dir)
+        # the old copy gets replaced, so its space counts as free
+        if self.workload.path_exists(archive):
+            free += self.workload.disk_usage(archive)
+        if needed > free:
+            raise ValkeyAOFArchiveNoSpaceError(
+                f"The corrupted AOF needs {needed} bytes, {self.workload.archive_dir} has {free}"
+            )
+        self.workload.remove_dir(archive)
+        try:
+            self.workload.copy_dir(aof_dir, archive)
+        except ValkeyWorkloadCommandError:
+            # a partial copy would look complete
+            self.workload.remove_dir(archive)
+            raise
+        # manifest first: if the rest fails, Valkey ignores the leftovers and won't crash again
         self.workload.remove_file(aof_dir / AOF_MANIFEST_NAME)
         self.workload.remove_dir(aof_dir)
-        logger.warning("Deleted the corrupted AOF in %s", aof_dir)
+        logger.warning("Moved the corrupted AOF to %s", archive)
 
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""

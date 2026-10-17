@@ -32,6 +32,10 @@ class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
 
 
+class ValkeyAOFArchiveNoSpaceError(Exception):
+    """Custom Exception if the archive volume has no room for the corrupted AOF."""
+
+
 class ValkeyServicesFailedToStartError(Exception):
     """Custom Exception if Valkey service fails to start."""
 
