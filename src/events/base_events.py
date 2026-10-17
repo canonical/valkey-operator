@@ -428,7 +428,12 @@ class BaseEvents(ops.Object):
                 logger.warning("Primary IP not available yet, retrying the client TLS apply")
                 return False
             tls_config = self.charm.config_manager.generate_tls_config()
-            self.charm.cluster_manager.reload_tls_settings(tls_config)
+            try:
+                self.charm.cluster_manager.reload_tls_settings(tls_config)
+            except ValkeyTLSLoadError:
+                # Valkey still serves its start cert, which the new CA can't verify
+                logger.info("Client TLS reload failed, retrying over the plain port")
+                self.charm.cluster_manager.reload_tls_settings(tls_config, tls=False)
             # inline: start holds the lock, and rollingops drops a nested request_restart
             self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
             self.charm.sentinel_manager.restart_service()
