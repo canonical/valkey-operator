@@ -97,11 +97,10 @@ class _VmProcessHandle:
 
     def wait(self) -> tuple[int, str]:
         rc = self._proc.wait()
-        # The process has exited; closing stderr unblocks the drain thread's
-        # blocking read() so the join() below cannot hang.
+        # closing stderr before the drain thread reads it loses the output
+        self._stderr_thread.join(timeout=5)
         if self._proc.stderr is not None:
             self._proc.stderr.close()
-        self._stderr_thread.join()
         return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
     def kill(self) -> None:
