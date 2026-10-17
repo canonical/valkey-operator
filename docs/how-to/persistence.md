@@ -22,7 +22,7 @@ Valkey restarts after approximately `1` second on Kubernetes and `20` seconds on
 juju config valkey persistence-mode=AOF
 ```
 
-The charm applies the change on every unit without a restart. When AOF is switched on, Valkey first writes the whole dataset to a new append-only file. Until that file is complete, `valkey.conf` keeps the previous settings, so a restart in between still loads current data.
+The charm applies the change on every unit without a restart. When AOF is switched on, Valkey first writes the whole dataset to a new append-only file. Until that file is complete, `valkey.conf` keeps the previous settings, so a restart in between still loads current data. Once the switch is done, the charm deletes the files of the mode it left, for example `dump.rdb` after a switch to `AOF`.
 
 ## Tune snapshots and disk syncs
 
@@ -42,8 +42,4 @@ If a value is invalid, the application shows a blocked status and the charm keep
 
 ## Corrupted append-only files
 
-A corrupted append-only file heals itself when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then copies the corrupted files to the archive storage (`appendonlydir.corrupt`, replacing any previous copy), deletes them from the data storage, and rebuilds the unit with a full sync from the primary. If no healthy unit exists, the unit shows a blocked status. If healing fails, the unit shows a maintenance status and retries.
-
-```{caution}
-The archive storage must fit the whole append-only file, and on Kubernetes the copy must finish within 5 minutes. Otherwise healing fails on every retry and the unit stays down. The archive storage also holds backup files while they transfer, and the corrupted copy stays there until the next heal replaces it, so leave room for both. Size the archive storage for your dataset when you deploy, for example with `juju deploy valkey --storage archive=20G`.
-```
+A corrupted append-only file heals itself when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then deletes the corrupted files and rebuilds the unit with a full sync from the primary. Writes the failed primary never replicated are lost. If no healthy unit exists, the unit shows a blocked status. If healing fails, the unit shows a maintenance status and retries.
