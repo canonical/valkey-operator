@@ -94,30 +94,8 @@ class ValkeyCharm(ops.CharmBase):
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
         self.metrics_manager = MetricsManager(state=self.state, workload=self.workload)
 
-        # --- UPGRADES ---
-        try:
-            if self.substrate == Substrate.K8S:
-                self.refresh = charm_refresh.Kubernetes(
-                    K8sValkeyRefresh(
-                        workload_name="Valkey",
-                        charm_name="valkey",
-                        oci_resource_name="valkey-image",
-                        charm=self,
-                    )
-                )
-            else:
-                self.refresh = charm_refresh.Machines(
-                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
-                )
-        except (
-            charm_refresh.UnitTearingDown,
-            charm_refresh.PeerRelationNotReady,
-            charm_refresh.KubernetesJujuAppNotTrusted,
-        ):
-            self.refresh = None
-
         self.refresh_manager = RefreshManager(
-            state=self.state, workload=self.workload, refresh=self.refresh
+            state=self.state, workload=self.workload, refresh=None
         )
 
         # --- STATUS HANDLER ---
@@ -153,6 +131,31 @@ class ValkeyCharm(ops.CharmBase):
             sync_lock_targets={SCALE_DOWN_LOCK_ID: ValkeyScaleDownLockBackend(self)},
             base_dir=pathops.LocalPath(ROLLINGOPS_BASE_DIR),
         )
+
+        # --- UPGRADES ---
+        # last, since VM `refresh_snap` runs inside the constructor and needs everything above
+        try:
+            if self.substrate == Substrate.K8S:
+                self.refresh = charm_refresh.Kubernetes(
+                    K8sValkeyRefresh(
+                        workload_name="Valkey",
+                        charm_name="valkey",
+                        oci_resource_name="valkey-image",
+                        charm=self,
+                    )
+                )
+            else:
+                self.refresh = charm_refresh.Machines(
+                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
+                )
+        except (
+            charm_refresh.UnitTearingDown,
+            charm_refresh.PeerRelationNotReady,
+            charm_refresh.KubernetesJujuAppNotTrusted,
+        ):
+            self.refresh = None
+
+        self.refresh_manager.refresh = self.refresh
 
         # ensure that post refresh handling is executed in EVERY hook
         self.post_refresh_handling(self.refresh)
