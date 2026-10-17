@@ -54,12 +54,16 @@ class ClusterManager(ManagerStatusProtocol):
         """Get the password of the admin user for the Valkey cluster."""
         return self.state.unit_server.valkey_admin_password
 
-    def _get_valkey_client(self) -> ValkeyClient:
-        """Get a client connection to Valkey."""
+    def _get_valkey_client(self, tls: bool | None = None) -> ValkeyClient:
+        """Get a client connection to Valkey.
+
+        Args:
+            tls: Whether to connect over TLS. Defaults to the unit's client TLS state.
+        """
         return ValkeyClient(
             username=self.admin_user,
             password=self.admin_password,
-            tls=self.state.unit_server.is_tls_enabled,
+            tls=self.state.unit_server.is_tls_enabled if tls is None else tls,
             workload=self.workload,
         )
 
@@ -281,9 +285,14 @@ class ClusterManager(ManagerStatusProtocol):
 
         return server_info["valkey_version"]
 
-    def reload_tls_settings(self, tls_config: dict[str, str]) -> None:
-        """Update TLS by loading the TLS settings."""
-        client = self._get_valkey_client()
+    def reload_tls_settings(self, tls_config: dict[str, str], tls: bool | None = None) -> None:
+        """Update TLS by loading the TLS settings.
+
+        Args:
+            tls_config: The TLS settings to set at runtime.
+            tls: Whether to connect over TLS. Defaults to the unit's client TLS state.
+        """
+        client = self._get_valkey_client(tls)
         try:
             client.config_set(tls_config, hostname=self.state.endpoint)
         except ValkeyWorkloadCommandError:
