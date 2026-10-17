@@ -443,7 +443,7 @@ class BaseEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
-        self._heal_corrupted_aof()
+        self.heal_corrupted_aof()
 
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
@@ -784,7 +784,7 @@ class BaseEvents(ops.Object):
         )
         self.charm.state.unit_server.update({"applied_persistence_config": persistence})
 
-    def _heal_corrupted_aof(self) -> None:
+    def heal_corrupted_aof(self) -> None:
         """Rebuild a unit whose AOF is corrupted with a full sync from the primary (DA290).
 
         A primary that Sentinel has not failed over yet gets a forced failover first.
@@ -817,9 +817,9 @@ class BaseEvents(ops.Object):
             # healing from a down primary leaves this unit empty and promotable (DA291)
             if not self.charm.cluster_manager.is_healthy(is_primary=True, hostname=primary):
                 raise ValkeyClusterNotReadyError(f"The primary {primary} is not healthy")
-            # rendered before the AOF moves, so an auto-restart comes back as a replica
+            # rendered before the AOF goes, so an auto-restart comes back as a replica
             self.charm.config_manager.set_config_properties(primary_endpoint=primary)
-            self.charm.cluster_manager.archive_corrupted_aof()
+            self.charm.cluster_manager.delete_corrupted_aof()
         except (
             SentinelFailoverError,
             ValkeyCannotGetPrimaryIPError,

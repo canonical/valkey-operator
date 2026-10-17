@@ -11,7 +11,7 @@ from typing import IO, BinaryIO, Protocol, runtime_checkable
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import AOF_TEMP_FILE_PREFIX, DATASET_IO_TIMEOUT_S, EXEC_TIMEOUT_S
+from literals import AOF_TEMP_FILE_PREFIX, EXEC_TIMEOUT_S
 
 
 @runtime_checkable
@@ -319,14 +319,6 @@ class WorkloadBase(ABC):
             ValkeyWorkloadCommandError: If the removal fails.
         """
         self.exec(["rm", "-rf", path.as_posix()])
-
-    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
-        """Copy a directory tree, also across partitions.
-
-        Raises:
-            ValkeyWorkloadCommandError: If the copy fails.
-        """
-        self.exec(["cp", "-a", src.as_posix(), dest.as_posix()], timeout=DATASET_IO_TIMEOUT_S)
 
     def make_dir(self, path: pathops.PathProtocol, exist_ok: bool = False) -> None:
         """Create a directory at the given path, translating filesystem/Pebble errors to ValkeyWorkloadCommandError."""

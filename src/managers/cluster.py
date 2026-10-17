@@ -33,7 +33,6 @@ from common.exceptions import (
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
-    AOF_CORRUPT_ARCHIVE_NAME,
     AOF_DIR_NAME,
     AOF_LOAD_FATAL_LOG_LINES,
     AOF_MANIFEST_NAME,
@@ -558,27 +557,17 @@ class ClusterManager(ManagerStatusProtocol):
             line in last_start for line in AOF_LOAD_FATAL_LOG_LINES
         )
 
-    def archive_corrupted_aof(self) -> None:
-        """Copy the AOF dir to the archive slot, replacing the old copy, then delete it.
+    def delete_corrupted_aof(self) -> None:
+        """Delete the AOF dir so the server can start and full-sync from the primary.
 
         Raises:
-            ValkeyWorkloadCommandError: If the copy or the delete fails.
+            ValkeyWorkloadCommandError: If the delete fails.
         """
         aof_dir = self.workload.working_dir / AOF_DIR_NAME
-        archive = self.workload.archive_dir / AOF_CORRUPT_ARCHIVE_NAME
-        # the archive volume may only fit one copy
-        self.workload.remove_dir(archive)
-        try:
-            self.workload.copy_dir(aof_dir, archive)
-        except ValkeyWorkloadCommandError:
-            # a partial copy would look complete
-            self.workload.remove_dir(archive)
-            raise
-        # Delete the manifest first. If the rest then fails partway, Valkey ignores the leftover
-        # files, so the unit doesn't look corrupted again and the archive keeps its full copy.
+        # without the manifest Valkey ignores leftover files if the rest fails partway
         self.workload.remove_file(aof_dir / AOF_MANIFEST_NAME)
         self.workload.remove_dir(aof_dir)
-        logger.warning("Moved the corrupted AOF to %s", archive)
+        logger.warning("Deleted the corrupted AOF in %s", aof_dir)
 
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""

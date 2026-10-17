@@ -56,21 +56,21 @@ class PersistenceStatuses(Enum):
 
     INVALID_CONFIG = StatusObject(
         status="blocked",
-        message="Invalid persistence config, keeping the last valid settings",
+        message="Invalid persistence config, revert it, check logs for details",
     )
     NOT_APPLIED = StatusObject(
         status="maintenance",
-        message="Persistence settings failed to apply, retrying",
+        message="Persistence settings failed to apply, retrying, check logs for details",
         running="async",
     )
     AOF_CORRUPTED = StatusObject(
         status="blocked",
-        message="Corrupted AOF, no healthy unit to resync from",
+        message="Corrupted AOF, no healthy unit to resync from, check logs for details",
         running="async",
     )
     AOF_HEAL_FAILED = StatusObject(
         status="maintenance",
-        message="Corrupted AOF, healing failed, retrying",
+        message="Corrupted AOF, healing failed, retrying, check logs for details",
         running="async",
     )
 

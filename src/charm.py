@@ -169,6 +169,9 @@ class ValkeyCharm(ops.CharmBase):
             logger.debug("Workload not allowed to start")
             return
 
+        # a corrupted AOF fails the health checks below, which raise before update-status can heal it
+        self.base_events.heal_corrupted_aof()
+
         if not self.workload.alive():
             logger.info("Restarting workload")
             if self.app.planned_units() == 1:

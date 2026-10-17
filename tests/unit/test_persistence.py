@@ -522,29 +522,19 @@ def test_is_aof_corrupted(mocker, responding, manifest_exists, log, corrupted):
         cm.workload.read_file_tail.assert_not_called()
 
 
-@pytest.mark.parametrize("copy_fails", [False, True])
-def test_archive_deletes_the_aof_only_after_a_complete_copy(mocker, copy_fails):
-    """A failed copy leaves no partial archive and keeps the AOF on the data volume."""
+def test_delete_corrupted_aof_removes_the_manifest_first(mocker):
+    """The manifest goes first, so a partial delete leaves files Valkey ignores."""
     cm, _ = _cluster_manager(mocker)
     cm.workload.working_dir = PurePosixPath("/data")
-    cm.workload.archive_dir = PurePosixPath("/archive")
-    if copy_fails:
-        cm.workload.copy_dir.side_effect = ValkeyWorkloadCommandError("No space left on device")
 
-    if copy_fails:
-        with pytest.raises(ValkeyWorkloadCommandError):
-            cm.archive_corrupted_aof()
-    else:
-        cm.archive_corrupted_aof()
+    cm.delete_corrupted_aof()
 
     removed = [
         c.args[0].as_posix()
         for c in cm.workload.mock_calls
         if c[0] in ("remove_dir", "remove_file")
     ]
-    archive = "/archive/appendonlydir.corrupt"
-    deleted = [archive, "/data/appendonlydir/appendonly.aof.manifest", "/data/appendonlydir"]
-    assert removed == ([archive, archive] if copy_fails else deleted)
+    assert removed == ["/data/appendonlydir/appendonly.aof.manifest", "/data/appendonlydir"]
 
 
 OWN_ENDPOINT = "10.0.0.1"
@@ -554,7 +544,7 @@ NEW_PRIMARY = "10.0.0.9"
 def _run_heal(
     primary_ips: list[str],
     failover_error: Exception | None = None,
-    archive_error: Exception | None = None,
+    delete_error: Exception | None = None,
     primary_healthy: bool = True,
 ):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
@@ -572,62 +562,62 @@ def _run_heal(
         ) as failover,
         patch("managers.config.ConfigManager.set_config_properties") as render,
         patch(
-            "managers.cluster.ClusterManager.archive_corrupted_aof", side_effect=archive_error
-        ) as archive,
+            "managers.cluster.ClusterManager.delete_corrupted_aof", side_effect=delete_error
+        ) as delete,
         patch("managers.cluster.ClusterManager.is_healthy", return_value=primary_healthy),
         patch("events.base_events.BaseEvents.reconcile_persistence"),
         patch("src.charm.ValkeyCharm.request_restart") as restart,
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
-    return state_out, failover, render, archive, restart
+    return state_out, failover, render, delete, restart
 
 
 def test_heal_resyncs_a_replica_from_the_primary():
-    """Sentinel already failed over: render as replica and archive, with no charm restart."""
-    _, failover, render, archive, restart = _run_heal([NEW_PRIMARY])
+    """Sentinel already failed over: render as replica and delete the AOF, no charm restart."""
+    _, failover, render, delete, restart = _run_heal([NEW_PRIMARY])
 
     failover.assert_not_called()
     render.assert_called_once_with(primary_endpoint=NEW_PRIMARY)
-    archive.assert_called_once()
+    delete.assert_called_once()
     # a second restart would abort the full sync
     restart.assert_not_called()
 
 
 def test_heal_forces_a_failover_when_still_primary():
     """Sentinel still names this unit: force the failover, then heal as a replica."""
-    _, failover, render, archive, _ = _run_heal([OWN_ENDPOINT, NEW_PRIMARY])
+    _, failover, render, delete, _ = _run_heal([OWN_ENDPOINT, NEW_PRIMARY])
 
     failover.assert_called_once_with(force=True)
     render.assert_called_once_with(primary_endpoint=NEW_PRIMARY)
-    archive.assert_called_once()
+    delete.assert_called_once()
 
 
 def test_heal_blocks_without_a_healthy_peer():
     """No replica to promote: block and keep the AOF in place."""
-    state_out, _, render, archive, restart = _run_heal(
+    state_out, _, render, delete, restart = _run_heal(
         [OWN_ENDPOINT], failover_error=SentinelFailoverError("NOGOODSLAVE")
     )
 
     render.assert_not_called()
-    archive.assert_not_called()
+    delete.assert_not_called()
     restart.assert_not_called()
     assert status_is(state_out, PersistenceStatuses.AOF_CORRUPTED.value)
 
 
 def test_heal_waits_for_a_primary_that_answers():
     """No heal from a down primary, which would leave this unit empty and promotable."""
-    state_out, _, render, archive, restart = _run_heal([NEW_PRIMARY], primary_healthy=False)
+    state_out, _, render, delete, restart = _run_heal([NEW_PRIMARY], primary_healthy=False)
 
     render.assert_not_called()
-    archive.assert_not_called()
+    delete.assert_not_called()
     restart.assert_not_called()
     assert status_is(state_out, PersistenceStatuses.AOF_CORRUPTED.value)
 
 
-def test_heal_shows_a_status_when_the_move_fails():
-    """A failed archive shows a status, and the next update-status retries."""
+def test_heal_shows_a_status_when_the_delete_fails():
+    """A failed delete shows a status, and the next update-status retries."""
     state_out, _, _, _, restart = _run_heal(
-        [NEW_PRIMARY], archive_error=ValkeyWorkloadCommandError("mv failed")
+        [NEW_PRIMARY], delete_error=ValkeyWorkloadCommandError("rm failed")
     )
 
     restart.assert_not_called()
