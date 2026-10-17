@@ -11,7 +11,7 @@ Valkey keeps its dataset in memory. The `persistence-mode` config option decides
 | `None`          | Nothing during normal operation                                             | The data is a cache you can rebuild                                                 |
 
 ```{warning}
-When `persistence-mode` is set to `None`, a primary crash can cause data loss on all units, including replicas. Use this setting only for data you can rebuild.
+When `persistence-mode` is set to `None` or `RDB`, a primary crash can cause data loss on all units, including replicas. Use `None` only for data you can rebuild.
 
 Valkey restarts after approximately `1` second on Kubernetes and `20` seconds on machines: before Sentinel’s 30-second failover window expires. If it restarts before failover, it resumes as the primary with an empty dataset or an older snapshot. Replicas then synchronize with the primary, replacing their data with that dataset.
 ```
@@ -22,7 +22,7 @@ Valkey restarts after approximately `1` second on Kubernetes and `20` seconds on
 juju config valkey persistence-mode=AOF
 ```
 
-The charm applies the change on every unit without a restart. When AOF is switched on, Valkey first writes the whole dataset to a new append-only file. Until that file is complete, `valkey.conf` keeps the previous settings, so a restart in between still loads current data. Once the switch is done, the charm deletes the files of the mode it left, for example `dump.rdb` after a switch to `AOF`.
+The charm applies the change on every unit without a restart. When AOF is switched on, Valkey first writes the whole dataset to a new append-only file. When AOF is switched off and snapshots stay on, Valkey first saves a new `dump.rdb`. Until that file is complete, `valkey.conf` keeps the previous settings, so a restart in between still loads current data. Once the switch is done, the charm deletes the files of the mode it left, for example `dump.rdb` after a switch to `AOF`.
 
 ## Tune snapshots and disk syncs
 
@@ -38,10 +38,14 @@ juju config valkey rdb-save-points="3600 1 300 100"
 juju config valkey aof-appendfsync=always
 ```
 
-If a value is invalid, the application shows a blocked status and the charm keeps the last valid settings.
+If a value is invalid, the application shows a blocked status and the charm keeps the last valid settings. The charm checks `rdb-save-points` only in the `RDB` and `RDB+AOF` modes.
+
+## Restore a backup
+
+[Backups](how-to-backup) are RDB snapshots, and a restore works in every mode. In an AOF mode, the restore deletes the current append-only file, the unit loads the backup, and the charm then switches AOF back on.
 
 ## Corrupted append-only files
 
-A corrupted append-only file heals itself when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then moves the corrupted files to the `archive` storage, replacing the previous copy, and rebuilds the unit with a full sync from the primary. Writes the failed primary never replicated are not in the cluster, but the archived copy keeps them. If no healthy unit exists, the unit shows a blocked status. If the archive storage has no space for the copy, the unit shows a blocked status and keeps the corrupted files in place until you free space on that storage or allocate more. If healing fails for another reason, the unit shows a maintenance status and retries.
+A corrupted append-only file heals itself on the next `update-status` when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then moves the corrupted files to the `archive` storage, replacing the previous copy, and rebuilds the unit with a full sync from the primary. Writes the failed primary never replicated are not in the cluster, but the archived copy keeps them. If no healthy unit exists, the unit shows a blocked status. If the archive storage has no space for the copy, the unit shows a blocked status and keeps the corrupted files in place until you free space on that storage or allocate more. If healing fails for another reason, the unit shows a maintenance status and retries.
 
-The copy, `appendonlydir.corrupt`, stays on the `archive` storage until you delete it. A restore moves the current `dump.rdb` onto that storage as a rollback copy, so delete the copy once you no longer need it, or a later restore can run out of space.
+The copy, `appendonlydir.corrupt`, stays on the `archive` storage until you delete it. During a restore, the primary keeps its current `dump.rdb` on that storage as a rollback copy. Delete `appendonlydir.corrupt` once you no longer need it, or a later restore can run out of space.
