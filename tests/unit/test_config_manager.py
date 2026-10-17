@@ -174,23 +174,19 @@ def test_explicit_settings_override_the_applied_ones():
 
 
 @pytest.mark.parametrize(
-    "has_manifest,has_dump,aof_newer,appendonly",
+    "mode,has_manifest,appendonly",
     [
-        (True, True, True, "yes"),
-        (True, False, False, "yes"),
-        (True, True, False, "no"),
-        (False, True, False, "no"),
+        (PersistenceMode.AOF, True, "yes"),
+        (PersistenceMode.AOF, False, "no"),
+        (PersistenceMode.RDB, True, "no"),
     ],
 )
-def test_reused_aof_loads_only_when_newest(has_manifest, has_dump, aof_newer, appendonly):
-    """With nothing applied, the stored AOF mode renders only when the AOF is newest."""
+def test_reused_aof_loads_in_aof_modes(mode, has_manifest, appendonly):
+    """With nothing applied, a stored AOF mode renders only when the volume has an AOF."""
     cm = _make_config_manager()
-    cm.state.cluster.persistence_config = PersistenceConfig(mode=PersistenceMode.AOF)
+    cm.state.cluster.persistence_config = PersistenceConfig(mode=mode)
     cm.workload.working_dir = PurePosixPath("/var/lib/valkey")
-    cm.workload.path_exists.side_effect = lambda path: (
-        has_manifest if path.name == "appendonly.aof.manifest" else has_dump
-    )
-    cm.workload.has_files_newer_than.return_value = aof_newer
+    cm.workload.path_exists.return_value = has_manifest
 
     assert cm.get_config_properties(primary_endpoint="10.0.0.5")["appendonly"] == appendonly
 

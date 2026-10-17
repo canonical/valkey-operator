@@ -22,7 +22,6 @@ from literals import (
     AOF_MANIFEST_NAME,
     CLIENT_PORT,
     PRIMARY_NAME,
-    RDB_FILE_NAME,
     SENTINEL_DOWN_AFTER_MS,
     SENTINEL_LOG_FILE,
     SENTINEL_PORT,
@@ -163,21 +162,13 @@ class ConfigManager(ManagerStatusProtocol):
     def _initial_persistence(self) -> PersistenceConfig:
         """Return the settings for a unit that has applied none.
 
-        It returns the RDB defaults unless the AOF on disk is newer than dump.rdb, so a reused
-        volume loads its AOF and a stale AOF from an earlier AOF period doesn't.
+        An AOF mode loads the AOF on a reused volume, other modes the RDB defaults. Switches and
+        restores delete the files they leave stale, so any AOF on the volume is current.
         """
         stored = self.state.cluster.persistence_config
-        aof_dir = self.workload.working_dir / AOF_DIR_NAME
-        dump = self.workload.working_dir / RDB_FILE_NAME
-        if (
-            stored.aof_enabled
-            and self.workload.path_exists(aof_dir / AOF_MANIFEST_NAME)
-            and (
-                not self.workload.path_exists(dump)
-                or self.workload.has_files_newer_than(aof_dir, dump)
-            )
-        ):
-            logger.info("Loading the AOF on this storage, it is newer than dump.rdb")
+        manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
+        if stored.aof_enabled and self.workload.path_exists(manifest):
+            logger.info("Loading the AOF on this storage")
             return stored
         return PersistenceConfig()
 

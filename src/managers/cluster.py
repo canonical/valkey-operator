@@ -37,6 +37,7 @@ from literals import (
     AOF_LOAD_FATAL_LOG_LINES,
     AOF_MANIFEST_NAME,
     DATASET_IO_TIMEOUT_S,
+    RDB_FILE_NAME,
     VALKEY_LOG_FILE,
     VALKEY_LOG_TAIL_LINES,
     VALKEY_READY_LOG_LINE,
@@ -466,7 +467,7 @@ class ClusterManager(ManagerStatusProtocol):
             self._save_in_background(run_id)
 
     def disable_old_persistence(self, settings: dict[str, str]) -> None:
-        """Turn off, without a restart, the old persistence the new settings drop.
+        """Turn off, without a restart, the old persistence the new settings drop, and its files.
 
         Call it only once valkey.conf names the new settings, so a restart loads current data.
 
@@ -474,7 +475,7 @@ class ClusterManager(ManagerStatusProtocol):
             settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
 
         Raises:
-            ValkeyWorkloadCommandError: If the server refuses the settings.
+            ValkeyWorkloadCommandError: If the server refuses the settings or a delete fails.
         """
         off = {"rdb-del-sync-files": settings["rdb-del-sync-files"]}
         if not settings["save"]:
@@ -482,6 +483,11 @@ class ClusterManager(ManagerStatusProtocol):
         if settings["appendonly"] == "no":
             off["appendonly"] = "no"
         self._get_valkey_client().config_set(off, hostname=self.state.endpoint)
+        # a reused volume then holds only files of the current mode, so it never has to guess
+        if settings["appendonly"] == "no":
+            self.workload.remove_dir(self.workload.working_dir / AOF_DIR_NAME)
+        if not settings["save"]:
+            self.workload.remove_file(self.workload.working_dir / RDB_FILE_NAME)
 
     def _disable_save_on_shutdown(self) -> None:
         """Set the configured shutdown option to 'no save' temporarily, will not persist a restart."""

@@ -15,6 +15,8 @@ Two layers, on purpose:
   the event layer, where that granularity belongs.
 """
 
+from pathlib import PurePosixPath
+
 import pytest
 
 from src.core.models import PeerAppModel, PeerUnitModel, PersistenceConfig
@@ -586,7 +588,7 @@ def test_restore_on_primary_orders_stop_backup_download_start(mocker):
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
-    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=mocker.Mock())
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=PurePosixPath("/data"))
     mgr.workload.path_exists.return_value = False  # no existing pre-restore -> move-aside runs
     calls = []
     mgr.workload.stop.side_effect = lambda s, check_alive=False: calls.append("stop")
@@ -615,7 +617,7 @@ def test_restore_on_primary_drops_stale_copy(mocker):
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
-    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=PurePosixPath("/data"))
     mgr.workload.alive.return_value = True  # fresh swap: valkey is up
     mgr.workload.path_exists.return_value = True  # a stale copy from a prior restore exists
 
@@ -640,7 +642,7 @@ def test_roll_back_stops_service_before_swap(mocker):
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
-    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=PurePosixPath("/data"))
     mgr.workload.alive.return_value = True  # server up -> _ensure_stopped stops it
     calls = []
     mgr.workload.stop.side_effect = lambda s, check_alive=False: calls.append("stop")
@@ -668,7 +670,7 @@ def test_roll_back_tolerates_already_stopped_service(mocker):
     from src.managers.backup import BackupManager
 
     mgr = BackupManager.__new__(BackupManager)
-    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=PurePosixPath("/data"))
     mgr.workload.alive.return_value = False  # already stopped (mid-restore crash)
     mocker.patch.object(BackupManager, "_dump_path", new_callable=mocker.PropertyMock)
     mocker.patch.object(BackupManager, "_pre_restore_path", new_callable=mocker.PropertyMock)
@@ -694,7 +696,7 @@ def test_restore_on_primary_stops_running_valkey_via_single_service_check(mocker
 
     mgr = BackupManager.__new__(BackupManager)
     mgr.state = mocker.Mock()
-    mgr.workload = mocker.Mock(valkey_service="valkey")
+    mgr.workload = mocker.Mock(valkey_service="valkey", working_dir=PurePosixPath("/data"))
     # Single-service alive(valkey) is True; the all-services alive() would be False.
     mgr.workload.alive.side_effect = lambda service=None: service == "valkey"
     mgr.workload.path_exists.return_value = False  # no stale/existing pre-restore copy
