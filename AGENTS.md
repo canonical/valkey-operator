@@ -88,7 +88,7 @@ tox run -e static        # pyright type checks over src/. Fast — no Juju neede
 # so a path posarg would still run the whole dir).
 tox run -e unit -- -k test_start_primary
 # Fast iteration after the first run (skips poetry install + coverage):
-.tox/unit/bin/pytest tests/unit -k test_start_primary
+.tox/unit/bin/pytest tests/unit -n auto --dist worksteal -k test_start_primary
 
 charmcraft pack          # or: charmcraftcache pack (faster, used in CI/spread). Long Rust build.
 
