@@ -94,6 +94,7 @@ class ValkeyCharm(ops.CharmBase):
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
         self.metrics_manager = MetricsManager(state=self.state, workload=self.workload)
 
+        # `refresh` stays None until charm_refresh runs at the end of __init__
         self.refresh_manager = RefreshManager(
             state=self.state, workload=self.workload, refresh=None
         )

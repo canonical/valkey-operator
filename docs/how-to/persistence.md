@@ -42,4 +42,6 @@ If a value is invalid, the application shows a blocked status and the charm keep
 
 ## Corrupted append-only files
 
-A corrupted append-only file heals itself when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then deletes the corrupted files and rebuilds the unit with a full sync from the primary. Writes the failed primary never replicated are lost. If no healthy unit exists, the unit shows a blocked status. If healing fails, the unit shows a maintenance status and retries.
+A corrupted append-only file heals itself when another healthy unit exists. If the affected unit is the primary, the charm fails over first. It then moves the corrupted files to the `archive` storage, replacing the previous copy, and rebuilds the unit with a full sync from the primary. Writes the failed primary never replicated are not in the cluster, but the archived copy keeps them. If no healthy unit exists, the unit shows a blocked status. If the archive storage has no space for the copy, the unit shows a blocked status and keeps the corrupted files in place until you free space on that storage or allocate more. If healing fails for another reason, the unit shows a maintenance status and retries.
+
+The copy, `appendonlydir.corrupt`, stays on the `archive` storage until you delete it. A restore moves the current `dump.rdb` onto that storage as a rollback copy, so delete the copy once you no longer need it, or a later restore can run out of space.

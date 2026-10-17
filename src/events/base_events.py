@@ -832,9 +832,6 @@ class BaseEvents(ops.Object):
 
         try:
             if not self.charm.cluster_manager.is_aof_corrupted():
-                # clear a stale status after a hand fix, not while LOADING: it can still crash
-                if self.charm.cluster_manager.is_healthy(check_replica_sync=False):
-                    self._clear_aof_statuses()
                 return
         except ValkeyWorkloadCommandError as e:
             logger.error("Cannot check the AOF: %s", e)
