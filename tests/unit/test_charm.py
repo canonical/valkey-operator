@@ -656,6 +656,7 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
             "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
         ),
+        patch("managers.cluster.ClusterManager.run_id", return_value="run-1"),
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
         patch(
             "managers.tls.TLSManager.build_sans_dns", return_value=frozenset({"www.example.com"})

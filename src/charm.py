@@ -16,7 +16,7 @@ from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
-from common.exceptions import ValkeyUpgradeError
+from common.exceptions import ValkeyUpgradeError, ValkeyWorkloadCommandError
 from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -218,6 +218,13 @@ class ValkeyCharm(ops.CharmBase):
         Args:
             **kwargs: Arguments for `BaseEvents.restart_workload`.
         """
+        if kwargs.get("restart_valkey", True):
+            # the callback restarts only this process, a newer one already runs the new config
+            try:
+                run_id = self.cluster_manager.run_id()
+            except ValkeyWorkloadCommandError:
+                run_id = ""
+            self.state.unit_server.update({"restart_run_id": run_id})
         try:
             self.rollingops.request_async_lock(RESTART_OPERATION_ID, kwargs=kwargs)
         except RollingOpsNoRelationError:

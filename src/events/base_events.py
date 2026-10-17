@@ -641,6 +641,7 @@ class BaseEvents(ops.Object):
 
         if not self.charm.state.unit_server.is_started:
             logger.info("Unit not started yet, dropping the restart, the start applies the config")
+            self.charm.state.unit_server.update({"restart_run_id": ""})
             return OperationResult.RELEASE
 
         if (
@@ -651,7 +652,8 @@ class BaseEvents(ops.Object):
             return OperationResult.RETRY_RELEASE
 
         try:
-            if restart_valkey:
+            # a RETRY_HOLD retry must not kill the load or sync the previous attempt started
+            if restart_valkey and self._valkey_runs_requested_process():
                 self.charm.workload.restart(self.charm.workload.valkey_service)
             if restart_sentinel:
                 # if primary endpoint is given, write sentinel config
@@ -669,7 +671,7 @@ class BaseEvents(ops.Object):
             return OperationResult.RETRY_HOLD
 
         if restart_valkey:
-            if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+            if not self._is_valkey_back_in_sync():
                 self.charm.state.unit_server.update({"is_valkey_healthy": False})
                 return OperationResult.RETRY_HOLD
             # CONFIG SET min-replicas-to-write does not survive the restart we
@@ -684,8 +686,36 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"is_sentinel_healthy": False})
             return OperationResult.RETRY_HOLD
 
-        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
         return OperationResult.RELEASE
+
+    def _valkey_runs_requested_process(self) -> bool:
+        """Whether Valkey still runs the process that was up when the restart was requested.
+
+        An unknown process, or a server that can't be queried, counts as needing the restart.
+        """
+        requested = self.charm.state.unit_server.model.restart_run_id
+        try:
+            return not requested or self.charm.cluster_manager.run_id() == requested
+        except ValkeyWorkloadCommandError:
+            return True
+
+    def _is_valkey_back_in_sync(self) -> bool:
+        """Whether the restarted Valkey is healthy and, as a replica, in sync with the primary.
+
+        A restarted replica can full-sync, so the lock is held until it has the data again.
+        """
+        if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+            return False
+        # read the role live: Sentinel may have failed over during the restart
+        try:
+            return (
+                self.charm.cluster_manager.is_primary()
+                or self.charm.cluster_manager.is_replica_synced()
+            )
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read the Valkey role: %s", e)
+            return False
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""

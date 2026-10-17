@@ -255,7 +255,7 @@ class ClusterManager(ManagerStatusProtocol):
         except Exception as e:  # tenacity reraises the last attempt's error
             raise ValkeyClusterNotReadyError(f"{failure} within {timeout_s}s") from e
 
-    def _run_id(self) -> str:
+    def run_id(self) -> str:
         """Return the ID of the running Valkey process, which changes on every restart.
 
         Raises:
@@ -273,7 +273,7 @@ class ClusterManager(ManagerStatusProtocol):
             ValkeyServerRestartedError: If the process ID changed.
             ValkeyWorkloadCommandError: If the server can't be queried.
         """
-        if self._run_id() != run_id:
+        if self.run_id() != run_id:
             raise ValkeyServerRestartedError("Valkey restarted during a persistence switch")
 
     @retry(
@@ -443,7 +443,7 @@ class ClusterManager(ManagerStatusProtocol):
         """
         client = self._get_valkey_client()
         # a restart reloads valkey.conf and loses the CONFIG SET changes below
-        run_id = self._run_id()
+        run_id = self.run_id()
         if settings["appendonly"] == "yes":
             client.config_set({"appendonly": "yes"}, hostname=self.state.endpoint)
             self._wait_until(

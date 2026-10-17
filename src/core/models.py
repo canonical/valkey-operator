@@ -392,6 +392,7 @@ class PeerUnitModel(PeerModel):
     applied_client_cert_fingerprint: str = Field(default="")
     is_valkey_healthy: bool = Field(default=True)
     is_sentinel_healthy: bool = Field(default=True)
+    restart_run_id: str = Field(default="")
     client_user_epoch: float = Field(default=0)
     backup_id: str = Field(default="")
     restore_step: str = Field(default="")
