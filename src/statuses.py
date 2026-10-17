@@ -66,6 +66,7 @@ class PersistenceStatuses(Enum):
     AOF_CORRUPTED = StatusObject(
         status="blocked",
         message="Corrupted AOF, no healthy unit to resync from, check logs for details",
+        action="Restore a backup",
         running="async",
     )
     AOF_HEAL_FAILED = StatusObject(
