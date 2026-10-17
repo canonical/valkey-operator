@@ -345,9 +345,8 @@ class BaseEvents(ops.Object):
         logger.info("Services started")
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
 
-        # ensure to run all operations depending on peer-relation changed (might have been deferred
-        # before start and not run again if only 1 unit, e.g. set pod labels, publish client data)
-        self.charm.trigger_relation_change_if_required()
+        # peer handlers skip unstarted units, so rerun them for changes missed while starting
+        self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
 
         if not self.charm.unit.is_leader():
             return
