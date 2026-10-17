@@ -120,7 +120,8 @@ All paths below are under `src/`.
   Add nothing else here.
 - `core/` — state & data, NO behavior. `cluster_state.py`: `ClusterState`, the single source of
   truth (peer relations, networking, secrets). `models.py`: pydantic models over relation databags
-  (`PeerAppModel`, `PeerUnitModel`; `RelationState.update()` DELETES keys whose value is falsy).
+  (`PeerAppModel`, `PeerUnitModel`; `RelationState.update()` DELETES keys whose value is `None` or
+  `""`, a `False` or `0` is stored).
   `base_workload.py`: `WorkloadBase` ABC + `TLSPaths`.
 - `managers/` — pure business logic, NO event handling; each takes (state, workload).
   `cluster.py`: health checks, replica sync, ACL reload. `config.py`: renders configs/ACL files,

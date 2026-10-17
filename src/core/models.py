@@ -435,7 +435,8 @@ class RelationState:
         # hook would then try to remove it again and raise SecretNotFoundError.
         items = {k: json.dumps(v) if isinstance(v, dict | list) else v for k, v in items.items()}
 
-        delete_fields = [key for key in items if not items[key]]
+        # only None and "" delete: a False or 0 must be stored, or a True default would come back
+        delete_fields = [key for key in items if items[key] is None or items[key] == ""]
         update_content = {k: items[k] for k in items if k not in delete_fields}
 
         for field, value in update_content.items():
