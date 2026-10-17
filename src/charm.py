@@ -34,6 +34,7 @@ from literals import (
     ROLLINGOPS_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
     START_OPERATION_ID,
+    VALKEY_DOWN_RUN_ID,
     Substrate,
 )
 from managers.auth import AuthManager
@@ -223,7 +224,8 @@ class ValkeyCharm(ops.CharmBase):
             try:
                 run_id = self.cluster_manager.run_id()
             except ValkeyWorkloadCommandError:
-                run_id = ""
+                # whatever process starts next reads the config already rendered
+                run_id = VALKEY_DOWN_RUN_ID
             self.state.unit_server.update({"restart_run_id": run_id})
         try:
             self.rollingops.request_async_lock(RESTART_OPERATION_ID, kwargs=kwargs)

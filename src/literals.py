@@ -112,6 +112,8 @@ SCALE_DOWN_LOCK_ID = "scale-down"
 # rollingops callback ids
 START_OPERATION_ID = "start"
 RESTART_OPERATION_ID = "restart"
+# restart_run_id of a restart requested while Valkey was down, no real run ID matches it
+VALKEY_DOWN_RUN_ID = "down"
 
 DEFAULT_RDB_SAVE_POINTS = "900 1 300 100 60 10000"
 # Valkey's multi-part AOF layout inside the data dir (appenddirname and its manifest)
