@@ -181,7 +181,7 @@ AOF_SETTINGS = {
     "save": "",
     "appendonly": "yes",
     "appendfsync": "everysec",
-    "rdb-del-sync-files": "no",
+    "rdb-del-sync-files": "yes",
     "shutdown-on-sigterm": "default",
 }
 RDB_SETTINGS = {
@@ -210,7 +210,7 @@ def test_rdb_to_aof_keeps_rdb_on_until_disable(mocker):
     cm.disable_old_persistence(AOF_SETTINGS)
 
     client.config_set.assert_called_once_with(
-        {"rdb-del-sync-files": "no", "save": ""}, hostname="10.0.0.1"
+        {"rdb-del-sync-files": "yes", "save": ""}, hostname="10.0.0.1"
     )
 
 

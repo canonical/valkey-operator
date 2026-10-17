@@ -126,7 +126,7 @@ def test_sentinel_logfile_points_to_logs_volume(mocker):
     "mode,save,appendonly,del_sync_files",
     [
         (PersistenceMode.RDB, "900 1 300 100 60 10000", "no", "no"),
-        (PersistenceMode.AOF, '""', "yes", "no"),
+        (PersistenceMode.AOF, '""', "yes", "yes"),
         (PersistenceMode.RDB_AOF, "900 1 300 100 60 10000", "yes", "no"),
         (PersistenceMode.NONE, '""', "no", "yes"),
     ],
