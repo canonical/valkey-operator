@@ -58,6 +58,8 @@ shellcheck-py = "*"
 pytest = "*"
 pytest-asyncio = "*"
 pytest-mock = "*"
+pytest-xdist = "*"
+pytest-cov = "*"
 coverage = { extras = ["toml"], version = "*" }
 parameterized = "*"
 ops-scenario = "*"

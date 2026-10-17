@@ -36,6 +36,7 @@ from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ARCHIVE_STORAGE_PATH,
     DATA_STORAGE_PATH,
+    DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     LOGROTATE_CRON_FILE,
@@ -43,6 +44,7 @@ from literals import (
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
     SNAP_ACL_FILE,
+    SNAP_CHECK_AOF_CLI,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
@@ -95,11 +97,10 @@ class _VmProcessHandle:
 
     def wait(self) -> tuple[int, str]:
         rc = self._proc.wait()
-        # The process has exited; closing stderr unblocks the drain thread's
-        # blocking read() so the join() below cannot hang.
+        # closing stderr before the drain thread reads it loses the output
+        self._stderr_thread.join(timeout=5)
         if self._proc.stderr is not None:
             self._proc.stderr.close()
-        self._stderr_thread.join()
         return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
     def kill(self) -> None:
@@ -266,6 +267,25 @@ class ValkeyVmWorkload(WorkloadBase):
             shutil.move(src.as_posix(), dest.as_posix())
         except OSError as e:
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        try:
+            subprocess.run(
+                [SNAP_CHECK_AOF_CLI, manifest.as_posix()],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=DATASET_IO_TIMEOUT_S,
+            )
+        except subprocess.CalledProcessError as e:
+            if e.returncode != 1:
+                raise ValkeyWorkloadCommandError(e)
+            logger.warning("valkey-check-aof found an invalid AOF: %s", e.stdout)
+            return False
+        except (subprocess.TimeoutExpired, OSError) as e:
+            raise ValkeyWorkloadCommandError(e)
+        return True
 
     @override
     def exec(

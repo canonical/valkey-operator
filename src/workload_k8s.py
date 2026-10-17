@@ -26,8 +26,10 @@ from literals import (
     ACL_FILE,
     ARCHIVE_STORAGE_PATH,
     CHARM,
+    CHECK_AOF_CLI,
     CONFIG_FILE,
     DATA_STORAGE_PATH,
+    DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
     LOGROTATE_CONFIG_FILE,
@@ -286,6 +288,26 @@ class ValkeyK8sWorkload(WorkloadBase):
             pebble.APIError,
         ) as e:
             raise ValkeyWorkloadCommandError(e)
+
+    @override
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        try:
+            self.container.exec(
+                command=[CHECK_AOF_CLI, manifest.as_posix()], timeout=DATASET_IO_TIMEOUT_S
+            ).wait_output()
+        except pebble.ExecError as e:
+            if e.exit_code != 1:
+                raise ValkeyWorkloadCommandError(e)
+            logger.warning("valkey-check-aof found an invalid AOF: %s", e.stdout)
+            return False
+        except (
+            pebble.APIError,
+            pebble.ChangeError,
+            pebble.ConnectionError,
+            pebble.TimeoutError,
+        ) as e:
+            raise ValkeyWorkloadCommandError(e)
+        return True
 
     @override
     @retry(

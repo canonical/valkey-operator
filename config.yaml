@@ -78,3 +78,29 @@ options:
     description: |
       Wait for manual confirmation to resume refresh after these units refresh
       Allowed values: "all", "first", "none"
+
+  persistence-mode:
+    type: string
+    default: "RDB"
+    description: |
+      Configure the persistence mode of Valkey. Allowed values are "RDB", "AOF", "RDB+AOF"
+      and "None". An invalid value is ignored: the charm keeps the last valid settings and
+      sets a blocked status.
+
+  rdb-save-points:
+    type: string
+    default: "900 1 300 100 60 10000"
+    description: |
+      When to save a point-in-time snapshot (RDB file) of the dataset, as pairs of
+      "<seconds> <changes>". Valkey saves once that many seconds have passed and at least that
+      many writes happened since the last save. The default saves every 900 seconds after at
+      least 1 write, every 300 seconds after at least 100 writes and every 60 seconds after at
+      least 10000 writes. Only used when persistence-mode is "RDB" or "RDB+AOF".
+
+  aof-appendfsync:
+    type: string
+    default: "everysec"
+    description: |
+      When to fsync the append-only file to disk. "no": the operating system decides.
+      "everysec": once per second. "always": after every write. Only used when
+      persistence-mode is "AOF" or "RDB+AOF".

@@ -16,7 +16,7 @@ from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
-from common.exceptions import ValkeyUpgradeError
+from common.exceptions import ValkeyUpgradeError, ValkeyWorkloadCommandError
 from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -34,6 +34,7 @@ from literals import (
     ROLLINGOPS_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
     START_OPERATION_ID,
+    VALKEY_DOWN_RUN_ID,
     Substrate,
 )
 from managers.auth import AuthManager
@@ -93,30 +94,9 @@ class ValkeyCharm(ops.CharmBase):
         self.backup_manager = BackupManager(state=self.state, workload=self.workload)
         self.metrics_manager = MetricsManager(state=self.state, workload=self.workload)
 
-        # --- UPGRADES ---
-        try:
-            if self.substrate == Substrate.K8S:
-                self.refresh = charm_refresh.Kubernetes(
-                    K8sValkeyRefresh(
-                        workload_name="Valkey",
-                        charm_name="valkey",
-                        oci_resource_name="valkey-image",
-                        charm=self,
-                    )
-                )
-            else:
-                self.refresh = charm_refresh.Machines(
-                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
-                )
-        except (
-            charm_refresh.UnitTearingDown,
-            charm_refresh.PeerRelationNotReady,
-            charm_refresh.KubernetesJujuAppNotTrusted,
-        ):
-            self.refresh = None
-
+        # `refresh` stays None until charm_refresh runs at the end of __init__
         self.refresh_manager = RefreshManager(
-            state=self.state, workload=self.workload, refresh=self.refresh
+            state=self.state, workload=self.workload, refresh=None
         )
 
         # --- STATUS HANDLER ---
@@ -153,6 +133,31 @@ class ValkeyCharm(ops.CharmBase):
             base_dir=pathops.LocalPath(ROLLINGOPS_BASE_DIR),
         )
 
+        # --- UPGRADES ---
+        # last, since VM `refresh_snap` runs inside the constructor and needs everything above
+        try:
+            if self.substrate == Substrate.K8S:
+                self.refresh = charm_refresh.Kubernetes(
+                    K8sValkeyRefresh(
+                        workload_name="Valkey",
+                        charm_name="valkey",
+                        oci_resource_name="valkey-image",
+                        charm=self,
+                    )
+                )
+            else:
+                self.refresh = charm_refresh.Machines(
+                    MachinesValkeyRefresh(workload_name="Valkey", charm_name="valkey", charm=self)
+                )
+        except (
+            charm_refresh.UnitTearingDown,
+            charm_refresh.PeerRelationNotReady,
+            charm_refresh.KubernetesJujuAppNotTrusted,
+        ):
+            self.refresh = None
+
+        self.refresh_manager.refresh = self.refresh
+
         # ensure that post refresh handling is executed in EVERY hook
         self.post_refresh_handling(self.refresh)
 
@@ -168,6 +173,9 @@ class ValkeyCharm(ops.CharmBase):
         if not refresh.workload_allowed_to_start:
             logger.debug("Workload not allowed to start")
             return
+
+        # a corrupted AOF fails the health checks below, which raise before update-status can heal it
+        self.base_events.heal_corrupted_aof()
 
         if not self.workload.alive():
             logger.info("Restarting workload")
@@ -215,6 +223,14 @@ class ValkeyCharm(ops.CharmBase):
         Args:
             **kwargs: Arguments for `BaseEvents.restart_workload`.
         """
+        if kwargs.get("restart_valkey", True):
+            # the callback restarts only this process, a newer one already runs the new config
+            try:
+                run_id = self.cluster_manager.run_id()
+            except ValkeyWorkloadCommandError:
+                # whatever process starts next reads the config already rendered
+                run_id = VALKEY_DOWN_RUN_ID
+            self.state.unit_server.update({"restart_run_id": run_id})
         try:
             self.rollingops.request_async_lock(RESTART_OPERATION_ID, kwargs=kwargs)
         except RollingOpsNoRelationError:
