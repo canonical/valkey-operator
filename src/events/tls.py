@@ -26,7 +26,6 @@ from literals import (
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
     SENTINEL_PORT,
-    STARTING_STATES,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
     TLSState,
@@ -186,18 +185,12 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NEW_CA_DETECTED)
             self.charm.tls_manager.write_certificate(cert, private_key)  # pyright: ignore[reportArgumentType]
             self.charm.tls_manager.set_cert_state(is_ready=True)
-            # the start applies TLS to an unstarted unit. A started one whose config still has
-            # the plain port didn't finish the enable
-            enable_finished = tls_state == TLSState.TLS and (
-                not self.charm.state.unit_server.is_started
-                or self.charm.config_manager.is_plain_port_closed()
-            )
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to store certificate: %s", e)
             event.defer()
             return
 
-        if enable_finished:
+        if tls_state == TLSState.TLS:
             logger.info("Refreshing TLS certificates in Valkey")
             try:
                 if rotate_ca:
@@ -219,14 +212,8 @@ class TLSEvents(ops.Object):
                 event.defer()
             return
 
-        if self.charm.state.unit_server.model.start_state in STARTING_STATES:
-            # its config already has the plain port, so enable once it is started
-            logger.info("Unit is starting, deferring client TLS enable")
-            event.defer()
-            return
-
         primary_ip = ""
-        if self.charm.state.unit_server.is_started:
+        if self.charm.workload.alive():
             try:
                 primary_ip = self.charm.sentinel_manager.get_primary_ip()
             except ValkeyCannotGetPrimaryIPError as e:
@@ -254,14 +241,7 @@ class TLSEvents(ops.Object):
         self.charm.unit.close_port("tcp", CLIENT_PORT)
         self.charm.unit.close_port("tcp", SENTINEL_PORT)
 
-        if self.charm.state.unit_server.is_started:
-            try:
-                self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-            except (ValkeyWorkloadCommandError, ValueError) as e:
-                # stay in TLS: the CLI uses the plain port in to-tls, and it is already closed
-                logger.error("Failed to write the Valkey config with the plain port closed: %s", e)
-                event.defer()
-                return
+        if self.charm.workload.alive():
             logger.info("Restarting Sentinel")
             self.charm.request_restart(
                 restart_valkey=False,
@@ -410,13 +390,14 @@ class TLSEvents(ops.Object):
         if not all(server.model.client_cert_ready for server in self.charm.state.servers):
             raise ValkeyCertificatesNotReadyError
 
-        if not self.charm.state.unit_server.is_started:
-            logger.debug("Not started yet, enabling client TLS will happen on start")
+        if not self.charm.workload.alive():
+            logger.debug("Services not running yet, enabling client TLS will happen on start")
             return
 
         logger.info("Enabling client TLS in Valkey")
-        # runtime only, the config file follows once the state is TLS
-        tls_config = self.charm.config_manager.generate_tls_config() | {"port": "0"}
+        primary_ip = self.charm.sentinel_manager.get_primary_ip()
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
+        tls_config = self.charm.config_manager.generate_tls_config()
         self.charm.cluster_manager.reload_tls_settings(tls_config)
 
     def _orchestrate_ca_rotation(self) -> None:

@@ -445,6 +445,7 @@ def test_client_certificate_available():
                 return_value=([certificate], None),
             ),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("workload_k8s.ValkeyK8sWorkload.alive", return_value=True),
             patch("managers.sentinel.SentinelManager.restart_service"),
             patch("managers.tls.TLSManager.write_certificate"),
             patch("managers.tls.TLSManager.will_certificate_expire"),
@@ -498,9 +499,11 @@ def test_client_certificate_available_enabling_fails():
                 return_value=([certificate], None),
             ),
             patch(
-                "managers.cluster.ClusterManager.reload_tls_settings",
-                side_effect=ValkeyTLSLoadError("failed"),
-            ) as reload_tls,
+                "managers.config.ConfigManager.set_config_properties",
+                side_effect=ValueError("failed"),
+            ),
+            patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+            patch("workload_k8s.ValkeyK8sWorkload.alive", return_value=True),
             patch("managers.tls.TLSManager.write_certificate"),
             patch("managers.tls.TLSManager.will_certificate_expire"),
             patch(
@@ -512,7 +515,7 @@ def test_client_certificate_available_enabling_fails():
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            reload_tls.assert_called_once()
+            reload_tls.assert_not_called()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"
 
@@ -854,7 +857,6 @@ def test_new_client_ca_single_unit():
             patch("charmlibs.pathops.ContainerPath.write_text"),
             patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
             patch("managers.tls.TLSManager.rehash_ca_certificates"),
-            patch("managers.config.ConfigManager.is_plain_port_closed", return_value=True),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("workload_k8s.ValkeyK8sWorkload.restart"),
@@ -920,7 +922,6 @@ def test_new_client_ca_rotation_started():
             patch("charmlibs.pathops.ContainerPath.write_text"),
             patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_certs,
             patch("managers.tls.TLSManager.rehash_ca_certificates"),
-            patch("managers.config.ConfigManager.is_plain_port_closed", return_value=True),
             patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
         ):
             event.certificate = certificate.certificate
