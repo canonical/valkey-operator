@@ -18,6 +18,7 @@ Get the current charm revision of the application with [`juju status`](https://d
 ### Supported refreshes
 
 These refreshes should be supported:
+
 * Minor in-place upgrade
 * Any refresh from one `stable` version to a later `stable` version in the same channel (e.g. `9/stable`)
 
@@ -99,11 +100,13 @@ Examples of manual checks:
 To facilitate your manual checks, the application can be configured to pause the refresh and wait for your confirmation.
 
 Set the `pause-after-unit-refresh` config option to:
+
 * `all` to wait for your confirmation after each unit refreshes
 * `first` (default) to wait for your confirmation once, after the first unit refreshes
 * `none` to never wait for your confirmation
 
 For example:
+
 ```shell
 juju config valkey pause-after-unit-refresh=all
 ```
