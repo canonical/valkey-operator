@@ -274,6 +274,8 @@ class BaseEvents(ops.Object):
         Returns:
             True if the services were started, False otherwise.
         """
+        # taken before the ACL write, so users added during start stay out of date
+        acl_epoch = time.time()
         try:
             self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(primary_endpoint)
@@ -287,13 +289,11 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"start_state": StartState.ERROR_ON_START.value})
             return False
 
-        # the ACL files are current from here
         self.charm.state.unit_server.update(
-            {
-                "start_state": StartState.STARTING_WAITING_VALKEY.value,
-                "client_user_epoch": time.time(),
-            }
+            {"start_state": StartState.STARTING_WAITING_VALKEY.value}
         )
+        if self.charm.state.external_client_relations and not self.charm.unit.is_leader():
+            self.charm.state.unit_server.update({"client_user_epoch": acl_epoch})
         return True
 
     def _is_started_and_in_sync(self) -> bool:
@@ -364,12 +364,8 @@ class BaseEvents(ops.Object):
         logger.info("Services started")
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
 
-        # only non-leaders can miss client users added during start
-        if self.charm.state.external_client_relations and not self.charm.unit.is_leader():
-            self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
-        else:
-            # a single unit gets no later peer event
-            self.charm.trigger_relation_change_if_required()
+        # rerun peer handlers skipped while this unit was starting
+        self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
 
         if not self.charm.unit.is_leader():
             return
