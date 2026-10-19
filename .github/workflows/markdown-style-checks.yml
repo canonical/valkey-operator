@@ -12,6 +12,7 @@ on:
     - '*'
     paths:
     - 'docs/**'   # Only run on changes to the docs directory
+  workflow_dispatch:
 
 jobs:
   markdown-lint:
