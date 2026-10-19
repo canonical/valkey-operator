@@ -11,7 +11,6 @@ import ops
 from charmlibs.interfaces.tls_certificates import (
     CertificateAvailableEvent,
     CertificateDeniedEvent,
-    CertificateRequestAttributes,
     TLSCertificatesRequiresV4,
 )
 
@@ -50,13 +49,7 @@ class TLSEvents(ops.Object):
         self.client_certificate = TLSCertificatesRequiresV4(
             self.charm,
             CLIENT_TLS_RELATION_NAME,
-            certificate_requests=[
-                CertificateRequestAttributes(
-                    common_name=self.charm.tls_manager.build_common_name(),
-                    sans_ip=self.charm.tls_manager.build_sans_ip(),
-                    sans_dns=self.charm.tls_manager.build_sans_dns(),
-                ),
-            ],
+            certificate_requests=self.charm.tls_manager.build_certificate_requests,
             private_key=self.charm.tls_manager.get_client_tls_private_key(),
             refresh_events=[self.refresh_tls_certificates_event],
         )
@@ -210,7 +203,7 @@ class TLSEvents(ops.Object):
 
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.record_applied_certificate(cert)
             except ValkeyCertificatesNotReadyError:
                 logger.debug("Not all units ready")
@@ -250,8 +243,10 @@ class TLSEvents(ops.Object):
 
         if self.charm.state.unit_server.is_started:
             logger.info("Restarting Sentinel")
-            self.charm.restart_workload.emit(
-                restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
+            self.charm.request_restart(
+                restart_valkey=False,
+                restart_sentinel=True,
+                primary_endpoint=primary_ip,
             )
         self.charm.tls_manager.record_applied_certificate(cert)
         self.charm.trigger_relation_change_if_required()
@@ -262,7 +257,12 @@ class TLSEvents(ops.Object):
             csr.certificate_signing_request
             for csr in self.client_certificate.get_csrs_from_requirer_relation_data()
         ]:
-            logger.error("Certificate request was denied: %s", event.error.message)
+            logger.error(
+                "Certificate request was denied: code=%s name=%s message=%s",
+                event.error.code,
+                event.error.name,
+                event.error.message,
+            )
             return
 
         logger.warning(
@@ -323,7 +323,7 @@ class TLSEvents(ops.Object):
             return
 
         logger.info("Restarting Sentinel")
-        self.charm.restart_workload.emit(
+        self.charm.request_restart(
             restart_valkey=False, restart_sentinel=True, primary_endpoint=primary_ip
         )
 
@@ -376,10 +376,8 @@ class TLSEvents(ops.Object):
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
-        if (
-            self.charm.state.client_tls_relation
-            and self.charm.tls_manager.certificate_sans_require_update()
-        ):
+        # the cert on disk may be the self-signed one, so let the lib compare against its CSRs
+        if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
             self.refresh_tls_certificates_event.emit()
 
@@ -436,5 +434,5 @@ class TLSEvents(ops.Object):
                 self.charm.tls_manager.rehash_ca_certificates()
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-                self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.tls_manager.set_ca_rotation_state(TLSCARotationState.NO_ROTATION)

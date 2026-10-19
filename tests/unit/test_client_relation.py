@@ -17,6 +17,7 @@ from literals import (
     CLIENTS_USERS_SECRET_LABEL_SUFFIX,
     EXTERNAL_CLIENTS_RELATION,
     PEER_RELATION,
+    RESTART_OPERATION_ID,
     SENTINEL_PORT,
     STATUS_PEERS_RELATION,
 )
@@ -31,7 +32,7 @@ METADATA = yaml.safe_load(Path("./metadata.yaml").read_text())
 APP_NAME = METADATA["name"]
 
 
-def test_add_new_client_user():
+def test_add_new_client_user(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     replica_endpoint = "valkey-1.valkey-endpoints"
     valkey_version = "9.0.1"
@@ -76,15 +77,15 @@ def test_add_new_client_user():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
         relation = state_out.get_relation(client_relation.id)
         response = json.loads(relation.local_app_data["requests"])[0]
         secret_user_id = response["secret-user"]
@@ -108,7 +109,7 @@ def test_add_new_client_user():
         assert secret_tls.latest_content.get("tls") == "false"
 
 
-def test_add_new_client_user_v0():
+def test_add_new_client_user_v0(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     replica_endpoint = "valkey-1.valkey-endpoints"
     valkey_version = "9.0.1"
@@ -148,15 +149,15 @@ def test_add_new_client_user_v0():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
         relation = state_out.get_relation(client_relation.id)
         response = relation.local_app_data
         secret_user_id = response["secret-user"]
@@ -175,7 +176,7 @@ def test_add_new_client_user_v0():
         assert secret_tls.latest_content.get("tls") == "false"
 
 
-def test_client_user_already_exists():
+def test_client_user_already_exists(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -226,15 +227,12 @@ def test_client_user_already_exists():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_changed(relation=client_relation), state_in)
         set_acl_file.assert_not_called()
         load_acl.assert_not_called()
         set_sentinel_acl_file.assert_not_called()
-        restart_sentinel.assert_not_called()
+        mock_request_async_lock.assert_not_called()
         assert (
             state_out.get_relation(peer_relation.id).local_app_data.get("client-user-epoch")
             == "1774854243.6019819"
@@ -327,7 +325,7 @@ def test_client_request_acl_load_failed():
         assert "bulk_resources_requested" in [e.name for e in state_out.deferred]
 
 
-def test_add_new_client_user_non_leader():
+def test_add_new_client_user_non_leader(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -373,9 +371,6 @@ def test_add_new_client_user_non_leader():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(
             ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in
@@ -383,11 +378,14 @@ def test_add_new_client_user_non_leader():
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
         assert state_out.get_relation(1).local_unit_data.get("client-user-epoch") != 0
 
 
-def test_client_user_not_created_yet():
+def test_client_user_not_created_yet(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -437,18 +435,15 @@ def test_client_user_not_created_yet():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=peer_relation, remote_unit=1), state_in)
         set_acl_file.assert_not_called()
         load_acl.assert_not_called()
         set_sentinel_acl_file.assert_not_called()
-        restart_sentinel.assert_not_called()
+        mock_request_async_lock.assert_not_called()
 
 
-def test_remove_client_user():
+def test_remove_client_user(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -495,15 +490,15 @@ def test_remove_client_user():
         patch("managers.auth.AuthManager.set_acl_file") as set_acl_file,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         state_out = ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
 
         managed_users_secret = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{CLIENTS_USERS_SECRET_LABEL_SUFFIX}"
@@ -515,7 +510,7 @@ def test_remove_client_user():
         assert managed_users.get("relation-4-08154711")
 
 
-def test_relation_broken_non_leader():
+def test_relation_broken_non_leader(mock_request_async_lock):
     primary_endpoint = "valkey-0.valkey-endpoints"
     key_prefix = "test:*"
     request_id = "0cbbc9781f189ea5"
@@ -564,16 +559,16 @@ def test_relation_broken_non_leader():
         ) as remove_user,
         patch("common.client.ValkeyClient.acl_load") as load_acl,
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_broken(relation=client_relation), state_in)
         remove_user.assert_not_called()
         set_acl_file.assert_called_once()
         load_acl.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
 
 
 def test_certificate_transfer_version_set():
@@ -597,7 +592,7 @@ def test_certificate_transfer_version_set():
     )
 
 
-def test_certificate_transfer_new_ca():
+def test_certificate_transfer_new_ca(mock_request_async_lock):
     ca_cert = "client_ca_certificate"
 
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
@@ -630,18 +625,18 @@ def test_certificate_transfer_new_ca():
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_called_once()
         rehash_ca_certs.assert_called_once()
         reload_tls.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
 
 
-def test_certificate_transfer_no_ca_available():
+def test_certificate_transfer_no_ca_available(mock_request_async_lock):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
         id=1,
@@ -668,18 +663,15 @@ def test_certificate_transfer_no_ca_available():
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_changed(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_not_called()
         rehash_ca_certs.assert_not_called()
         reload_tls.assert_not_called()
-        restart_sentinel.assert_not_called()
+        mock_request_async_lock.assert_not_called()
 
 
-def test_certificate_transfer_ca_removed():
+def test_certificate_transfer_ca_removed(mock_request_async_lock):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
         id=1,
@@ -704,16 +696,16 @@ def test_certificate_transfer_ca_removed():
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_ca_certs,
         patch("managers.tls.TLSManager.rehash_ca_certificates") as rehash_ca_certs,
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.relation_broken(relation=certificate_transfer_relation), state_in)
         write_ca_certs.assert_not_called()
         remove_ca_certs.assert_called_once()
         rehash_ca_certs.assert_called_once()
         reload_tls.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
 
 
 def test_certificate_transfer_ca_available_pebble_down_defers():

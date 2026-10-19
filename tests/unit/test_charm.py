@@ -15,6 +15,8 @@ from src.literals import (
     METRICS_PORT,
     PEER_RELATION,
     PRIMARY_NAME,
+    RESTART_OPERATION_ID,
+    ROLLINGOPS_PEER_RELATION,
     STATUS_PEERS_RELATION,
     CharmUsers,
     StartState,
@@ -30,6 +32,20 @@ SERVICE_METRIC_EXPORTER = "metrics-exporter"
 SERVICE_SENTINEL = "sentinel"
 SERVICE_VALKEY_LOGS = "valkey-logs"
 SERVICE_SENTINEL_LOGS = "sentinel-logs"
+SERVICE_LOGROTATE = "logrotate"
+
+
+ROLLINGOPS_RELATION = testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION)
+
+
+@pytest.fixture
+def lock_granted_immediately(mocker):
+    """Run each queued rolling operation inside the hook, as if the lock was granted at once."""
+
+    def run(manager, callback_id, kwargs=None, max_retry=None):
+        manager._peer_backend.callback_targets[callback_id](**(kwargs or {}))
+
+    mocker.patch("charmlibs.rollingops.RollingOpsManager.request_async_lock", new=run)
 
 
 internal_passwords_secret = testing.Secret(
@@ -39,7 +55,7 @@ internal_passwords_secret = testing.Secret(
 )
 
 
-def test_start_primary():
+def test_start_primary(lock_granted_immediately):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -49,7 +65,7 @@ def test_start_primary():
     state_in = testing.State(
         model=testing.Model(name="my-vm-model", type="lxd"),
         leader=True,
-        relations={relation, status_peer_relation},
+        relations={relation, status_peer_relation, ROLLINGOPS_RELATION},
         containers={container},
     )
 
@@ -95,6 +111,18 @@ def test_start_primary():
                 "group": CHARM_USER,
                 "startup": "enabled",
             },
+            SERVICE_LOGROTATE: {
+                "override": "replace",
+                "summary": "Rotate Valkey and Sentinel logs",
+                "command": "sh -c '/usr/sbin/logrotate -s /var/lib/valkey/logrotate.status "
+                "/var/lib/valkey/logrotate.conf; rc=$?; sleep 5; exit $rc'",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "enabled",
+                "backoff-delay": "1m0s",
+                "backoff-factor": 1,
+                "backoff-limit": "1m0s",
+            },
         }
     }
 
@@ -112,9 +140,7 @@ def test_start_primary():
         "REDIS_EXPORTER_TLS_SERVER_NAME": "valkey-0.valkey-endpoints",
         "REDIS_EXPORTER_WEB_LISTEN_ADDRESS": f"0.0.0.0:{METRICS_PORT}",
         "REDIS_EXPORTER_INCL_SYSTEM_METRICS": "true",
-        "REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL": "true",
         "REDIS_EXPORTER_INCL_CONFIG_METRICS": "false",
-        "REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT": "true",
     }
 
     # start event
@@ -133,6 +159,7 @@ def test_start_primary():
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
@@ -142,6 +169,7 @@ def test_start_primary():
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.SentinelClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
         patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
@@ -174,7 +202,7 @@ def test_start_primary():
     state_in = testing.State(
         model=testing.Model(name="my-vm-model", type="lxd"),
         leader=True,
-        relations={relation, status_peer_relation},
+        relations={relation, status_peer_relation, ROLLINGOPS_RELATION},
         containers={container},
     )
 
@@ -232,6 +260,13 @@ def test_start_non_primary():
 
         assert status_is(state_out, StartStatuses.WAITING_TO_START.value)
 
+
+def test_start_non_primary_after_lock_granted(lock_granted_immediately):
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    with patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.0.1"):
         # health check
         with patch(
             "common.client.ValkeyClient.role",
@@ -240,7 +275,6 @@ def test_start_non_primary():
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -264,12 +298,12 @@ def test_start_non_primary():
                 side_effect=ValkeyWorkloadCommandError("errored out"),
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -293,12 +327,12 @@ def test_start_non_primary():
                 return_value=[{"ip": "10.0.1.1"}, {"ip": "10.0.1.2"}],
             ),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -316,12 +350,12 @@ def test_start_non_primary():
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=False),
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -338,12 +372,12 @@ def test_start_non_primary():
             patch("managers.sentinel.SentinelManager.is_sentinel_discovered", return_value=True),
             patch("managers.cluster.ClusterManager.is_replica_synced", return_value=True),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
         ):
             relation = testing.PeerRelation(
                 id=1,
                 endpoint=PEER_RELATION,
-                local_app_data={"start-member": "valkey/0"},
                 peers_data={1: {"start-state": "started"}},
             )
             state_in = testing.State(
@@ -419,7 +453,7 @@ def test_internal_user_creation():
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         model=testing.Model(name="my-vm-model", type="lxd"),
-        relations={relation},
+        relations={relation, ROLLINGOPS_RELATION},
         leader=True,
         containers={container},
     )
@@ -436,6 +470,7 @@ def test_leader_elected_no_peer_relation():
     container = testing.Container(name=CONTAINER, can_connect=True)
     state_in = testing.State(
         leader=True,
+        relations={ROLLINGOPS_RELATION},
         containers={container},
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
@@ -454,7 +489,7 @@ def test_leader_elected_leader_password_specified():
     )
     state_in = testing.State(
         leader=True,
-        relations={relation},
+        relations={relation, ROLLINGOPS_RELATION},
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
@@ -514,7 +549,7 @@ def test_config_changed_non_leader_unit():
         mock_update.assert_not_called()
 
 
-def test_config_changed_leader_unit():
+def test_config_changed_leader_unit(mock_request_async_lock):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1, endpoint=PEER_RELATION, local_unit_data={"start-state": "started"}
@@ -527,7 +562,7 @@ def test_config_changed_leader_unit():
     )
     state_in = testing.State(
         leader=True,
-        relations={relation},
+        relations={relation, ROLLINGOPS_RELATION},
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
@@ -538,14 +573,16 @@ def test_config_changed_leader_unit():
         patch("managers.auth.AuthManager.set_sentinel_acl_file") as set_sentinel_acl_file,
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         mock_set_acl_file.assert_called_once()
         mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
         secret_out = state_out.get_secret(
             label=f"{PEER_RELATION}.{APP_NAME}.app.{INTERNAL_USERS_SECRET_LABEL_SUFFIX}"
         )
@@ -587,7 +624,7 @@ def test_config_changed_leader_unit_wrong_username():
         mock_set_acl_file.assert_not_called()
 
 
-def test_config_changed_ip_change_no_tls_relation(vm_environment):
+def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_environment):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1,
@@ -602,7 +639,7 @@ def test_config_changed_ip_change_no_tls_relation(vm_environment):
     )
     state_in = testing.State(
         leader=True,
-        relations={relation},
+        relations={relation, ROLLINGOPS_RELATION},
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
@@ -612,12 +649,10 @@ def test_config_changed_ip_change_no_tls_relation(vm_environment):
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
-        patch("managers.sentinel.SentinelManager.restart_service") as mock_restart_sentinel,
         patch(
             "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
         ),
-        patch("workload_vm.ValkeyVmWorkload.restart") as mock_workload_restart,
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
         patch(
             "managers.tls.TLSManager.build_sans_dns", return_value=frozenset({"www.example.com"})
@@ -626,17 +661,13 @@ def test_config_changed_ip_change_no_tls_relation(vm_environment):
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
-        patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
-        patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
-        patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()
-        mock_restart_sentinel.assert_called_once()
-        mock_workload_restart.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(RESTART_OPERATION_ID, kwargs={})
 
 
-def test_change_password_secret_changed_non_leader_unit():
+def test_change_password_secret_changed_non_leader_unit(mock_request_async_lock):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1,
@@ -653,7 +684,7 @@ def test_change_password_secret_changed_non_leader_unit():
 
     state_in = testing.State(
         leader=False,
-        relations={relation},
+        relations={relation, ROLLINGOPS_RELATION},
         containers={container},
         secrets={password_secret},
         config={INTERNAL_USERS_PASSWORD_CONFIG: password_secret.id},
@@ -668,9 +699,6 @@ def test_change_password_secret_changed_non_leader_unit():
         patch("common.client.ValkeyClient.acl_load") as mock_acl_load,
         patch("common.client.ValkeyClient.config_set") as mock_config_set,
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.0.1.1"),
-        patch("common.locks.DataBagLock.is_held_by_this_unit", return_value=True),
-        patch("managers.sentinel.SentinelManager.restart_service") as restart_sentinel,
-        patch("managers.sentinel.SentinelManager.is_healthy"),
     ):
         ctx.run(ctx.on.secret_changed(password_secret), state_in)
         mock_update_password.assert_not_called()
@@ -678,7 +706,10 @@ def test_change_password_secret_changed_non_leader_unit():
         mock_acl_load.assert_called_once()
         mock_config_set.assert_called_once()
         set_sentinel_acl_file.assert_called_once()
-        restart_sentinel.assert_called_once()
+        mock_request_async_lock.assert_called_once_with(
+            RESTART_OPERATION_ID,
+            kwargs={"restart_valkey": False, "restart_sentinel": True},
+        )
 
 
 def test_change_password_secret_changed_non_leader_unit_not_successful():
@@ -758,91 +789,11 @@ def test_change_password_secret_changed_leader_unit():
         mock_update_password.assert_called_once_with(password_secret.id)
 
 
-def test_relation_changed_event_leader_setting_starting_member():
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started"},
-        peers_data={1: {"request-start-lock": "true"}},
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
-    with (
-        patch("managers.tls.TLSManager.will_certificate_expire"),
-        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
-    ):
-        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
-
-
-def test_relation_changed_event_leader_clears_starting_member():
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
-        local_unit_data={"start-state": "started"},
-        peers_data={1: {"start-state": "started"}},
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
-    with (
-        patch("managers.tls.TLSManager.will_certificate_expire"),
-        patch("common.client.SentinelClient.primary", return_value={"quorum": "2"}),
-    ):
-        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("start-member") is None
-
-
-def test_relation_changed_event_leader_leaves_starting_member_as_is():
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
-        local_unit_data={"start-state": StartState.STARTED.value},
-        peers_data={
-            1: {
-                "start-state": StartState.STARTING_WAITING_REPLICA_SYNC.value,
-                "request-start-lock": "true",
-            }
-        },
-    )
-    container = testing.Container(name=CONTAINER, can_connect=True)
-
-    state_in = testing.State(
-        leader=True,
-        relations={relation},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
-    with (
-        patch("managers.tls.TLSManager.will_certificate_expire"),
-        patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
-    ):
-        state_out = ctx.run(ctx.on.relation_changed(relation), state_in)
-        assert state_out.get_relation(1).local_app_data.get("start-member") == "valkey/1"
-
-
 def test_relation_changed_event_update_quorum():
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": StartState.STARTED.value},
         peers_data={1: {"start-state": StartState.STARTED.value}},
     )
@@ -868,7 +819,6 @@ def test_relation_changed_event_do_not_update_quorum():
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_app_data={"start-member": "valkey/1"},
         local_unit_data={"start-state": StartState.STARTED.value},
         peers_data={
             1: {"start-state": StartState.STARTED.value},
