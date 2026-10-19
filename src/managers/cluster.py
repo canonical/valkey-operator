@@ -15,6 +15,7 @@ from ops import pebble
 from tenacity import (
     Retrying,
     retry,
+    retry_if_not_exception_type,
     retry_if_result,
     stop_after_attempt,
     stop_after_delay,
@@ -24,13 +25,29 @@ from tenacity import (
 from common.client import ValkeyClient
 from common.exceptions import (
     ValkeyACLLoadError,
+    ValkeyAOFArchiveNoSpaceError,
     ValkeyClusterNotReadyError,
+    ValkeyServerRestartedError,
     ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
-from literals import SAVE_TIMEOUT_S, CharmUsers, ScaleDownState, StartState
+from literals import (
+    AOF_CORRUPT_ARCHIVE_NAME,
+    AOF_DIR_NAME,
+    AOF_LOAD_FATAL_LOG_LINES,
+    AOF_MANIFEST_NAME,
+    DATASET_IO_TIMEOUT_S,
+    RDB_FILE_NAME,
+    VALKEY_LOG_FILE,
+    VALKEY_LOG_TAIL_LINES,
+    VALKEY_READY_LOG_LINE,
+    VALKEY_START_LOG_LINE,
+    CharmUsers,
+    ScaleDownState,
+    StartState,
+)
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
 logger = logging.getLogger(__name__)
@@ -203,21 +220,89 @@ class ClusterManager(ManagerStatusProtocol):
         self._wait_until(self.is_replica_synced, timeout_s, "replica did not resync")
         logger.info("restore.wait: replica resynced")
 
-    def _wait_until(self, condition: Callable[[], bool], timeout_s: int, failure: str) -> None:
+    def _wait_until(
+        self,
+        condition: Callable[[], bool],
+        timeout_s: int,
+        failure: str,
+        run_id: str | None = None,
+    ) -> None:
         """Poll ``condition`` every 5s for up to ``timeout_s``; raise NotReady on timeout.
 
         A raising ``condition`` (e.g. the CLI can't connect yet) is retried like
-        a False one; the last error is chained onto the timeout exception.
+        a False one; the last error is chained onto the timeout exception. With
+        ``run_id``, the wait also fails on the first poll after a Valkey restart.
+        A restart kills the rewrite or BGSAVE being waited on, and the new process
+        reports idle defaults, so waiting longer can't help.
+
+        Raises:
+            ValkeyServerRestartedError: If Valkey restarted since ``run_id`` was read.
+            ValkeyClusterNotReadyError: If ``condition`` is not met within ``timeout_s``.
         """
         try:
             for attempt in Retrying(
-                stop=stop_after_delay(timeout_s), wait=wait_fixed(5), reraise=True
+                stop=stop_after_delay(timeout_s),
+                wait=wait_fixed(5),
+                retry=retry_if_not_exception_type(ValkeyServerRestartedError),
+                reraise=True,
             ):
                 with attempt:
-                    if not condition():
+                    met = condition()
+                    # check after the condition, so a restart before or during that read fails here
+                    if run_id:
+                        self._check_not_restarted(run_id)
+                    if not met:
                         raise ValkeyClusterNotReadyError("condition not met yet")
+        except ValkeyServerRestartedError:
+            raise
         except Exception as e:  # tenacity reraises the last attempt's error
             raise ValkeyClusterNotReadyError(f"{failure} within {timeout_s}s") from e
+
+    def run_id(self) -> str:
+        """Return the ID of the running Valkey process, which changes on every restart.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the server can't be queried or the reply has no run_id.
+        """
+        info = self._get_valkey_client().info_server(hostname=self.state.endpoint)
+        if not (run_id := info.get("run_id")):
+            raise ValkeyWorkloadCommandError("INFO server reply has no run_id")
+        return run_id
+
+    def _check_not_restarted(self, run_id: str) -> None:
+        """Raise if Valkey restarted since the caller read ``run_id``.
+
+        Raises:
+            ValkeyServerRestartedError: If the process ID changed.
+            ValkeyWorkloadCommandError: If the server can't be queried.
+        """
+        if self.run_id() != run_id:
+            raise ValkeyServerRestartedError("Valkey restarted during a persistence switch")
+
+    def runs_requested_process(self) -> bool:
+        """Whether Valkey still runs the process that was up when the restart was requested.
+
+        An unknown process, or a server that can't be queried, counts as needing the restart.
+        """
+        requested = self.state.unit_server.model.restart_run_id
+        try:
+            return not requested or self.run_id() == requested
+        except ValkeyWorkloadCommandError:
+            return True
+
+    def is_back_in_sync(self) -> bool:
+        """Whether the restarted Valkey is healthy and, as a replica, in sync with the primary.
+
+        A restarted replica can full-sync, so the lock is held until it has the data again.
+        """
+        if not self.is_healthy(check_replica_sync=False):
+            return False
+        # read the role live: Sentinel may have failed over during the restart
+        try:
+            return self.is_primary() or self.is_replica_synced()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read the Valkey role: %s", e)
+            return False
 
     @retry(
         wait=wait_fixed(5),
@@ -313,16 +398,123 @@ class ClusterManager(ManagerStatusProtocol):
         """Wait out any running BGSAVE, then run a blocking save.
 
         Raises:
-            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``DATASET_IO_TIMEOUT_S``.
             ValkeyWorkloadCommandError: If the save fails.
         """
         self._wait_until(
             lambda: not self._is_bgsave_in_progress(),
-            SAVE_TIMEOUT_S,
+            DATASET_IO_TIMEOUT_S,
             "background save did not finish",
         )
         client = self._get_valkey_client()
         client.save(hostname=self.state.endpoint)
+
+    def _is_aof_rewrite_idle(self) -> bool:
+        """Whether no AOF rewrite is running or scheduled."""
+        info = self._get_valkey_client().info_persistence(hostname=self.state.endpoint)
+        return (
+            info.get("aof_rewrite_in_progress") == "0" and info.get("aof_rewrite_scheduled") == "0"
+        )
+
+    def _is_aof_on(self) -> bool:
+        """Whether AOF is on and its first rewrite finished, so a complete AOF is on disk."""
+        info = self._get_valkey_client().info_persistence(hostname=self.state.endpoint)
+        return (
+            info.get("aof_enabled") == "1"
+            and info.get("aof_rewrite_in_progress") == "0"
+            and info.get("aof_rewrite_scheduled") == "0"
+        )
+
+    def _save_in_background(self, run_id: str) -> None:
+        """Run a BGSAVE and wait for it, without blocking clients like SAVE does.
+
+        Args:
+            run_id: The Valkey process ID the switch started on.
+
+        Raises:
+            ValkeyServerRestartedError: If Valkey restarts before the BGSAVE is confirmed.
+            ValkeyClusterNotReadyError: If a child process or the BGSAVE does not finish in time.
+            ValkeyWorkloadCommandError: If the BGSAVE fails.
+        """
+        self._wait_until(
+            lambda: self._is_aof_rewrite_idle() and not self._is_bgsave_in_progress(),
+            DATASET_IO_TIMEOUT_S,
+            "a background child process did not finish",
+            run_id=run_id,
+        )
+        client = self._get_valkey_client()
+        client.bgsave(hostname=self.state.endpoint)
+        self._wait_until(
+            lambda: not self._is_bgsave_in_progress(),
+            DATASET_IO_TIMEOUT_S,
+            "BGSAVE did not finish",
+            run_id=run_id,
+        )
+        info = client.info_persistence(hostname=self.state.endpoint)
+        # a restarted server reports ok whatever happened to our BGSAVE
+        self._check_not_restarted(run_id)
+        if info.get("rdb_last_bgsave_status") != "ok":
+            raise ValkeyWorkloadCommandError("BGSAVE failed")
+
+    def enable_new_persistence(self, settings: dict[str, str]) -> None:
+        """Turn on, without a restart, the persistence the new settings add.
+
+        The old settings stay on, so the persistence the current valkey.conf names stays current.
+
+        Args:
+            settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
+
+        Raises:
+            ValkeyServerRestartedError: If Valkey restarts during an AOF rewrite or a BGSAVE.
+            ValkeyClusterNotReadyError: If an AOF rewrite or a BGSAVE does not finish in time.
+            ValkeyWorkloadCommandError: If a command fails.
+        """
+        client = self._get_valkey_client()
+        # a restart reloads valkey.conf and loses the CONFIG SET changes below
+        run_id = self.run_id()
+        if settings["appendonly"] == "yes":
+            client.config_set({"appendonly": "yes"}, hostname=self.state.endpoint)
+            self._wait_until(
+                self._is_aof_on, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish", run_id=run_id
+            )
+
+        rdb_on = {"save": settings["save"]} if settings["save"] else {}
+        client.config_set(
+            {
+                "appendfsync": settings["appendfsync"],
+                "shutdown-on-sigterm": settings["shutdown-on-sigterm"],
+                **rdb_on,
+            },
+            hostname=self.state.endpoint,
+        )
+
+        # once the file says appendonly no, a restart loads dump.rdb, so make it current first
+        aof_on = client.info_persistence(hostname=self.state.endpoint).get("aof_enabled") == "1"
+        if settings["appendonly"] == "no" and settings["save"] and aof_on:
+            self._save_in_background(run_id)
+
+    def disable_old_persistence(self, settings: dict[str, str]) -> None:
+        """Turn off, without a restart, the old persistence the new settings drop, and its files.
+
+        Call it only once valkey.conf names the new settings, so a restart loads current data.
+
+        Args:
+            settings: The new Valkey persistence keys from ``ConfigManager.persistence_settings``.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the server refuses the settings or a delete fails.
+        """
+        off = {"rdb-del-sync-files": settings["rdb-del-sync-files"]}
+        if not settings["save"]:
+            off["save"] = ""
+        if settings["appendonly"] == "no":
+            off["appendonly"] = "no"
+        self._get_valkey_client().config_set(off, hostname=self.state.endpoint)
+        # a reused volume then holds only files of the current mode, so it never has to guess
+        if settings["appendonly"] == "no":
+            self.workload.remove_dir(self.workload.working_dir / AOF_DIR_NAME)
+        if not settings["save"]:
+            self.workload.remove_file(self.workload.working_dir / RDB_FILE_NAME)
 
     def _disable_save_on_shutdown(self) -> None:
         """Set the configured shutdown option to 'no save' temporarily, will not persist a restart."""
@@ -332,6 +524,15 @@ class ClusterManager(ManagerStatusProtocol):
             config_settings={"shutdown-on-sigterm": "nosave"},
         )
 
+    def is_live_persistence(self, settings: dict[str, str]) -> bool:
+        """Whether the running server uses these persistence settings.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the settings can't be read.
+        """
+        live = self._get_valkey_client().config_get(list(settings), self.state.endpoint)
+        return live == settings
+
     def save_dataset_before_shutdown(self) -> None:
         """Save, then disable save-on-shutdown so Pebble cannot kill a shutdown save.
 
@@ -339,10 +540,15 @@ class ClusterManager(ManagerStatusProtocol):
         failure and a retry is safe.
 
         Raises:
-            ValkeyClusterNotReadyError: If a BGSAVE is still running after ``SAVE_TIMEOUT_S``.
+            ValkeyClusterNotReadyError: If an AOF rewrite or a BGSAVE is still running after
+                ``DATASET_IO_TIMEOUT_S``.
             ValkeyWorkloadCommandError: If the save fails.
         """
         logger.info("Save dataset to disk")
+        # DA290: never stop Valkey mid-rewrite, the fields read 0 when AOF is off
+        self._wait_until(
+            self._is_aof_rewrite_idle, DATASET_IO_TIMEOUT_S, "AOF rewrite did not finish"
+        )
         self._save_database_blocking()
 
         try:
@@ -364,6 +570,55 @@ class ClusterManager(ManagerStatusProtocol):
         except pebble.ConnectionError as e:
             logger.error("Error cleaning up inconsistent dump files: %s", e)
             raise ValkeyWorkloadCommandError("Error cleaning up inconsistent dump files") from e
+
+    def is_aof_corrupted(self) -> bool:
+        """Whether the local server is down because its last start failed to load the AOF.
+
+        A LOADING reply means Valkey has not decided yet, so only a silent server gets checked.
+        """
+        if self._get_valkey_client().is_responding(self.state.endpoint):
+            return False
+        manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
+        log_file = self.workload.log_dir / VALKEY_LOG_FILE
+        if not self.workload.path_exists(manifest) or not self.workload.path_exists(log_file):
+            return False
+        # TODO: go back to valkey-check-aof once a Valkey 9.0 release with valkey-io/valkey#4739
+        # reaches the Ubuntu archive. Until then it rejects every healthy AOF with an RDB base.
+        log_tail = self.workload.read_file_tail(log_file, VALKEY_LOG_TAIL_LINES)
+        last_start = log_tail.rpartition(VALKEY_START_LOG_LINE)[2]
+        return VALKEY_READY_LOG_LINE not in last_start and any(
+            line in last_start for line in AOF_LOAD_FATAL_LOG_LINES
+        )
+
+    def archive_corrupted_aof(self) -> None:
+        """Copy the AOF dir to the archive slot, replacing the old copy, then delete it.
+
+        Raises:
+            ValkeyAOFArchiveNoSpaceError: If the archive volume has no room for the copy.
+            ValkeyWorkloadCommandError: If the space check, the copy or a delete fails.
+        """
+        aof_dir = self.workload.working_dir / AOF_DIR_NAME
+        archive = self.workload.archive_dir / AOF_CORRUPT_ARCHIVE_NAME
+        needed = self.workload.disk_usage(aof_dir)
+        free = self.workload.free_space(self.workload.archive_dir)
+        # the old copy gets replaced, so its space counts as free
+        if self.workload.path_exists(archive):
+            free += self.workload.disk_usage(archive)
+        if needed > free:
+            raise ValkeyAOFArchiveNoSpaceError(
+                f"The corrupted AOF needs {needed} bytes, {self.workload.archive_dir} has {free}"
+            )
+        self.workload.remove_dir(archive)
+        try:
+            self.workload.copy_dir(aof_dir, archive)
+        except ValkeyWorkloadCommandError:
+            # a partial copy would look complete
+            self.workload.remove_dir(archive)
+            raise
+        # manifest first: if the rest fails, Valkey ignores the leftovers and won't crash again
+        self.workload.remove_file(aof_dir / AOF_MANIFEST_NAME)
+        self.workload.remove_dir(aof_dir)
+        logger.warning("Moved the corrupted AOF to %s", archive)
 
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""

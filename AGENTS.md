@@ -88,7 +88,7 @@ tox run -e static        # pyright type checks over src/. Fast — no Juju neede
 # so a path posarg would still run the whole dir).
 tox run -e unit -- -k test_start_primary
 # Fast iteration after the first run (skips poetry install + coverage):
-.tox/unit/bin/pytest tests/unit -k test_start_primary
+.tox/unit/bin/pytest tests/unit -n auto --dist worksteal -k test_start_primary
 
 charmcraft pack          # or: charmcraftcache pack (faster, used in CI/spread). Long Rust build.
 
@@ -120,7 +120,8 @@ All paths below are under `src/`.
   Add nothing else here.
 - `core/` — state & data, NO behavior. `cluster_state.py`: `ClusterState`, the single source of
   truth (peer relations, networking, secrets). `models.py`: pydantic models over relation databags
-  (`PeerAppModel`, `PeerUnitModel`; `RelationState.update()` DELETES keys whose value is falsy).
+  (`PeerAppModel`, `PeerUnitModel`; `RelationState.update()` DELETES keys whose value is `None` or
+  `""`, a `False` or `0` is stored).
   `base_workload.py`: `WorkloadBase` ABC + `TLSPaths`.
 - `managers/` — pure business logic, NO event handling; each takes (state, workload).
   `cluster.py`: health checks, replica sync, ACL reload. `config.py`: renders configs/ACL files,

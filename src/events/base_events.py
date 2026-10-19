@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import ops
 from charmlibs.rollingops import OperationResult, RollingOpsNoRelationError
+from pydantic import ValidationError
 
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
@@ -24,6 +25,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
+from core.models import PersistenceConfig
 from literals import (
     ARCHIVE_STORAGE,
     CLIENT_PORT,
@@ -386,10 +388,11 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
-        # reassert min-replicas-to-write to match the (possibly changed) topology
         if self.charm.state.unit_server.is_started:
+            # reassert min-replicas-to-write to match the (possibly changed) topology
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
             self.charm.metrics_manager.reconcile()
+            self.charm.reconcile_persistence()
 
         if not self.charm.unit.is_leader():
             return
@@ -456,11 +459,16 @@ class BaseEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
+        self.charm.heal_corrupted_aof()
+
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
             return
 
         self.charm.metrics_manager.reconcile()
+
+        if not self.charm.state.cluster.is_restore_in_progress:
+            self.charm.reconcile_persistence()
 
         # runs before the leader check (any unit's address can change) and is not
         # deferred: update-status repeats on its own
@@ -496,6 +504,9 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the old leader may have missed the config-changed
+        self._store_persistence_config()
 
         if self.charm.state.unit_server.is_active:
             try:
@@ -646,6 +657,7 @@ class BaseEvents(ops.Object):
 
         if not self.charm.state.unit_server.is_started:
             logger.info("Unit not started yet, dropping the restart, the start applies the config")
+            self.charm.state.unit_server.update({"restart_run_id": ""})
             return OperationResult.RELEASE
 
         if (
@@ -656,7 +668,8 @@ class BaseEvents(ops.Object):
             return OperationResult.RETRY_RELEASE
 
         try:
-            if restart_valkey:
+            # a RETRY_HOLD retry must not kill the load or sync the previous attempt started
+            if restart_valkey and self.charm.cluster_manager.runs_requested_process():
                 self.charm.workload.restart(self.charm.workload.valkey_service)
             if restart_sentinel:
                 # if primary endpoint is given, write sentinel config
@@ -674,7 +687,7 @@ class BaseEvents(ops.Object):
             return OperationResult.RETRY_HOLD
 
         if restart_valkey:
-            if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+            if not self.charm.cluster_manager.is_back_in_sync():
                 self.charm.state.unit_server.update({"is_valkey_healthy": False})
                 return OperationResult.RETRY_HOLD
             # CONFIG SET min-replicas-to-write does not survive the restart we
@@ -689,11 +702,15 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"is_sentinel_healthy": False})
             return OperationResult.RETRY_HOLD
 
-        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
         return OperationResult.RELEASE
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
+        if self.charm.unit.is_leader():
+            # needs no unit address, so a deferred address reconcile must not delay it
+            self._store_persistence_config()
+
         if not self._reconcile_unit_address():
             # config-changed does not repeat on its own, so the reconcile must be retried
             event.defer()
@@ -701,6 +718,11 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the leader gets no relation-changed for its own app databag write
+        state = self.charm.state
+        if state.unit_server.is_started and not state.cluster.is_restore_in_progress:
+            self.charm.reconcile_persistence()
 
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
@@ -719,6 +741,16 @@ class BaseEvents(ops.Object):
                 self.charm.topology_manager.restart_observer()
             except (ValkeyWorkloadCommandError, ValueError) as e:
                 logger.error("Failed to restart topology observer: %s", e)
+
+    def _store_persistence_config(self) -> None:
+        """Store valid persistence settings for all units, keep the last valid ones otherwise."""
+        try:
+            persistence = PersistenceConfig.from_charm_config(self.charm.config)
+        except ValidationError as e:
+            logger.error("Invalid persistence config, keeping the last valid settings: %s", e)
+            return
+
+        self.charm.state.cluster.update({"persistence_config": persistence})
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""

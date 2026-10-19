@@ -597,7 +597,10 @@ def test_check_certificate_expiration():
     # exec returns (stdout, stderr); the openssl -checkend path only cares that it
     # doesn't raise, and the sentinel down-after self-heal on update-status parses
     # stdout as JSON.
-    with patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=("{}", None)):
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=("{}", None)),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert not state_out.get_relation(1).local_unit_data.get("tls-certificate-expiring")
         assert not status_is(state_out, TLSStatuses.CERTIFICATE_EXPIRING.value)
@@ -608,6 +611,7 @@ def test_check_certificate_expiration():
             side_effect=ValkeyWorkloadCommandError("failed"),
         ),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         reload_tls.assert_not_called()
@@ -1261,7 +1265,10 @@ def test_invalid_private_key():
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
 
-    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         # ensure the secret was not populated with the invalid private key
         with pytest.raises(KeyError):
@@ -1298,7 +1305,10 @@ def test_private_key_refreshes_certificate():
         model=testing.Model(name="my-vm-model", type="lxd"),
     )
 
-    with patch("workload_k8s.ValkeyK8sWorkload.exec"):
+    with (
+        patch("workload_k8s.ValkeyK8sWorkload.exec"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
         assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw

@@ -19,6 +19,13 @@ from literals import (
 from statuses import ScaleDownStatuses
 from tests.unit.helpers import status_is
 
+# INFO PERSISTENCE with no BGSAVE or AOF rewrite running
+IDLE_PERSISTENCE_INFO = {
+    "rdb_bgsave_in_progress": "0",
+    "aof_rewrite_in_progress": "0",
+    "aof_rewrite_scheduled": "0",
+}
+
 
 @pytest.fixture(autouse=True)
 def primary_reachable():
@@ -107,7 +114,7 @@ def test_non_primary():
         patch("common.client.ValkeyClient.role") as get_replica_offset,
         patch(
             "common.client.ValkeyClient.info_persistence",
-            return_value={"rdb_bgsave_in_progress": "0"},
+            return_value=IDLE_PERSISTENCE_INFO,
         ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
@@ -164,7 +171,7 @@ def test_non_primary_block_until_synced():
         ) as get_replica_offset,
         patch(
             "common.client.ValkeyClient.info_persistence",
-            return_value={"rdb_bgsave_in_progress": "0"},
+            return_value=IDLE_PERSISTENCE_INFO,
         ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
@@ -213,7 +220,7 @@ def test_primary():
         patch("common.client.ValkeyClient.role") as get_replica_offset,
         patch(
             "common.client.ValkeyClient.info_persistence",
-            return_value={"rdb_bgsave_in_progress": "0"},
+            return_value=IDLE_PERSISTENCE_INFO,
         ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch(
@@ -270,7 +277,7 @@ def test_lock_is_released_after_the_unit_is_marked_going_away():
         patch("common.client.ValkeyClient.role"),
         patch(
             "common.client.ValkeyClient.info_persistence",
-            return_value={"rdb_bgsave_in_progress": "0"},
+            return_value=IDLE_PERSISTENCE_INFO,
         ),
         patch("common.client.ValkeyClient.save"),
         patch(
@@ -317,7 +324,7 @@ def test_last_leader_unit_going_down():
         patch("common.client.SentinelClient.sentinels_primary", return_value=[]),
         patch(
             "common.client.ValkeyClient.info_persistence",
-            return_value={"rdb_bgsave_in_progress": "0"},
+            return_value=IDLE_PERSISTENCE_INFO,
         ),
         patch("common.client.ValkeyClient.save") as save_dataset,
         patch("core.models.ValkeyCluster.update") as cluster_update,

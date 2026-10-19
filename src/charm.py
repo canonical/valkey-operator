@@ -16,7 +16,14 @@ from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
 from common.custom_events import TopologyChangedCharmEvents
-from common.exceptions import ValkeyUpgradeError
+from common.exceptions import (
+    SentinelFailoverError,
+    ValkeyAOFArchiveNoSpaceError,
+    ValkeyCannotGetPrimaryIPError,
+    ValkeyClusterNotReadyError,
+    ValkeyUpgradeError,
+    ValkeyWorkloadCommandError,
+)
 from common.locks import ValkeyScaleDownLockBackend
 from core.cluster_state import ClusterState
 from events.backup import BackupEvents
@@ -34,6 +41,9 @@ from literals import (
     ROLLINGOPS_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
     START_OPERATION_ID,
+    VALKEY_DOWN_RUN_ID,
+    ScaleDownState,
+    StartState,
     Substrate,
 )
 from managers.auth import AuthManager
@@ -46,6 +56,7 @@ from managers.refresh import RefreshManager
 from managers.sentinel import SentinelManager
 from managers.tls import TLSManager
 from managers.topology import TopologyManager
+from statuses import PersistenceStatuses
 from workload_k8s import ValkeyK8sWorkload
 from workload_vm import ValkeyVmWorkload
 
@@ -169,6 +180,9 @@ class ValkeyCharm(ops.CharmBase):
             logger.debug("Workload not allowed to start")
             return
 
+        # a corrupted AOF fails the health checks below, which raise before update-status can heal it
+        self.heal_corrupted_aof()
+
         if not self.workload.alive():
             logger.info("Restarting workload")
             if self.app.planned_units() == 1:
@@ -198,6 +212,138 @@ class ValkeyCharm(ops.CharmBase):
         logger.info("Unit is healthy, allowing next unit to refresh")
         refresh.next_unit_allowed_to_refresh = True
 
+    def reconcile_persistence(self) -> None:
+        """Move this unit to the stored persistence settings if it has not applied them yet.
+
+        Failures are logged, never deferred, because a replay would block every later hook on
+        the waits and update-status already retries.
+        """
+        persistence = self.state.cluster.persistence_config
+        settings = self.config_manager.persistence_settings(persistence)
+        applied = self.state.unit_server.applied_persistence_config
+        # compare Valkey settings, so editing an option the mode doesn't use reapplies nothing
+        if applied and self.config_manager.persistence_settings(applied) == settings:
+            # a reverted failed switch can leave the new settings live
+            try:
+                if self.cluster_manager.is_live_persistence(settings):
+                    return
+            except ValkeyWorkloadCommandError:
+                # a down server restarts on the rendered file, which matches
+                return
+
+        try:
+            # resolved first, so a server switched live always gets its file rendered to match
+            primary_endpoint = self.sentinel_manager.get_primary_ip()
+            logger.info("Applying persistence mode %s", persistence.mode)
+            # new on, file, old off: whatever valkey.conf names on a restart is still current
+            self.cluster_manager.enable_new_persistence(settings)
+            self.config_manager.set_config_properties(
+                primary_endpoint=primary_endpoint, persistence=persistence
+            )
+            self.cluster_manager.disable_old_persistence(settings)
+        except (
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyClusterNotReadyError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Failed to apply the persistence settings: %s", e)
+            self.state.statuses.add(
+                PersistenceStatuses.NOT_APPLIED.value,
+                scope="unit",
+                component=self.cluster_manager.name,
+            )
+            return
+
+        self.state.statuses.delete(
+            PersistenceStatuses.NOT_APPLIED.value,
+            scope="unit",
+            component=self.cluster_manager.name,
+        )
+        self.state.unit_server.update({"applied_persistence_config": persistence})
+
+    def heal_corrupted_aof(self) -> None:
+        """Rebuild a unit whose AOF is corrupted with a full sync from the primary (DA290).
+
+        A primary that Sentinel has not failed over yet gets a forced failover first.
+        """
+        unit = self.state.unit_server
+        # a unit that never launched Valkey cannot have crashed on its AOF
+        if (
+            not unit.model
+            or unit.model.start_state == StartState.NOT_STARTED.value
+            or self.state.cluster.is_restore_in_progress
+            or unit.model.scale_down_state != ScaleDownState.NO_SCALE_DOWN.value
+        ):
+            return
+
+        try:
+            if not self.cluster_manager.is_aof_corrupted():
+                return
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Cannot check the AOF: %s", e)
+            return
+
+        try:
+            primary = self.sentinel_manager.get_primary_ip()
+            if primary == self.state.endpoint:
+                logger.warning("The primary has a corrupted AOF, forcing a failover")
+                self.sentinel_manager.failover(force=True)
+                primary = self.sentinel_manager.get_primary_ip()
+            if primary == self.state.endpoint:
+                raise SentinelFailoverError("Sentinel still reports this unit as primary")
+            # healing from a down primary leaves this unit empty and promotable (DA291)
+            if not self.cluster_manager.is_healthy(is_primary=True, hostname=primary):
+                raise ValkeyClusterNotReadyError(f"The primary {primary} is not healthy")
+            # rendered before the AOF moves, so an auto-restart comes back as a replica
+            self.config_manager.set_config_properties(primary_endpoint=primary)
+            self.cluster_manager.archive_corrupted_aof()
+        except (
+            SentinelFailoverError,
+            ValkeyAOFArchiveNoSpaceError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyClusterNotReadyError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Cannot heal the corrupted AOF: %s", e)
+            # not the status handler: VM `refresh_snap` heals before it exists
+            self.state.statuses.add(
+                self._aof_heal_status(e).value,
+                scope="unit",
+                component=self.cluster_manager.name,
+            )
+            return
+
+        self._clear_aof_statuses()
+        # no restart: the service manager already restarts the server, a second one aborts its sync
+
+    @staticmethod
+    def _aof_heal_status(error: Exception) -> PersistenceStatuses:
+        """Pick the status for a failed heal.
+
+        Args:
+            error: The exception the heal raised.
+
+        Returns:
+            The status to show on the unit.
+        """
+        # once a human frees space, the next update-status retries
+        if isinstance(error, ValkeyAOFArchiveNoSpaceError):
+            return PersistenceStatuses.AOF_ARCHIVE_NO_SPACE
+        if isinstance(error, ValkeyWorkloadCommandError):
+            return PersistenceStatuses.AOF_HEAL_FAILED
+        return PersistenceStatuses.AOF_CORRUPTED
+
+    def _clear_aof_statuses(self) -> None:
+        """Clear the corrupted-AOF statuses."""
+        for status in (
+            PersistenceStatuses.AOF_CORRUPTED,
+            PersistenceStatuses.AOF_ARCHIVE_NO_SPACE,
+            PersistenceStatuses.AOF_HEAL_FAILED,
+        ):
+            self.state.statuses.delete(
+                status.value, scope="unit", component=self.cluster_manager.name
+            )
+
     def trigger_relation_change_if_required(self) -> None:
         """Trigger a peer-relation changed event if it is a single-unit deployment."""
         if len(self.state.servers) != 1:
@@ -215,6 +361,14 @@ class ValkeyCharm(ops.CharmBase):
         Args:
             **kwargs: Arguments for `BaseEvents.restart_workload`.
         """
+        if kwargs.get("restart_valkey", True):
+            # the callback restarts only this process, a newer one already runs the new config
+            try:
+                run_id = self.cluster_manager.run_id()
+            except ValkeyWorkloadCommandError:
+                # whatever process starts next reads the config already rendered
+                run_id = VALKEY_DOWN_RUN_ID
+            self.state.unit_server.update({"restart_run_id": run_id})
         try:
             self.rollingops.request_async_lock(RESTART_OPERATION_ID, kwargs=kwargs)
         except RollingOpsNoRelationError:

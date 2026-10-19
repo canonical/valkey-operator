@@ -8,6 +8,7 @@ These guides accompany you through the operations lifecycle of Charmed Valkey.
 
 Deploy <deploy>
 Scale horizontally <scale-horizontally>
+Persistence <persistence>
 Client connections <clients>
 Manage passwords <manage-passwords>
 LDAP auth <ldap>

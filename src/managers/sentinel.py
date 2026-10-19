@@ -223,17 +223,23 @@ class SentinelManager(ManagerStatusProtocol):
         client = self._get_sentinel_client()
         return client.ping(hostname=sentinel_ip)
 
-    def failover(self) -> None:
+    def failover(self, force: bool = False) -> None:
         """Trigger a failover in the cluster.
 
         This method triggers a failover through the sentinel client and then checks if the failover is in progress.
+
+        Args:
+            force: Fail over without the primary's help, for a primary whose Valkey is down.
 
         Raises:
             SentinelFailoverError: If triggering failover fails or if failover does not start after triggering.
         """
         client = self._get_sentinel_client()
         try:
-            client.failover_primary_coordinated(self.state.endpoint)
+            if force:
+                client.failover_primary(self.state.endpoint)
+            else:
+                client.failover_primary_coordinated(self.state.endpoint)
             if client.is_failover_in_progress(self.state.endpoint):
                 raise SentinelFailoverError("Failover is in progress after triggering failover.")
         except ValkeyWorkloadCommandError as e:
