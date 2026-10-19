@@ -331,6 +331,7 @@ class PeerUnitModel(PeerModel):
 
     charmed_operator_password_local_unit_copy: InternalUsersSecret = Field(default="")
     start_state: str = Field(default=StartState.NOT_STARTED.value)
+    start_hold_count: int = Field(default=0)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     scale_down_state: str = Field(default="")

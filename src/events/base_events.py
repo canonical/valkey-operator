@@ -36,6 +36,7 @@ from literals import (
     SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
+    START_MAX_HOLDS,
     START_OPERATION_ID,
     STARTING_STATES,
     TLS_PORT,
@@ -216,8 +217,21 @@ class BaseEvents(ops.Object):
         Returns:
             RELEASE once the unit is started and in sync, RETRY_HOLD while its started services
             are not in sync yet, so no restart or other start runs in between, RETRY_RELEASE if
-            it cannot start the services yet.
+            it cannot start the services yet. After START_MAX_HOLDS holds in a row it returns
+            RETRY_RELEASE once so queued restarts can run.
         """
+        result = self._run_start()
+        holds = 0
+        if result == OperationResult.RETRY_HOLD:
+            holds = self.charm.state.unit_server.model.start_hold_count + 1
+        if holds >= START_MAX_HOLDS:
+            logger.warning("Start held the lock %d times, releasing it once", holds)
+            result, holds = OperationResult.RETRY_RELEASE, 0
+        self.charm.state.unit_server.update({"start_hold_count": holds})
+        return result
+
+    def _run_start(self) -> OperationResult:
+        """Run one start attempt, see `start_unit`."""
         if self.charm.state.unit_server.is_started:
             return OperationResult.RELEASE
 

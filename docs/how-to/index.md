@@ -14,4 +14,5 @@ LDAP auth <ldap>
 TLS encryption <tls>
 Back up and restore <back-up-and-restore>
 Monitoring and logging <monitoring>
+Refresh (upgrade) <upgrade>
 ```
