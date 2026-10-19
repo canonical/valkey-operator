@@ -5,6 +5,7 @@
 """Valkey base event handlers."""
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import ops
@@ -272,8 +273,12 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"start_state": StartState.ERROR_ON_START.value})
             return False
 
+        # ACLs are current now, so _finish_start only reconciles users added during start
         self.charm.state.unit_server.update(
-            {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            {
+                "start_state": StartState.STARTING_WAITING_VALKEY.value,
+                "client_user_epoch": time.time(),
+            }
         )
         return True
 
