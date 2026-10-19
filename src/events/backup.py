@@ -633,7 +633,7 @@ class BackupEvents(ops.Object):
                 logger.exception("min-replicas reconcile after restore failed")
             # best-effort as well, update-status converges it after the restore
             try:
-                self.charm.base_events.reconcile_persistence()
+                self.charm.reconcile_persistence()
             except Exception:
                 logger.exception("persistence reconcile after restore failed")
 

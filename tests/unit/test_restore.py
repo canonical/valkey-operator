@@ -1947,7 +1947,7 @@ def test_primary_restores_with_rdb_settings_then_reapplies_persistence(restore_m
     )
     restore_managers.restore_on_primary.side_effect = lambda: order.append("restore")
     mocker.patch(
-        "events.base_events.BaseEvents.reconcile_persistence",
+        "src.charm.ValkeyCharm.reconcile_persistence",
         side_effect=lambda: order.append("reconcile"),
     )
     ctx, state = _restore_context_and_state(

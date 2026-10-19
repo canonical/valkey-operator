@@ -577,7 +577,7 @@ def _run_heal(
             "managers.cluster.ClusterManager.archive_corrupted_aof", side_effect=archive_error
         ) as archive,
         patch("managers.cluster.ClusterManager.is_healthy", return_value=primary_healthy),
-        patch("events.base_events.BaseEvents.reconcile_persistence"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
         patch("src.charm.ValkeyCharm.request_restart") as restart,
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)

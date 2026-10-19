@@ -279,6 +279,31 @@ class ClusterManager(ManagerStatusProtocol):
         if self.run_id() != run_id:
             raise ValkeyServerRestartedError("Valkey restarted during a persistence switch")
 
+    def runs_requested_process(self) -> bool:
+        """Whether Valkey still runs the process that was up when the restart was requested.
+
+        An unknown process, or a server that can't be queried, counts as needing the restart.
+        """
+        requested = self.state.unit_server.model.restart_run_id
+        try:
+            return not requested or self.run_id() == requested
+        except ValkeyWorkloadCommandError:
+            return True
+
+    def is_back_in_sync(self) -> bool:
+        """Whether the restarted Valkey is healthy and, as a replica, in sync with the primary.
+
+        A restarted replica can full-sync, so the lock is held until it has the data again.
+        """
+        if not self.is_healthy(check_replica_sync=False):
+            return False
+        # read the role live: Sentinel may have failed over during the restart
+        try:
+            return self.is_primary() or self.is_replica_synced()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read the Valkey role: %s", e)
+            return False
+
     @retry(
         wait=wait_fixed(5),
         stop=stop_after_attempt(5),

@@ -66,7 +66,8 @@ class ConfigManager(ManagerStatusProtocol):
             "save": persistence.rdb_save_points if persistence.rdb_enabled else "",
             "appendonly": "yes" if persistence.aof_enabled else "no",
             "appendfsync": persistence.aof_appendfsync.value,
-            # without save points, a replica's full sync would leave a dataset-sized dump.rdb
+            # without save points, a replica's full sync would leave a dataset-sized dump.rdb.
+            # Valkey pauses the AOF while a replica loads the sync, so this works in AOF mode too.
             "rdb-del-sync-files": "no" if persistence.rdb_enabled else "yes",
             # None mode has no save points, so this makes a planned stop (SIGTERM) save (DA290)
             "shutdown-on-sigterm": "default" if any_persistence else "save",

@@ -599,7 +599,7 @@ def test_check_certificate_expiration():
     # stdout as JSON.
     with (
         patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=("{}", None)),
-        patch("events.base_events.BaseEvents.reconcile_persistence"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert not state_out.get_relation(1).local_unit_data.get("tls-certificate-expiring")
@@ -611,7 +611,7 @@ def test_check_certificate_expiration():
             side_effect=ValkeyWorkloadCommandError("failed"),
         ),
         patch("managers.cluster.ClusterManager.reload_tls_settings") as reload_tls,
-        patch("events.base_events.BaseEvents.reconcile_persistence"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         reload_tls.assert_not_called()
@@ -1267,7 +1267,7 @@ def test_invalid_private_key():
 
     with (
         patch("workload_k8s.ValkeyK8sWorkload.exec"),
-        patch("events.base_events.BaseEvents.reconcile_persistence"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         # ensure the secret was not populated with the invalid private key
@@ -1307,7 +1307,7 @@ def test_private_key_refreshes_certificate():
 
     with (
         patch("workload_k8s.ValkeyK8sWorkload.exec"),
-        patch("events.base_events.BaseEvents.reconcile_persistence"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
