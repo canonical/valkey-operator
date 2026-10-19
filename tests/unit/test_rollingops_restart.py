@@ -147,12 +147,13 @@ def test_restart_callback_releases_on_success():
         patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
         patch("managers.cluster.ClusterManager.reconcile_min_replicas_to_write"),
         patch("core.models.ValkeyServer.update") as update,
+        patch("managers.cluster.ClusterManager.is_primary", return_value=True),
     ):
         assert charm.base_events.restart_workload() == OperationResult.RELEASE
         charm.workload.restart.assert_called_once()
         restart_sentinel.assert_called_once()
         update.assert_any_call({"is_valkey_healthy": True})
-        update.assert_any_call({"is_sentinel_healthy": True})
+        update.assert_any_call({"is_sentinel_healthy": True, "restart_run_id": ""})
 
 
 def test_restart_callback_rewrites_sentinel_config_for_primary_endpoint():

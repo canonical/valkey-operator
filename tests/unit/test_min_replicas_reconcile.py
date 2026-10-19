@@ -83,6 +83,7 @@ def test_restart_workload_reconciles_min_replicas():
             patch("managers.cluster.ClusterManager._save_database_blocking"),
             patch("managers.cluster.ClusterManager._disable_save_on_shutdown"),
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
+            patch("managers.cluster.ClusterManager.is_primary", return_value=True),
             patch("managers.topology.TopologyManager.start_observer"),
             patch(
                 "managers.cluster.ClusterManager.reconcile_min_replicas_to_write"

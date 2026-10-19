@@ -174,6 +174,7 @@ def test_start_primary(lock_granted_immediately):
         patch("common.client.SentinelClient.primary", return_value={"ip": "test"}),
         patch("events.base_events.BaseEvents._reconfigure_quorum_if_necessary"),
         patch("managers.tls.TLSManager.will_certificate_expire"),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.start(), state_out)
         assert state_out.unit_status == ActiveStatus()
@@ -375,6 +376,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
             patch("managers.tls.TLSManager.will_certificate_expire", return_value=False),
+            patch("src.charm.ValkeyCharm.reconcile_persistence"),
         ):
             relation = testing.PeerRelation(
                 id=1,
@@ -420,6 +422,7 @@ def test_update_status_leader_unit():
     with (
         patch("managers.tls.TLSManager.will_certificate_expire"),
         patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
@@ -442,6 +445,7 @@ def test_update_status_non_leader_unit():
     with (
         patch("managers.tls.TLSManager.will_certificate_expire"),
         patch("common.client.SentinelClient.primary", return_value={"quorum": "1"}),
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         state_out = ctx.run(ctx.on.update_status(), state_in)
         assert state_out.unit_status == ActiveStatus()
@@ -654,6 +658,7 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
             "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
         ),
+        patch("managers.cluster.ClusterManager.run_id", return_value="run-1"),
         patch("managers.tls.TLSManager.build_sans_ip", return_value=frozenset({"127.0.1.1"})),
         patch(
             "managers.tls.TLSManager.build_sans_dns", return_value=frozenset({"www.example.com"})
@@ -662,6 +667,7 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
         mock_create_certificate.assert_called_once()

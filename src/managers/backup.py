@@ -23,6 +23,7 @@ from common.client import ValkeyClient
 from common.exceptions import StorageBackendError, ValkeyBackupError, ValkeyRestoreError
 from common.storage_backend import StorageBackend, build_backend
 from literals import (
+    AOF_DIR_NAME,
     BACKUP_CA_FILENAME,
     BACKUP_EXISTS_CODE,
     BACKUP_ID_FORMAT,
@@ -374,6 +375,8 @@ class BackupManager(ManagerStatusProtocol):
             self.cleanup_restore_files()
         logger.info("restore.primary: keeping the current dump at %s", self._pre_restore_path)
         self.workload.move_file(self._dump_path, self._pre_restore_path)
+        # the AOF predates the restored data, and the rollback copy was saved just before the stop
+        self.workload.remove_dir(self.workload.working_dir / AOF_DIR_NAME)
         self.download_backup(self.state.cluster.restore_id)
         # Readiness is gated later by wait_until_loaded.
         logger.info("restore.primary: starting valkey-server on the restored dump")

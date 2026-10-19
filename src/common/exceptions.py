@@ -32,6 +32,10 @@ class ValkeyWorkloadCommandError(Exception):
     """Custom Exception if any workload-related command fails."""
 
 
+class ValkeyAOFArchiveNoSpaceError(Exception):
+    """Custom Exception if the archive volume has no room for the corrupted AOF."""
+
+
 class ValkeyServicesFailedToStartError(Exception):
     """Custom Exception if Valkey service fails to start."""
 
@@ -46,6 +50,10 @@ class ValkeyConfigurationError(Exception):
 
 class ValkeyClusterNotReadyError(Exception):
     """Raised when the cluster does not reach a ready state within a bounded wait."""
+
+
+class ValkeyServerRestartedError(ValkeyClusterNotReadyError):
+    """Raised when Valkey restarts during a wait, which ends the operation the wait polls."""
 
 
 class SentinelFailoverError(Exception):

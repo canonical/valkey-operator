@@ -51,6 +51,37 @@ class ClusterStatuses(Enum):
     )
 
 
+class PersistenceStatuses(Enum):
+    """Collection of possible statuses related to persistence."""
+
+    INVALID_CONFIG = StatusObject(
+        status="blocked",
+        message="Invalid persistence config, revert it, check logs for details",
+    )
+    NOT_APPLIED = StatusObject(
+        status="maintenance",
+        message="Persistence settings failed to apply, retrying, check logs for details",
+        running="async",
+    )
+    AOF_CORRUPTED = StatusObject(
+        status="blocked",
+        message="Corrupted AOF, no healthy unit to resync from, check logs for details",
+        action="Restore a backup",
+        running="async",
+    )
+    AOF_ARCHIVE_NO_SPACE = StatusObject(
+        status="blocked",
+        message="Corrupted AOF, the archive volume has no room for it",
+        action="Free space on the archive volume or allocate more storage",
+        running="async",
+    )
+    AOF_HEAL_FAILED = StatusObject(
+        status="maintenance",
+        message="Corrupted AOF, healing failed, retrying, check logs for details",
+        running="async",
+    )
+
+
 class StartStatuses(Enum):
     """Collection of possible statuses related to the service start."""
 
