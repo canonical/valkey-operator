@@ -21,7 +21,6 @@ from common.exceptions import (
     ValkeyServiceNotAliveError,
     ValkeyServicesCouldNotBeStoppedError,
     ValkeyServicesFailedToStartError,
-    ValkeyTLSLoadError,
     ValkeyWorkloadCommandError,
 )
 from literals import (
@@ -245,10 +244,6 @@ class BaseEvents(ops.Object):
             if not self._start_workload(primary_endpoint):
                 return OperationResult.RETRY_RELEASE
 
-        # first, so a retry reaches it even when its Sentinel restart failed
-        if not self._apply_client_tls_after_start():
-            return OperationResult.RETRY_HOLD
-
         if not self._is_started_and_in_sync():
             return OperationResult.RETRY_HOLD
 
@@ -409,49 +404,6 @@ class BaseEvents(ops.Object):
             self.charm.topology_manager.restart_observer()
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to restart topology observer: %s", e)
-
-    def _apply_client_tls_after_start(self) -> bool:
-        """Close the plain ports if client TLS was enabled after the unit wrote its config.
-
-        Returns:
-            bool: False if applying the config failed and must be retried.
-        """
-        if self.charm.state.unit_server.tls_client_state != TLSState.TLS:
-            return True
-
-        try:
-            if self.charm.config_manager.is_plain_port_closed():
-                # the unit wrote its config after the switch, nothing to apply
-                return True
-            # a bootstrapping leader falls back to itself
-            if (primary_ip := self._get_primary_endpoint_for_start()) is None:
-                logger.warning("Primary IP not available yet, retrying the client TLS apply")
-                return False
-            tls_config = self.charm.config_manager.generate_tls_config()
-            try:
-                self.charm.cluster_manager.reload_tls_settings(tls_config)
-            except ValkeyTLSLoadError:
-                # Valkey still serves its start cert, which the new CA can't verify
-                logger.info("Client TLS reload failed, retrying over the plain port")
-                self.charm.cluster_manager.reload_tls_settings(tls_config, tls=False)
-            # inline: start holds the lock, and rollingops drops a nested request_restart
-            self.charm.config_manager.set_sentinel_config_properties(primary_endpoint=primary_ip)
-            self.charm.sentinel_manager.restart_service()
-            if not self.charm.sentinel_manager.is_healthy():
-                logger.warning("Sentinel is not healthy after the client TLS restart")
-                return False
-            # last: the skip check reads this file, so any failed step reruns
-            self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-        except (
-            ValkeyServicesFailedToStartError,
-            ValkeyTLSLoadError,
-            ValkeyWorkloadCommandError,
-            ValueError,
-        ) as e:
-            logger.error("Failed to apply the client TLS config after start: %s", e)
-            return False
-
-        return True
 
     def _on_peer_relation_departed(self, _: ops.RelationDepartedEvent) -> None:
         """Handle event received by all units when a unit departs."""

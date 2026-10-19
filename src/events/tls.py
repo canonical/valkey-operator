@@ -26,6 +26,7 @@ from literals import (
     CLIENT_TLS_RELATION_NAME,
     PEER_RELATION,
     SENTINEL_PORT,
+    STARTING_STATES,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
     TLSState,
@@ -216,6 +217,12 @@ class TLSEvents(ops.Object):
             except (ValkeyTLSLoadError, ValkeyWorkloadCommandError):
                 logger.error("Failed to reload TLS certificates")
                 event.defer()
+            return
+
+        if self.charm.state.unit_server.model.start_state in STARTING_STATES:
+            # its config already has the plain port, so enable once it is started
+            logger.info("Unit is starting, deferring client TLS enable")
+            event.defer()
             return
 
         primary_ip = ""
