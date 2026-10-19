@@ -286,10 +286,6 @@ total 32
 -rw-r--r-- 1 snap_daemon snap_daemon 23722 Oct  7 04:13 valkey.log
 ```
 
-Both files rotate daily, or earlier once one passes 200M. Rotated files are kept for up to 10 days,
-14 files at most. All but the newest are gzipped, so the names are `valkey.log.1`,
-`valkey.log.2.gz`, and so on.
-
 ````
 
 ````{tab-item} K8s
@@ -310,16 +306,19 @@ drwxrws--- 2 root     170  16384 Oct  7 03:55 lost+found
 -rw-r--r-- 1 _daemon_ 170 602834 Oct  7 04:14 valkey.log
 ```
 
-Both files rotate daily, or earlier once one passes 200M. Rotated files are kept for up to 10 days,
-14 files at most. All but the newest are gzipped, so the names are `valkey.log.1`,
-`valkey.log.2.gz`, and so on.
-
 ````
 
 `````
 
-``````{important}
-For production environments, use a logs volume of at least 8G. Set it when you deploy:
+Both files rotate daily, or earlier once one passes 200 MB. Rotated files are kept for up to 10
+days, 14 files at most. All but the newest are compressed, so the names are `valkey.log.1`,
+`valkey.log.2.gz`, and so on.
+
+```{important}
+For production environments, use a logs volume of at least 8 GB.
+```
+
+To set the logs volume size when you deploy, pass `--storage logs=<size>`:
 
 `````{tab-set}
 :sync-group: substrate
@@ -343,7 +342,6 @@ juju deploy valkey --channel 9/edge -n 3 --storage logs=8G --trust
 ````
 
 `````
-``````
 
 ## Query the metrics endpoint
 
