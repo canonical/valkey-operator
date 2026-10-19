@@ -2,10 +2,9 @@
 
 # How to refresh (upgrade)
 
-```{admonition} Emergency stop button
-:class: attention
-Use `juju config <app name> pause-after-unit-refresh=all` to halt an in-progress refresh.
-Then, consider [rolling back](how-to-refresh-roll-back)
+```{note}
+If you see any problem during the refresh and need to pause an in-progress refresh, use `juju config
+<app name> pause-after-unit-refresh=all`. Then, consider [rolling back](how-to-refresh-roll-back).
 ```
 
 Charmed Valkey supports minor version in-place refresh via the [`juju refresh`](https://documentation.ubuntu.com/juju/3.6/reference/juju-cli/list-of-juju-cli-commands/refresh/#details) command.
@@ -13,6 +12,8 @@ Charmed Valkey supports minor version in-place refresh via the [`juju refresh`](
 ## Determine which version to refresh to
 
 Get the current charm revision of the application with [`juju status`](https://documentation.ubuntu.com/juju/3.6/reference/juju-cli/list-of-juju-cli-commands/status/).
+
+(how-to-refresh-supported)=
 
 ### Supported refreshes
 
@@ -31,52 +32,30 @@ In some of these cases, it may be possible to perform an out-of-place upgrade or
 * Major in-place downgrade
 * Any refresh from or to a non-stable version (e.g. 9/edge)
 
+## Prepare for refresh
+
 (how-to-refresh-backup)=
 
-## Create a backup
+### 1. Create a backup
 
 See [](back-up-and-restore.md).
 
-## Read the rollback instructions
+### 2. Read the rollback instructions
 
 In the event that something goes wrong (e.g. the refresh fails, the new version of Valkey has any issues, 
 a database client is incompatible with the new version), you may want to quickly roll back.
 
-Prepare for this possibility by reading through the entire refresh documentation — with special attention to the 
-[](how-to-refresh-halt) and [](how-to-refresh-roll-back) sections — before starting the refresh.
+Prepare for this possibility by reading through the entire refresh documentation - with special attention to the 
+[](how-to-refresh-halt) and [](how-to-refresh-roll-back) sections - before starting the refresh.
 
-## Review release notes
+### 3. Review release notes
 
 For every charm version between the version that you are refreshing from and to, review the release notes 
 to understand what changed and if any action is required from you before, during, or after the refresh.
 
-If the Valkey versions that you are refreshing from and to are different, refer to the 
-[upstream Valkey release notes](https://github.com/valkey-io/valkey/releases) to understand what changed and if 
-any action is required from you.
+Make sure you refresh within the same Charmhub track to avoid any breaking change (see [](how-to-refresh-supported))
 
-(how-to-refresh-staging)=
-
-## Test in a staging environment
-
-We recommend testing the entire refresh procedure in a staging environment before refreshing your production environment.
-
-In a staging environment, we also encourage you to simulate failure of the refresh and to practice recovery by restoring 
-from [the backup](how-to-refresh-backup).
-
-## Check that clients are compatible
-
-Ensure that your clients are compatible with the Valkey version that you're refreshing to.
-It may be necessary to refresh your clients before refreshing Valkey.
-
-## Inform users and schedule a maintenance window
-
-Tell your users when you will perform the refresh and remain in contact with them so that you are aware of any issues.
-
-If possible, schedule a maintenance window during a period of low traffic.
-The duration of the refresh may depend on the size of your data and volume of traffic.
-To estimate the duration, we recommend [testing on a staging environment](how-to-refresh-staging).
-
-## Consider scaling up
+### 4. Consider scaling up
 
 During the refresh of the application, units will be restarted one by one.
 While a unit is restarting, the performance of the cluster may be degraded.
@@ -87,9 +66,11 @@ To ensure that the cluster can handle all traffic during the refresh, consider s
 Charmed Valkey does also support scaling up while a refresh is in progress.
 ```
 
+## Perform the refresh
+
 (how-to-refresh-pre-check)=
 
-## Pre-refresh check
+### Pre-refresh check
 
 Run the `pre-refresh-check` action on the leader unit to prepare the application for refresh.
 
@@ -97,14 +78,14 @@ Run the `pre-refresh-check` action on the leader unit to prepare the application
 juju run valkey/leader pre-refresh-check
 ```
 
-If the action does not succeed, do not refresh.
+**_If the action does not succeed, do not refresh._**
 
 If the action succeeds, copy down the rollback command.
 Keep the command available in case you need to [roll back](how-to-refresh-roll-back).
 
 (how-to-refresh-manual-checks)=
 
-## Configure `pause-after-unit-refresh`
+### Configure `pause-after-unit-refresh`
 
 After each unit is refreshed, the charm will perform automatic health checks.
 We recommend supplementing the automatic checks with manual checks.
@@ -132,7 +113,7 @@ If the charm's automatic health checks fail, the refresh will be paused (until t
 regardless of the value of the `pause-after-unit-refresh` config option.
 ```
 
-## Avoid operations while a refresh is in progress
+### Avoid operations while a refresh is in progress
 
 While a refresh is in progress, the application is in a vulnerable state.
 
@@ -147,7 +128,7 @@ These operations are supported but not recommended while a refresh is in progres
 * Changes to config values (except `pause-after-unit-refresh`)
 * Updating the admin password or private keys for TLS certificates
 
-## Start the refresh
+### Start the refresh
 
 Use `juju refresh` and specify the charm revision that you are refreshing to.
 
@@ -155,9 +136,29 @@ Use `juju refresh` and specify the charm revision that you are refreshing to.
 juju refresh valkey --revision <your-target-revision>
 ```
 
+(how-to-refresh-monitor)=
+
+### Monitor the refresh
+
+Use `juju status` to monitor the progress of the refresh.
+
+In some cases, it may take a few minutes for the statuses to update after the refresh has started.
+
+If the application status or any of the unit statuses are `blocked`, your action is required.
+Follow the instructions in the status messages.
+
+If the application status or any of the unit statuses are `error`, your action may be required.
+Monitor `juju debug-log`.
+The error may have been a temporary issue.
+If the error persists, your action is required - consider [rolling back](how-to-refresh-roll-back).
+
+Monitor the refresh until it successfully finishes.
+When the refresh completes, the application status will go from a message beginning with "Refreshing" 
+to an `active` status with no message.
+
 (how-to-refresh-halt)=
 
-## Halt the refresh
+### Halt the refresh
 
 If something goes wrong, halt the refresh by running:
 
@@ -190,32 +191,7 @@ The procedure for the rollback is the same as described in [](how-to-refresh-mon
 
 ### Reflect
 
-After the application has been rolled back, and you have confirmed that service has been fully restored, 
-investigate what went wrong.
-
 If applicable, please file a [bug report](https://github.com/canonical/valkey-operator/issues).
-
-Once you understand what went wrong and have tested that it has been fixed, the refresh can be attempted again.
-
-(how-to-refresh-monitor)=
-
-## Monitor the refresh
-
-Use `juju status` to monitor the progress of the refresh.
-
-In some cases, it may take a few minutes for the statuses to update after the refresh has started.
-
-If the application status or any of the unit statuses are `blocked`, your action is required.
-Follow the instructions in the status messages.
-
-If the application status or any of the unit statuses are `error`, your action may be required.
-Monitor `juju debug-log`.
-The error may have been a temporary issue.
-If the error persists, your action is required — consider [rolling back](how-to-refresh-roll-back).
-
-Monitor the refresh until it successfully finishes.
-When the refresh completes, the application status will go from a message beginning with "Refreshing" 
-to an `active` status with no message.
 
 ### Resume refresh
 
