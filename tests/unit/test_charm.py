@@ -374,7 +374,6 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
             patch("managers.cluster.ClusterManager.is_healthy", return_value=True),
             patch("managers.cluster.ClusterManager.is_primary", return_value=False),
             patch("managers.sentinel.SentinelManager.is_healthy", return_value=True),
-            patch("managers.tls.TLSManager.will_certificate_expire", return_value=False),
         ):
             relation = testing.PeerRelation(
                 id=1,

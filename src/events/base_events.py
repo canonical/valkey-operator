@@ -287,7 +287,7 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"start_state": StartState.ERROR_ON_START.value})
             return False
 
-        # ACLs are current now, so _finish_start only reconciles users added during start
+        # the ACL files are current from here
         self.charm.state.unit_server.update(
             {
                 "start_state": StartState.STARTING_WAITING_VALKEY.value,
@@ -364,8 +364,12 @@ class BaseEvents(ops.Object):
         logger.info("Services started")
         self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
 
-        # peer handlers skip unstarted units, so rerun them for changes missed while starting
-        self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
+        # only non-leaders can miss client users added during start
+        if self.charm.state.external_client_relations and not self.charm.unit.is_leader():
+            self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
+        else:
+            # a single unit gets no later peer event
+            self.charm.trigger_relation_change_if_required()
 
         if not self.charm.unit.is_leader():
             return
