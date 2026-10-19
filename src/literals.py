@@ -114,6 +114,8 @@ SCALE_DOWN_LOCK_ID = "scale-down"
 # rollingops callback ids
 START_OPERATION_ID = "start"
 RESTART_OPERATION_ID = "restart"
+# Holds in a row before a starting unit gives up the lock once for queued restarts
+START_MAX_HOLDS = 10
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380

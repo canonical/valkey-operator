@@ -483,6 +483,7 @@ def test_create_backup_deletes_object_and_raises_when_cli_fails(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     proc.wait.return_value = (1, "WRONGPASS")
     workload.exec_stream.return_value = proc
 
@@ -703,6 +704,7 @@ def test_create_backup_kills_producer_on_upload_failure(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     workload.exec_stream.return_value = proc
 
     backend = _fake_backend(mocker)
@@ -896,6 +898,7 @@ def test_create_backup_kills_producer_on_an_unexpected_upload_error(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     workload.exec_stream.return_value = proc
 
     backend = _fake_backend(mocker)

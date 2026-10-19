@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import re
+import secrets
 
 import jubilant
 
@@ -40,6 +41,31 @@ def write_key(juju: jubilant.Juju, key: str, value: str) -> None:
         password=password,
         command=f"SET {key} {value}",
     )
+
+
+def seed_data(juju: jubilant.Juju, num_keys: int = 20) -> dict[str, str]:
+    """Write random 100 KB values to the primary.
+
+    Random values resist RDB compression, so a backup spans many K8s websocket messages.
+
+    Args:
+        juju: The Juju client.
+        num_keys: How many keys to write.
+
+    Returns:
+        The written keys and values.
+    """
+    password = get_password(juju)
+    primary_ip = get_primary_ip(juju, APP_NAME)
+    data = {f"seed:{i}": secrets.token_urlsafe(75_000) for i in range(num_keys)}
+    for key, value in data.items():
+        exec_valkey_cli(
+            primary_ip,
+            username=CharmUsers.VALKEY_ADMIN.value,
+            password=password,
+            command=f"SET {key} {value}",
+        )
+    return data
 
 
 def read_key(juju: jubilant.Juju, unit_name: str, key: str) -> str | None:

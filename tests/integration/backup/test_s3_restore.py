@@ -32,6 +32,7 @@ from tests.integration.backup.helpers import (
     BACKUP_ID_RE,
     deploy_and_relate_s3,
     read_key,
+    seed_data,
     write_key,
 )
 from tests.integration.ha.helpers.helpers import get_unit_name_from_primary_ip
@@ -131,6 +132,7 @@ def test_restore_rollback(
     deploy_and_relate_s3(juju, charm, substrate, microceph)
 
     write_key(juju, "restore_test_key", "original")
+    seeded = seed_data(juju)
 
     task = juju.run(f"{APP_NAME}/leader", "create-backup")
     assert task.success, task.stderr
@@ -152,6 +154,8 @@ def test_restore_rollback(
     for unit_name in juju.status().apps[APP_NAME].units:
         got = read_key(juju, unit_name, "restore_test_key")
         assert got == "original", f"Expected 'original' on {unit_name}, got {got!r}"
+        # A truncated RDB fails to load, so one seeded key is enough.
+        assert read_key(juju, unit_name, "seed:0") == seeded["seed:0"], unit_name
 
 
 @pytest.mark.abort_on_fail
