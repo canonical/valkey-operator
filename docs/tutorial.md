@@ -415,6 +415,8 @@ juju remove-relation valkey:client-certificates self-signed-certificates:certifi
 
 The Charmed Valkey application is not using TLS anymore.
 
+(tutorial-charm-statuses)=
+
 ## Inspect the charm's status
 
 Charmed Valkey provides detailed, component-specific status information. Use the `status-detail`
