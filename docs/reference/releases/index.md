@@ -1,6 +1,6 @@
 (releases)=
 
-### Releases
+# Releases
 
 Charmed Valkey has the following `stable` revisions:
 
