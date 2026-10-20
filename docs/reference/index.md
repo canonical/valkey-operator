@@ -10,4 +10,5 @@ Technical information about Charmed Valkey.
 
 Alert rules <alert-rules>
 Releases <releases/index>
+Requirements <requirements>
 ```

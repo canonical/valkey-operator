@@ -6,12 +6,6 @@ Charmed Valkey is shipped in the following [tracks](https://documentation.ubuntu
 
 * [Valkey 9](https://charmhub.io/valkey?channel=9/stable) (channel `9/stable`)
 
-## Valkey 9
-
-**Base:** Ubuntu 26.04 LTS (Resolute Racoon)
-
-**Supported architectures:** `amd64` and `arm64`.
-
 ### Releases
 
 Charmed Valkey has the following `stable` revisions:
