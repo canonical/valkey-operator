@@ -84,7 +84,7 @@ for more information on how to select the right certificate provider for your us
 Encryption in transit for backups is provided by the storage provider. S3-compatible object storage, 
 Azure Blob storage and Google Cloud Storage are supported.
 
-For more information on encryption, see the [Cryptography](cryptography) explanation page and [How to enable TLS](../../how-to/tls) guide.
+For more information on encryption, see the [Cryptography](cryptography) explanation page and [How to enable TLS](how-to-tls) guide.
 
 ### Authentication and Authorisation
 
@@ -98,7 +98,7 @@ These client users are restricted to access only the range of keys specified in 
 request.
 
 As an additional layer of authentication and authorisation, Charmed Valkey supports LDAP. 
-See [How to manage LDAP](../../how-to/ldap.md) for more information.
+See [How to manage LDAP](how-to-ldap) for more information.
 
 ### Monitoring and auditing
 
