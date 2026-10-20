@@ -1,11 +1,5 @@
 # Charmed Valkey documentation
 
-```{warning}
-The charm is under active development and is not yet production-ready.
-APIs, configuration options, and integration endpoints may change.
-{doc}`Contact us<reference/contact>` for feature requests.
-```
-
 Charmed Valkey is an open-source **Juju charm** that will automate the deployment, scaling,
 configuration and operations of [Valkey](https://valkey.io/) clusters across clouds,
 virtual machines and bare metal, using the [Juju](https://juju.is/) orchestration framework.
