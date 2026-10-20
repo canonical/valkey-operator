@@ -112,6 +112,9 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["logfile"] = (self.workload.log_dir / VALKEY_LOG_FILE).as_posix()
 
         config_properties["bind"] = self.state.endpoint
+        # enable public IPs
+        if self.state.substrate == Substrate.VM and self.state.endpoint != self.state.bind_address:
+            config_properties["bind"] = self.state.bind_address
 
         # DA261 backup-safety overrides
         config_properties["repl-diskless-load"] = "on-empty-db"
@@ -357,6 +360,8 @@ class ConfigManager(ManagerStatusProtocol):
             sentinel_configs["resolve-hostnames"] = "yes"
             sentinel_configs["announce-hostnames"] = "yes"
             sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
+        else:
+            sentinel_configs["announce-ip"] = self.state.endpoint
         return sentinel_configs
 
     def set_sentinel_config_properties(self, primary_endpoint: str) -> None:

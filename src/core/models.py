@@ -385,6 +385,7 @@ class PeerUnitModel(PeerModel):
     start_hold_count: int = Field(default=0)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
+    endpoint: str = Field(default="")
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
@@ -580,7 +581,7 @@ class ValkeyServer(RelationState):
         On VM-based substrates, this should be the private IP address.
         On Kubernetes, this should be the hostname of the unit.
         """
-        return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
+        return self.model.endpoint
 
     @property
     def tls_ca_rotation_state(self) -> TLSCARotationState:

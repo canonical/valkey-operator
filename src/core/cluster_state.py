@@ -6,6 +6,7 @@
 
 import logging
 import socket
+import subprocess
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -211,21 +212,20 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
-    def ingress_addresses(self) -> list[str]:
-        """The network ingress IP addresses from the peer relation.
+    def public_address(self) -> str | None:
+        """The unit's public address from Juju, which ops does not expose."""
+        try:
+            result = subprocess.run(
+                ["unit-get", "public-address"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return None
 
-        Hostnames that Juju could not resolve are skipped.
-        """
-        if not (
-            binding := self.model.get_binding(self.peer_relation)  # pyright: ignore[reportArgumentType]
-        ):
-            raise ValueError
-
-        return [
-            str(address)
-            for address in binding.network.ingress_addresses
-            if not isinstance(address, str)
-        ]
+        return result.stdout.strip() or None
 
     @property
     def hostname(self) -> str:
@@ -239,12 +239,18 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
     @property
     def endpoint(self) -> str:
-        """The endpoint to be used by other units to connect to this unit.
+        """The endpoint to be used to connect to this unit.
 
-        On VM-based substrates, this should be the bind address.
-        On Kubernetes, this should be the fully qualified domain name of the unit.
+        On VM, this is the public IP addresses if available, otherwise the private IP.
+        On K8s, this is the FQDN of the unit.
         """
-        return self.bind_address if self.substrate == Substrate.VM else self.hostname
+        if self.substrate == Substrate.K8S:
+            return self.hostname
+
+        if public_ip := self.public_address:
+            return public_ip
+
+        return self.bind_address
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

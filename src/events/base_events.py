@@ -570,6 +570,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "endpoint": self.charm.state.endpoint,
             }
         )
 
@@ -623,6 +624,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "endpoint": self.charm.state.endpoint,
             }
         )
         self.charm.request_restart()

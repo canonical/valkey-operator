@@ -41,12 +41,14 @@ def get_3_unit_peer_relation():
         local_unit_data={
             "hostname": "valkey-0",
             "private-ip": "10.0.1.0",
+            "endpoint": "valkey-0",
             "start-state": "started",
         },
         peers_data={
             unit_id: {
                 "hostname": f"valkey-{unit_id}",
                 "private-ip": f"10.0.1.{unit_id}",
+                "endpoint": f"valkey-{unit_id}",
                 "start-state": "started",
             }
             for unit_id in range(1, 3)
@@ -538,12 +540,14 @@ def test_unit_departure_leader():
         local_unit_data={
             "hostname": "valkey-0",
             "private-ip": "10.0.1.0",
+            "endpoint": "valkey-0",
             "start-state": "started",
         },
         peers_data={
             1: {
                 "hostname": "valkey-2",
                 "private-ip": "10.0.1.2",
+                "endpoint": "valkey-2",
                 "start-state": "started",
             }
         },
