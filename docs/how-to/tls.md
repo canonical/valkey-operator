@@ -1,3 +1,5 @@
+(how-to-tls)=
+
 # How to enable TLS
 
 Valkey provides a secure transport layer for communication between clients and Valkey,
