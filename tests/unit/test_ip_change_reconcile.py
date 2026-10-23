@@ -5,6 +5,7 @@
 """Self-healing reconciliation of a VM unit's address change."""
 
 from contextlib import ExitStack
+from subprocess import CompletedProcess
 from unittest.mock import PropertyMock, patch
 
 from ops import testing
@@ -150,6 +151,10 @@ def test_update_status_regenerates_self_signed_certificate_when_sans_changed(vm_
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout=OLD_IP),
+        ),
     ):
         ctx.run(ctx.on.update_status(), state_in)
 
@@ -166,6 +171,10 @@ def test_update_status_refreshes_client_certificate_when_sans_changed(vm_environ
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout=OLD_IP),
+        ),
     ):
         ctx.run(ctx.on.update_status(), state_in)
 
