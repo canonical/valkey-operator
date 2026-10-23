@@ -112,7 +112,8 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["logfile"] = (self.workload.log_dir / VALKEY_LOG_FILE).as_posix()
 
         config_properties["bind"] = self.state.endpoint
-        # enable public IPs
+        # in case of public IP: use private address for binding Valkey's tcp interface
+        # public IPs are implemented through 1:1 NAT, traffic will arrive at the private address
         if self.state.substrate == Substrate.VM and self.state.endpoint != self.state.bind_address:
             config_properties["bind"] = self.state.bind_address
 
@@ -360,7 +361,8 @@ class ConfigManager(ManagerStatusProtocol):
             sentinel_configs["resolve-hostnames"] = "yes"
             sentinel_configs["announce-hostnames"] = "yes"
             sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
-        else:
+        elif self.state.endpoint != self.state.bind_address:
+            # in case of public IP: announce the public address for Sentinel discovery
             sentinel_configs["announce-ip"] = self.state.endpoint
         return sentinel_configs
 
