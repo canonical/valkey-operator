@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a new feature for the Valkey charm
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: Problem-Description
+    attributes:
+      label: Problem description
+      description: "Describe the problem/use-case: "
+      placeholder: ex. "I want to be able to deploy Valkey without persistent storage."
+    validations:
+      required: true
+
+  - type: textarea
+    id: Desired-Behaviour
+    attributes:
+      label: Desired behaviour
+      description: "Describe the desired behaviour: "
+      placeholder: ex. "`valkey` should run without persistency configured."
+    validations:
+      required: true
+
+  - type: textarea
+    id: Info-Notes
+    attributes:
+      label: "Notes & References"
+      description: "Please add relevant notes, other related issues/PRs, anything to help build a solution."
+    validations:
+      required: false
