@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+from subprocess import CompletedProcess
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -634,7 +635,11 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "private-ip": "127.0.1.1"},
+        local_unit_data={
+            "start-state": "started",
+            "private-ip": "127.0.1.1",
+            "endpoint": "127.0.1.1",
+        },
     )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -679,7 +684,11 @@ def test_change_password_secret_changed_non_leader_unit(mock_request_async_lock)
     relation = testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "private-ip": "127.0.1.0"},
+        local_unit_data={
+            "start-state": "started",
+            "private-ip": "127.0.1.0",
+            "endpoint": "127.0.1.1",
+        },
     )
     container = testing.Container(name=CONTAINER, can_connect=True)
 
@@ -846,3 +855,53 @@ def test_relation_changed_event_do_not_update_quorum():
     ):
         ctx.run(ctx.on.relation_changed(relation), state_in)
         mock_set.assert_not_called()
+
+
+def test_advertise_public_ip_address(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        with patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="10.0.0.1"),
+        ):
+            assert mgr.charm.state.endpoint == "10.0.0.1"
+
+
+def test_advertise_private_ip_address(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        assert mgr.charm.state.endpoint == "127.1.1.1"
+
+
+def test_advertise_address_k8s():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        containers={container},
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        assert mgr.charm.state.endpoint == "valkey-0.valkey-endpoints"

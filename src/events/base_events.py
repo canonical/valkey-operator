@@ -570,6 +570,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "endpoint": self.charm.state.endpoint,
             }
         )
 
@@ -599,6 +600,14 @@ class BaseEvents(ops.Object):
             if self.charm.state.bind_address == recorded_ip and not sans_changed:
                 return True
 
+            # in case of private IP, `unit-get` might be delayed for the new IP address
+            if (
+                self.charm.state.unit_server.model.endpoint == recorded_ip
+                and self.charm.state.endpoint == self.charm.state.unit_server.model.endpoint
+            ):
+                logger.debug("Juju has not yet updated the private IP consistently")
+                return False
+
             self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(
                 self.charm.sentinel_manager.get_primary_ip()
@@ -623,6 +632,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "endpoint": self.charm.state.endpoint,
             }
         )
         self.charm.request_restart()
