@@ -5,15 +5,16 @@
 """Valkey base event handlers."""
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import ops
+from charmlibs.rollingops import OperationResult, RollingOpsNoRelationError
+from pydantic import ValidationError
 
-from common.custom_events import UnitFullyStartedEvent
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
-    RequestingLockTimedOutError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
@@ -24,7 +25,7 @@ from common.exceptions import (
     ValkeyServicesFailedToStartError,
     ValkeyWorkloadCommandError,
 )
-from common.locks import RestartLock, ScaleDownLock, StartLock
+from core.models import PersistenceConfig
 from literals import (
     ARCHIVE_STORAGE,
     CLIENT_PORT,
@@ -34,8 +35,13 @@ from literals import (
     LOG_STORAGE,
     METRICS_PORT,
     PEER_RELATION,
+    SCALE_DOWN_LOCK_ID,
+    SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
+    START_MAX_HOLDS,
+    START_OPERATION_ID,
+    STARTING_STATES,
     TLS_PORT,
     CharmUsers,
     ScaleDownState,
@@ -54,8 +60,6 @@ logger = logging.getLogger(__name__)
 class BaseEvents(ops.Object):
     """Handle all base events."""
 
-    unit_fully_started = ops.EventSource(UnitFullyStartedEvent)
-
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="base_events")
         self.charm = charm
@@ -73,10 +77,10 @@ class BaseEvents(ops.Object):
             self.charm.on[PEER_RELATION].relation_departed, self._on_peer_relation_departed
         )
         self.framework.observe(self.charm.on.update_status, self._on_update_status)
+        self.framework.observe(self.charm.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
-        self.framework.observe(self.unit_fully_started, self._on_unit_fully_started)
         for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
             self.framework.observe(
                 self.charm.on[storage_name].storage_detaching, self._on_storage_detaching
@@ -132,7 +136,17 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
-        start_lock = StartLock(self.charm.state)
+        # The refresh handling already restarted the workload and checked its health.
+        # We do not check refresh_in_progress as it is already false when the last unit starts.
+        if self.charm.state.unit_server.is_started and self.charm.workload.alive():
+            logger.info("Unit restarted by the refresh, not starting it again")
+            return
+
+        if not self._start_conditions_met():
+            event.defer()
+            return
+
+        self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
@@ -141,114 +155,201 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        if self._get_primary_endpoint_for_start() is None:
+            logger.debug(
+                "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
+            )
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
+            )
+            event.defer()
+            return
+
+        self.charm.state.unit_server.update({"start_state": StartState.WAITING_TO_START.value})
+        try:
+            self.charm.rollingops.request_async_lock(START_OPERATION_ID)
+        except RollingOpsNoRelationError:
+            logger.info("No rollingops peer relation yet, deferring the start")
+            event.defer()
+
+    def _start_conditions_met(self) -> bool:
+        """Check what must hold both when the start is requested and when the lock is granted.
+
+        Returns:
+            True if the workload is reachable, the client certificates are ready and the refresh
+            allows the workload to start.
+        """
+        if not self.charm.workload.can_connect:
+            logger.warning("Workload not ready yet")
+            return False
+
         if (
             self.charm.state.client_tls_relation
             and not self.charm.state.unit_server.model.client_cert_ready
         ):
             logger.warning("Waiting for client TLS certificates before starting")
-            event.defer()
-            return
+            return False
 
         # avoid accidental start of scaled-up unit during refresh
         # call goes through refresh manager to avoid unnecessary waits on VM
         if not self.charm.refresh_manager.workload_allowed_to_start():
             logger.warning("Refresh in progress, workload not allowed to start")
-            event.defer()
-            return
+            return False
 
+        return True
+
+    def _get_primary_endpoint_for_start(self) -> str | None:
+        """Find the primary a starting unit should follow.
+
+        Returns:
+            The primary endpoint, this unit's own endpoint if it is the leader and no unit has
+            started yet, or None if there is no primary to follow yet.
+        """
         try:
-            primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
+            return self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
-                primary_endpoint = self.charm.state.unit_server.get_endpoint(
-                    self.charm.state.substrate
-                )
-            else:
-                logger.debug(
-                    "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
-                )
+                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return None
+
+    def start_unit(self) -> OperationResult:
+        """Start the workload once the rolling lock is granted to this unit.
+
+        This is the rollingops `start` callback.
+
+        Returns:
+            RELEASE once the unit is started and in sync, RETRY_HOLD while its started services
+            are not in sync yet, so no restart or other start runs in between, RETRY_RELEASE if
+            it cannot start the services yet. After START_MAX_HOLDS holds in a row it returns
+            RETRY_RELEASE once so queued restarts can run.
+        """
+        result = self._run_start()
+        holds = 0
+        if result == OperationResult.RETRY_HOLD:
+            holds = self.charm.state.unit_server.model.start_hold_count + 1
+        if holds >= START_MAX_HOLDS:
+            logger.warning("Start held the lock %d times, releasing it once", holds)
+            result, holds = OperationResult.RETRY_RELEASE, 0
+        self.charm.state.unit_server.update({"start_hold_count": holds})
+        return result
+
+    def _run_start(self) -> OperationResult:
+        """Run one start attempt, see `start_unit`."""
+        if self.charm.state.unit_server.is_started:
+            return OperationResult.RELEASE
+
+        # once the services are started, keep the lock until the unit is in sync
+        starting = self.charm.state.unit_server.model.start_state in STARTING_STATES
+        retry = OperationResult.RETRY_HOLD if starting else OperationResult.RETRY_RELEASE
+
+        if not self._start_conditions_met():
+            return retry
+
+        if self.charm.state.cluster.is_restore_in_progress:
+            logger.info("Restore in progress, retrying the start later")
+            return retry
+
+        if not starting:
+            primary_endpoint = self._get_primary_endpoint_for_start()
+            if primary_endpoint is None:
+                logger.info("Primary IP not available yet, retrying the start later")
                 self.charm.state.unit_server.update(
                     {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
                 )
-                event.defer()
-                return
+                return OperationResult.RETRY_RELEASE
 
-        self.charm.state.unit_server.update({"start_state": StartState.WAITING_TO_START.value})
-        start_lock.request_lock()
+            if not self._start_workload(primary_endpoint):
+                return OperationResult.RETRY_RELEASE
 
-        if not start_lock.is_held_by_this_unit:
-            logger.info("Waiting for lock to start")
-            event.defer()
-            return
+        if not self._is_started_and_in_sync():
+            return OperationResult.RETRY_HOLD
 
+        self._finish_start()
+        return OperationResult.RELEASE
+
+    def _start_workload(self, primary_endpoint: str) -> bool:
+        """Configure and start the services.
+
+        Args:
+            primary_endpoint: Address of the primary to follow.
+
+        Returns:
+            True if the services were started, False otherwise.
+        """
+        # taken before the ACL write, so users added during start stay out of date
+        acl_epoch = time.time()
         try:
             self.charm.auth_manager.configure_auth()
             self.charm.config_manager.configure_services(primary_endpoint)
             self.charm.metrics_manager.reconcile()
             self.charm.workload.start()
         except ValkeyConfigurationError:
-            self.charm.state.unit_server.update(
-                {"start_state": StartState.CONFIGURATION_ERROR.value}
-            )
-            start_lock.release_lock()
-            event.defer()
-            return
+            # the managers already set CONFIGURATION_ERROR
+            return False
         except (ValkeyServicesFailedToStartError, ValkeyServiceNotAliveError) as e:
             logger.error(e)
             self.charm.state.unit_server.update({"start_state": StartState.ERROR_ON_START.value})
-            start_lock.release_lock()
-            event.defer()
-            return
+            return False
 
         self.charm.state.unit_server.update(
             {"start_state": StartState.STARTING_WAITING_VALKEY.value}
         )
-        self.unit_fully_started.emit(
-            is_primary=primary_endpoint
-            == self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
-        )
+        if self.charm.state.external_client_relations and not self.charm.unit.is_leader():
+            self.charm.state.unit_server.update({"client_user_epoch": acl_epoch})
+        return True
 
-    # TODO check how to trigger if deferred without update status event
-    def _on_unit_fully_started(self, event: UnitFullyStartedEvent) -> None:
-        """Handle the unit-fully-started event."""
-        if not self.charm.cluster_manager.is_healthy(
-            is_primary=event.is_primary, check_replica_sync=False
-        ):
-            logger.warning("Unit is not healthy after start, deferring event.")
+    def _is_started_and_in_sync(self) -> bool:
+        """Check the started services, recording the start state the unit is still waiting in.
+
+        Returns:
+            True once Valkey and Sentinel are healthy and a replica is discovered and synced.
+        """
+        if not self.charm.cluster_manager.is_healthy(check_replica_sync=False):
+            logger.warning("Unit is not healthy after start, waiting for Valkey.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_VALKEY.value}
             )
-            event.defer()
-            return
+            return False
+
+        # read the role live: Sentinel may have promoted this unit since it started
+        try:
+            is_primary = self.charm.cluster_manager.is_primary()
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read the Valkey role, waiting for Valkey: %s", e)
+            self.charm.state.unit_server.update(
+                {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            )
+            return False
 
         if not self.charm.sentinel_manager.is_healthy():
-            logger.warning("Sentinel is not healthy after start, deferring event.")
+            logger.warning("Sentinel is not healthy after start, waiting for Sentinel.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
             )
-            event.defer()
-            return
+            return False
 
-        if not event.is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
-            logger.info("Sentinel service not yet discovered by other units. Deferring event.")
+        if not is_primary and not self.charm.sentinel_manager.is_sentinel_discovered():
+            logger.info("Sentinel service not yet discovered by other units.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_SENTINEL.value}
             )
-            event.defer()
-            return
+            return False
 
-        if not event.is_primary and not self.charm.cluster_manager.is_replica_synced():
-            logger.info("Replica not yet synced. Deferring event.")
+        if not is_primary and not self.charm.cluster_manager.is_replica_synced():
+            logger.info("Replica not yet synced.")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.STARTING_WAITING_REPLICA_SYNC.value}
             )
-            event.defer()
-            return
+            return False
 
-        logger.info("Services started")
-        self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
-        StartLock(self.charm.state).release_lock()
+        return True
 
+    def _finish_start(self) -> None:
+        """Run the repeatable post-start steps, then mark the unit started.
+
+        The peer relation handlers triggered at the end skip units that are not started, so
+        STARTED is written right before them and not after.
+        """
         # the rendered config ships min-replicas-to-write=1; reassert the
         # topology-correct runtime value now the server is up, as CONFIG SET
         # does not persist across a restart
@@ -262,9 +363,11 @@ class BaseEvents(ops.Object):
         if self.charm.state.substrate == Substrate.K8S:
             self.charm.unit.open_port("tcp", METRICS_PORT)
 
-        # ensure to run all operations depending on peer-relation changed (might have been deferred
-        # before start and not run again if only 1 unit, e.g. set pod labels, publish client data)
-        self.charm.trigger_relation_change_if_required()
+        logger.info("Services started")
+        self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
+
+        # rerun peer handlers skipped while this unit was starting
+        self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)
 
         if not self.charm.unit.is_leader():
             return
@@ -285,16 +388,14 @@ class BaseEvents(ops.Object):
             logger.error(f"Failed to update sentinel quorum: {e}")
             # not critical to defer here, we can wait for the next relation change
 
-        # reassert min-replicas-to-write to match the (possibly changed) topology
         if self.charm.state.unit_server.is_started:
+            # reassert min-replicas-to-write to match the (possibly changed) topology
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
             self.charm.metrics_manager.reconcile()
+            self.charm.reconcile_persistence()
 
         if not self.charm.unit.is_leader():
             return
-
-        for lock in [StartLock(self.charm.state), RestartLock(self.charm.state)]:
-            lock.process()
 
         if not self.charm.state.unit_server.is_active:
             return
@@ -358,11 +459,16 @@ class BaseEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle the update-status event."""
+        self.charm.heal_corrupted_aof()
+
         if not self.charm.state.unit_server.is_started:
             logger.warning("Service not started")
             return
 
         self.charm.metrics_manager.reconcile()
+
+        if not self.charm.state.cluster.is_restore_in_progress:
+            self.charm.reconcile_persistence()
 
         # runs before the leader check (any unit's address can change) and is not
         # deferred: update-status repeats on its own
@@ -377,6 +483,16 @@ class BaseEvents(ops.Object):
         except (ValkeyWorkloadCommandError, ValueError) as e:
             logger.error("Failed to start topology observer: %s", e)
 
+    def _on_upgrade_charm(self, event: ops.UpgradeCharmEvent) -> None:
+        """Restart the topology observer so it runs the new charm code."""
+        if not self.charm.unit.is_leader() or not self.charm.state.unit_server.is_active:
+            return
+
+        try:
+            self.charm.topology_manager.restart_observer()
+        except (ValkeyWorkloadCommandError, ValueError) as e:
+            logger.error("Failed to restart topology observer: %s", e)
+
     def _on_leader_elected(self, event: ops.LeaderElectedEvent) -> None:
         """Handle the leader-elected event."""
         try:
@@ -388,6 +504,9 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the old leader may have missed the config-changed
+        self._store_persistence_config()
 
         if self.charm.state.unit_server.is_active:
             try:
@@ -506,11 +625,92 @@ class BaseEvents(ops.Object):
                 "private_ip": self.charm.state.bind_address,
             }
         )
-        self.charm.restart_workload.emit()
+        self.charm.request_restart()
         return True
+
+    def restart_workload(
+        self,
+        restart_valkey: bool = True,
+        restart_sentinel: bool = True,
+        primary_endpoint: str = "",
+    ) -> OperationResult:
+        """Restart the workload once the rolling lock is granted to this unit.
+
+        This is the rollingops `restart` callback.
+
+        Args:
+            restart_valkey: Whether to restart the Valkey service.
+            restart_sentinel: Whether to restart the Sentinel service.
+            primary_endpoint: Address of the primary. If set, Sentinel's config is rewritten
+                right before the restart, because Sentinel rewrites that file on its own.
+
+        Returns:
+            RELEASE once the restarted services are healthy or if the start flow has not started
+            the unit yet, RETRY_RELEASE during a backup or restore, RETRY_HOLD otherwise, so no
+            other unit restarts or starts while this one is unhealthy.
+        """
+        logger.info(
+            "Restarting workload. Restart Valkey: %s, Restart Sentinel: %s",
+            restart_valkey,
+            restart_sentinel,
+        )
+
+        if not self.charm.state.unit_server.is_started:
+            logger.info("Unit not started yet, dropping the restart, the start applies the config")
+            self.charm.state.unit_server.update({"restart_run_id": ""})
+            return OperationResult.RELEASE
+
+        if (
+            self.charm.state.unit_server.is_backup_in_progress
+            or self.charm.state.cluster.is_restore_in_progress
+        ):
+            logger.info("Backup/restore in progress on this unit; retrying the restart later")
+            return OperationResult.RETRY_RELEASE
+
+        try:
+            # a RETRY_HOLD retry must not kill the load or sync the previous attempt started
+            if restart_valkey and self.charm.cluster_manager.runs_requested_process():
+                self.charm.workload.restart(self.charm.workload.valkey_service)
+            if restart_sentinel:
+                # if primary endpoint is given, write sentinel config
+                # this is necessary as Sentinel may rewrite its config file since the last write
+                if primary_endpoint != "":
+                    self.charm.config_manager.set_sentinel_config_properties(
+                        primary_endpoint=primary_endpoint
+                    )
+                self.charm.sentinel_manager.restart_service()
+        except (
+            ValkeyServicesFailedToStartError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error(e)
+            return OperationResult.RETRY_HOLD
+
+        if restart_valkey:
+            if not self.charm.cluster_manager.is_back_in_sync():
+                self.charm.state.unit_server.update({"is_valkey_healthy": False})
+                return OperationResult.RETRY_HOLD
+            # CONFIG SET min-replicas-to-write does not survive the restart we
+            # just performed; the rendered file ships 1, so reassert the
+            # topology-correct runtime value (0 on < 3 active units) now that
+            # Valkey is back up and healthy, or a small cluster would be
+            # write-frozen until the next peer-relation event.
+            self.charm.cluster_manager.reconcile_min_replicas_to_write()
+        self.charm.state.unit_server.update({"is_valkey_healthy": True})
+
+        if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+            return OperationResult.RETRY_HOLD
+
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
+        return OperationResult.RELEASE
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
+        if self.charm.unit.is_leader():
+            # needs no unit address, so a deferred address reconcile must not delay it
+            self._store_persistence_config()
+
         if not self._reconcile_unit_address():
             # config-changed does not repeat on its own, so the reconcile must be retried
             event.defer()
@@ -518,6 +718,11 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # the leader gets no relation-changed for its own app databag write
+        state = self.charm.state
+        if state.unit_server.is_started and not state.cluster.is_restore_in_progress:
+            self.charm.reconcile_persistence()
 
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
             try:
@@ -536,6 +741,16 @@ class BaseEvents(ops.Object):
                 self.charm.topology_manager.restart_observer()
             except (ValkeyWorkloadCommandError, ValueError) as e:
                 logger.error("Failed to restart topology observer: %s", e)
+
+    def _store_persistence_config(self) -> None:
+        """Store valid persistence settings for all units, keep the last valid ones otherwise."""
+        try:
+            persistence = PersistenceConfig.from_charm_config(self.charm.config)
+        except ValidationError as e:
+            logger.error("Invalid persistence config, keeping the last valid settings: %s", e)
+            return
+
+        self.charm.state.cluster.update({"persistence_config": persistence})
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle the secret_changed event."""
@@ -571,7 +786,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                    self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 # update the local unit admin password to match the leader
                 self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
@@ -636,7 +851,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.set_sentinel_acl_file(passwords=new_passwords)
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.reload_acl_file()
-                    self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+                    self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
                 self.charm.state.cluster.update(
                     {
                         f"{user.value.replace('-', '_')}_password": new_passwords[user.value]
@@ -696,9 +911,6 @@ class BaseEvents(ops.Object):
 
     def _scale_down_unit(self) -> None:
         """Failover if needed, flush the dataset, and stop the workload."""
-        # get scale down lock
-        scale_down_lock = ScaleDownLock(self.charm)
-
         self.charm.status.set_running_status(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
             scope="unit",
@@ -706,17 +918,33 @@ class BaseEvents(ops.Object):
             statuses_state=self.charm.state.statuses,
         )
 
+        # without a primary there is nothing to coordinate with
         try:
             primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
-            self._set_state_for_going_away()
+            self._leave_without_coordination()
             return
 
-        # blocks until the lock is acquired
-        if not scale_down_lock.request_lock(primary_ip=primary_ip):
-            raise RequestingLockTimedOutError("Failed to acquire scale down lock within timeout")
+        # Sentinel keeps reporting a primary that is down, and the lock lives on the primary
+        if not self.charm.cluster_manager.is_healthy(
+            is_primary=True, check_replica_sync=False, hostname=primary_ip
+        ):
+            logger.error("Primary %s is unreachable, scaling down without the lock", primary_ip)
+            self._leave_without_coordination()
+            return
 
+        # blocks until the lock is acquired, a timeout raises and Juju retries the hook
+        with self.charm.rollingops.acquire_sync_lock(
+            SCALE_DOWN_LOCK_ID, timeout=SCALE_DOWN_LOCK_TIMEOUT_S
+        ):
+            self._scale_down_holding_lock()
+
+    def _scale_down_holding_lock(self) -> None:
+        """Failover if needed, flush the dataset, stop the workload and mark the unit going away.
+
+        The lock backend releases the lock after the unit is marked going away.
+        """
         self.charm.state.statuses.delete(
             ScaleDownStatuses.WAIT_FOR_LOCK.value,
             scope="unit",
@@ -735,7 +963,7 @@ class BaseEvents(ops.Object):
             primary_ip = self.charm.sentinel_manager.get_primary_ip_for_scale_down()
         except ValkeyCannotGetPrimaryIPError as e:
             logger.error(e)
-            self._set_state_for_going_away()
+            self._leave_without_coordination()
             return
 
         active_sentinels = self.charm.sentinel_manager.get_active_sentinel_ips(primary_ip)
@@ -761,20 +989,28 @@ class BaseEvents(ops.Object):
 
         # Raises if the save fails, so the hook errors and Juju retries it with the workload still up.
         self.charm.cluster_manager.save_dataset_before_shutdown()
-        # stop valkey
+        self._stop_workload()
+
+        self._set_state_for_going_away()
+
+    def _leave_without_coordination(self) -> None:
+        """Save the dataset if the local Valkey answers, then stop and mark the unit going away."""
+        # a dead local Valkey has nothing to save, and must not block the removal
+        if self.charm.cluster_manager.is_healthy(
+            is_primary=True, check_replica_sync=False
+        ) or self.charm.workload.alive(service=self.charm.workload.valkey_service):
+            self.charm.cluster_manager.save_dataset_before_shutdown()
+        self._stop_workload()
+        self._set_state_for_going_away()
+
+    def _stop_workload(self) -> None:
+        """Stop the services and reset the start state."""
         try:
             self.charm.workload.stop()
         except ValkeyServicesCouldNotBeStoppedError as e:
             logger.error("Could not stop Valkey services cleanly: %s", e)
 
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
-
-        try:
-            scale_down_lock.release_lock(primary_ip=primary_ip)
-        except ValkeyWorkloadCommandError:
-            logger.warning("Failed to release scale-down lock, will be released when TTL expires")
-
-        self._set_state_for_going_away()
 
     def _set_state_for_going_away(self) -> None:
         """Set the state to going away when the unit is going down."""

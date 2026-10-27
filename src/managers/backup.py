@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import pathlib
 import re
@@ -22,6 +23,7 @@ from common.client import ValkeyClient
 from common.exceptions import StorageBackendError, ValkeyBackupError, ValkeyRestoreError
 from common.storage_backend import StorageBackend, build_backend
 from literals import (
+    AOF_DIR_NAME,
     BACKUP_CA_FILENAME,
     BACKUP_EXISTS_CODE,
     BACKUP_ID_FORMAT,
@@ -60,10 +62,12 @@ class _CountingReader:
     """
 
     def __init__(self, stream: IO[bytes], head_size: int = 16):
-        self._stream = stream
         self._head_size = head_size
         self.head = b""
         self.bytes_read = 0
+        # Pebble (K8s) and the unbuffered VM pipe return a few KB per read(), but the
+        # SDKs size uploads by read(n). BufferedReader.read(n) waits for n bytes or EOF.
+        self._stream = io.BufferedReader(cast("io.RawIOBase", stream))
 
     def read(self, size: int = -1) -> bytes:
         chunk = self._stream.read(size)
@@ -371,6 +375,8 @@ class BackupManager(ManagerStatusProtocol):
             self.cleanup_restore_files()
         logger.info("restore.primary: keeping the current dump at %s", self._pre_restore_path)
         self.workload.move_file(self._dump_path, self._pre_restore_path)
+        # the AOF predates the restored data, and the rollback copy was saved just before the stop
+        self.workload.remove_dir(self.workload.working_dir / AOF_DIR_NAME)
         self.download_backup(self.state.cluster.restore_id)
         # Readiness is gated later by wait_until_loaded.
         logger.info("restore.primary: starting valkey-server on the restored dump")

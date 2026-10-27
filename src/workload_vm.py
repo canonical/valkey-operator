@@ -12,10 +12,10 @@ import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from pathlib import Path
 from typing import BinaryIO, override
 
-import tomllib
 from charmlibs import pathops, snap
 from tenacity import (
     Retrying,
@@ -36,11 +36,15 @@ from core.base_workload import ProcessHandle, TLSPaths, WorkloadBase
 from literals import (
     ARCHIVE_STORAGE_PATH,
     DATA_STORAGE_PATH,
+    DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     LOG_STORAGE_PATH,
+    LOGROTATE_CRON_FILE,
+    LOGROTATE_VM_CONFIG_FILE,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
     SNAP_ACL_FILE,
+    SNAP_CHECK_AOF_CLI,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
@@ -93,11 +97,10 @@ class _VmProcessHandle:
 
     def wait(self) -> tuple[int, str]:
         rc = self._proc.wait()
-        # The process has exited; closing stderr unblocks the drain thread's
-        # blocking read() so the join() below cannot hang.
+        # closing stderr before the drain thread reads it loses the output
+        self._stderr_thread.join(timeout=5)
         if self._proc.stderr is not None:
             self._proc.stderr.close()
-        self._stderr_thread.join()
         return rc, b"".join(self._stderr_buf).decode("utf-8", "replace")
 
     def kill(self) -> None:
@@ -123,6 +126,8 @@ class ValkeyVmWorkload(WorkloadBase):
         self.sentinel_acl_file = self.root_dir / SNAP_CURRENT_PATH / SNAP_SENTINEL_ACL_FILE
         self.working_dir = self.root_dir / SNAP_COMMON_PATH / DATA_STORAGE_PATH
         self.log_dir = self.root_dir / SNAP_COMMON_PATH / LOG_STORAGE_PATH
+        self.logrotate_config_file = self.root_dir / LOGROTATE_VM_CONFIG_FILE
+        self.logrotate_cron_file = self.root_dir / LOGROTATE_CRON_FILE
         self.archive_dir = self.root_dir / SNAP_COMMON_PATH / ARCHIVE_STORAGE_PATH
         self.lib_dir = self.root_dir / f"snap/{SNAP_NAME}/current/usr/lib/valkey/modules"
         self.tls_dir = self.root_dir / SNAP_CURRENT_PATH / "tls"
@@ -209,6 +214,14 @@ class ValkeyVmWorkload(WorkloadBase):
             logger.exception(str(e))
             raise ValkeyServicesFailedToStartError(f"Failed to start Valkey services: {e}") from e
 
+        if not service:
+            # the snap ships no logrotate, so use the host's
+            self.write_file(
+                f"* * * * * root /usr/sbin/logrotate {self.logrotate_config_file}\n",
+                self.logrotate_cron_file,
+                mode=0o644,
+            )
+
         # A service can start then die immediately; when check_alive, poll the
         # whole set (all-services start) or check the one service, matching k8s.
         if check_alive:
@@ -256,6 +269,25 @@ class ValkeyVmWorkload(WorkloadBase):
             raise ValkeyWorkloadCommandError(e)
 
     @override
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        try:
+            subprocess.run(
+                [SNAP_CHECK_AOF_CLI, manifest.as_posix()],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=DATASET_IO_TIMEOUT_S,
+            )
+        except subprocess.CalledProcessError as e:
+            if e.returncode != 1:
+                raise ValkeyWorkloadCommandError(e)
+            logger.warning("valkey-check-aof found an invalid AOF: %s", e.stdout)
+            return False
+        except (subprocess.TimeoutExpired, OSError) as e:
+            raise ValkeyWorkloadCommandError(e)
+        return True
+
+    @override
     def exec(
         self,
         command: list[str],
@@ -298,7 +330,7 @@ class ValkeyVmWorkload(WorkloadBase):
         retry=retry_if_result(lambda healthy: not healthy),
         retry_error_callback=lambda _: False,
     )
-    def alive(self, service: str | None = None) -> bool:
+    def alive(self, service: str | None = None) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         services = [service] if service else [self.valkey_service, self.sentinel_service]
         try:
             return all(bool(self.valkey.services[s]["active"]) for s in services)
@@ -335,7 +367,7 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         reraise=True,
     )
-    def stop(self, service: str | None = None, check_alive: bool = False) -> None:
+    def stop(self, service: str | None = None, check_alive: bool = False) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         services = [service] if service else [SNAP_SERVICE, SNAP_SENTINEL_SERVICE]
         try:
             self.valkey.stop(services=services)

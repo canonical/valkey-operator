@@ -13,9 +13,9 @@ from common.exceptions import ValkeyWorkloadCommandError
 from core.base_workload import WorkloadBase
 from literals import (
     CLIENT_PORT,
+    DATASET_IO_TIMEOUT_S,
     EXEC_TIMEOUT_S,
     PRIMARY_NAME,
-    SAVE_TIMEOUT_S,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
@@ -156,6 +156,18 @@ class ValkeyClient(CliClient):
         except ValkeyWorkloadCommandError:
             return False
 
+    def is_responding(self, hostname: str) -> bool:
+        """Whether the server answers a ping at all, a LOADING error included.
+
+        Args:
+            hostname: The hostname to connect to.
+        """
+        try:
+            self.exec_cli_command(["ping"], hostname=hostname, json_output=False)
+        except ValkeyWorkloadCommandError:
+            return False
+        return True
+
     def info_persistence(self, hostname: str) -> dict[str, str]:
         """Get the persistence information of the Valkey server.
 
@@ -290,7 +302,13 @@ class ValkeyClient(CliClient):
         return self.exec_cli_command(["acl", "load"], hostname=hostname) == "OK"
 
     def config_set(self, config_settings: dict[str, str], hostname: str) -> None:
-        """Load a dictionary of config settings in a Valkey server."""
+        """Load a dictionary of config settings in a Valkey server.
+
+        valkey-cli prints error replies on stdout with exit code 0, so the reply is checked.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails or the server refuses the settings.
+        """
         cmd = ["CONFIG", "SET"]
 
         for key, value in config_settings.items():
@@ -298,7 +316,20 @@ class ValkeyClient(CliClient):
             cmd.append(value)
         logger.debug("Loading config settings")
 
-        self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
+        reply = self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
+        if reply != "OK":
+            # the reply can echo values such as primaryauth, so only the keys are reported
+            raise ValkeyWorkloadCommandError(
+                f"CONFIG SET {', '.join(config_settings)} refused on {hostname}"
+            )
+
+    def config_get(self, keys: list[str], hostname: str) -> dict[str, str]:
+        """Read config values from a Valkey server.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails.
+        """
+        return self.exec_cli_command(["CONFIG", "GET", *keys], hostname=hostname)
 
     def save(self, hostname: str) -> None:
         """Run a blocking save.
@@ -312,10 +343,23 @@ class ValkeyClient(CliClient):
             ValkeyWorkloadCommandError: If the CLI fails, times out, or the reply is not ``OK``.
         """
         reply = self.exec_cli_command(
-            ["save"], hostname=hostname, json_output=False, timeout=SAVE_TIMEOUT_S
+            ["save"], hostname=hostname, json_output=False, timeout=DATASET_IO_TIMEOUT_S
         )
         if reply != "OK":
             raise ValkeyWorkloadCommandError(f"SAVE failed on {hostname}: {reply}")
+
+    def bgsave(self, hostname: str) -> None:
+        """Start a background save.
+
+        Args:
+            hostname: The hostname to connect to.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails or the server refuses the save.
+        """
+        reply = self.exec_cli_command(["bgsave"], hostname=hostname, json_output=False)
+        if "Background saving started" not in reply:
+            raise ValkeyWorkloadCommandError(f"BGSAVE failed on {hostname}: {reply}")
 
     def reset_client_connections(self, hostname: str) -> None:
         """Send a kill command to connected clients of types normal/pubsub.
@@ -412,6 +456,21 @@ class SentinelClient(CliClient):
             )
             == "OK"
         )
+
+    def failover_primary(self, hostname: str) -> None:
+        """Promote a replica without the primary's help, which works when the primary is down.
+
+        Args:
+            hostname: The hostname to connect to.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the CLI fails or Sentinel refuses with NOGOODSLAVE.
+        """
+        reply = self.exec_cli_command(
+            command=["sentinel", "failover", PRIMARY_NAME], hostname=hostname, json_output=False
+        )
+        if reply != "OK":
+            raise ValkeyWorkloadCommandError(f"SENTINEL FAILOVER refused: {reply}")
 
     # wait for 3m+10 for the failover to finish
     # sentinel waits 3m before timing out a failover

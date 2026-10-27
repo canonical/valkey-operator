@@ -1,6 +1,6 @@
 (how-to-monitoring)=
 
-# How to enable monitoring
+# How to enable monitoring and logging
 
 This guide provides instructions for integrating Charmed Valkey with the
 [Canonical Observability Stack (COS)](https://documentation.ubuntu.com/observability/).
@@ -11,6 +11,8 @@ After you integrate the two, COS receives:
 - the Valkey and Sentinel logs
 - a Grafana dashboard and the [alert rules](reference-alert-rules) that ship with the
   charm
+
+It also shows where each unit keeps its log files and how they rotate.
 
 ## Prerequisites
 
@@ -308,6 +310,39 @@ drwxrws--- 2 root     170  16384 Oct  7 03:55 lost+found
 
 `````
 
+Both files rotate daily, or earlier once one passes 200 MB. Rotated files are kept for up to 10
+days, 14 files at most. All but the newest are compressed, so the names are `valkey.log.1`,
+`valkey.log.2.gz`, and so on.
+
+```{important}
+For production environments, use a logs volume of at least 8 GB.
+```
+
+To set the logs volume size when you deploy, pass `--storage logs=<size>`:
+
+`````{tab-set}
+:sync-group: substrate
+
+````{tab-item} VM
+:sync: vm
+
+```shell
+juju deploy valkey --channel 9/edge -n 3 --storage logs=8G
+```
+
+````
+
+````{tab-item} K8s
+:sync: k8s
+
+```shell
+juju deploy valkey --channel 9/edge -n 3 --storage logs=8G --trust
+```
+
+````
+
+`````
+
 ## Query the metrics endpoint
 
 The exporter serves metrics on port `9121` at `/metrics`. It connects to Valkey over TLS as the
@@ -350,16 +385,16 @@ The output has several hundred lines. On the primary, part of it looks like this
 ```text
 # HELP redis_up Information about the Redis instance
 # TYPE redis_up gauge
-redis_up{instance_role="master"} 1
+redis_up 1
 # HELP redis_connected_slaves connected_slaves metric
 # TYPE redis_connected_slaves gauge
-redis_connected_slaves{instance_role="master"} 2
+redis_connected_slaves 2
 # HELP redis_connected_clients connected_clients metric
 # TYPE redis_connected_clients gauge
-redis_connected_clients{instance_role="master"} 7
+redis_connected_clients 7
 # HELP redis_memory_used_bytes memory_used_bytes metric
 # TYPE redis_memory_used_bytes gauge
-redis_memory_used_bytes{instance_role="master"} 1.92476e+06
+redis_memory_used_bytes 1.92476e+06
 ```
 
 `redis_up` is `1` when the exporter reaches Valkey and `0` when it does not.

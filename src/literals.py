@@ -14,6 +14,10 @@ SNAP_LOGS_SLOT = f"{SNAP_NAME}:logs"
 SNAP_SERVICE = "server"
 SNAP_SENTINEL_SERVICE = "sentinel"
 METRICS_SERVICE = "metrics-exporter"
+LOGROTATE_SERVICE = "logrotate"
+LOGROTATE_CONFIG_FILE = "logrotate.conf"
+LOGROTATE_VM_CONFIG_FILE = "etc/logrotate.d/charmed-valkey"
+LOGROTATE_CRON_FILE = "etc/cron.d/charmed-valkey"
 SNAP_COMMON_PATH = f"var/snap/{SNAP_NAME}/common"
 SNAP_CURRENT_PATH = f"var/snap/{SNAP_NAME}/current"
 SNAP_CONFIG_FILE = "etc/valkey/valkey.conf"
@@ -31,13 +35,20 @@ CONFIG_FILE = "var/lib/valkey/valkey.conf"
 SENTINEL_CONFIG_FILE = "var/lib/valkey/sentinel.conf"
 ACL_FILE = "var/lib/valkey/users.acl"
 SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
+LOGROTATE_STATE_FILE = "var/lib/valkey/logrotate.status"
 
 TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
+TOPOLOGY_OBSERVER_LOG_MAX_BYTES = 10 * 1024**2
+TOPOLOGY_OBSERVER_LOG_BACKUPS = 3
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
 TOPOLOGY_OBSERVER_PID_FILENAME = "topology_observer.pid"
 
+# The non-root K8s charm user can write under /var/lib/juju but not /var/lib
+ROLLINGOPS_BASE_DIR = "/var/lib/juju/rollingops"
+
 PEER_RELATION = "valkey-peers"
 STATUS_PEERS_RELATION = "status-peers"
+ROLLINGOPS_PEER_RELATION = "rollingops-peers"
 CLIENT_TLS_RELATION_NAME = "client-certificates"
 CERTIFICATE_TRANSFER_RELATION = "certificate-transfer"
 LDAP_CA_CERT_RELATION = "ldap-ca-cert"
@@ -90,9 +101,48 @@ RESTORE_LOAD_TIMEOUT_S = 600
 RESTORE_RESYNC_TIMEOUT_S = 900
 # TIMEOUT for execs on the workload commands
 EXEC_TIMEOUT_S = 10
-# Bound for the pre-scale-down SAVE and for waiting out a running BGSAVE, equal to the lock TTL.
-# 1 GB took about 12 s on a 100 MB/s disk, so 300 s covers roughly 30 GB.
-SAVE_TIMEOUT_S = 300
+# Bound for one pass over the whole dataset on disk (SAVE, BGSAVE, AOF rewrite, valkey-check-aof).
+# The scale-down lock TTL is derived from it. A 1 GB SAVE took about 12 s on a 100 MB/s disk.
+DATASET_IO_TIMEOUT_S = 300
+# Scale-down lock wait. The TTL covers the AOF rewrite and BGSAVE waits, SAVE and failover.
+SCALE_DOWN_LOCK_TIMEOUT_S = 300
+SCALE_DOWN_LOCK_TTL_S = 4 * DATASET_IO_TIMEOUT_S
+SCALE_DOWN_LOCK_RETRY_INTERVAL_S = 5
+SCALE_DOWN_LOCK_ID = "scale-down"
+# rollingops callback ids
+START_OPERATION_ID = "start"
+RESTART_OPERATION_ID = "restart"
+# Holds in a row before a starting unit gives up the lock once for queued restarts
+START_MAX_HOLDS = 10
+# restart_run_id of a restart requested while Valkey was down, no real run ID matches it
+VALKEY_DOWN_RUN_ID = "down"
+
+DEFAULT_RDB_SAVE_POINTS = "900 1 300 100 60 10000"
+# Valkey's multi-part AOF layout inside the data dir (appenddirname and its manifest)
+AOF_DIR_NAME = "appendonlydir"
+AOF_MANIFEST_NAME = "appendonly.aof.manifest"
+RDB_FILE_NAME = "dump.rdb"
+# One archive slot for the last corrupted AOF a self-heal moved aside
+AOF_CORRUPT_ARCHIVE_NAME = "appendonlydir.corrupt"
+SNAP_CHECK_AOF_CLI = f"{SNAP_NAME}.check-aof"
+CHECK_AOF_CLI = "valkey-check-aof"
+# Valkey log lines around a start attempt, and the ones it logs before exiting on a corrupted AOF
+# (aof.c, rdb.c). Open, permission and I/O errors are left out, since moving the AOF can't fix them.
+VALKEY_START_LOG_LINE = "Valkey is starting"
+VALKEY_READY_LOG_LINE = "Ready to accept connections"
+# A start logs about 15 lines before it is ready or fails, plus client connections while it loads
+VALKEY_LOG_TAIL_LINES = 10_000
+AOF_LOAD_FATAL_LOG_LINES = (
+    "Bad file format reading the append only file",
+    "Error reading the append only file",
+    "Unexpected end of file reading the append only file",
+    "Fatal error: the truncated file is not the last file",
+    "FATAL AOF MANIFEST FILE ERROR",
+    "Error reading the RDB base file",
+    "Terminating server after rdb file reading failure",
+    # a file listed in the manifest is missing
+    "length. stat: No such file or directory",
+)
 
 CLIENT_PORT = 6379
 TLS_PORT = 6380
@@ -165,6 +215,14 @@ class StartState(StrEnum):
     STARTED = "started"
 
 
+# States after the services were started, while the unit waits to become healthy.
+STARTING_STATES = (
+    StartState.STARTING_WAITING_VALKEY.value,
+    StartState.STARTING_WAITING_SENTINEL.value,
+    StartState.STARTING_WAITING_REPLICA_SYNC.value,
+)
+
+
 class RestoreStep(StrEnum):
     """Steps of the restore coordination workflow (ordered).
 
@@ -199,6 +257,23 @@ class ScaleDownState(StrEnum):
     RESET_SENTINEL = "reset_sentinel"
     HEALTH_CHECK = "health_check"
     GOING_AWAY = "going_away"
+
+
+class PersistenceMode(StrEnum):
+    """Values of the `persistence-mode` config option."""
+
+    RDB = "RDB"
+    AOF = "AOF"
+    RDB_AOF = "RDB+AOF"
+    NONE = "None"
+
+
+class AppendFsync(StrEnum):
+    """Values of the `aof-appendfsync` config option."""
+
+    ALWAYS = "always"
+    EVERYSEC = "everysec"
+    NO = "no"
 
 
 class TLSState(StrEnum):

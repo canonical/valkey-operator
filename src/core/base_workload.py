@@ -11,7 +11,7 @@ from typing import IO, BinaryIO, Protocol, runtime_checkable
 from charmlibs import pathops
 
 from common.exceptions import ValkeyWorkloadCommandError
-from literals import EXEC_TIMEOUT_S
+from literals import DATASET_IO_TIMEOUT_S, EXEC_TIMEOUT_S
 
 
 @runtime_checkable
@@ -100,6 +100,7 @@ class WorkloadBase(ABC):
     sentinel_acl_file: pathops.PathProtocol
     working_dir: pathops.PathProtocol
     log_dir: pathops.PathProtocol
+    logrotate_config_file: pathops.PathProtocol
     archive_dir: pathops.PathProtocol
     lib_dir: pathops.PathProtocol
     tls_dir: pathops.PathProtocol
@@ -311,6 +312,40 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def remove_dir(self, path: pathops.PathProtocol) -> None:
+        """Remove a directory with its content, doing nothing if it is absent.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the removal fails.
+        """
+        self.exec(["rm", "-rf", path.as_posix()])
+
+    def copy_dir(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
+        """Copy a directory tree, also across partitions.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the copy fails.
+        """
+        self.exec(["cp", "-a", src.as_posix(), dest.as_posix()], timeout=DATASET_IO_TIMEOUT_S)
+
+    def disk_usage(self, path: pathops.PathProtocol) -> int:
+        """Return the bytes a file or directory tree uses on disk.
+
+        Raises:
+            ValkeyWorkloadCommandError: If ``du`` fails.
+        """
+        stdout, _ = self.exec(["du", "-sB1", path.as_posix()], timeout=DATASET_IO_TIMEOUT_S)
+        return int(stdout.split()[0])
+
+    def free_space(self, path: pathops.PathProtocol) -> int:
+        """Return the bytes available on the filesystem that holds the path.
+
+        Raises:
+            ValkeyWorkloadCommandError: If ``df`` fails.
+        """
+        stdout, _ = self.exec(["df", "--output=avail", "-B1", path.as_posix()])
+        return int(stdout.split()[-1])
+
     def make_dir(self, path: pathops.PathProtocol, exist_ok: bool = False) -> None:
         """Create a directory at the given path, translating filesystem/Pebble errors to ValkeyWorkloadCommandError."""
         try:
@@ -350,6 +385,14 @@ class WorkloadBase(ABC):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
 
+    def read_file_tail(self, path: pathops.PathProtocol, lines: int) -> str:
+        """Return the last lines of a text file, without reading the whole file.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the file cannot be read.
+        """
+        return self.exec(["tail", "-n", str(lines), path.as_posix()])[0]
+
     @abstractmethod
     def push_data_file(
         self,
@@ -364,4 +407,16 @@ class WorkloadBase(ABC):
     @abstractmethod
     def move_file(self, src: pathops.PathProtocol, dest: pathops.PathProtocol) -> None:
         """Rename a file within the data dir."""
+        pass
+
+    @abstractmethod
+    def check_aof(self, manifest: pathops.PathProtocol) -> bool:
+        """Run valkey-check-aof, without --fix, against an AOF manifest.
+
+        Returns:
+            True if the AOF is valid, False if it is truncated or corrupted.
+
+        Raises:
+            ValkeyWorkloadCommandError: If the check could not run.
+        """
         pass

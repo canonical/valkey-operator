@@ -16,6 +16,7 @@ from literals import (
     METRICS_PORT,
     METRICS_SERVICE,
     PEER_RELATION,
+    ROLLINGOPS_PEER_RELATION,
     TLS_PORT,
     CharmUsers,
 )
@@ -37,7 +38,7 @@ def base_state():
     return testing.State(
         leader=True,
         containers=[container],
-        relations=[peer_relation],
+        relations=[peer_relation, testing.PeerRelation(id=2, endpoint=ROLLINGOPS_PEER_RELATION)],
     )
 
 
@@ -63,9 +64,7 @@ def test_exporter_env_rendered_k8s(base_state):
         assert env["REDIS_EXPORTER_TLS_SERVER_NAME"] == charm.state.endpoint
         assert env["REDIS_EXPORTER_WEB_LISTEN_ADDRESS"] == f"0.0.0.0:{METRICS_PORT}"
         assert env["REDIS_EXPORTER_INCL_SYSTEM_METRICS"] == "true"
-        assert env["REDIS_EXPORTER_APPEND_INSTANCE_ROLE_LABEL"] == "true"
         assert env["REDIS_EXPORTER_INCL_CONFIG_METRICS"] == "false"
-        assert env["REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT"] == "true"
 
 
 def test_exporter_env_rendered_vm(vm_environment):
@@ -77,7 +76,7 @@ def test_exporter_env_rendered_vm(vm_environment):
     )
     state = testing.State(
         leader=True,
-        relations=[peer_relation],
+        relations=[peer_relation, testing.PeerRelation(id=2, endpoint=ROLLINGOPS_PEER_RELATION)],
     )
     state = ctx.run(ctx.on.leader_elected(), state)
 

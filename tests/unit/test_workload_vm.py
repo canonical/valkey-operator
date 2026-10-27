@@ -4,7 +4,13 @@
 
 """Unit tests for ValkeyVmWorkload.total_memory_bytes per-unit RAM detection."""
 
+import subprocess
+from pathlib import PurePosixPath
+
+import pytest
+
 import workload_vm
+from common.exceptions import ValkeyWorkloadCommandError
 from workload_vm import ValkeyVmWorkload
 
 
@@ -121,3 +127,29 @@ def test_sysconf_path_is_gone():
     import inspect
 
     assert "sysconf" not in inspect.getsource(workload_vm)
+
+
+@pytest.mark.parametrize("returncode,valid", [(0, True), (1, False)])
+def test_check_aof_maps_exit_codes(monkeypatch, returncode, valid):
+    """Exit code 0 means valid and 1 means truncated or corrupted."""
+
+    def fake_run(command, **kwargs):
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, command, output="AOF is not valid")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(workload_vm.subprocess, "run", fake_run)
+
+    assert _vm_workload({}).check_aof(PurePosixPath("/data/appendonly.aof.manifest")) is valid
+
+
+def test_check_aof_raises_when_the_check_cannot_run(monkeypatch):
+    """Any other exit code is a failed check, never a corrupted AOF."""
+
+    def fake_run(command, **kwargs):
+        raise subprocess.CalledProcessError(127, command)
+
+    monkeypatch.setattr(workload_vm.subprocess, "run", fake_run)
+
+    with pytest.raises(ValkeyWorkloadCommandError):
+        _vm_workload({}).check_aof(PurePosixPath("/data/appendonly.aof.manifest"))

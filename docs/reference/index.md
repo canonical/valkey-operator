@@ -9,4 +9,6 @@ Technical information about Charmed Valkey.
 :maxdepth: 2
 
 Alert rules <alert-rules>
+Releases <releases/index>
+Requirements <requirements>
 ```

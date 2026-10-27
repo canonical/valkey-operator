@@ -179,7 +179,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -242,7 +242,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -269,7 +269,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
@@ -328,6 +328,12 @@ class ExternalClientsEvents(ops.Object):
 
     def _on_ca_available(self, event: CertificatesAvailableEvent) -> None:
         """Handle the CA certificates available event."""
+        if self.charm.state.unit_server.is_tls_transitioning:
+            # a reload mid-transition can load a rotating cert early
+            logger.info("TLS transition in progress, deferring CA update")
+            event.defer()
+            return
+
         if not (
             ca_certs := self.certificate_transfer.get_all_certificates(
                 relation_id=event.relation_id  # pyright: ignore[reportArgumentType]
@@ -348,7 +354,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error storing CA certificates for external clients: %s", e)
             event.defer()
@@ -356,6 +362,12 @@ class ExternalClientsEvents(ops.Object):
 
     def _on_ca_removed(self, event: CertificatesRemovedEvent) -> None:
         """Handle the CA certificates removed event."""
+        if self.charm.state.unit_server.is_tls_transitioning:
+            # a reload mid-transition can load a rotating cert early
+            logger.info("TLS transition in progress, deferring CA update")
+            event.defer()
+            return
+
         ca_certs_file = (
             self.charm.workload.tls_paths.ca_certs_dir
             / f"external_client_cas_{event.relation_id}.pem"
@@ -369,7 +381,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.tls_manager.rehash_ca_certificates()
             tls_config = self.charm.config_manager.generate_tls_config()
             self.charm.cluster_manager.reload_tls_settings(tls_config)
-            self.charm.restart_workload.emit(restart_valkey=False, restart_sentinel=True)
+            self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         except (ValkeyTLSLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Error removing CA certificates for external clients: %s", e)
             event.defer()

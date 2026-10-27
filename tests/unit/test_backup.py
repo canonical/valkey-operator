@@ -45,6 +45,7 @@ from src.literals import (
     DATA_STORAGE,
     GCS_RELATION_NAME,
     PEER_RELATION,
+    ROLLINGOPS_PEER_RELATION,
     S3_RELATION_NAME,
     STATUS_PEERS_RELATION,
 )
@@ -482,6 +483,7 @@ def test_create_backup_deletes_object_and_raises_when_cli_fails(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     proc.wait.return_value = (1, "WRONGPASS")
     workload.exec_stream.return_value = proc
 
@@ -702,6 +704,7 @@ def test_create_backup_kills_producer_on_upload_failure(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     workload.exec_stream.return_value = proc
 
     backend = _fake_backend(mocker)
@@ -895,6 +898,7 @@ def test_create_backup_kills_producer_on_an_unexpected_upload_error(mocker):
     workload = mocker.MagicMock()
     workload.cli = "valkey-cli"
     proc = mocker.MagicMock()
+    proc.stdout = io.BytesIO(b"")
     workload.exec_stream.return_value = proc
 
     backend = _fake_backend(mocker)
@@ -1181,7 +1185,10 @@ BACKUP_ID = "2026-05-13T10:00:00Z"
 def _backup_context_and_state(*, leader=True, relations=(), secrets=(), unit_data=None, peer=True):
     """Build a Context + State with the peer relations and the given storage relations."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peers = {testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)}
+    peers = {
+        testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION),
+        testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION),
+    }
     if peer:
         peers.add(
             testing.PeerRelation(

@@ -1,3 +1,5 @@
+(how-to-ldap)=
+
 # How to manage LDAP
 
 LDAP (Lightweight Directory Access Protocol) enables centralized authentication for Valkey, 

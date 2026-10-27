@@ -153,6 +153,8 @@ To access the database:
 valkey-1.valkey-endpoints:6379> set test-keyspace:mykey 42
 ```
 
+(how-to-clients-mtls)=
+
 ## Enable mutual TLS
 
 Charmed Valkey optionally supports client-side TLS in addition to server-side TLS. 
@@ -201,10 +203,12 @@ After connecting, log in with the credentials provided through the relation inte
 valkey-1.valkey-endpoints:6380> AUTH relation-5-40749865b6c7d821 <PASSWORD>
 ```
 
+(how-to-clients-password-less)=
+
 ## Enable authentication through client certificate
 
 Charmed Valkey also supports password-less authentication via client certificates.
-This requires mutual TLS.
+This requires [mutual TLS](how-to-clients-mtls).
 
 Clients can log in to Valkey without providing a username and password, when the 
 common name (CN) of the presented client certificates matches the username that

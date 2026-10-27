@@ -84,7 +84,7 @@ for more information on how to select the right certificate provider for your us
 Encryption in transit for backups is provided by the storage provider. S3-compatible object storage, 
 Azure Blob storage and Google Cloud Storage are supported.
 
-For more information on encryption, see the [Cryptography](cryptography) explanation page and [How to enable TLS](../../how-to/tls) guide.
+For more information on encryption, see the [Cryptography](cryptography) explanation page and [How to enable TLS](how-to-tls) guide.
 
 ### Authentication and Authorisation
 
@@ -98,7 +98,7 @@ These client users are restricted to access only the range of keys specified in 
 request.
 
 As an additional layer of authentication and authorisation, Charmed Valkey supports LDAP. 
-See [How to manage LDAP](../../how-to/ldap.md) for more information.
+See [How to manage LDAP](how-to-ldap) for more information.
 
 ### Monitoring and auditing
 
@@ -106,18 +106,19 @@ Charmed Valkey provides native integration with the [Canonical Observability Sta
 To reduce the blast radius of infrastructure disruptions, the general recommendation is to deploy 
 COS and the observed application into separate environments, isolated from one another. 
 Refer to the [COS production deployments best practices](https://charmhub.io/topics/canonical-observability-stack/reference/best-practices) for more information.
-To set up the integration, see [How to enable monitoring](how-to-monitoring).
+To set up the integration, see [How to enable monitoring and logging](how-to-monitoring).
 
 ````{tab-set}
 ```{tab-item} VM
 :sync: vm
 Logging is enabled by default. The logs are stored in the `/var/snap/valkey-charmed/common/var/log/valkey` 
-directory of the Valkey container.
+directory of the Valkey container. They are rotated daily and kept for up to 10 days.
 ```
 
 ```{tab-item} K8s
 :sync: k8s
 Logging is enabled by default. The logs are stored in the `/var/log/valkey` directory of the Valkey container.
+They are rotated daily and kept for up to 10 days.
 ```
 ```` 
 
