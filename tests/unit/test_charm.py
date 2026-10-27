@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import dataclasses
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -156,13 +157,15 @@ def test_start_primary(lock_granted_immediately):
     )
     assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
 
+    # Each start below runs the start handler again, so drop the deferred
+    # unit-fully-started event rather than have it re-emitted first.
     with (
         patch("common.client.ValkeyClient.ping", return_value=True),
         patch("common.client.ValkeyClient.info_persistence", return_value={"loading": "0"}),
         patch("managers.cluster.ClusterManager.is_primary", return_value=True),
         patch("common.client.ValkeyClient.set", return_value=True),
     ):
-        state_out = ctx.run(ctx.on.start(), state_out)
+        state_out = ctx.run(ctx.on.start(), dataclasses.replace(state_out, deferred=[]))
         assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
 
     with (
@@ -176,7 +179,7 @@ def test_start_primary(lock_granted_immediately):
         patch("managers.tls.TLSManager.will_certificate_expire"),
         patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
-        state_out = ctx.run(ctx.on.start(), state_out)
+        state_out = ctx.run(ctx.on.start(), dataclasses.replace(state_out, deferred=[]))
         assert state_out.unit_status == ActiveStatus()
         assert state_out.app_status == ActiveStatus()
 
