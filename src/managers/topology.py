@@ -11,15 +11,21 @@ import subprocess
 from pathlib import Path
 from sys import version_info
 
+from common.exceptions import (
+    ValkeyServicesCouldNotBeStoppedError,
+    ValkeyServicesFailedToStartError,
+)
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
     LOG_STORAGE,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
     TOPOLOGY_OBSERVER_PID_FILENAME,
     TOPOLOGY_OBSERVER_TLS_CA_FILENAME,
     CharmUsers,
+    Substrate,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +53,14 @@ class TopologyManager:
 
     def start_observer(self) -> None:
         """Start the topology observer as a subprocess."""
+        if self.state.substrate == Substrate.K8S:
+            # before the early return, so a restarted valkey container gets its forwarding back
+            try:
+                self.workload.start(TOPOLOGY_OBSERVER_LOGS_SERVICE, check_alive=False)
+            except ValkeyServicesFailedToStartError as e:
+                # e.g. a refreshed pod before the full start adds this revision's layer
+                logger.warning("Cannot forward the topology observer log: %s", e)
+
         if self._read_observer_pid() != 0:
             return
 
@@ -108,6 +122,13 @@ class TopologyManager:
 
     def stop_observer(self) -> None:
         """Stop the topology observer."""
+        if self.state.substrate == Substrate.K8S:
+            # before the early return, the forwarding outlives a restarted charm container
+            try:
+                self.workload.stop(TOPOLOGY_OBSERVER_LOGS_SERVICE)
+            except ValkeyServicesCouldNotBeStoppedError as e:
+                logger.warning("Cannot stop forwarding the topology observer log: %s", e)
+
         if (observer_pid := self._read_observer_pid()) == 0:
             logger.debug("Topology observer already stopped")
             return

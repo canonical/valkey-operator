@@ -2,7 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-from unittest.mock import PropertyMock, patch
+from unittest.mock import PropertyMock, call, patch
 
 import pytest
 from ops import testing
@@ -14,6 +14,7 @@ from literals import (
     PEER_RELATION,
     SCALE_DOWN_LOCK_TIMEOUT_S,
     STATUS_PEERS_RELATION,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
     ScaleDownState,
 )
 from statuses import ScaleDownStatuses
@@ -127,7 +128,8 @@ def test_non_primary():
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
         mock_acquire.assert_called_once_with(timeout=SCALE_DOWN_LOCK_TIMEOUT_S)
         mock_release.assert_called_once_with()
-        mock_stop.assert_called_once()
+        # the leader stops the observer log forwarding before the workload
+        assert mock_stop.call_args_list == [call(TOPOLOGY_OBSERVER_LOGS_SERVICE), call()]
         mock_reset.assert_not_called()
         assert get_replica_offset.call_count == 2
         save_dataset.assert_called_once()
@@ -182,7 +184,8 @@ def test_non_primary_block_until_synced():
         ),
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
-        mock_stop.assert_called_once()
+        # the leader stops the observer log forwarding before the workload
+        assert mock_stop.call_args_list == [call(TOPOLOGY_OBSERVER_LOGS_SERVICE), call()]
         mock_reset.assert_not_called()
         assert get_replica_offset.call_count == 3
         save_dataset.assert_called_once()
@@ -237,7 +240,8 @@ def test_primary():
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
         mock_failover.assert_called_once()
         mock_failover_in_progress.assert_called_once()
-        mock_stop.assert_called_once()
+        # the leader stops the observer log forwarding before the workload
+        assert mock_stop.call_args_list == [call(TOPOLOGY_OBSERVER_LOGS_SERVICE), call()]
         mock_reset.assert_not_called()
         get_replica_offset.assert_not_called()
         save_dataset.assert_called_once()
@@ -331,7 +335,8 @@ def test_last_leader_unit_going_down():
         patch("ops.model.Application.planned_units", return_value=0),
     ):
         state_out = ctx.run(ctx.on.storage_detaching(data_strorage), state_in)
-        mock_stop.assert_called_once()
+        # the leader stops the observer log forwarding before the workload
+        assert mock_stop.call_args_list == [call(TOPOLOGY_OBSERVER_LOGS_SERVICE), call()]
         save_dataset.assert_called_once()
         status_is(state_out, ScaleDownStatuses.GOING_AWAY.value)
         cluster_update.assert_called_once_with(
