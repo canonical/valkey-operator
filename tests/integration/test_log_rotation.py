@@ -9,7 +9,6 @@ from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import (
     PRIMARY_NAME,
-    TOPOLOGY_OBSERVER_LOG_FILENAME,
     TOPOLOGY_OBSERVER_LOGS_SERVICE,
     CharmUsers,
     Substrate,
@@ -18,6 +17,7 @@ from tests.integration.ha.helpers.helpers import reboot_unit
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    OBSERVER_LOG,
     are_apps_active_and_agents_idle,
     exec_valkey_cli,
     fast_forward,
@@ -29,8 +29,6 @@ from tests.integration.helpers import (
 logger = logging.getLogger(__name__)
 
 UNIT = f"{APP_NAME}/0"
-# the charm process sees the logs storage at its VM path on both substrates
-OBSERVER_LOG = f"/var/snap/valkey-charmed/common/var/log/valkey/{TOPOLOGY_OBSERVER_LOG_FILENAME}"
 
 
 def grow(path: str, size: str) -> str:
