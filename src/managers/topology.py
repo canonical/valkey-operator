@@ -14,6 +14,7 @@ from sys import version_info
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
+    LOG_STORAGE,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TOPOLOGY_OBSERVER_PID_FILENAME,
@@ -99,6 +100,8 @@ class TopologyManager:
                 str(self.state.unit_server.is_tls_enabled),
                 self.state.unit_server.unit_name,
                 self.state.charm.charm_dir,
+                # the logs storage survives pod restarts and refreshes, unlike the charm dir
+                self.state.charm.model.storages[LOG_STORAGE][0].location,
             ],
             # The observer writes its own rotating log file.
             stdout=subprocess.DEVNULL,

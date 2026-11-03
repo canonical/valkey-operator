@@ -45,11 +45,11 @@ def handle_stop_signal(signum, frame) -> None:
 
 def main() -> None:
     """Start a Sentinel client and check changes to primary."""
-    hosts, username, password, tls, unit_name, charm_dir = sys.argv[1:]
+    hosts, username, password, tls, unit_name, charm_dir, log_dir = sys.argv[1:]
     logging.basicConfig(
         handlers=[
             RotatingFileHandler(
-                f"{charm_dir}/{TOPOLOGY_OBSERVER_LOG_FILENAME}",
+                f"{log_dir}/{TOPOLOGY_OBSERVER_LOG_FILENAME}",
                 maxBytes=TOPOLOGY_OBSERVER_LOG_MAX_BYTES,
                 backupCount=TOPOLOGY_OBSERVER_LOG_BACKUPS,
             )

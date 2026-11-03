@@ -4,9 +4,11 @@
 import logging
 
 import jubilant
+import pytest
 from tenacity import Retrying, stop_after_delay, wait_fixed
 
 from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_LOG_FILENAME, CharmUsers, Substrate
+from tests.integration.ha.helpers.helpers import reboot_unit
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
@@ -20,7 +22,8 @@ from tests.integration.helpers import (
 logger = logging.getLogger(__name__)
 
 UNIT = f"{APP_NAME}/0"
-CHARM_DIR = f"/var/lib/juju/agents/unit-{APP_NAME}-0/charm"
+# the charm process sees the logs storage at its VM path on both substrates
+OBSERVER_LOG = f"/var/snap/valkey-charmed/common/var/log/valkey/{TOPOLOGY_OBSERVER_LOG_FILENAME}"
 
 
 def grow(path: str, size: str) -> str:
@@ -87,7 +90,7 @@ def test_valkey_and_sentinel_logs_rotate(juju: jubilant.Juju, substrate: Substra
 
 def test_topology_observer_log_rotates(juju: jubilant.Juju, substrate: Substrate) -> None:
     """The observer log rotates past 10M on the observer's next write."""
-    log_file = f"{CHARM_DIR}/{TOPOLOGY_OBSERVER_LOG_FILENAME}"
+    log_file = OBSERVER_LOG
     # K8s lands in the charm container as the charm user, the VM charm runs as root
     sudo = "" if substrate == Substrate.K8S else "sudo "
 
@@ -107,3 +110,23 @@ def test_topology_observer_log_rotates(juju: jubilant.Juju, substrate: Substrate
                 juju.cli(
                     "ssh", UNIT, f"{sudo}sh -c 'test -f {log_file}.1 && {is_fresh(log_file)}'"
                 )
+
+
+def test_topology_observer_log_survives_pod_restart(
+    juju: jubilant.Juju, substrate: Substrate
+) -> None:
+    """The observer log lives on the logs storage, so a new pod keeps the old lines."""
+    if substrate != Substrate.K8S:
+        pytest.skip("Pod restarts are K8s-only")
+
+    first_line = juju.ssh(UNIT, f"head -1 {OBSERVER_LOG}").strip()
+    assert first_line, "the observer log is empty"
+
+    logger.info("Deleting the pod of %s", UNIT)
+    reboot_unit(juju, UNIT, substrate)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        timeout=600,
+    )
+
+    assert first_line in juju.ssh(UNIT, f"cat {OBSERVER_LOG}").splitlines()
