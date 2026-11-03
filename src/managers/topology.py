@@ -47,14 +47,8 @@ class TopologyManager:
 
     def start_observer(self) -> None:
         """Start the topology observer as a subprocess."""
-        if (observer_pid := self._read_observer_pid()) != 0:
-            try:
-                # check if the process already runs
-                os.kill(int(observer_pid), 0)
-                return
-            except OSError:
-                logger.debug("Topology observer not running")
-                pass
+        if self._read_observer_pid() != 0:
+            return
 
         # Generate the venv path based on the existing lib path
         env = os.environ.copy()
@@ -133,8 +127,12 @@ class TopologyManager:
         self.start_observer()
 
     def _read_observer_pid(self) -> int:
-        """Read the pid file of the topology observer and return the pid, or 0 if none."""
+        """Return the pid of the running topology observer, or 0 if none."""
         try:
-            return int(self._pid_file_path.read_text())
+            pid = int(self._pid_file_path.read_text())
+            # the pid file outlives a crashed observer and the kernel can reuse its pid
+            if "topology_observer.py" in Path(f"/proc/{pid}/cmdline").read_text():
+                return pid
         except (FileNotFoundError, PermissionError):
-            return 0
+            pass
+        return 0
