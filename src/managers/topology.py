@@ -108,7 +108,8 @@ class TopologyManager:
                 str(self.state.unit_server.is_tls_enabled),
                 self.state.unit_server.unit_name,
                 self.state.charm.charm_dir,
-                # the logs storage survives pod restarts and refreshes, unlike the charm dir
+                # the logs storage survives pod restarts and refreshes, unlike the charm dir.
+                # On K8s this is the charm container's mount, the workload's is elsewhere.
                 self.state.charm.model.storages[LOG_STORAGE][0].location,
             ],
             # The observer writes its own rotating log file.
