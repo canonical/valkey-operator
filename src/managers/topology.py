@@ -11,14 +11,21 @@ import subprocess
 from pathlib import Path
 from sys import version_info
 
+from common.exceptions import (
+    ValkeyServicesCouldNotBeStoppedError,
+    ValkeyServicesFailedToStartError,
+)
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
 from literals import (
+    LOG_STORAGE,
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
     TOPOLOGY_OBSERVER_PID_FILENAME,
     TOPOLOGY_OBSERVER_TLS_CA_FILENAME,
     CharmUsers,
+    Substrate,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,14 +53,16 @@ class TopologyManager:
 
     def start_observer(self) -> None:
         """Start the topology observer as a subprocess."""
-        if (observer_pid := self._read_observer_pid()) != 0:
+        if self.state.substrate == Substrate.K8S:
+            # before the early return, so a restarted valkey container gets its forwarding back
             try:
-                # check if the process already runs
-                os.kill(int(observer_pid), 0)
-                return
-            except OSError:
-                logger.debug("Topology observer not running")
-                pass
+                self.workload.start(TOPOLOGY_OBSERVER_LOGS_SERVICE, check_alive=False)
+            except ValkeyServicesFailedToStartError as e:
+                # e.g. a refreshed pod before the full start adds this revision's layer
+                logger.warning("Cannot forward the topology observer log: %s", e)
+
+        if self._read_observer_pid() != 0:
+            return
 
         # Generate the venv path based on the existing lib path
         env = os.environ.copy()
@@ -99,6 +108,9 @@ class TopologyManager:
                 str(self.state.unit_server.is_tls_enabled),
                 self.state.unit_server.unit_name,
                 self.state.charm.charm_dir,
+                # the logs storage survives pod restarts and refreshes, unlike the charm dir.
+                # On K8s this is the charm container's mount, the workload's is elsewhere.
+                self.state.charm.model.storages[LOG_STORAGE][0].location,
             ],
             # The observer writes its own rotating log file.
             stdout=subprocess.DEVNULL,
@@ -111,6 +123,13 @@ class TopologyManager:
 
     def stop_observer(self) -> None:
         """Stop the topology observer."""
+        if self.state.substrate == Substrate.K8S:
+            # before the early return, the forwarding outlives a restarted charm container
+            try:
+                self.workload.stop(TOPOLOGY_OBSERVER_LOGS_SERVICE)
+            except ValkeyServicesCouldNotBeStoppedError as e:
+                logger.warning("Cannot stop forwarding the topology observer log: %s", e)
+
         if (observer_pid := self._read_observer_pid()) == 0:
             logger.debug("Topology observer already stopped")
             return
@@ -130,8 +149,12 @@ class TopologyManager:
         self.start_observer()
 
     def _read_observer_pid(self) -> int:
-        """Read the pid file of the topology observer and return the pid, or 0 if none."""
+        """Return the pid of the running topology observer, or 0 if none."""
         try:
-            return int(self._pid_file_path.read_text())
+            pid = int(self._pid_file_path.read_text())
+            # the pid file outlives a crashed observer and the kernel can reuse its pid
+            if "topology_observer.py" in Path(f"/proc/{pid}/cmdline").read_text():
+                return pid
         except (FileNotFoundError, PermissionError):
-            return 0
+            pass
+        return 0

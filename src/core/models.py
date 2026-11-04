@@ -375,6 +375,7 @@ class PeerAppModel(PeerModel):
     restore_participants: str = Field(default="")
     sentinel_reset_required: bool = Field(default=False)
     persistence_config: PersistenceConfig | None = Field(default=None)
+    topology_observer_unit: str = Field(default="")
 
 
 class PeerUnitModel(PeerModel):

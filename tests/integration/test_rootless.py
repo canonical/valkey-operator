@@ -21,6 +21,7 @@ from tests.integration.ha.helpers.helpers import (
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    OBSERVER_LOG,
     TLS_CHANNEL,
     TLS_NAME,
     are_agents_idle,
@@ -97,7 +98,7 @@ def test_workload_container_runs_as_non_root(juju: jubilant.Juju, substrate: Sub
 
 
 def test_topology_observer_log_with_tls(juju: jubilant.Juju, substrate: Substrate) -> None:
-    """After enabling TLS the topology observer must write its log into the charm directory."""
+    """After enabling TLS the topology observer must write its log into the logs storage."""
     if substrate != Substrate.K8S:
         pytest.skip("Rootless tests are K8s-only")
 
@@ -122,7 +123,7 @@ def test_topology_observer_log_with_tls(juju: jubilant.Juju, substrate: Substrat
     charm_dir_result = juju.exec(command="printenv JUJU_CHARM_DIR", unit=unit_name)
     charm_dir = charm_dir_result.stdout.strip()
 
-    log_path = f"{charm_dir}/topology_observer.log"
+    log_path = OBSERVER_LOG
     ca_path = f"{charm_dir}/valkey_ca.pem"
 
     # Give the topology observer time to start and write its first log line.
@@ -163,9 +164,7 @@ def test_topology_changed_dispatched_after_failover(
     primary_unit = get_unit_name_from_primary_ip(juju, primary_ip, substrate)
     observer_unit = next(name for name, unit in units.items() if unit.leader)
 
-    charm_dir_result = juju.exec(command="printenv JUJU_CHARM_DIR", unit=observer_unit)
-    charm_dir = charm_dir_result.stdout.strip()
-    log_path = f"{charm_dir}/topology_observer.log"
+    log_path = OBSERVER_LOG
 
     # Record log line count before the failover.
     result = juju.exec(

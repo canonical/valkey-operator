@@ -40,6 +40,8 @@ from literals import (
     SENTINEL_CONFIG_FILE,
     SENTINEL_LOG_FILE,
     SENTINEL_LOGS_SERVICE,
+    TOPOLOGY_OBSERVER_LOG_FILENAME,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
     VALKEY_LOG_FILE,
     VALKEY_LOGS_SERVICE,
 )
@@ -214,6 +216,16 @@ class ValkeyK8sWorkload(WorkloadBase):
                     "backoff-delay": "1m0s",
                     "backoff-factor": 1,
                     "backoff-limit": "1m0s",
+                },
+                # the topology manager starts it on the leader only, next to the observer
+                TOPOLOGY_OBSERVER_LOGS_SERVICE: {
+                    "override": "replace",
+                    "summary": "Stream the topology observer log file to stdout for log forwarding",
+                    "command": "tail -n0 -F "
+                    f"{(self.log_dir / TOPOLOGY_OBSERVER_LOG_FILENAME).as_posix()}",
+                    "user": self.user,
+                    "group": self.user,
+                    "startup": "disabled",
                 },
             },
         }
@@ -397,7 +409,13 @@ class ValkeyK8sWorkload(WorkloadBase):
             )
         )
         try:
-            self.container.stop(*targets)
+            # Pebble rejects services missing from the plan, e.g. before the first start
+            if running := [
+                name
+                for name, info in self.container.get_services(*targets).items()
+                if info.is_running()
+            ]:
+                self.container.stop(*running)
         except (
             pebble.ChangeError,
             pebble.TimeoutError,
