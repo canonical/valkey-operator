@@ -5,6 +5,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1725,7 +1726,11 @@ def _vm_peer_relation() -> testing.PeerRelation:
     return testing.PeerRelation(
         id=1,
         endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started", "private-ip": "127.1.1.1"},
+        local_unit_data={
+            "start-state": "started",
+            "private-ip": "127.1.1.1",
+            "endpoint": "127.1.1.1",
+        },
     )
 
 
@@ -1739,27 +1744,31 @@ def vm_cert_mocks(vm_environment, mocker):
     return mocker.patch("managers.tls.TLSManager.create_and_store_self_signed_certificate")
 
 
-def test_build_sans_ip_adds_all_ingress_addresses_on_vm(vm_cert_mocks):
+def test_build_sans_ip_adds_public_address_on_vm(vm_cert_mocks):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    state_in = _vm_state({_vm_peer_relation()}, ["10.0.0.5", "203.0.113.7"])
+    state_in = _vm_state({_vm_peer_relation()})
 
     with ctx(ctx.on.update_status(), state_in) as manager:
-        assert manager.charm.tls_manager.build_sans_ip() == {
-            "127.1.1.1",
-            "10.0.0.5",
-            "203.0.113.7",
-        }
+        with patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="10.0.0.5"),
+        ):
+            assert manager.charm.tls_manager.build_sans_ip() == {"127.1.1.1", "10.0.0.5"}
 
 
-def test_build_sans_ip_ignores_unresolved_ingress_hostname_on_vm(vm_cert_mocks):
+def test_build_sans_ip_ignores_invalid_public_ip_on_vm(vm_cert_mocks):
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    state_in = _vm_state({_vm_peer_relation()}, ["ec2-1-2-3-4.example.com", "10.0.0.5"])
+    state_in = _vm_state({_vm_peer_relation()})
 
     with ctx(ctx.on.update_status(), state_in) as manager:
-        assert manager.charm.tls_manager.build_sans_ip() == {"127.1.1.1", "10.0.0.5"}
+        with patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="invalid-ip"),
+        ):
+            assert manager.charm.tls_manager.build_sans_ip() == {"127.1.1.1"}
 
 
-def test_config_changed_regenerates_self_signed_certificate_when_ingress_address_added(
+def test_config_changed_regenerates_self_signed_certificate_when_public_address_added(
     vm_cert_mocks, mocker
 ):
     mocker.patch("managers.auth.AuthManager.configure_auth")
@@ -1767,8 +1776,10 @@ def test_config_changed_regenerates_self_signed_certificate_when_ingress_address
     mocker.patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2")
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
 
-    ctx.run(
-        ctx.on.config_changed(), _vm_state({_vm_peer_relation()}, ["127.1.1.1", "203.0.113.7"])
-    )
+    with patch(
+        "subprocess.run",
+        return_value=CompletedProcess(returncode=0, args=[], stdout="10.0.0.5"),
+    ):
+        ctx.run(ctx.on.config_changed(), _vm_state({_vm_peer_relation()}))
 
-    vm_cert_mocks.assert_called_once()
+        vm_cert_mocks.assert_called_once()
