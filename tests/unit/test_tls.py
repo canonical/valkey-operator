@@ -1726,7 +1726,7 @@ def _vm_peer_relation() -> testing.PeerRelation:
         local_unit_data={
             "start-state": "started",
             "private-ip": "127.1.1.1",
-            "endpoint": "127.1.1.1",
+            "advertised_address": "127.1.1.1",
         },
     )
 

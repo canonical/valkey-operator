@@ -209,7 +209,7 @@ class BaseEvents(ops.Object):
             return self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
             if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
     def start_unit(self) -> OperationResult:
@@ -570,7 +570,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
-                "endpoint": self.charm.state.endpoint,
+                "advertised_address": self.charm.state.advertised_address,
             }
         )
 
@@ -590,6 +590,7 @@ class BaseEvents(ops.Object):
             return True
 
         recorded_ip = self.charm.state.unit_server.model.private_ip
+        recorded_public_ip = self.charm.state.unit_server.model.advertised_address
         if not recorded_ip:
             # the address is first recorded on start; there is nothing to reconcile before that
             return True
@@ -597,13 +598,17 @@ class BaseEvents(ops.Object):
         try:
             # an ingress address, such as a public IP, can change while the bind address stays
             sans_changed = self.charm.tls_manager.certificate_sans_require_update()
-            if self.charm.state.bind_address == recorded_ip and not sans_changed:
+            if (
+                self.charm.state.bind_address == recorded_ip
+                and self.charm.state.advertised_address == recorded_public_ip
+                and not sans_changed
+            ):
                 return True
 
             # in case of private IP, `unit-get` might be delayed for the new IP address
             if (
-                self.charm.state.unit_server.model.endpoint == recorded_ip
-                and self.charm.state.endpoint == self.charm.state.unit_server.model.endpoint
+                self.charm.state.unit_server.model.private_ip == recorded_ip
+                and self.charm.state.unit_server.model.advertised_address == recorded_public_ip
             ):
                 logger.debug("Juju has not yet updated the private IP consistently")
                 return False
@@ -632,7 +637,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
-                "endpoint": self.charm.state.endpoint,
+                "advertised_address": self.charm.state.advertised_address,
             }
         )
         self.charm.request_restart()

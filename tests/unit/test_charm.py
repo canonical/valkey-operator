@@ -872,7 +872,7 @@ def test_advertise_public_ip_address(vm_environment):
             "subprocess.run",
             return_value=CompletedProcess(returncode=0, args=[], stdout="10.0.0.1"),
         ):
-            assert mgr.charm.state.endpoint == "10.0.0.1"
+            assert mgr.charm.state.advertised_address == "10.0.0.1"
 
 
 def test_advertise_private_ip_address(vm_environment):
@@ -887,7 +887,7 @@ def test_advertise_private_ip_address(vm_environment):
     )
 
     with ctx(ctx.on.update_status(), state_in) as mgr:
-        assert mgr.charm.state.endpoint == "127.1.1.1"
+        assert mgr.charm.state.advertised_address == "127.1.1.1"
 
 
 def test_advertise_address_k8s():
@@ -904,4 +904,4 @@ def test_advertise_address_k8s():
     )
 
     with ctx(ctx.on.update_status(), state_in) as mgr:
-        assert mgr.charm.state.endpoint == "valkey-0.valkey-endpoints"
+        assert mgr.charm.state.advertised_address == "valkey-0.valkey-endpoints"

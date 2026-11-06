@@ -29,7 +29,7 @@ def _peer_relation(private_ip: str = OLD_IP) -> testing.PeerRelation:
         local_unit_data={
             "start-state": "started",
             "private-ip": private_ip,
-            "endpoint": private_ip,
+            "advertised_address": private_ip,
         },
     )
 

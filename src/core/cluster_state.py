@@ -239,7 +239,16 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
     @property
     def endpoint(self) -> str:
-        """The endpoint to be used to connect to this unit.
+        """The endpoint to be used by the charm to connect to this unit.
+
+        On VM-based substrates, this should be the bind address.
+        On Kubernetes, this should be the fully qualified domain name of the unit.
+        """
+        return self.bind_address if self.substrate == Substrate.VM else self.hostname
+
+    @property
+    def advertised_address(self) -> str:
+        """The endpoint to be advertised/used for client connections.
 
         On VM, this is the public IP addresses if available, otherwise the private IP.
         On K8s, this is the FQDN of the unit.
@@ -251,6 +260,21 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             return public_ip
 
         return self.bind_address
+
+    @property
+    def is_exposed_public(self) -> bool:
+        """Check if the deployment is exposed publicly, in case of VM. Always true on K8s.
+
+        Compares the private and public IP addresses from Juju. Used to determine whether
+        Sentinel needs to announce its address or not.
+        """
+        if self.substrate == Substrate.K8S:
+            return True
+
+        if self.public_address == self.bind_address:
+            return False
+
+        return True
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

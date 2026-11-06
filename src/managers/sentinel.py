@@ -90,7 +90,8 @@ class SentinelManager(ManagerStatusProtocol):
         active_sentinels = [
             unit.get_endpoint(self.state.substrate)
             for unit in self.state.servers
-            if unit.is_active and unit.get_endpoint(self.state.substrate) != self.state.endpoint
+            if unit.is_active
+            and unit.get_endpoint(self.state.substrate) != self.state.advertised_address
         ]
 
         client = self._get_sentinel_client()
@@ -100,11 +101,11 @@ class SentinelManager(ManagerStatusProtocol):
                 discovered_sentinels = {
                     sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_host)
                 }
-                if self.state.endpoint not in discovered_sentinels:
+                if self.state.advertised_address not in discovered_sentinels:
                     logger.warning(
                         "Sentinel at %s does not see local sentinel at %s.",
                         sentinel_host,
-                        self.state.endpoint,
+                        self.state.advertised_address,
                     )
                     return False
 

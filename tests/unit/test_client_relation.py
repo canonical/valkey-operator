@@ -47,7 +47,7 @@ def test_add_new_client_user(mock_request_async_lock):
         local_unit_data={
             "start-state": "started",
             "hostname": primary_endpoint,
-            "endpoint": primary_endpoint,
+            "advertised_address": primary_endpoint,
         },
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -126,7 +126,7 @@ def test_add_new_client_user_v0(mock_request_async_lock):
         local_unit_data={
             "start-state": "started",
             "hostname": primary_endpoint,
-            "endpoint": primary_endpoint,
+            "advertised_address": primary_endpoint,
         },
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
