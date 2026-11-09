@@ -379,6 +379,9 @@ class BaseEvents(ops.Object):
 
     def _on_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
         """Handle event received by all units when a unit's relation data changes."""
+        if not self.charm.unit.is_leader():
+            self.charm.topology_manager.stop_observer()
+
         if self.charm.state.cluster.is_restore_in_progress:
             return
 
@@ -476,6 +479,8 @@ class BaseEvents(ops.Object):
             return
 
         if not self.charm.unit.is_leader():
+            # fallback if peer-relation-changed missed the leader change
+            self.charm.topology_manager.stop_observer()
             return
 
         try:
@@ -504,6 +509,9 @@ class BaseEvents(ops.Object):
 
         if not self.charm.unit.is_leader():
             return
+
+        # fires peer-relation-changed on the old leader, so it stops its observer
+        self.charm.state.cluster.update({"topology_observer_unit": self.charm.unit.name})
 
         # the old leader may have missed the config-changed
         self._store_persistence_config()

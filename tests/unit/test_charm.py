@@ -34,6 +34,7 @@ SERVICE_SENTINEL = "sentinel"
 SERVICE_VALKEY_LOGS = "valkey-logs"
 SERVICE_SENTINEL_LOGS = "sentinel-logs"
 SERVICE_LOGROTATE = "logrotate"
+SERVICE_TOPOLOGY_OBSERVER_LOGS = "topology-observer-logs"
 
 
 ROLLINGOPS_RELATION = testing.PeerRelation(id=100, endpoint=ROLLINGOPS_PEER_RELATION)
@@ -123,6 +124,14 @@ def test_start_primary(lock_granted_immediately):
                 "backoff-delay": "1m0s",
                 "backoff-factor": 1,
                 "backoff-limit": "1m0s",
+            },
+            SERVICE_TOPOLOGY_OBSERVER_LOGS: {
+                "override": "replace",
+                "summary": "Stream the topology observer log file to stdout for log forwarding",
+                "command": "tail -n0 -F /var/log/valkey/topology_observer.log",
+                "user": CHARM_USER,
+                "group": CHARM_USER,
+                "startup": "disabled",
             },
         }
     }
