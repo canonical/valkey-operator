@@ -25,6 +25,7 @@ from common.network_utils import resolve_k8s_fqdn
 from core.models import (
     BackupCredentials,
     LDAPState,
+    LocalDataOffset,
     PeerAppModel,
     PeerUnitModel,
     ValkeyCluster,
@@ -315,6 +316,38 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def is_backup_in_progress_any(self) -> bool:
         """True if ANY peer unit is uploading a backup (backup_id is per-unit)."""
         return any(server.is_backup_in_progress for server in self.servers)
+
+    @property
+    def all_units_local_data_offset_stored(self) -> bool:
+        """True if all units have read and stored their local data offset in peer data."""
+        return all(server.get_local_data_offset() for server in self.servers)
+
+    @property
+    def any_unit_local_data_offset_stored(self) -> bool:
+        """True if any unit has read and stored its local data offset in peer data."""
+        return any(server.get_local_data_offset() for server in self.servers)
+
+    @property
+    def latest_data_offset(self) -> LocalDataOffset | None:
+        """Compare all collected local data offsets and return the latest one."""
+        all_offsets = [server.get_local_data_offset() for server in self.servers]
+        non_empty_offsets = [
+            offset for offset in all_offsets if offset is not None and not offset.no_data_found
+        ]
+
+        if len(non_empty_offsets) == 0:
+            logger.debug("No previous database files on any unit")
+            return None
+
+        all_same_id = all(
+            offset.replication_id == non_empty_offsets[0].replication_id  # pyright: ignore[reportOptionalMemberAccess]
+            for offset in non_empty_offsets
+        )
+
+        if all_same_id and non_empty_offsets[0].replication_id != "0":  # pyright: ignore[reportOptionalMemberAccess]
+            return max(non_empty_offsets, key=lambda o: o.replication_id)  # pyright: ignore[reportOptionalMemberAccess]
+
+        return max(non_empty_offsets, key=lambda o: o.timestamp)  # pyright: ignore[reportOptionalMemberAccess]
 
     @property
     def is_tls_transitioning(self) -> bool:

@@ -44,6 +44,7 @@ from literals import (
     STARTING_STATES,
     TLS_PORT,
     CharmUsers,
+    PersistenceMode,
     ScaleDownState,
     StartState,
     Substrate,
@@ -156,9 +157,7 @@ class BaseEvents(ops.Object):
             return
 
         if self._get_primary_endpoint_for_start() is None:
-            logger.debug(
-                "Primary IP not available yet or other units have already started, deferring start event until leader starts the primary"
-            )
+            logger.debug("Primary not available, deferring start event")
             self.charm.state.unit_server.update(
                 {"start_state": StartState.WAITING_FOR_PRIMARY_START.value}
             )
@@ -183,6 +182,11 @@ class BaseEvents(ops.Object):
             logger.warning("Workload not ready yet")
             return False
 
+        if len(self.charm.state.servers) != self.charm.app.planned_units():
+            # ensure we can see all units in the peer relation, which we rely on later in the flow
+            logger.warning("Peer relation not ready for all units")
+            return False
+
         if (
             self.charm.state.client_tls_relation
             and not self.charm.state.unit_server.model.client_cert_ready
@@ -202,15 +206,49 @@ class BaseEvents(ops.Object):
         """Find the primary a starting unit should follow.
 
         Returns:
-            The primary endpoint, this unit's own endpoint if it is the leader and no unit has
-            started yet, or None if there is no primary to follow yet.
+            The primary endpoint, or None if there is no primary to follow yet.
         """
         try:
             return self.charm.sentinel_manager.get_primary_ip()
         except ValkeyCannotGetPrimaryIPError:
-            if self.charm.state.number_units_started == 0 and self.charm.unit.is_leader():
+            logger.debug("No active primary for startup")
+
+        if self.charm.state.number_units_started != 0:
+            logger.debug("Another unit is already started, waiting for primary")
+            return None
+
+        if self.charm.app.planned_units() == 1:
+            logger.debug("Single unit deployment, continue starting with this unit as primary")
+            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+
+        if self.charm.state.cluster.persistence_config.mode == PersistenceMode.NONE:
+            if self.charm.unit.is_leader():
+                logger.debug("No persistence enabled, continue starting with this unit as primary")
                 return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
             return None
+
+        logger.debug("Check if local data exists")
+        self.charm.cluster_manager.read_local_data_offset()
+
+        if (
+            self.charm.state.any_unit_local_data_offset_stored
+            and not self.charm.state.all_units_local_data_offset_stored
+        ):
+            logger.debug("Not all units have read their local data, cannot determine primary yet")
+            return None
+
+        if latest_data_offset := self.charm.state.latest_data_offset:
+            logger.debug("Latest data is: %s", latest_data_offset)
+            if latest_data_offset == self.charm.state.unit_server.get_local_data_offset():
+                logger.debug("Unit has latest data and will start as primary")
+                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return None
+
+        logger.debug("Cannot determine primary from data on disk")
+        if self.charm.unit.is_leader():
+            logger.debug("Starting the leader unit as primary")
+            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+        return None
 
     def start_unit(self) -> OperationResult:
         """Start the workload once the rolling lock is granted to this unit.
@@ -364,7 +402,12 @@ class BaseEvents(ops.Object):
             self.charm.unit.open_port("tcp", METRICS_PORT)
 
         logger.info("Services started")
-        self.charm.state.unit_server.update({"start_state": StartState.STARTED.value})
+        self.charm.state.unit_server.update(
+            {
+                "start_state": StartState.STARTED.value,
+                "local_data_offset": "",
+            }
+        )
 
         # rerun peer handlers skipped while this unit was starting
         self.charm.on[PEER_RELATION].relation_changed.emit(self.charm.state.peer_relation)

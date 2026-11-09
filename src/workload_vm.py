@@ -43,8 +43,10 @@ from literals import (
     LOGROTATE_VM_CONFIG_FILE,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
+    RDB_FILE_NAME,
     SNAP_ACL_FILE,
     SNAP_CHECK_AOF_CLI,
+    SNAP_CHECK_RDB_CLI,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
@@ -286,6 +288,26 @@ class ValkeyVmWorkload(WorkloadBase):
         except (subprocess.TimeoutExpired, OSError) as e:
             raise ValkeyWorkloadCommandError(e)
         return True
+
+    @override
+    def check_rdb(self) -> str:
+        rdb_file = self.working_dir / RDB_FILE_NAME
+
+        try:
+            return subprocess.run(
+                [SNAP_CHECK_RDB_CLI, rdb_file.as_posix()],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=EXEC_TIMEOUT_S,
+            ).stdout
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+        ) as e:
+            logger.warning("Error running %s: %s", SNAP_CHECK_RDB_CLI, e)
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     def exec(

@@ -351,6 +351,21 @@ class PersistenceConfig(BaseModel):
         return self.mode in (PersistenceMode.AOF, PersistenceMode.RDB_AOF)
 
 
+class LocalDataOffset(BaseModel):
+    """Validated information for local data offsets, from peer unit data."""
+
+    replication_id: str
+    replication_offset: str
+    timestamp: str
+
+    @property
+    def no_data_found(self) -> bool:
+        """Check if all of the attributes are set to '0', meaning no data was found locally."""
+        return (
+            self.replication_id == "0" and self.replication_offset == "0" and self.timestamp == "0"
+        )
+
+
 class PeerAppModel(PeerModel):
     """Model for the peer application data."""
 
@@ -404,6 +419,7 @@ class PeerUnitModel(PeerModel):
     ldap_user_epoch: float | int = Field(default=0)
     ldap_sync_failed: bool = Field(default=False)
     applied_persistence_config: PersistenceConfig | None = Field(default=None)
+    local_data_offset: LocalDataOffset | None = Field(default=None)
 
 
 class RelationState:
@@ -600,6 +616,25 @@ class ValkeyServer(RelationState):
             self.tls_client_state in (TLSState.TO_TLS, TLSState.TO_NO_TLS)
             or self.tls_ca_rotation_state != TLSCARotationState.NO_ROTATION
         )
+
+    def store_local_data_offset(
+        self, replication_id: str, replication_offset: str, timestamp: str
+    ) -> None:
+        """Populate unit databag with data offset on the local unit."""
+        local_data_offset = LocalDataOffset(
+            replication_id=replication_id,
+            replication_offset=replication_offset,
+            timestamp=timestamp,
+        )
+
+        self.update({"local_data_offset": local_data_offset})
+
+    def get_local_data_offset(self) -> LocalDataOffset | None:
+        """Get the offset/timestamp read from the unit's database files, returned as dict."""
+        if not self.model or not (local_data_offset := self.model.local_data_offset):
+            return None
+
+        return local_data_offset
 
 
 @final

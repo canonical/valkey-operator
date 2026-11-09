@@ -27,6 +27,7 @@ from literals import (
     ARCHIVE_STORAGE_PATH,
     CHARM,
     CHECK_AOF_CLI,
+    CHECK_RDB_CLI,
     CONFIG_FILE,
     DATA_STORAGE_PATH,
     DATASET_IO_TIMEOUT_S,
@@ -36,6 +37,7 @@ from literals import (
     LOGROTATE_SERVICE,
     LOGROTATE_STATE_FILE,
     METRICS_SERVICE,
+    RDB_FILE_NAME,
     SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
     SENTINEL_LOG_FILE,
@@ -320,6 +322,24 @@ class ValkeyK8sWorkload(WorkloadBase):
         ) as e:
             raise ValkeyWorkloadCommandError(e)
         return True
+
+    @override
+    def check_rdb(self) -> str:
+        rdb_file = self.working_dir / RDB_FILE_NAME
+
+        try:
+            return self.container.exec(
+                command=[CHECK_RDB_CLI, rdb_file.as_posix()], timeout=EXEC_TIMEOUT_S
+            ).wait_output()[0]
+        except (
+            pebble.APIError,
+            pebble.ChangeError,
+            pebble.ConnectionError,
+            pebble.ExecError,
+            pebble.TimeoutError,
+        ) as e:
+            logger.warning("Error running %s: %s", CHECK_RDB_CLI, e)
+            raise ValkeyWorkloadCommandError(e)
 
     @override
     @retry(

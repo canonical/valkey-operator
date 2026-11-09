@@ -265,6 +265,7 @@ def test_start_non_primary():
             relations={relation, status_peer_relation},
             secrets={internal_passwords_secret},
             containers={container},
+            planned_units=2,
         )
         state_out = ctx.run(ctx.on.start(), state_in)
 
@@ -293,6 +294,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 relations={relation, status_peer_relation},
                 secrets={internal_passwords_secret},
                 containers={container},
+                planned_units=2,
             )
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.SERVICE_STARTING.value)
@@ -322,6 +324,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 relations={relation, status_peer_relation},
                 secrets={internal_passwords_secret},
                 containers={container},
+                planned_units=2,
             )
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
@@ -351,6 +354,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 relations={relation, status_peer_relation},
                 secrets={internal_passwords_secret},
                 containers={container},
+                planned_units=2,
             )
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.WAITING_FOR_SENTINEL_DISCOVERY.value)
@@ -374,6 +378,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 relations={relation, status_peer_relation},
                 secrets={internal_passwords_secret},
                 containers={container},
+                planned_units=2,
             )
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, StartStatuses.WAITING_FOR_REPLICA_SYNC.value)
@@ -398,6 +403,7 @@ def test_start_non_primary_after_lock_granted(lock_granted_immediately):
                 relations={relation, status_peer_relation},
                 secrets={internal_passwords_secret},
                 containers={container},
+                planned_units=2,
             )
             state_out = ctx.run(ctx.on.start(), state_in)
             assert status_is(state_out, CharmStatuses.ACTIVE_IDLE.value)
