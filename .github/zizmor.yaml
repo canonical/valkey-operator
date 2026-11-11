@@ -17,6 +17,6 @@ rules:
   secrets-inherit:
     ignore:
       - release.yaml:27
-      - ci.yaml:149
+      - ci.yaml:150
   self-repository:
     disable: true
