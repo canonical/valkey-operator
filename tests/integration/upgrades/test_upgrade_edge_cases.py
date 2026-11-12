@@ -19,7 +19,7 @@ from tests.integration.cw_helpers import (
 from tests.integration.helpers import (
     APP_NAME,
     DATA_INTEGRATOR_NAME,
-    DEPLOY_TIMEOUT_S,
+    DEPLOY_TIMEOUT_TLS_S,
     IMAGE_RESOURCE,
     TLS_CHANNEL,
     TLS_NAME,
@@ -62,7 +62,7 @@ def test_deploy(juju: jubilant.Juju, substrate: Substrate, glide_runner_charm: s
         lambda status: are_apps_active_and_agents_idle(
             status, APP_NAME, unit_count=NUM_UNITS, idle_period=30
         ),
-        timeout=DEPLOY_TIMEOUT_S,
+        timeout=DEPLOY_TIMEOUT_TLS_S,
     )
 
 
