@@ -4,12 +4,14 @@
 
 """Unit tests for ClusterManager."""
 
+from pathlib import PurePosixPath
 from unittest.mock import MagicMock
 
 import pytest
 import tenacity
 
 from common.exceptions import ValkeyClusterNotReadyError, ValkeyWorkloadCommandError
+from literals import PersistenceMode
 from managers.cluster import ClusterManager
 
 
@@ -132,3 +134,168 @@ def test_bounded_waits_log_their_own_progress(mocker, caplog):
     assert "restore.wait: dataset loaded" in caplog.text
     assert "restore.wait: replica resync (up to 900s)" in caplog.text
     assert "restore.wait: replica resynced" in caplog.text
+
+
+def _cluster_manager_with_workload() -> ClusterManager:
+    """Build a ClusterManager whose workload has a real working_dir for path joins."""
+    cm = ClusterManager(state=MagicMock(), workload=MagicMock())
+    cm.workload.working_dir = PurePosixPath("/data")
+    return cm
+
+
+# valkey-check-rdb prints the AUX FIELD lines among other, non-metadata, lines.
+RDB_CHECK_OUTPUT = (
+    "[offset 0] Checking RDB file /data/dump.rdb\n"
+    "[offset 26] AUX FIELD redis-ver = '255.255.255'\n"
+    "[offset 40] AUX FIELD redis-bits = '64'\n"
+    "[offset 52] AUX FIELD ctime = '1794421900'\n"
+    "[offset 67] AUX FIELD used-mem = '1197808'\n"
+    "[offset 83] AUX FIELD repl-stream-db = '0'\n"
+    "[offset 105] AUX FIELD repl-id = '7d8f0a2b3c'\n"
+    "[offset 130] AUX FIELD repl-offset = '4242'\n"
+    "[offset 145] Checksum OK\n"
+    "[info] RDB file was saved with checksum OK\n"
+)
+
+
+def test_get_rdb_metadata_keeps_only_aux_fields():
+    """Only the AUX FIELD lines carry the metadata we later parse."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.check_rdb.return_value = RDB_CHECK_OUTPUT
+
+    metadata = cm.get_rdb_metadata()
+
+    assert metadata == [
+        "[offset 26] AUX FIELD redis-ver = '255.255.255'",
+        "[offset 40] AUX FIELD redis-bits = '64'",
+        "[offset 52] AUX FIELD ctime = '1794421900'",
+        "[offset 67] AUX FIELD used-mem = '1197808'",
+        "[offset 83] AUX FIELD repl-stream-db = '0'",
+        "[offset 105] AUX FIELD repl-id = '7d8f0a2b3c'",
+        "[offset 130] AUX FIELD repl-offset = '4242'",
+    ]
+
+
+def test_get_rdb_metadata_returns_none_when_the_check_fails():
+    """A failed valkey-check-rdb (e.g. no dump.rdb) yields no metadata."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.check_rdb.side_effect = ValkeyWorkloadCommandError("no such file")
+
+    assert cm.get_rdb_metadata() is None
+
+
+AOF_MANIFEST = (
+    "file appendonly.aof.1.base.rdb seq 1 type b\n"
+    "file appendonly.aof.1.incr.aof seq 1 type i\n"
+    "file appendonly.aof.2.incr.aof seq 2 type i\n"
+)
+
+
+def test_get_latest_aof_returns_the_last_incr_file():
+    """The newest incremental file in the manifest is the one to read a timestamp from."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.read_file.return_value = AOF_MANIFEST
+
+    assert cm.get_latest_aof() == "/data/appendonlydir/appendonly.aof.2.incr.aof"
+
+
+def test_get_latest_aof_returns_none_without_an_incr_file():
+    """A manifest with only a base file has no incremental timestamps to read."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.read_file.return_value = "file appendonly.aof.1.base.rdb seq 1 type b\n"
+
+    assert cm.get_latest_aof() is None
+
+
+def test_get_latest_aof_returns_none_when_the_manifest_is_unreadable():
+    """No manifest (fresh unit or no AOF) means there is no AOF to inspect."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.read_file.side_effect = ValkeyWorkloadCommandError("no manifest")
+
+    assert cm.get_latest_aof() is None
+
+
+def test_get_latest_timestamp_from_aof_extracts_the_timestamp():
+    """The reverse-grep returns the raw '#TS:...' line, we keep only the epoch value."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.exec.return_value = ("#TS:1794421964\r\n", "")
+
+    assert cm.get_latest_timestamp_from_aof("/data/appendonlydir/appendonly.aof.2.incr.aof") == (
+        "1794421964"
+    )
+
+
+def test_get_latest_timestamp_from_aof_returns_none_on_error():
+    """A failed search (e.g. empty AOF) yields no timestamp rather than raising."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.exec.side_effect = ValkeyWorkloadCommandError("grep failed")
+
+    assert (
+        cm.get_latest_timestamp_from_aof("/data/appendonlydir/appendonly.aof.2.incr.aof") is None
+    )
+
+
+def test_read_local_data_offset_parses_rdb_metadata():
+    """RDB mode stores the replication id, offset and ctime read from the RDB file."""
+    cm = _cluster_manager_with_workload()
+    cm.state.cluster.persistence_config.mode = PersistenceMode.RDB
+    cm.get_rdb_metadata = MagicMock(
+        return_value=[
+            "AUX FIELD ctime = '1794421900'",
+            "AUX FIELD repl-id = '7d8f0a2b3c'",
+            "AUX FIELD repl-offset = '4242'",
+        ]
+    )
+
+    cm.read_local_data_offset()
+
+    cm.state.unit_server.store_local_data_offset.assert_called_once_with(
+        "7d8f0a2b3c", "4242", "1794421900"
+    )
+
+
+def test_read_local_data_offset_uses_aof_timestamp_in_aof_mode():
+    """AOF mode has no replication id/offset, only the timestamp read from the AOF."""
+    cm = _cluster_manager_with_workload()
+    cm.state.cluster.persistence_config.mode = PersistenceMode.AOF
+    cm.get_latest_aof = MagicMock(return_value="/data/appendonlydir/appendonly.aof.2.incr.aof")
+    cm.get_latest_timestamp_from_aof = MagicMock(return_value="1794421964")
+
+    cm.read_local_data_offset()
+
+    cm.state.unit_server.store_local_data_offset.assert_called_once_with("0", "0", "1794421964")
+
+
+def test_read_local_data_offset_aof_timestamp_overrides_rdb_ctime():
+    """RDB+AOF reads only the AOF timestamp; the RDB replication id/offset are left unset.
+
+    The RDB block runs for pure RDB mode only, so a RDB+AOF unit reports all
+    zeros for the replication id/offset and relies on the AOF timestamp.
+    """
+    cm = _cluster_manager_with_workload()
+    cm.state.cluster.persistence_config.mode = PersistenceMode.RDB_AOF
+    cm.get_rdb_metadata = MagicMock(
+        return_value=[
+            "AUX FIELD ctime = '1794421900'",
+            "AUX FIELD repl-id = '7d8f0a2b3c'",
+            "AUX FIELD repl-offset = '4242'",
+        ]
+    )
+    cm.get_latest_aof = MagicMock(return_value="/data/appendonlydir/appendonly.aof.2.incr.aof")
+    cm.get_latest_timestamp_from_aof = MagicMock(return_value="1794421964")
+
+    cm.read_local_data_offset()
+
+    cm.get_rdb_metadata.assert_not_called()
+    cm.state.unit_server.store_local_data_offset.assert_called_once_with("0", "0", "1794421964")
+
+
+def test_read_local_data_offset_stores_zeros_without_any_data():
+    """No RDB and no AOF on disk stores the 'no data found' sentinel of all zeros."""
+    cm = _cluster_manager_with_workload()
+    cm.state.cluster.persistence_config.mode = PersistenceMode.RDB
+    cm.get_rdb_metadata = MagicMock(return_value=None)
+
+    cm.read_local_data_offset()
+
+    cm.state.unit_server.store_local_data_offset.assert_called_once_with("0", "0", "0")

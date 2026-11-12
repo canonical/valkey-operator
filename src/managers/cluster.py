@@ -656,7 +656,7 @@ class ClusterManager(ManagerStatusProtocol):
     def get_latest_timestamp_from_aof(self, aof: str) -> str | None:
         """Read an appendonly-file from the end and return the first timestamp found."""
         # reverse-grep the file and stop at the first occurrence to avoid reading entire aof files
-        # run shell command because ops.Container.exec() runs without shell and skips the | symbol
+        # run shell command to avoid ops.Container.exec() / subprocess to swallow the | symbol
         search_command = ["/bin/sh", "-c", f"tac {aof} | grep -m1 '^#TS:'"]
         try:
             timestamp = self.workload.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]
