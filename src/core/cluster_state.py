@@ -345,9 +345,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         )
 
         if all_same_id and non_empty_offsets[0].replication_id != "0":  # pyright: ignore[reportOptionalMemberAccess]
-            return max(non_empty_offsets, key=lambda o: o.replication_id)  # pyright: ignore[reportOptionalMemberAccess]
+            return max(non_empty_offsets, key=lambda o: int(o.replication_offset))  # pyright: ignore[reportOptionalMemberAccess]
 
-        return max(non_empty_offsets, key=lambda o: o.timestamp)  # pyright: ignore[reportOptionalMemberAccess]
+        return max(non_empty_offsets, key=lambda o: int(o.timestamp))  # pyright: ignore[reportOptionalMemberAccess]
 
     @property
     def is_tls_transitioning(self) -> bool:

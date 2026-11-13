@@ -131,6 +131,14 @@ def test_latest_data_offset_picks_newest_timestamp_across_replication_ids():
     assert _cluster_state([older, newer]).latest_data_offset == newer
 
 
+def test_latest_data_offset_picks_highest_replication_offset():
+    """The highest replication offset wins when replication ids match."""
+    older = LocalDataOffset(replication_id="r1", replication_offset="10", timestamp="100")
+    newer = LocalDataOffset(replication_id="r1", replication_offset="20", timestamp="100")
+
+    assert _cluster_state([older, newer]).latest_data_offset == newer
+
+
 def test_latest_data_offset_uses_timestamp_for_aof_only_offsets():
     """AOF offsets share the '0' replication id, so the newest timestamp wins."""
     older = LocalDataOffset(replication_id="0", replication_offset="0", timestamp="100")
