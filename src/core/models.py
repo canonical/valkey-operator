@@ -630,7 +630,7 @@ class ValkeyServer(RelationState):
         self.update({"local_data_offset": local_data_offset})
 
     def get_local_data_offset(self) -> LocalDataOffset | None:
-        """Get the offset/timestamp read from the unit's database files, returned as dict."""
+        """Get the offset/timestamp read from the unit's database files."""
         if not self.model or not (local_data_offset := self.model.local_data_offset):
             return None
 

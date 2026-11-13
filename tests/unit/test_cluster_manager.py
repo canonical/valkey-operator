@@ -4,11 +4,11 @@
 
 """Unit tests for ClusterManager."""
 
-from pathlib import PurePosixPath
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import tenacity
+from charmlibs import pathops
 
 from common.exceptions import ValkeyClusterNotReadyError, ValkeyWorkloadCommandError
 from literals import PersistenceMode
@@ -139,7 +139,7 @@ def test_bounded_waits_log_their_own_progress(mocker, caplog):
 def _cluster_manager_with_workload() -> ClusterManager:
     """Build a ClusterManager whose workload has a real working_dir for path joins."""
     cm = ClusterManager(state=MagicMock(), workload=MagicMock())
-    cm.workload.working_dir = PurePosixPath("/data")
+    cm.workload.working_dir = pathops.ContainerPath("/data", container="valkey")
     return cm
 
 
@@ -163,7 +163,8 @@ def test_get_rdb_metadata_keeps_only_aux_fields():
     cm = _cluster_manager_with_workload()
     cm.workload.check_rdb.return_value = RDB_CHECK_OUTPUT
 
-    metadata = cm.get_rdb_metadata()
+    with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
+        metadata = cm.get_rdb_metadata()
 
     assert metadata == [
         "[offset 26] AUX FIELD redis-ver = '255.255.255'",
@@ -181,7 +182,8 @@ def test_get_rdb_metadata_returns_none_when_the_check_fails():
     cm = _cluster_manager_with_workload()
     cm.workload.check_rdb.side_effect = ValkeyWorkloadCommandError("no such file")
 
-    assert cm.get_rdb_metadata() is None
+    with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
+        assert cm.get_rdb_metadata() is None
 
 
 AOF_MANIFEST = (
@@ -196,7 +198,8 @@ def test_get_latest_aof_returns_the_last_incr_file():
     cm = _cluster_manager_with_workload()
     cm.workload.read_file.return_value = AOF_MANIFEST
 
-    assert cm.get_latest_aof() == "/data/appendonlydir/appendonly.aof.2.incr.aof"
+    with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
+        assert cm.get_latest_aof() == "/data/appendonlydir/appendonly.aof.2.incr.aof"
 
 
 def test_get_latest_aof_returns_none_without_an_incr_file():
@@ -204,7 +207,8 @@ def test_get_latest_aof_returns_none_without_an_incr_file():
     cm = _cluster_manager_with_workload()
     cm.workload.read_file.return_value = "file appendonly.aof.1.base.rdb seq 1 type b\n"
 
-    assert cm.get_latest_aof() is None
+    with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
+        assert cm.get_latest_aof() is None
 
 
 def test_get_latest_aof_returns_none_when_the_manifest_is_unreadable():
@@ -212,7 +216,8 @@ def test_get_latest_aof_returns_none_when_the_manifest_is_unreadable():
     cm = _cluster_manager_with_workload()
     cm.workload.read_file.side_effect = ValkeyWorkloadCommandError("no manifest")
 
-    assert cm.get_latest_aof() is None
+    with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
+        assert cm.get_latest_aof() is None
 
 
 def test_get_latest_timestamp_from_aof_extracts_the_timestamp():

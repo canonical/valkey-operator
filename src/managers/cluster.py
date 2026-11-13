@@ -626,7 +626,14 @@ class ClusterManager(ManagerStatusProtocol):
     def get_rdb_metadata(self) -> list[str] | None:
         """Get the metadata of the RDB file on the unit."""
         try:
+            if not (self.workload.working_dir / RDB_FILE_NAME).exists():
+                logger.info("No previous RDB file found")
+                return None
+
             result_list = self.workload.check_rdb().split("\n")
+        except pebble.ConnectionError as e:
+            logger.warning("Error looking up RDB file: %s", e)
+            return None
         except ValkeyWorkloadCommandError:
             return None
 
@@ -635,8 +642,16 @@ class ClusterManager(ManagerStatusProtocol):
     def get_latest_aof(self) -> str | None:
         """Get the latest appendonly-file from the unit."""
         aof_manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
+
         try:
+            if not aof_manifest.exists():
+                logger.info("No previous AOF files found")
+                return None
+
             manifest_content = self.workload.read_file(aof_manifest).split("\n")
+        except pebble.ConnectionError as e:
+            logger.warning("Error looking up AOF manifest: %s", e)
+            return None
         except ValkeyWorkloadCommandError as e:
             logger.warning("Could not read appendonly manifest: %s", e)
             return None
@@ -662,7 +677,7 @@ class ClusterManager(ManagerStatusProtocol):
         try:
             timestamp_line = self.workload.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]
         except ValkeyWorkloadCommandError as e:
-            logger.warning("Error searching latest timestamp in %s: %s", aof, e)
+            logger.warning("No timestamp found in %s: %s", aof, e)
             return None
 
         # extract the timestamp only from '#TS:1794421964\r\n'
