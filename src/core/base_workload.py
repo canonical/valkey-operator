@@ -420,3 +420,8 @@ class WorkloadBase(ABC):
             ValkeyWorkloadCommandError: If the check could not run.
         """
         pass
+
+    @abstractmethod
+    def check_rdb(self) -> str:
+        """Run valkey-check-rdb against the RDB file and return the output as str."""
+        pass

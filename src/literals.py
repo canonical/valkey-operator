@@ -126,7 +126,9 @@ RDB_FILE_NAME = "dump.rdb"
 # One archive slot for the last corrupted AOF a self-heal moved aside
 AOF_CORRUPT_ARCHIVE_NAME = "appendonlydir.corrupt"
 SNAP_CHECK_AOF_CLI = f"{SNAP_NAME}.check-aof"
+SNAP_CHECK_RDB_CLI = f"{SNAP_NAME}.check-rdb"
 CHECK_AOF_CLI = "valkey-check-aof"
+CHECK_RDB_CLI = "valkey-check-rdb"
 # Valkey log lines around a start attempt, and the ones it logs before exiting on a corrupted AOF
 # (aof.c, rdb.c). Open, permission and I/O errors are left out, since moving the AOF can't fix them.
 VALKEY_START_LOG_LINE = "Valkey is starting"
