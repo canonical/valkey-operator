@@ -2,10 +2,23 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+import datetime
+import ipaddress
+import socket
+import ssl
+import threading
+from contextlib import suppress
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import ldap3
+import ldap3.core.exceptions
+import pytest
 import yaml
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from ops import testing
 from pytest import raises
 
@@ -19,6 +32,7 @@ from literals import (
     PEER_RELATION,
     STATUS_PEERS_RELATION,
 )
+from managers.auth import LdapTls
 from statuses import AuthStatuses
 
 from .helpers import status_is
@@ -1726,3 +1740,87 @@ def test_update_status_skips_ldap_acl_before_unit_started():
         ctx.run(ctx.on.update_status(), state_in)
 
     reload_acl.assert_not_called()
+
+
+def _issue_ldap_server_cert(tmp_path: Path, san_ip: str) -> str:
+    """Write a CA-signed server cert with a DNS SAN and `san_ip` as IP SAN, return the CA PEM."""
+    now = datetime.datetime.now(datetime.UTC)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    key = ec.generate_private_key(ec.SECP256R1())
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ldap.example.com")]))
+        .issuer_name(ca_name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.DNSName("ldap.example.com"), x509.IPAddress(ipaddress.ip_address(san_ip))]
+            ),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), False
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    (tmp_path / "server.pem").write_bytes(
+        cert.public_bytes(serialization.Encoding.PEM)
+        + key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return ca_cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+@pytest.mark.parametrize(("san_ip", "verified"), [("127.0.0.1", True), ("10.0.0.1", False)])
+def test_ldap_tls_matches_ip_san(tmp_path: Path, san_ip: str, verified: bool):
+    """An LDAPS server reached by IP is checked against IP SANs, even when a DNS SAN exists."""
+    ca_pem = _issue_ldap_server_cert(tmp_path, san_ip)
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(tmp_path / "server.pem")
+
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+
+        def serve() -> None:
+            sock, _ = listener.accept()
+            with suppress(OSError), server_context.wrap_socket(sock, server_side=True) as tls:
+                tls.recv(1)  # hold the session open until the client hangs up
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        tls = LdapTls(
+            version=ssl.PROTOCOL_TLS_CLIENT, validate=ssl.CERT_REQUIRED, ca_certs_data=ca_pem
+        )
+        server = ldap3.Server(
+            f"ldaps://127.0.0.1:{listener.getsockname()[1]}",
+            use_ssl=True,
+            tls=tls,
+            get_info=ldap3.NONE,  # the fake server only does the TLS handshake
+        )
+        connection = ldap3.Connection(server)
+
+        if verified:
+            connection.open()
+        else:
+            with raises(ldap3.core.exceptions.LDAPSocketOpenError):
+                connection.open()
+        connection.unbind()
+        thread.join(timeout=5)
