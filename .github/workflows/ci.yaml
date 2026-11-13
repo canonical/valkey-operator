@@ -151,4 +151,7 @@ jobs:
     with:
       artifact-prefix: ${{ needs.build.outputs.artifact-prefix }}
     secrets: inherit
-    permissions: {}
+    permissions:
+      contents: read
+      pull-requests: write # the diff and the PR comment, for flake0 classify and summarize
+      actions: read # run history, for flake0 classify
