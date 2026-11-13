@@ -6,6 +6,7 @@
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from time import sleep
 
 from data_platform_helpers.advanced_statuses.models import StatusObject
@@ -659,13 +660,21 @@ class ClusterManager(ManagerStatusProtocol):
         # run shell command to avoid ops.Container.exec() / subprocess to swallow the | symbol
         search_command = ["/bin/sh", "-c", f"tac {aof} | grep -m1 '^#TS:'"]
         try:
-            timestamp = self.workload.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]
+            timestamp_line = self.workload.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]
         except ValkeyWorkloadCommandError as e:
             logger.warning("Error searching latest timestamp in %s: %s", aof, e)
             return None
 
         # extract the timestamp only from '#TS:1794421964\r\n'
-        return timestamp.strip().split(":")[1]
+        timestamp = timestamp_line.strip().split(":")[1]
+
+        try:
+            datetime.fromtimestamp(int(timestamp))
+        except (OverflowError, OSError, TypeError, ValueError) as e:
+            logger.warning("Invalid timestamp in AOF: %s", e)
+            return None
+
+        return timestamp
 
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""
@@ -691,8 +700,11 @@ class ClusterManager(ManagerStatusProtocol):
         replication_offset = "0"
         timestamp = "0"
 
-        persistence_mode = self.state.cluster.persistence_config.mode
-        if persistence_mode == PersistenceMode.RDB and (rdb_metadata := self.get_rdb_metadata()):
+        persistence = (
+            self.state.unit_server.applied_persistence_config
+            or self.state.cluster.persistence_config
+        )
+        if persistence.mode == PersistenceMode.RDB and (rdb_metadata := self.get_rdb_metadata()):
             for field in rdb_metadata:
                 if "repl-id" in field:
                     replication_id = field.split(" = ")[1].strip("'")
@@ -702,7 +714,7 @@ class ClusterManager(ManagerStatusProtocol):
                     timestamp = field.split(" = ")[1].strip("'")
 
         if (
-            persistence_mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]
+            persistence.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]
             and (aof := self.get_latest_aof())
             and (aof_timestamp := self.get_latest_timestamp_from_aof(aof))
         ):

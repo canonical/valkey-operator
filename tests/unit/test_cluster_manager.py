@@ -225,6 +225,16 @@ def test_get_latest_timestamp_from_aof_extracts_the_timestamp():
     )
 
 
+def test_get_latest_timestamp_from_aof_ignores_invalid_values():
+    """Test the best-effort timestamp search validation."""
+    cm = _cluster_manager_with_workload()
+    cm.workload.exec.return_value = ("#TS:InvalidValue\r\n", "")
+
+    assert (
+        cm.get_latest_timestamp_from_aof("/data/appendonlydir/appendonly.aof.2.incr.aof") is None
+    )
+
+
 def test_get_latest_timestamp_from_aof_returns_none_on_error():
     """A failed search (e.g. empty AOF) yields no timestamp rather than raising."""
     cm = _cluster_manager_with_workload()
@@ -238,7 +248,7 @@ def test_get_latest_timestamp_from_aof_returns_none_on_error():
 def test_read_local_data_offset_parses_rdb_metadata():
     """RDB mode stores the replication id, offset and ctime read from the RDB file."""
     cm = _cluster_manager_with_workload()
-    cm.state.cluster.persistence_config.mode = PersistenceMode.RDB
+    cm.state.unit_server.applied_persistence_config.mode = PersistenceMode.RDB
     cm.get_rdb_metadata = MagicMock(
         return_value=[
             "AUX FIELD ctime = '1794421900'",
@@ -257,7 +267,7 @@ def test_read_local_data_offset_parses_rdb_metadata():
 def test_read_local_data_offset_uses_aof_timestamp_in_aof_mode():
     """AOF mode has no replication id/offset, only the timestamp read from the AOF."""
     cm = _cluster_manager_with_workload()
-    cm.state.cluster.persistence_config.mode = PersistenceMode.AOF
+    cm.state.unit_server.applied_persistence_config.mode = PersistenceMode.AOF
     cm.get_latest_aof = MagicMock(return_value="/data/appendonlydir/appendonly.aof.2.incr.aof")
     cm.get_latest_timestamp_from_aof = MagicMock(return_value="1794421964")
 
@@ -273,7 +283,7 @@ def test_read_local_data_offset_aof_timestamp_overrides_rdb_ctime():
     zeros for the replication id/offset and relies on the AOF timestamp.
     """
     cm = _cluster_manager_with_workload()
-    cm.state.cluster.persistence_config.mode = PersistenceMode.RDB_AOF
+    cm.state.unit_server.applied_persistence_config.mode = PersistenceMode.RDB_AOF
     cm.get_rdb_metadata = MagicMock(
         return_value=[
             "AUX FIELD ctime = '1794421900'",
