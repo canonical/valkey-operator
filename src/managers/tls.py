@@ -156,7 +156,8 @@ class TLSManager(ManagerStatusProtocol):
 
         sans_ip.add(self.state.bind_address)
 
-        sans_ip.update(self.state.ingress_addresses)
+        if (public_address := self.state.public_address) and self._is_ip_address(public_address):
+            sans_ip.add(public_address)
 
         return frozenset(sans_ip)
 

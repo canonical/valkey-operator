@@ -112,6 +112,10 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["logfile"] = (self.workload.log_dir / VALKEY_LOG_FILE).as_posix()
 
         config_properties["bind"] = self.state.endpoint
+        # in case of public IP: use private address for binding Valkey's tcp interface
+        # public IPs are implemented through 1:1 NAT, traffic will arrive at the private address
+        if self.state.substrate == Substrate.VM and self.state.endpoint != self.state.bind_address:
+            config_properties["bind"] = self.state.bind_address
 
         # DA261 backup-safety overrides
         config_properties["repl-diskless-load"] = "on-empty-db"
@@ -357,6 +361,10 @@ class ConfigManager(ManagerStatusProtocol):
             sentinel_configs["resolve-hostnames"] = "yes"
             sentinel_configs["announce-hostnames"] = "yes"
             sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
+        elif self.state.unit_server.model.endpoint != self.state.unit_server.model.private_ip:
+            # in case of public IP: announce the public address for Sentinel discovery
+            # use information persisted to relation data to avoid inconsistencies during IP change
+            sentinel_configs["announce-ip"] = self.state.endpoint
         return sentinel_configs
 
     def set_sentinel_config_properties(self, primary_endpoint: str) -> None:
