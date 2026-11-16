@@ -28,7 +28,9 @@ PRIMARY_ENDPOINT = "10.0.0.9"
 # --------------------------------------------------------------------------- #
 def test_no_data_found_only_when_everything_is_zero():
     """The all-zeros sentinel marks a unit with no data; any set field clears it."""
-    assert LocalDataOffset(replication_id="0", replication_offset="0", timestamp="0").no_data_found
+    assert LocalDataOffset(
+        replication_id="0", replication_offset="0", timestamp="0"
+    ).no_offset_data_found
 
 
 @pytest.mark.parametrize(
@@ -46,7 +48,7 @@ def test_data_found_when_any_field_is_set(replication_id, replication_offset, ti
         timestamp=timestamp,
     )
 
-    assert not offset.no_data_found
+    assert not offset.no_offset_data_found
 
 
 # --------------------------------------------------------------------------- #
@@ -251,6 +253,15 @@ def test_unit_without_the_latest_data_waits():
     events, _ = _events(latest_offset=latest, own_offset=older)
 
     assert events._get_primary_endpoint_for_start() is None
+
+
+def test_multiple_units_with_same_data():
+    """A unit with older data must not lead; it waits to resync from the newest one."""
+    latest = LocalDataOffset(replication_id="r1", replication_offset="10", timestamp="200")
+    older = LocalDataOffset(replication_id="r1", replication_offset="10", timestamp="200")
+    events, _ = _events(latest_offset=latest, own_offset=older)
+
+    assert events._get_primary_endpoint_for_start() == OWN_ENDPOINT
 
 
 def test_no_data_anywhere_starts_the_leader_as_primary():

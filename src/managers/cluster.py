@@ -14,6 +14,7 @@ from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtoc
 from data_platform_helpers.advanced_statuses.types import Scope
 from ops import pebble
 from tenacity import (
+    RetryError,
     Retrying,
     retry,
     retry_if_not_exception_type,
@@ -34,13 +35,13 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from core.models import PersistenceConfig
 from literals import (
     AOF_CORRUPT_ARCHIVE_NAME,
     AOF_DIR_NAME,
     AOF_LOAD_FATAL_LOG_LINES,
     AOF_MANIFEST_NAME,
     DATASET_IO_TIMEOUT_S,
-    EXEC_TIMEOUT_S,
     RDB_FILE_NAME,
     VALKEY_LOG_FILE,
     VALKEY_LOG_TAIL_LINES,
@@ -631,8 +632,8 @@ class ClusterManager(ManagerStatusProtocol):
                 return None
 
             result_list = self.workload.check_rdb().split("\n")
-        except pebble.ConnectionError as e:
-            logger.warning("Error looking up RDB file: %s", e)
+        except RetryError as e:
+            logger.warning("Retries exhausted: %s", e)
             return None
         except ValkeyWorkloadCommandError:
             return None
@@ -671,11 +672,8 @@ class ClusterManager(ManagerStatusProtocol):
 
     def get_latest_timestamp_from_aof(self, aof: str) -> str | None:
         """Read an appendonly-file from the end and return the first timestamp found."""
-        # reverse-grep the file and stop at the first occurrence to avoid reading entire aof files
-        # run shell command to avoid ops.Container.exec() / subprocess to swallow the | symbol
-        search_command = ["/bin/sh", "-c", f"tac {aof} | grep -m1 '^#TS:'"]
         try:
-            timestamp_line = self.workload.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]
+            timestamp_line = self.workload.get_latest_aof_timestamp(aof)
         except ValkeyWorkloadCommandError as e:
             logger.warning("No timestamp found in %s: %s", aof, e)
             return None
@@ -709,17 +707,15 @@ class ClusterManager(ManagerStatusProtocol):
             except ValkeyWorkloadCommandError as e:
                 logger.warning("Could not reset client connections on %s: %s", endpoint, e)
 
-    def read_local_data_offset(self) -> None:
+    def read_local_data_offset(self, persistence_config: PersistenceConfig) -> None:
         """Read the offset from the locally stored data file, depending on the persistence mode."""
         replication_id = "0"
         replication_offset = "0"
         timestamp = "0"
 
-        persistence = (
-            self.state.unit_server.applied_persistence_config
-            or self.state.cluster.persistence_config
-        )
-        if persistence.mode == PersistenceMode.RDB and (rdb_metadata := self.get_rdb_metadata()):
+        if persistence_config.mode == PersistenceMode.RDB and (
+            rdb_metadata := self.get_rdb_metadata()
+        ):
             for field in rdb_metadata:
                 if "repl-id" in field:
                     replication_id = field.split(" = ")[1].strip("'")
@@ -729,7 +725,7 @@ class ClusterManager(ManagerStatusProtocol):
                     timestamp = field.split(" = ")[1].strip("'")
 
         if (
-            persistence.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]
+            persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]
             and (aof := self.get_latest_aof())
             and (aof_timestamp := self.get_latest_timestamp_from_aof(aof))
         ):

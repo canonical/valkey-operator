@@ -332,7 +332,9 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         """Compare all collected local data offsets and return the latest one."""
         all_offsets = [server.get_local_data_offset() for server in self.servers]
         non_empty_offsets = [
-            offset for offset in all_offsets if offset is not None and not offset.no_data_found
+            offset
+            for offset in all_offsets
+            if offset is not None and not offset.no_offset_data_found
         ]
 
         if len(non_empty_offsets) == 0:
@@ -345,7 +347,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         )
 
         if all_same_id and non_empty_offsets[0].replication_id != "0":  # pyright: ignore[reportOptionalMemberAccess]
-            return max(non_empty_offsets, key=lambda o: int(o.replication_offset))  # pyright: ignore[reportOptionalMemberAccess]
+            return max(
+                non_empty_offsets,
+                key=lambda o: (int(o.replication_offset), int(o.timestamp)),  # pyright: ignore[reportOptionalMemberAccess]
+            )
 
         return max(non_empty_offsets, key=lambda o: int(o.timestamp))  # pyright: ignore[reportOptionalMemberAccess]
 

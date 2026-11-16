@@ -13,7 +13,13 @@ from typing import IO, BinaryIO, override
 import ops
 from charmlibs import pathops
 from ops import pebble
-from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from common.exceptions import (
     ValkeyServiceNotAliveError,
@@ -324,22 +330,29 @@ class ValkeyK8sWorkload(WorkloadBase):
         return True
 
     @override
-    def check_rdb(self) -> str:
+    @retry(
+        retry=retry_if_exception_type(
+            (pebble.APIError, pebble.TimeoutError, pebble.ConnectionError)
+        ),
+        wait=wait_fixed(1),
+        stop=stop_after_attempt(2),
+    )
+    def check_rdb(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         rdb_file = self.working_dir / RDB_FILE_NAME
 
         try:
             return self.container.exec(
-                command=[CHECK_RDB_CLI, rdb_file.as_posix()], timeout=EXEC_TIMEOUT_S
+                command=[CHECK_RDB_CLI, rdb_file.as_posix()],
+                timeout=DATASET_IO_TIMEOUT_S,
             ).wait_output()[0]
-        except (
-            pebble.APIError,
-            pebble.ChangeError,
-            pebble.ConnectionError,
-            pebble.ExecError,
-            pebble.TimeoutError,
-        ) as e:
+        except (pebble.ChangeError, pebble.ExecError) as e:
             logger.warning("Error running %s: %s", CHECK_RDB_CLI, e)
             raise ValkeyWorkloadCommandError(e)
+        except (pebble.APIError, pebble.ConnectionError, pebble.TimeoutError) as e:
+            logger.warning(
+                "Timeout or Connection error running %s: %s, will retry", CHECK_RDB_CLI, e
+            )
+            raise
 
     @override
     @retry(

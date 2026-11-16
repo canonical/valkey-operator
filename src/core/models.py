@@ -359,7 +359,7 @@ class LocalDataOffset(BaseModel):
     timestamp: str
 
     @property
-    def no_data_found(self) -> bool:
+    def no_offset_data_found(self) -> bool:
         """Check if all of the attributes are set to '0', meaning no data was found locally."""
         return (
             self.replication_id == "0" and self.replication_offset == "0" and self.timestamp == "0"

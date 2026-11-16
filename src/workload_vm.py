@@ -290,7 +290,12 @@ class ValkeyVmWorkload(WorkloadBase):
         return True
 
     @override
-    def check_rdb(self) -> str:
+    @retry(
+        retry=retry_if_exception_type(subprocess.TimeoutExpired),
+        wait=wait_fixed(1),
+        stop=stop_after_attempt(2),
+    )
+    def check_rdb(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         rdb_file = self.working_dir / RDB_FILE_NAME
 
         try:
@@ -299,15 +304,14 @@ class ValkeyVmWorkload(WorkloadBase):
                 check=True,
                 text=True,
                 capture_output=True,
-                timeout=EXEC_TIMEOUT_S,
+                timeout=DATASET_IO_TIMEOUT_S,
             ).stdout
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            OSError,
-        ) as e:
+        except (subprocess.CalledProcessError, OSError) as e:
             logger.warning("Error running %s: %s", SNAP_CHECK_RDB_CLI, e)
             raise ValkeyWorkloadCommandError(e)
+        except subprocess.TimeoutExpired as e:
+            logger.warning("Timeout running %s: %s, will retry", SNAP_CHECK_RDB_CLI, e)
+            raise
 
     @override
     def exec(

@@ -221,14 +221,15 @@ class BaseEvents(ops.Object):
             logger.debug("Single unit deployment, continue starting with this unit as primary")
             return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
 
-        if self.charm.state.cluster.persistence_config.mode == PersistenceMode.NONE:
+        persistence_config = self.charm.config_manager.get_current_persistence_config()
+        if persistence_config.mode == PersistenceMode.NONE:
             if self.charm.unit.is_leader():
                 logger.debug("No persistence enabled, continue starting with this unit as primary")
                 return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
             return None
 
         logger.debug("Check if local data exists")
-        self.charm.cluster_manager.read_local_data_offset()
+        self.charm.cluster_manager.read_local_data_offset(persistence_config)
 
         if (
             self.charm.state.any_unit_local_data_offset_stored
