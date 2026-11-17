@@ -1848,6 +1848,7 @@ def test_ldap_tls_verifies_server_cert(
             use_ssl=True,
             tls=tls,
             get_info=ldap3.NONE,  # the fake server only does the TLS handshake
+            mode=ldap3.IP_V4_ONLY,  # the fake server listens on 127.0.0.1 only
         )
         connection = ldap3.Connection(server)
 
