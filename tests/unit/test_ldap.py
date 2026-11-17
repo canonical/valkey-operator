@@ -1742,8 +1742,10 @@ def test_update_status_skips_ldap_acl_before_unit_started():
     reload_acl.assert_not_called()
 
 
-def _issue_ldap_server_cert(tmp_path: Path, san_ip: str) -> str:
-    """Write a CA-signed server cert with a DNS SAN and `san_ip` as IP SAN, return the CA PEM."""
+def _issue_ldap_server_cert(
+    tmp_path: Path, dns_name: str, san_ip: str, expired: bool = False
+) -> str:
+    """Write a CA-signed server cert with `dns_name` and `san_ip` as SANs, return the CA PEM."""
     now = datetime.datetime.now(datetime.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
@@ -1759,18 +1761,22 @@ def _issue_ldap_server_cert(tmp_path: Path, san_ip: str) -> str:
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), False)
         .sign(ca_key, hashes.SHA256())
     )
+    # only the server cert expires, so the CA cannot be the reason a handshake fails
+    not_valid_after = (
+        now - datetime.timedelta(days=1) if expired else now + datetime.timedelta(days=1)
+    )
     key = ec.generate_private_key(ec.SECP256R1())
     cert = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ldap.example.com")]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, dns_name)]))
         .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + datetime.timedelta(days=1))
+        .not_valid_before(now - datetime.timedelta(days=2))
+        .not_valid_after(not_valid_after)
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.DNSName("ldap.example.com"), x509.IPAddress(ipaddress.ip_address(san_ip))]
+                [x509.DNSName(dns_name), x509.IPAddress(ipaddress.ip_address(san_ip))]
             ),
             critical=False,
         )
@@ -1790,10 +1796,31 @@ def _issue_ldap_server_cert(tmp_path: Path, san_ip: str) -> str:
     return ca_cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
-@pytest.mark.parametrize(("san_ip", "verified"), [("127.0.0.1", True), ("10.0.0.1", False)])
-def test_ldap_tls_matches_ip_san(tmp_path: Path, san_ip: str, verified: bool):
-    """An LDAPS server reached by IP is checked against IP SANs, even when a DNS SAN exists."""
-    ca_pem = _issue_ldap_server_cert(tmp_path, san_ip)
+@pytest.mark.parametrize(
+    ("host", "dns_name", "san_ip", "trusted", "expired", "error"),
+    [
+        ("127.0.0.1", "ldap.example.com", "127.0.0.1", True, False, None),
+        ("127.0.0.1", "ldap.example.com", "10.0.0.1", True, False, "IP address mismatch"),
+        ("localhost", "localhost", "10.0.0.1", True, False, None),
+        ("localhost", "ldap.example.com", "127.0.0.1", True, False, "Hostname mismatch"),
+        ("127.0.0.1", "ldap.example.com", "127.0.0.1", False, False, "unable to get local issuer"),
+        ("127.0.0.1", "ldap.example.com", "127.0.0.1", True, True, "certificate has expired"),
+    ],
+)
+def test_ldap_tls_verifies_server_cert(
+    tmp_path: Path,
+    host: str,
+    dns_name: str,
+    san_ip: str,
+    trusted: bool,
+    expired: bool,
+    error: str | None,
+):
+    """OpenSSL checks the LDAPS server cert's DNS or IP SAN, issuing CA and expiry."""
+    ca_pem = _issue_ldap_server_cert(tmp_path, dns_name, san_ip, expired)
+    if not trusted:
+        (other := tmp_path / "other").mkdir()
+        ca_pem = _issue_ldap_server_cert(other, dns_name, san_ip)
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server_context.load_cert_chain(tmp_path / "server.pem")
 
@@ -1810,17 +1837,35 @@ def test_ldap_tls_matches_ip_san(tmp_path: Path, san_ip: str, verified: bool):
             version=ssl.PROTOCOL_TLS_CLIENT, validate=ssl.CERT_REQUIRED, ca_certs_data=ca_pem
         )
         server = ldap3.Server(
-            f"ldaps://127.0.0.1:{listener.getsockname()[1]}",
+            f"ldaps://{host}:{listener.getsockname()[1]}",
             use_ssl=True,
             tls=tls,
             get_info=ldap3.NONE,  # the fake server only does the TLS handshake
         )
         connection = ldap3.Connection(server)
 
-        if verified:
+        if error is None:
             connection.open()
         else:
-            with raises(ldap3.core.exceptions.LDAPSocketOpenError):
+            with raises(ldap3.core.exceptions.LDAPSocketOpenError, match=error):
                 connection.open()
         connection.unbind()
         thread.join(timeout=5)
+
+
+def test_ldap_connection_uses_ldap_tls():
+    """The LDAP user sync connects through `LdapTls` with the stored CA and a required cert."""
+    ctx, state_in = _ldap_query_state({})
+
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        with (
+            patch("workload_k8s.ValkeyK8sWorkload.read_file", return_value="ldap-ca-pem"),
+            patch("managers.auth.ldap3.Connection") as connection,
+        ):
+            charm.auth_manager._get_ldap_connection()
+
+    tls = connection.call_args.kwargs["server"].tls
+    assert isinstance(tls, LdapTls)
+    assert tls.ca_certs_data == "ldap-ca-pem"
+    assert tls.validate == ssl.CERT_REQUIRED
