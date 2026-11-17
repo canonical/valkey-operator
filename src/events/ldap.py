@@ -61,27 +61,8 @@ class LDAPEvents(ops.Object):
 
     def _on_ldap_ready(self, event: LdapReadyEvent) -> None:
         """Handle the setup of the LDAP relation."""
-        # A restore restarts the primary; defer LDAP reconfiguration until it
-        # completes rather than colliding with the restart. These events don't
-        # re-fire once the restore clears, so defer (not return) to keep them.
-        if self.charm.state.cluster.is_restore_in_progress:
+        if not self._reconcile_ldap():
             event.defer()
-            return
-
-        if not self.charm.state.is_ldap_valid:
-            return
-
-        try:
-            self._update_ldap_config()
-            self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (
-            ValkeyACLLoadError,
-            ValkeyCannotGetPrimaryIPError,
-            ValkeyWorkloadCommandError,
-        ) as e:
-            logger.error("Failed to enable LDAP: %s", e)
-            event.defer()
-            return
 
     def _on_ldap_unavailable(self, event: LdapUnavailableEvent) -> None:
         """Handle the removal of the LDAP relation."""
@@ -130,20 +111,8 @@ class LDAPEvents(ops.Object):
             event.defer()
             return
 
-        if not self.charm.state.is_ldap_valid:
-            return
-
-        try:
-            self._update_ldap_config()
-            self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (
-            ValkeyACLLoadError,
-            ValkeyCannotGetPrimaryIPError,
-            ValkeyWorkloadCommandError,
-        ) as e:
-            logger.error("Failed to enable LDAP: %s", e)
+        if not self._reconcile_ldap():
             event.defer()
-            return
 
     def _on_ldap_ca_removed(self, event: CertificatesRemovedEvent) -> None:
         """Handle the CA certificate removed event for LDAP."""
@@ -175,51 +144,53 @@ class LDAPEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle LDAP related config changes."""
-        if not self.charm.state.is_ldap_valid:
-            return
-
-        # Guard AFTER the is_ldap_valid filter so a non-LDAP cluster isn't
-        # needlessly deferred; defer only a real LDAP reconfigure during a restore.
-        if self.charm.state.cluster.is_restore_in_progress:
+        if not self._reconcile_ldap():
             event.defer()
-            return
-
-        try:
-            self._update_ldap_config()
-            self.charm.state.unit_server.update({"ldap_enabled": True})
-        except (
-            ValkeyACLLoadError,
-            ValkeyCannotGetPrimaryIPError,
-            ValkeyWorkloadCommandError,
-        ) as e:
-            logger.error("Failed to update LDAP settings: %s", e)
-            event.defer()
-            return
 
     def _on_secret_changed(self, event: ops.SecretChangedEvent) -> None:
         """Handle LDAP related secret updates."""
-        if not self.charm.state.is_ldap_valid:
-            return
-
         if event.secret.id != self.charm.state.ldap.bind_password_secret:
             return
 
-        # Guard AFTER the secret-id filter so an unrelated secret change isn't
-        # needlessly deferred; defer only a real LDAP reconfigure during a restore.
-        if self.charm.state.cluster.is_restore_in_progress:
+        if not self._reconcile_ldap():
             event.defer()
-            return
 
+    def _reconcile_ldap(self) -> bool:
+        """Enable LDAP or apply its current settings when the configuration is valid.
+
+        Returns:
+            False when the caller should retry later, True otherwise.
+        """
         try:
+            if not self.charm.state.is_ldap_valid:
+                return True
+
+            # Checked after the validity filter so a non-LDAP cluster is never deferred.
+            if self.charm.state.cluster.is_restore_in_progress:
+                return False
+
+            if not self.charm.workload.tls_paths.ldap_ca.exists():
+                logger.warning("LDAP CA certificate not stored yet, waiting for the CA provider")
+                return False
+
             self._update_ldap_config()
+            # the ACL was just rebuilt from LDAP, so the unit is up to date
+            self.charm.state.unit_server.update(
+                {
+                    "ldap_enabled": True,
+                    "ldap_user_epoch": self.charm.state.cluster.model.ldap_user_epoch,
+                }
+            )
         except (
+            ops.ModelError,
             ValkeyACLLoadError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyWorkloadCommandError,
         ) as e:
-            logger.error("Failed to update LDAP settings: %s", e)
-            event.defer()
-            return
+            logger.error("Failed to apply LDAP settings: %s", e)
+            return False
+
+        return True
 
     def _update_ldap_config(self) -> None:
         """Update the current LDAP configuration."""
@@ -269,7 +240,16 @@ class LDAPEvents(ops.Object):
             event.fail(error)
             return
 
-        if not self.charm.state.is_ldap_valid:
+        try:
+            is_ldap_valid = self.charm.state.is_ldap_valid
+        except ops.ModelError as e:
+            logger.error("Cannot read LDAP bind secret: %s", e)
+            error = "Cannot read the LDAP bind secret, try again"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        if not is_ldap_valid:
             error = "LDAP configuration is invalid, see `debug-log` for details"
             event.set_results({"error": error})
             event.fail(error)
@@ -282,7 +262,7 @@ class LDAPEvents(ops.Object):
         try:
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+        except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Failed to update ACL settings: %s", e)
             event.set_results({"error": e})
             event.fail("Failed to update ACL settings, check `debug-log` for details")
@@ -327,19 +307,11 @@ class LDAPEvents(ops.Object):
         self.charm.state.unit_server.update({"ldap_user_epoch": time.time()})
 
     def _on_update_status(self, _: ops.UpdateStatusEvent) -> None:
-        """Handle update status for LDAP."""
+        """Heal missed LDAP events and renders that dropped LDAP."""
         if (
             not self.charm.state.unit_server.is_started
-            or not self.charm.state.unit_server.is_ldap_enabled
-            or not self.charm.state.is_ldap_valid
             or self.charm.state.cluster.is_restore_in_progress
         ):
             return
 
-        logger.info("Update ACL configuration")
-        try:
-            self.charm.auth_manager.set_acl_file()
-            self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
-            logger.error("Failed to update ACL settings: %s", e)
-            return
+        self._reconcile_ldap()

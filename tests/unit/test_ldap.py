@@ -7,12 +7,13 @@ import ipaddress
 import socket
 import ssl
 import threading
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import ldap3
 import ldap3.core.exceptions
+import ops
 import pytest
 import yaml
 from cryptography import x509
@@ -591,6 +592,39 @@ def test_config_change_but_invalid():
         assert not state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
 
 
+def test_update_status_enables_ldap_after_failed_secret_read():
+    """update-status enables LDAP once the bind secret reads again after a failed read."""
+    ctx, state_in = _ldap_query_state({})
+    patches = (
+        patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
+        patch("managers.tls.TLSManager.will_certificate_expire", return_value=False),
+        patch("managers.sentinel.SentinelManager.reconcile_failover_suppression"),
+        patch("managers.sentinel.SentinelManager.get_primary_ip"),
+        patch("managers.config.ConfigManager.set_config_properties"),
+        patch("managers.cluster.ClusterManager.reload_ldap_settings"),
+        patch("managers.auth.AuthManager.set_acl_file"),
+        patch("managers.cluster.ClusterManager.reload_acl_file"),
+    )
+
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        stack.enter_context(
+            patch(
+                "core.cluster_state.ClusterState.get_secret_from_id",
+                side_effect=ops.ModelError("secret backend timeout"),
+            )
+        )
+        state_mid = ctx.run(ctx.on.config_changed(), state_in)
+    assert state_mid.get_relation(1).local_unit_data.get("ldap-enabled") != "true"
+
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        state_out = ctx.run(ctx.on.update_status(), state_mid)
+    assert state_out.get_relation(1).local_unit_data.get("ldap-enabled") == "true"
+
+
 def test_ldap_bind_secret_update():
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     peer_relation = testing.PeerRelation(
@@ -804,6 +838,7 @@ def test_not_started_no_config_load():
         event = MagicMock(spec=LdapReadyEvent)
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
@@ -1305,38 +1340,7 @@ def test_ldap_config_changed_not_deferred_when_ldap_invalid_during_restore():
 
 def test_ldap_ready_deferred_during_restore():
     """An ldap-ready event during a restore is deferred, not applied to the primary."""
-    ctx = testing.Context(ValkeyCharm, app_trusted=True)
-    peer_relation = testing.PeerRelation(
-        id=1,
-        endpoint=PEER_RELATION,
-        local_unit_data={"start-state": "started"},
-        local_app_data={"restore-id": "2026-05-13T10:00:00Z"},
-    )
-    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
-    ldap_secret = testing.Secret({"password": "dummy"})
-    ldap_relation_data = {
-        "auth_method": "simple",
-        "base_dn": "dc=glauth,dc=com",
-        "bind_dn": "cn=valkey,ou=ldap,dc=glauth,dc=com",
-        "bind_password_secret": ldap_secret.id,
-        "ldaps_urls": '["ldaps://glauth-k8s.ldap.svc.cluster.local:3894"]',
-        "starttls": "True",
-        "urls": '["ldap://glauth-k8s.ldap.svc.cluster.local:3893"]',
-    }
-    ldap_relation = testing.Relation(
-        id=3, endpoint=LDAP_RELATION, remote_app_data=ldap_relation_data
-    )
-    ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
-
-    container = testing.Container(name=CONTAINER, can_connect=True)
-    state_in = testing.State(
-        leader=False,
-        relations={peer_relation, status_peer_relation, ldap_relation, ldap_ca_cert_relation},
-        secrets={ldap_secret},
-        config={"ldap-map": "ldap_group:valkey_group"},
-        containers={container},
-        model=testing.Model(name="my-vm-model", type="lxd"),
-    )
+    ctx, state_in = _ldap_query_state({}, app_data={"restore-id": "2026-05-13T10:00:00Z"})
 
     with ctx(ctx.on.update_status(), state_in) as manager:
         charm: ValkeyCharm = manager.charm
@@ -1681,6 +1685,9 @@ def test_update_status_reconciles_ldap_acl():
         patch("managers.auth.AuthManager._get_internal_user_acl_line", return_value=""),
         patch("managers.auth.AuthManager._get_client_user_acl_lines", return_value=""),
         patch("managers.auth.AuthManager._get_ldap_users_for_group", return_value=["clark_kent"]),
+        patch("managers.sentinel.SentinelManager.get_primary_ip"),
+        patch("managers.config.ConfigManager.set_config_properties"),
+        patch("managers.cluster.ClusterManager.reload_ldap_settings"),
         patch("workload_k8s.ValkeyK8sWorkload.write_file") as write_file,
         patch("managers.cluster.ClusterManager.reload_acl_file") as reload_acl,
     ):
@@ -1809,6 +1816,7 @@ def _issue_ldap_server_cert(
 )
 def test_ldap_tls_verifies_server_cert(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     host: str,
     dns_name: str,
     san_ip: str,
@@ -1823,6 +1831,13 @@ def test_ldap_tls_verifies_server_cert(
         ca_pem = _issue_ldap_server_cert(other, dns_name, san_ip)
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server_context.load_cert_chain(tmp_path / "server.pem")
+    # runners can resolve localhost to several addresses, and the fake server accepts only one
+    getaddrinfo = socket.getaddrinfo
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda h, *args: getaddrinfo("127.0.0.1" if h == "localhost" else h, *args),
+    )
 
     with socket.create_server(("127.0.0.1", 0)) as listener:
 
@@ -1847,8 +1862,10 @@ def test_ldap_tls_verifies_server_cert(
         if error is None:
             connection.open()
         else:
-            with raises(ldap3.core.exceptions.LDAPSocketOpenError, match=error):
+            with raises(ldap3.core.exceptions.LDAPSocketOpenError, match=error) as excinfo:
                 connection.open()
+            # the charm logs a certificate failure based on this type
+            assert isinstance(excinfo.value, ssl.SSLCertVerificationError)
         connection.unbind()
         thread.join(timeout=5)
 
