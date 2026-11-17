@@ -10,6 +10,7 @@ import secrets
 import ssl
 import string
 from pathlib import Path
+from typing import override
 
 import ldap3
 import ldap3.core.exceptions
@@ -26,6 +27,23 @@ from statuses import AuthStatuses, CharmStatuses
 logger = logging.getLogger(__name__)
 
 WORKING_DIR = Path(__file__).absolute().parent
+
+
+class LdapTls(ldap3.Tls):
+    """ldap3 TLS settings that let OpenSSL verify the server hostname.
+
+    ldap3's own check ignores IP SANs on Python 3.12+, so it rejects IP URLs once a DNS SAN exists.
+    """
+
+    @override
+    def wrap_socket(self, connection: ldap3.Connection, do_handshake: bool = False) -> None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=self.ca_certs_data)
+        connection.socket = context.wrap_socket(
+            connection.socket,
+            server_hostname=connection.server.host,
+            do_handshake_on_connect=do_handshake,
+        )
 
 
 class AuthManager(ManagerStatusProtocol):
@@ -76,8 +94,7 @@ class AuthManager(ManagerStatusProtocol):
         )
         ldap_ca_cert = self.workload.read_file(self.workload.tls_paths.ldap_ca)
 
-        tls_context = ldap3.Tls(
-            ciphers="ALL",
+        tls_context = LdapTls(
             version=ssl.PROTOCOL_TLS_CLIENT,
             validate=ssl.CERT_REQUIRED,
             ca_certs_data=ldap_ca_cert,
