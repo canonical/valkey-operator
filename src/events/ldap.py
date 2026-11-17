@@ -176,7 +176,10 @@ class LDAPEvents(ops.Object):
             self._update_ldap_config()
             # the ACL was just rebuilt from LDAP, so the unit is up to date
             self.charm.state.unit_server.update(
-                {"ldap_enabled": True, "ldap_user_epoch": time.time()}
+                {
+                    "ldap_enabled": True,
+                    "ldap_user_epoch": self.charm.state.cluster.model.ldap_user_epoch,
+                }
             )
         except (
             ops.ModelError,
