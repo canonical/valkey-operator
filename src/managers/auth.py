@@ -14,6 +14,7 @@ from typing import override
 
 import ldap3
 import ldap3.core.exceptions
+import ops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -234,7 +235,7 @@ class AuthManager(ManagerStatusProtocol):
 
         try:
             ldap_connection = self._get_ldap_connection()
-        except ldap3.core.exceptions.LDAPException as e:
+        except (ldap3.core.exceptions.LDAPException, ops.ModelError) as e:
             logger.error("Could not get LDAP connection: %s", e)
             self.state.unit_server.update({"ldap-sync-failed": True})
             return ldap_users
