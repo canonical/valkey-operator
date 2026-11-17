@@ -726,6 +726,7 @@ class ClusterManager(ManagerStatusProtocol):
                     timestamp = field.split(" = ")[1].strip("'")
 
         if persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]:
+            aof_timestamp = None
             # try to get the timestamp from the incremental AOF first
             if aof_list := self.get_active_aofs():
                 # go through the last aof first
@@ -735,11 +736,16 @@ class ClusterManager(ManagerStatusProtocol):
                     ):
                         timestamp = aof_timestamp
                         break
+
             # if no timestamp found, try to get ctime from the AOF basefile instead
             # if also not found, there is no usable AOF data on the unit
-            elif (aof_base_file := self.get_active_aofs(base_file=True)) and (
-                aof_basefile_metadata := self.get_rdb_metadata(
-                    (self.workload.working_dir / AOF_DIR_NAME / aof_base_file[-1])
+            if (
+                not aof_timestamp
+                and (aof_base_file := self.get_active_aofs(base_file=True))
+                and (
+                    aof_basefile_metadata := self.get_rdb_metadata(
+                        self.workload.working_dir / AOF_DIR_NAME / aof_base_file[-1]
+                    )
                 )
             ):
                 for field in aof_basefile_metadata:
