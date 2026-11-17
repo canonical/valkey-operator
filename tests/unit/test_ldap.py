@@ -1853,8 +1853,10 @@ def test_ldap_tls_verifies_server_cert(
         if error is None:
             connection.open()
         else:
-            with raises(ldap3.core.exceptions.LDAPSocketOpenError, match=error):
+            with raises(ldap3.core.exceptions.LDAPSocketOpenError, match=error) as excinfo:
                 connection.open()
+            # the charm logs a certificate failure based on this type
+            assert isinstance(excinfo.value, ssl.SSLCertVerificationError)
         connection.unbind()
         thread.join(timeout=5)
 

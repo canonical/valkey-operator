@@ -236,7 +236,11 @@ class AuthManager(ManagerStatusProtocol):
         try:
             ldap_connection = self._get_ldap_connection()
         except (ldap3.core.exceptions.LDAPException, ops.ModelError) as e:
-            logger.error("Could not get LDAP connection: %s", e)
+            # ldap3 merges the original SSL error type into its own exception class
+            if isinstance(e, ssl.SSLCertVerificationError):
+                logger.error("LDAP server certificate failed verification: %s", e)
+            else:
+                logger.error("Could not get LDAP connection: %s", e)
             self.state.unit_server.update({"ldap-sync-failed": True})
             return ldap_users
 
