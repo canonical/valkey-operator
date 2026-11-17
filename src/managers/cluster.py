@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from time import sleep
 
+from charmlibs.pathops import PathProtocol
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -624,14 +625,16 @@ class ClusterManager(ManagerStatusProtocol):
         self.workload.remove_dir(aof_dir)
         logger.warning("Moved the corrupted AOF to %s", archive)
 
-    def get_rdb_metadata(self) -> list[str] | None:
-        """Get the metadata of the RDB file on the unit."""
+    def get_rdb_metadata(self, rdb_file_path: PathProtocol | None = None) -> list[str] | None:
+        """Get the metadata from an RDB file on the unit."""
+        rdb_file = rdb_file_path or (self.workload.working_dir / RDB_FILE_NAME)
+
         try:
-            if not (self.workload.working_dir / RDB_FILE_NAME).exists():
+            if not self.workload.path_exists(rdb_file):
                 logger.info("No previous RDB file found")
                 return None
 
-            result_list = self.workload.check_rdb().split("\n")
+            result_list = self.workload.check_rdb(rdb_file).split("\n")
         except RetryError as e:
             logger.warning("Retries exhausted: %s", e)
             return None
@@ -640,8 +643,9 @@ class ClusterManager(ManagerStatusProtocol):
 
         return [line for line in result_list if "AUX FIELD" in line]
 
-    def get_latest_aof(self) -> str | None:
+    def get_latest_aof(self, base_file: bool = False) -> str | None:
         """Get the latest appendonly-file from the unit."""
+        search_str = ".base.rdb" if base_file else ".incr.aof"
         aof_manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
 
         try:
@@ -661,12 +665,12 @@ class ClusterManager(ManagerStatusProtocol):
         latest_aof = None
 
         for line in manifest_content:
-            if ".incr.aof" in line:
+            if search_str in line:
                 last_line = line
         if last_line:
             # manifest format: "file <name> seq <n> type <t>"
             filename = last_line.split()[1]
-            latest_aof = (self.workload.working_dir / AOF_DIR_NAME / filename).as_posix()
+            latest_aof = filename
 
         return latest_aof
 
@@ -707,7 +711,7 @@ class ClusterManager(ManagerStatusProtocol):
             except ValkeyWorkloadCommandError as e:
                 logger.warning("Could not reset client connections on %s: %s", endpoint, e)
 
-    def read_local_data_offset(self, persistence_config: PersistenceConfig) -> None:
+    def read_local_data_offset(self, persistence_config: PersistenceConfig) -> None:  # noqa: C901
         """Read the offset from the locally stored data file, depending on the persistence mode."""
         replication_id = "0"
         replication_offset = "0"
@@ -724,12 +728,24 @@ class ClusterManager(ManagerStatusProtocol):
                 elif "ctime" in field:
                     timestamp = field.split(" = ")[1].strip("'")
 
-        if (
-            persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]
-            and (aof := self.get_latest_aof())
-            and (aof_timestamp := self.get_latest_timestamp_from_aof(aof))
-        ):
-            timestamp = aof_timestamp
+        if persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]:
+            # try to get the timestamp from the incremental AOF first
+            if (aof := self.get_latest_aof()) and (
+                aof_timestamp := self.get_latest_timestamp_from_aof(
+                    (self.workload.working_dir / AOF_DIR_NAME / aof).as_posix()
+                )
+            ):
+                timestamp = aof_timestamp
+            # if no timestamp found, try to get ctime from the AOF basefile instead
+            # if also not found, there is no usable AOF data on the unit
+            elif (aof_base_file := self.get_latest_aof(base_file=True)) and (
+                aof_basefile_metadata := self.get_rdb_metadata(
+                    (self.workload.working_dir / AOF_DIR_NAME / aof_base_file)
+                )
+            ):
+                for field in aof_basefile_metadata:
+                    if "ctime" in field:
+                        timestamp = field.split(" = ")[1].strip("'")
 
         logger.debug(
             "Local data offset: replication id %s, replication offset %s, timestamp %s",

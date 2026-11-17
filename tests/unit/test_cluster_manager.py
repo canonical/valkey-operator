@@ -200,7 +200,7 @@ def test_get_latest_aof_returns_the_last_incr_file():
     cm.workload.read_file.return_value = AOF_MANIFEST
 
     with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
-        assert cm.get_latest_aof() == "/data/appendonlydir/appendonly.aof.2.incr.aof"
+        assert cm.get_latest_aof() == "appendonly.aof.2.incr.aof"
 
 
 def test_get_latest_aof_returns_none_without_an_incr_file():

@@ -43,7 +43,6 @@ from literals import (
     LOGROTATE_VM_CONFIG_FILE,
     METRICS_EXPORTER_ENV_FILE,
     METRICS_SERVICE,
-    RDB_FILE_NAME,
     SNAP_ACL_FILE,
     SNAP_CHECK_AOF_CLI,
     SNAP_CHECK_RDB_CLI,
@@ -295,9 +294,7 @@ class ValkeyVmWorkload(WorkloadBase):
         wait=wait_fixed(1),
         stop=stop_after_attempt(2),
     )
-    def check_rdb(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        rdb_file = self.working_dir / RDB_FILE_NAME
-
+    def check_rdb(self, rdb_file: pathops.PathProtocol) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return subprocess.run(
                 [SNAP_CHECK_RDB_CLI, rdb_file.as_posix()],

@@ -43,7 +43,6 @@ from literals import (
     LOGROTATE_SERVICE,
     LOGROTATE_STATE_FILE,
     METRICS_SERVICE,
-    RDB_FILE_NAME,
     SENTINEL_ACL_FILE,
     SENTINEL_CONFIG_FILE,
     SENTINEL_LOG_FILE,
@@ -337,9 +336,7 @@ class ValkeyK8sWorkload(WorkloadBase):
         wait=wait_fixed(1),
         stop=stop_after_attempt(2),
     )
-    def check_rdb(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        rdb_file = self.working_dir / RDB_FILE_NAME
-
+    def check_rdb(self, rdb_file: pathops.PathProtocol) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return self.container.exec(
                 command=[CHECK_RDB_CLI, rdb_file.as_posix()],

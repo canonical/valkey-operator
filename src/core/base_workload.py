@@ -422,7 +422,7 @@ class WorkloadBase(ABC):
         pass
 
     @abstractmethod
-    def check_rdb(self) -> str:
+    def check_rdb(self, rdb_file: pathops.PathProtocol) -> str:
         """Run valkey-check-rdb against the RDB file and return the output as str."""
         pass
 
