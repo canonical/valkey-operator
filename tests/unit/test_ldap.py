@@ -1816,6 +1816,7 @@ def _issue_ldap_server_cert(
 )
 def test_ldap_tls_verifies_server_cert(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     host: str,
     dns_name: str,
     san_ip: str,
@@ -1830,6 +1831,13 @@ def test_ldap_tls_verifies_server_cert(
         ca_pem = _issue_ldap_server_cert(other, dns_name, san_ip)
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server_context.load_cert_chain(tmp_path / "server.pem")
+    # runners can resolve localhost to several addresses, and the fake server accepts only one
+    getaddrinfo = socket.getaddrinfo
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda h, *args: getaddrinfo("127.0.0.1" if h == "localhost" else h, *args),
+    )
 
     with socket.create_server(("127.0.0.1", 0)) as listener:
 
@@ -1848,7 +1856,6 @@ def test_ldap_tls_verifies_server_cert(
             use_ssl=True,
             tls=tls,
             get_info=ldap3.NONE,  # the fake server only does the TLS handshake
-            mode=ldap3.IP_V4_ONLY,  # the fake server listens on 127.0.0.1 only
         )
         connection = ldap3.Connection(server)
 
