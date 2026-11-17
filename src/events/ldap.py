@@ -169,9 +169,17 @@ class LDAPEvents(ops.Object):
             if self.charm.state.cluster.is_restore_in_progress:
                 return False
 
+            if not self.charm.workload.tls_paths.ldap_ca.exists():
+                logger.warning("LDAP CA certificate not stored yet, waiting for the CA provider")
+                return False
+
             self._update_ldap_config()
-            self.charm.state.unit_server.update({"ldap_enabled": True})
+            # the ACL was just rebuilt from LDAP, so the unit is up to date
+            self.charm.state.unit_server.update(
+                {"ldap_enabled": True, "ldap_user_epoch": time.time()}
+            )
         except (
+            ops.ModelError,
             ValkeyACLLoadError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyWorkloadCommandError,

@@ -838,6 +838,7 @@ def test_not_started_no_config_load():
         event = MagicMock(spec=LdapReadyEvent)
 
         with (
+            patch("charmlibs.pathops.ContainerPath.exists", return_value=True),
             patch("managers.sentinel.SentinelManager.get_primary_ip"),
             patch("managers.config.ConfigManager.set_config_properties") as set_config,
             patch("managers.cluster.ClusterManager.reload_ldap_settings") as reload_ldap,
