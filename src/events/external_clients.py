@@ -180,7 +180,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+        except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return
@@ -243,7 +243,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+        except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return
@@ -270,7 +270,7 @@ class ExternalClientsEvents(ops.Object):
             self.charm.cluster_manager.reload_acl_file()
             self.charm.auth_manager.set_sentinel_acl_file()
             self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+        except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error(e)
             event.defer()
             return

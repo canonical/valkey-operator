@@ -240,7 +240,16 @@ class LDAPEvents(ops.Object):
             event.fail(error)
             return
 
-        if not self.charm.state.is_ldap_valid:
+        try:
+            is_ldap_valid = self.charm.state.is_ldap_valid
+        except ops.ModelError as e:
+            logger.error("Cannot read LDAP bind secret: %s", e)
+            error = "Cannot read the LDAP bind secret, try again"
+            event.set_results({"error": error})
+            event.fail(error)
+            return
+
+        if not is_ldap_valid:
             error = "LDAP configuration is invalid, see `debug-log` for details"
             event.set_results({"error": error})
             event.fail(error)
@@ -253,7 +262,7 @@ class LDAPEvents(ops.Object):
         try:
             self.charm.auth_manager.set_acl_file()
             self.charm.cluster_manager.reload_acl_file()
-        except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+        except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
             logger.error("Failed to update ACL settings: %s", e)
             event.set_results({"error": e})
             event.fail("Failed to update ACL settings, check `debug-log` for details")

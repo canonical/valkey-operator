@@ -409,9 +409,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         try:
             ldap_secret = self.get_secret_from_id(self.ldap.bind_password_secret)
-        except (ops.ModelError, ops.SecretNotFoundError, TypeError) as e:
+        except (ops.SecretNotFoundError, TypeError) as e:
             logger.error("Cannot read LDAP bind secret: %s", e)
             return False
+        # any other ModelError propagates, so a failed read keeps the current LDAP settings
 
         if not ldap_secret.get("password"):
             logger.warning("Password missing in LDAP bind secret")

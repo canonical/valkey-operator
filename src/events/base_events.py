@@ -843,7 +843,7 @@ class BaseEvents(ops.Object):
                 self.charm.auth_manager.update_local_valkey_admin_password()
                 if self.charm.state.unit_server.is_started:
                     self.charm.cluster_manager.update_primary_auth()
-            except (ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
+            except (ops.ModelError, ValkeyACLLoadError, ValkeyWorkloadCommandError) as e:
                 logger.error(e)
                 self.charm.status.set_running_status(
                     ClusterStatuses.PASSWORD_UPDATE_FAILED.value,

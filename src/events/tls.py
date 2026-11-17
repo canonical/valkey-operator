@@ -224,6 +224,7 @@ class TLSEvents(ops.Object):
         try:
             self._enable_client_tls()
         except (
+            ops.ModelError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyWorkloadCommandError,
             ValkeyTLSLoadError,
@@ -302,7 +303,7 @@ class TLSEvents(ops.Object):
                 self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
                 tls_config = self.charm.config_manager.generate_tls_config()
                 self.charm.cluster_manager.reload_tls_settings(tls_config)
-            except (ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
+            except (ops.ModelError, ValkeyWorkloadCommandError, ValkeyTLSLoadError, ValueError):
                 logger.error("Failed to disable client TLS")
                 event.defer()
                 return
