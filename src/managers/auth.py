@@ -112,7 +112,8 @@ class AuthManager(ManagerStatusProtocol):
             user=self.state.ldap.bind_dn,
             password=ldap_bind_password,
             read_only=True,
-            auto_bind=True,
+            # STARTTLS before the bind so the password never crosses ldap:// in cleartext
+            auto_bind=True if ldap_server.ssl else ldap3.AUTO_BIND_TLS_BEFORE_BIND,
         )
 
     def _get_internal_user_acl_line(
