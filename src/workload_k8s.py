@@ -331,7 +331,7 @@ class ValkeyK8sWorkload(WorkloadBase):
     @override
     @retry(
         retry=retry_if_exception_type(
-            (pebble.APIError, pebble.TimeoutError, pebble.ConnectionError)
+            (pebble.APIError, pebble.TimeoutError, pebble.ConnectionError, pebble.ChangeError)
         ),
         wait=wait_fixed(1),
         stop=stop_after_attempt(2),
@@ -342,7 +342,7 @@ class ValkeyK8sWorkload(WorkloadBase):
                 command=[CHECK_RDB_CLI, rdb_file.as_posix()],
                 timeout=DATASET_IO_TIMEOUT_S,
             ).wait_output()[0]
-        except (pebble.ChangeError, pebble.ExecError) as e:
+        except pebble.ExecError as e:
             logger.warning("Error running %s: %s", CHECK_RDB_CLI, e)
             raise ValkeyWorkloadCommandError(e)
         except (pebble.APIError, pebble.ConnectionError, pebble.TimeoutError) as e:
