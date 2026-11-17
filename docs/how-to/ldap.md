@@ -23,7 +23,7 @@ Canonical-maintained ones: the [Authentik LDAP outpost](https://charmhub.io/auth
 which exposes an Authentik directory over LDAP, and [GLAuth](https://charmhub.io/glauth-k8s), a
 lightweight LDAP server. Both are Kubernetes charms.
 
-Charmed Valkey never sends the bind password in cleartext. The provider must offer LDAPS URLs or support STARTTLS on its `ldap://` URLs.
+Charmed Valkey never sends the bind password unencrypted. The provider must offer LDAPS URLs or support STARTTLS on its `ldap://` URLs.
 
 The exact way you deploy them depends on the substrate Charmed Valkey runs on:
 
