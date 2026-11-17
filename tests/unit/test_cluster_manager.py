@@ -200,7 +200,7 @@ def test_get_latest_aof_returns_the_last_incr_file():
     cm.workload.read_file.return_value = AOF_MANIFEST
 
     with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
-        assert cm.get_latest_aof() == "appendonly.aof.2.incr.aof"
+        assert cm.get_active_aofs() == ["appendonly.aof.1.incr.aof", "appendonly.aof.2.incr.aof"]
 
 
 def test_get_latest_aof_returns_none_without_an_incr_file():
@@ -209,7 +209,7 @@ def test_get_latest_aof_returns_none_without_an_incr_file():
     cm.workload.read_file.return_value = "file appendonly.aof.1.base.rdb seq 1 type b\n"
 
     with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
-        assert cm.get_latest_aof() is None
+        assert cm.get_active_aofs() is None
 
 
 def test_get_latest_aof_returns_none_when_the_manifest_is_unreadable():
@@ -218,7 +218,7 @@ def test_get_latest_aof_returns_none_when_the_manifest_is_unreadable():
     cm.workload.read_file.side_effect = ValkeyWorkloadCommandError("no manifest")
 
     with patch("charmlibs.pathops.ContainerPath.exists", return_value=True):
-        assert cm.get_latest_aof() is None
+        assert cm.get_active_aofs() is None
 
 
 def test_get_latest_timestamp_from_aof_extracts_the_timestamp():
@@ -272,7 +272,7 @@ def test_read_local_data_offset_parses_rdb_metadata():
 def test_read_local_data_offset_uses_aof_timestamp_in_aof_mode():
     """AOF mode has no replication id/offset, only the timestamp read from the AOF."""
     cm = _cluster_manager_with_workload()
-    cm.get_latest_aof = MagicMock(return_value="/data/appendonlydir/appendonly.aof.2.incr.aof")
+    cm.get_active_aofs = MagicMock(return_value=["/data/appendonlydir/appendonly.aof.2.incr.aof"])
     cm.get_latest_timestamp_from_aof = MagicMock(return_value="1794421964")
 
     cm.read_local_data_offset(persistence_config=PersistenceConfig(mode=PersistenceMode.AOF))
@@ -294,7 +294,7 @@ def test_read_local_data_offset_aof_timestamp_overrides_rdb_ctime():
             "AUX FIELD repl-offset = '4242'",
         ]
     )
-    cm.get_latest_aof = MagicMock(return_value="/data/appendonlydir/appendonly.aof.2.incr.aof")
+    cm.get_active_aofs = MagicMock(return_value=["/data/appendonlydir/appendonly.aof.2.incr.aof"])
     cm.get_latest_timestamp_from_aof = MagicMock(return_value="1794421964")
 
     cm.read_local_data_offset(persistence_config=PersistenceConfig(mode=PersistenceMode.RDB_AOF))

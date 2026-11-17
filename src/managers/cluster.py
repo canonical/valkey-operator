@@ -643,8 +643,8 @@ class ClusterManager(ManagerStatusProtocol):
 
         return [line for line in result_list if "AUX FIELD" in line]
 
-    def get_latest_aof(self, base_file: bool = False) -> str | None:
-        """Get the latest appendonly-file from the unit."""
+    def get_active_aofs(self, base_file: bool = False) -> list[str] | None:
+        """Get the active appendonly-files from the unit."""
         search_str = ".base.rdb" if base_file else ".incr.aof"
         aof_manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
 
@@ -661,18 +661,15 @@ class ClusterManager(ManagerStatusProtocol):
             logger.warning("Could not read appendonly manifest: %s", e)
             return None
 
-        last_line = None
-        latest_aof = None
+        active_aofs = []
 
         for line in manifest_content:
-            if search_str in line:
-                last_line = line
-        if last_line:
-            # manifest format: "file <name> seq <n> type <t>"
-            filename = last_line.split()[1]
-            latest_aof = filename
+            if search_str in line and "type h" not in line:
+                # manifest format: "file <name> seq <n> type <t>"
+                filename = line.split()[1]
+                active_aofs.append(filename)
 
-        return latest_aof
+        return active_aofs if active_aofs else None
 
     def get_latest_timestamp_from_aof(self, aof: str) -> str | None:
         """Read an appendonly-file from the end and return the first timestamp found."""
@@ -730,17 +727,19 @@ class ClusterManager(ManagerStatusProtocol):
 
         if persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]:
             # try to get the timestamp from the incremental AOF first
-            if (aof := self.get_latest_aof()) and (
-                aof_timestamp := self.get_latest_timestamp_from_aof(
-                    (self.workload.working_dir / AOF_DIR_NAME / aof).as_posix()
-                )
-            ):
-                timestamp = aof_timestamp
+            if aof_list := self.get_active_aofs():
+                # go through the last aof first
+                for aof in aof_list[::-1]:
+                    if aof_timestamp := self.get_latest_timestamp_from_aof(
+                        (self.workload.working_dir / AOF_DIR_NAME / aof).as_posix()
+                    ):
+                        timestamp = aof_timestamp
+                        break
             # if no timestamp found, try to get ctime from the AOF basefile instead
             # if also not found, there is no usable AOF data on the unit
-            elif (aof_base_file := self.get_latest_aof(base_file=True)) and (
+            elif (aof_base_file := self.get_active_aofs(base_file=True)) and (
                 aof_basefile_metadata := self.get_rdb_metadata(
-                    (self.workload.working_dir / AOF_DIR_NAME / aof_base_file)
+                    (self.workload.working_dir / AOF_DIR_NAME / aof_base_file[-1])
                 )
             ):
                 for field in aof_basefile_metadata:
