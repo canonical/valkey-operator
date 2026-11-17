@@ -6,13 +6,16 @@
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from time import sleep
 
+from charmlibs.pathops import PathProtocol
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
 from ops import pebble
 from tenacity import (
+    RetryError,
     Retrying,
     retry,
     retry_if_not_exception_type,
@@ -33,6 +36,7 @@ from common.exceptions import (
 )
 from core.base_workload import WorkloadBase
 from core.cluster_state import ClusterState
+from core.models import PersistenceConfig
 from literals import (
     AOF_CORRUPT_ARCHIVE_NAME,
     AOF_DIR_NAME,
@@ -45,6 +49,7 @@ from literals import (
     VALKEY_READY_LOG_LINE,
     VALKEY_START_LOG_LINE,
     CharmUsers,
+    PersistenceMode,
     ScaleDownState,
     StartState,
 )
@@ -620,6 +625,71 @@ class ClusterManager(ManagerStatusProtocol):
         self.workload.remove_dir(aof_dir)
         logger.warning("Moved the corrupted AOF to %s", archive)
 
+    def get_rdb_metadata(self, rdb_file_path: PathProtocol | None = None) -> list[str] | None:
+        """Get the metadata from an RDB file on the unit."""
+        rdb_file = rdb_file_path or (self.workload.working_dir / RDB_FILE_NAME)
+
+        try:
+            if not self.workload.path_exists(rdb_file):
+                logger.info("No previous RDB file found")
+                return None
+
+            result_list = self.workload.check_rdb(rdb_file).split("\n")
+        except RetryError as e:
+            logger.warning("Retries exhausted: %s", e)
+            return None
+        except ValkeyWorkloadCommandError:
+            return None
+
+        return [line for line in result_list if "AUX FIELD" in line]
+
+    def get_active_aofs(self, base_file: bool = False) -> list[str] | None:
+        """Get the active appendonly-files from the unit."""
+        search_str = ".base.rdb" if base_file else ".incr.aof"
+        aof_manifest = self.workload.working_dir / AOF_DIR_NAME / AOF_MANIFEST_NAME
+
+        try:
+            if not aof_manifest.exists():
+                logger.info("No previous AOF files found")
+                return None
+
+            manifest_content = self.workload.read_file(aof_manifest).split("\n")
+        except pebble.ConnectionError as e:
+            logger.warning("Error looking up AOF manifest: %s", e)
+            return None
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("Could not read appendonly manifest: %s", e)
+            return None
+
+        active_aofs = []
+
+        for line in manifest_content:
+            if search_str in line and "type h" not in line:
+                # manifest format: "file <name> seq <n> type <t>"
+                filename = line.split()[1]
+                active_aofs.append(filename)
+
+        return active_aofs if active_aofs else None
+
+    def get_latest_timestamp_from_aof(self, aof: str) -> str | None:
+        """Read an appendonly-file from the end and return the first timestamp found."""
+        try:
+            timestamp_line = self.workload.get_latest_aof_timestamp(aof)
+        except ValkeyWorkloadCommandError as e:
+            logger.warning("No timestamp found in %s: %s", aof, e)
+            return None
+
+        # extract the timestamp only from '#TS:1794421964\r\n'
+        timestamp = timestamp_line.strip().split(":")[1]
+
+        try:
+            datetime.fromtimestamp(int(timestamp))
+        except (OverflowError, OSError, TypeError, ValueError) as e:
+            logger.warning("Invalid timestamp in AOF: %s", e)
+            return None
+
+        return timestamp
+
     def reset_client_connections(self) -> None:
         """Disconnect all clients to re-establish connections after failover."""
         endpoints = [
@@ -637,6 +707,60 @@ class ClusterManager(ManagerStatusProtocol):
                 client.reset_client_connections(endpoint)
             except ValkeyWorkloadCommandError as e:
                 logger.warning("Could not reset client connections on %s: %s", endpoint, e)
+
+    def read_local_data_offset(self, persistence_config: PersistenceConfig) -> None:  # noqa: C901
+        """Read the offset from the locally stored data file, depending on the persistence mode."""
+        replication_id = "0"
+        replication_offset = "0"
+        timestamp = "0"
+
+        if persistence_config.mode == PersistenceMode.RDB and (
+            rdb_metadata := self.get_rdb_metadata()
+        ):
+            for field in rdb_metadata:
+                if "repl-id" in field:
+                    replication_id = field.split(" = ")[1].strip("'")
+                elif "repl-offset" in field:
+                    replication_offset = field.split(" = ")[1].strip("'")
+                elif "ctime" in field:
+                    timestamp = field.split(" = ")[1].strip("'")
+
+        if persistence_config.mode in [PersistenceMode.AOF, PersistenceMode.RDB_AOF]:
+            aof_timestamp = None
+            # try to get the timestamp from the incremental AOF first
+            if aof_list := self.get_active_aofs():
+                # go through the last aof first
+                for aof in aof_list[::-1]:
+                    if aof_timestamp := self.get_latest_timestamp_from_aof(
+                        (self.workload.working_dir / AOF_DIR_NAME / aof).as_posix()
+                    ):
+                        timestamp = aof_timestamp
+                        break
+
+            # if no timestamp found, try to get ctime from the AOF basefile instead
+            # if also not found, there is no usable AOF data on the unit
+            if (
+                not aof_timestamp
+                and (aof_base_file := self.get_active_aofs(base_file=True))
+                and (
+                    aof_basefile_metadata := self.get_rdb_metadata(
+                        self.workload.working_dir / AOF_DIR_NAME / aof_base_file[-1]
+                    )
+                )
+            ):
+                for field in aof_basefile_metadata:
+                    if "ctime" in field:
+                        timestamp = field.split(" = ")[1].strip("'")
+
+        logger.debug(
+            "Local data offset: replication id %s, replication offset %s, timestamp %s",
+            replication_id,
+            replication_offset,
+            timestamp,
+        )
+        self.state.unit_server.store_local_data_offset(
+            replication_id, replication_offset, timestamp
+        )
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the cluster manager's statuses."""
