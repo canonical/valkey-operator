@@ -1526,6 +1526,7 @@ def _ldap_query_state(
     ldap_enabled: bool = False,
     app_data: dict[str, str] | None = None,
     started: bool = True,
+    ldap_data: dict[str, str] | None = None,
 ) -> tuple[testing.Context, testing.State]:
     """Build a context and state with a fully valid LDAP setup for filter tests."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
@@ -1552,6 +1553,7 @@ def _ldap_query_state(
             "ldaps_urls": '["ldaps://10.0.0.1:636"]',
             "starttls": "False",
             "urls": '["ldap://10.0.0.1:3389"]',
+            **(ldap_data or {}),
         },
     )
     ldap_ca_cert_relation = testing.Relation(id=4, endpoint=LDAP_CA_CERT_RELATION)
@@ -1886,3 +1888,36 @@ def test_ldap_connection_uses_ldap_tls():
     assert isinstance(tls, LdapTls)
     assert tls.ca_certs_data == "ldap-ca-pem"
     assert tls.validate == ssl.CERT_REQUIRED
+
+
+def test_ldap_connection_starts_tls_before_bind_over_ldap_url():
+    """Over an ldap:// URL, the user sync sends STARTTLS first, never a cleartext bind."""
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        first_message = []
+
+        def serve() -> None:
+            sock, _ = listener.accept()
+            with sock:
+                first_message.append(sock.recv(4096))
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        ctx, state_in = _ldap_query_state(
+            {},
+            ldap_data={
+                "ldaps_urls": "[]",
+                "urls": f'["ldap://127.0.0.1:{listener.getsockname()[1]}"]',
+            },
+        )
+
+        with ctx(ctx.on.update_status(), state_in) as manager:
+            charm: ValkeyCharm = manager.charm
+            with (
+                patch("workload_k8s.ValkeyK8sWorkload.read_file", return_value="ldap-ca-pem"),
+                raises(ldap3.core.exceptions.LDAPException),  # the fake server hangs up
+            ):
+                charm.auth_manager._get_ldap_connection()
+        thread.join(timeout=5)
+
+    assert b"1.3.6.1.4.1.1466.20037" in first_message[0]  # StartTLS extended request OID
+    assert b"dummy" not in first_message[0]  # the bind password
