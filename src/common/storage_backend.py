@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pathlib
 import shutil
 from enum import Enum
@@ -30,12 +31,20 @@ from google.api_core.exceptions import (
     from_http_status,
 )
 from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import AuthorizedSession, Request
 from google.cloud import storage
 from google.cloud.storage.exceptions import DataCorruption, InvalidResponse
+from google.oauth2 import service_account
+from requests.adapters import HTTPAdapter
 
 from common.exceptions import StorageBackendError
 from core.models import AzureStorageParameters, BackupCredentials, GCSParameters, S3Parameters
-from literals import AZURE_HTTPS_PROTOCOLS, GCS_INVALID_KEY_CODE
+from literals import (
+    AZURE_HTTPS_PROTOCOLS,
+    GCS_API_URL,
+    GCS_INVALID_KEY_CODE,
+    GCS_TOKEN_REFRESH_TIMEOUT,
+)
 
 if TYPE_CHECKING:
     from azure.storage.blob import BlobClient
@@ -55,6 +64,24 @@ _GCS_ERRORS = (
     DataCorruption,
     requests.RequestException,
 )
+
+
+def _proxies(url: str) -> dict[str, str] | None:
+    """Return the juju-*-proxy model config for ``url``, or None to keep the SDK default.
+
+    Juju exports these keys only as ``JUJU_CHARM_*``, which no SDK reads. The legacy
+    ``http-proxy`` keys arrive as ``HTTP_PROXY``, which the SDKs honor on their own.
+    """
+    proxies = {
+        scheme: value
+        for scheme in ("http", "https")
+        if (value := os.environ.get(f"JUJU_CHARM_{scheme.upper()}_PROXY"))
+    }
+    # requests matches CIDR entries, which botocore's own NO_PROXY check skips.
+    no_proxy = os.environ.get("JUJU_CHARM_NO_PROXY")
+    if not proxies or requests.utils.should_bypass_proxies(url, no_proxy=no_proxy):
+        return None
+    return proxies
 
 
 class RemoteObject(NamedTuple):
@@ -190,6 +217,7 @@ class S3Backend:
                 config=Config(
                     request_checksum_calculation="when_required",
                     response_checksum_validation="when_required",
+                    proxies=_proxies(self.params.endpoint),
                 ),
                 verify=verify,
             ),
@@ -310,13 +338,15 @@ class AzureBackend:
         endpoint is not ``<account>.blob.*`` -- an emulator or a custom domain,
         where the account sits in the URL path instead.
         """
+        account_url = self._account_url()
         return ContainerClient(
-            account_url=self._account_url(),
+            account_url=account_url,
             container_name=self.params.container,
             credential={
                 "account_name": self.params.storage_account,
                 "account_key": self.params.secret_key,
             },
+            proxies=_proxies(account_url),
         )
 
     def _blob(self, backup_id: str) -> "BlobClient":
@@ -425,12 +455,30 @@ class GCSBackend:
         message names the format, never the key material.
         """
         service_account_info = self._service_account_info()
+        project = service_account_info.get("project_id")
+        proxies = _proxies(GCS_API_URL)
         try:
-            return storage.Client.from_service_account_info(
-                service_account_info, project=service_account_info.get("project_id")
+            if proxies is None:
+                return storage.Client.from_service_account_info(
+                    service_account_info, project=project
+                )
+            credentials = service_account.Credentials.from_service_account_info(
+                service_account_info, scopes=storage.Client.SCOPE
             )
         except ValueError as e:
             raise StorageBackendError(str(e), safe_code=GCS_INVALID_KEY_CODE) from e
+        # Token refresh uses its own session, so it needs the proxy too. The retry
+        # adapter matches what AuthorizedSession mounts on its default one.
+        auth_session = requests.Session()
+        auth_session.mount("https://", HTTPAdapter(max_retries=3))
+        auth_session.proxies = proxies
+        http = AuthorizedSession(
+            credentials,
+            auth_request=Request(auth_session),
+            refresh_timeout=GCS_TOKEN_REFRESH_TIMEOUT,
+        )
+        http.proxies = proxies
+        return storage.Client(project=project, credentials=credentials, _http=http)
 
     def _bucket(self) -> "GCSBucket":
         """Return a bucket handle; no round trip until a method is called on it."""

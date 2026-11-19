@@ -20,6 +20,8 @@ import requests
 from azure.core.exceptions import HttpResponseError, ResourceExistsError, ServiceRequestError
 from azure.storage.blob import StorageErrorCode
 from botocore.exceptions import ClientError, EndpointConnectionError
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from google.api_core.exceptions import (
     Conflict,
     Forbidden,
@@ -35,7 +37,7 @@ from common import storage_backend
 from common.exceptions import StorageBackendError
 from common.storage_backend import AzureBackend, GCSBackend, S3Backend, build_backend
 from core.models import AzureStorageParameters, GCSParameters, S3Parameters
-from literals import GCS_INVALID_KEY_CODE
+from literals import GCS_INVALID_KEY_CODE, GCS_TOKEN_REFRESH_TIMEOUT
 
 
 def _s3_params(**overrides):
@@ -715,6 +717,35 @@ def test_gcsbackend_client_passes_project_none_when_the_key_has_none(mocker):
 
     _, kwargs = from_info.call_args
     assert kwargs == {"project": None}
+
+
+def test_gcsbackend_client_routes_api_and_token_refresh_through_the_juju_proxy(monkeypatch):
+    """Juju exports juju-*-proxy only as JUJU_CHARM_*, so the backend passes it explicitly.
+
+    Token refresh runs on its own session, so both sessions must carry the proxy.
+    Building the real client also catches an SDK bump that breaks ``_http``.
+    """
+    proxy = "http://squid.internal:3128"
+    monkeypatch.setenv("JUJU_CHARM_HTTP_PROXY", proxy)
+    monkeypatch.setenv("JUJU_CHARM_HTTPS_PROXY", proxy)
+    monkeypatch.setenv("JUJU_CHARM_NO_PROXY", "127.0.0.1,localhost,::1,10.0.0.0/8")
+    pem = (
+        rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
+
+    client = GCSBackend(_gcs_params(**{"secret-key": _gcs_key(private_key=pem)}))._client()
+
+    expected = {"http": proxy, "https": proxy}
+    assert client.project == "proj"
+    assert client._http.proxies == expected
+    assert client._http._auth_request.session.proxies == expected
+    assert client._http._refresh_timeout == GCS_TOKEN_REFRESH_TIMEOUT
 
 
 def test_gcsbackend_client_translates_an_unparsable_private_key(mocker):
