@@ -90,6 +90,10 @@ BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_EXISTS_CODE = "BackupAlreadyExists"
 # Action error code for a GCS service-account key the SDK cannot parse.
 GCS_INVALID_KEY_CODE = "InvalidServiceAccountKey"
+# GCS API host, matched against juju-no-proxy (gcs-integrator has no endpoint option).
+GCS_API_URL = "https://storage.googleapis.com"
+# Token refresh cap in seconds, the value storage.Client sets on its default session.
+GCS_TOKEN_REFRESH_TIMEOUT = 300
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
 # Normal down-after (rendered by ConfigManager, reasserted by resume_failover);
