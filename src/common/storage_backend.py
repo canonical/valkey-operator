@@ -465,7 +465,7 @@ class GCSBackend:
             credentials = service_account.Credentials.from_service_account_info(
                 service_account_info, scopes=storage.Client.SCOPE
             )
-        except ValueError as e:
+        except (TypeError, ValueError) as e:
             raise StorageBackendError(str(e), safe_code=GCS_INVALID_KEY_CODE) from e
         # Token refresh uses its own session, so it needs the proxy too. The retry
         # adapter matches what AuthorizedSession mounts on its default one.
