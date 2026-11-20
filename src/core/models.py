@@ -386,6 +386,7 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     advertised_address: str = Field(default="")
+    public_ip_mode: bool = Field(default=False)
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)

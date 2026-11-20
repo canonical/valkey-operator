@@ -43,6 +43,7 @@ from literals import (
     STATUS_PEERS_RELATION,
     RestoreFailure,
     Substrate,
+    TLSState,
 )
 
 if TYPE_CHECKING:
@@ -211,7 +212,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         return str(address)
 
-    @property
+    @cached_property
     def public_address(self) -> str | None:
         """The unit's public address from Juju, which ops does not expose."""
         try:
@@ -260,21 +261,6 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             return public_ip
 
         return self.bind_address
-
-    @property
-    def is_exposed_public(self) -> bool:
-        """Check if the deployment is exposed publicly, in case of VM. Always true on K8s.
-
-        Compares the private and public IP addresses from Juju. Used to determine whether
-        Sentinel needs to announce its address or not.
-        """
-        if self.substrate == Substrate.K8S:
-            return True
-
-        if self.public_address == self.bind_address:
-            return False
-
-        return True
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
