@@ -25,6 +25,7 @@ from common.network_utils import resolve_k8s_fqdn
 from core.models import (
     BackupCredentials,
     LDAPState,
+    LocalDataOffset,
     PeerAppModel,
     PeerUnitModel,
     ValkeyCluster,
@@ -317,6 +318,43 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return any(server.is_backup_in_progress for server in self.servers)
 
     @property
+    def all_units_local_data_offset_stored(self) -> bool:
+        """True if all units have read and stored their local data offset in peer data."""
+        return all(server.get_local_data_offset() for server in self.servers)
+
+    @property
+    def any_unit_local_data_offset_stored(self) -> bool:
+        """True if any unit has read and stored its local data offset in peer data."""
+        return any(server.get_local_data_offset() for server in self.servers)
+
+    @property
+    def latest_data_offset(self) -> LocalDataOffset | None:
+        """Compare all collected local data offsets and return the latest one."""
+        all_offsets = [server.get_local_data_offset() for server in self.servers]
+        non_empty_offsets = [
+            offset
+            for offset in all_offsets
+            if offset is not None and not offset.no_offset_data_found
+        ]
+
+        if len(non_empty_offsets) == 0:
+            logger.debug("No previous database files on any unit")
+            return None
+
+        all_same_id = all(
+            offset.replication_id == non_empty_offsets[0].replication_id  # pyright: ignore[reportOptionalMemberAccess]
+            for offset in non_empty_offsets
+        )
+
+        if all_same_id and non_empty_offsets[0].replication_id != "0":  # pyright: ignore[reportOptionalMemberAccess]
+            return max(
+                non_empty_offsets,
+                key=lambda o: (int(o.replication_offset), int(o.timestamp)),  # pyright: ignore[reportOptionalMemberAccess]
+            )
+
+        return max(non_empty_offsets, key=lambda o: int(o.timestamp))  # pyright: ignore[reportOptionalMemberAccess]
+
+    @property
     def is_tls_transitioning(self) -> bool:
         """True while any unit is mid client-TLS enable/disable or a CA rotation.
 
@@ -371,9 +409,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         try:
             ldap_secret = self.get_secret_from_id(self.ldap.bind_password_secret)
-        except (ops.ModelError, ops.SecretNotFoundError, TypeError) as e:
+        except (ops.SecretNotFoundError, TypeError) as e:
             logger.error("Cannot read LDAP bind secret: %s", e)
             return False
+        # any other ModelError propagates, so a failed read keeps the current LDAP settings
 
         if not ldap_secret.get("password"):
             logger.warning("Password missing in LDAP bind secret")

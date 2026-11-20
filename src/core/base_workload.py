@@ -420,3 +420,15 @@ class WorkloadBase(ABC):
             ValkeyWorkloadCommandError: If the check could not run.
         """
         pass
+
+    @abstractmethod
+    def check_rdb(self, rdb_file: pathops.PathProtocol) -> str:
+        """Run valkey-check-rdb against the RDB file and return the output as str."""
+        pass
+
+    def get_latest_aof_timestamp(self, aof: str) -> str:
+        """Reverse-search an appendonly-file and return the first timestamp found."""
+        # reverse-grep the file and stop at the first occurrence to avoid reading entire aof files
+        # run shell command to avoid ops.Container.exec() / subprocess to swallow the | symbol
+        search_command = ["/bin/sh", "-c", f"tac {aof} | grep -m1 '^#TS:'"]
+        return self.exec(command=search_command, timeout=EXEC_TIMEOUT_S)[0]

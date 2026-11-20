@@ -316,7 +316,13 @@ class ValkeyClient(CliClient):
             cmd.append(value)
         logger.debug("Loading config settings")
 
-        reply = self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
+        try:
+            reply = self.exec_cli_command(command=cmd, hostname=hostname, json_output=False)
+        except ValkeyWorkloadCommandError:
+            # the VM exec error includes the argv with its secret values
+            raise ValkeyWorkloadCommandError(
+                f"CONFIG SET {', '.join(config_settings)} failed on {hostname}"
+            ) from None
         if reply != "OK":
             # the reply can echo values such as primaryauth, so only the keys are reported
             raise ValkeyWorkloadCommandError(

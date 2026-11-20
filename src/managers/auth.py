@@ -10,9 +10,11 @@ import secrets
 import ssl
 import string
 from pathlib import Path
+from typing import override
 
 import ldap3
 import ldap3.core.exceptions
+import ops
 from data_platform_helpers.advanced_statuses.models import StatusObject
 from data_platform_helpers.advanced_statuses.protocol import ManagerStatusProtocol
 from data_platform_helpers.advanced_statuses.types import Scope
@@ -26,6 +28,23 @@ from statuses import AuthStatuses, CharmStatuses
 logger = logging.getLogger(__name__)
 
 WORKING_DIR = Path(__file__).absolute().parent
+
+
+class LdapTls(ldap3.Tls):
+    """ldap3 TLS settings that let OpenSSL verify the server hostname.
+
+    ldap3's own check ignores IP SANs on Python 3.12+, so it rejects IP URLs once a DNS SAN exists.
+    """
+
+    @override
+    def wrap_socket(self, connection: ldap3.Connection, do_handshake: bool = False) -> None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=self.ca_certs_data)
+        connection.socket = context.wrap_socket(
+            connection.socket,
+            server_hostname=connection.server.host,
+            do_handshake_on_connect=do_handshake,
+        )
 
 
 class AuthManager(ManagerStatusProtocol):
@@ -76,8 +95,7 @@ class AuthManager(ManagerStatusProtocol):
         )
         ldap_ca_cert = self.workload.read_file(self.workload.tls_paths.ldap_ca)
 
-        tls_context = ldap3.Tls(
-            ciphers="ALL",
+        tls_context = LdapTls(
             version=ssl.PROTOCOL_TLS_CLIENT,
             validate=ssl.CERT_REQUIRED,
             ca_certs_data=ldap_ca_cert,
@@ -94,7 +112,8 @@ class AuthManager(ManagerStatusProtocol):
             user=self.state.ldap.bind_dn,
             password=ldap_bind_password,
             read_only=True,
-            auto_bind=True,
+            # STARTTLS before the bind so the password never crosses ldap:// in cleartext
+            auto_bind=True if ldap_server.ssl else ldap3.AUTO_BIND_TLS_BEFORE_BIND,
         )
 
     def _get_internal_user_acl_line(
@@ -217,8 +236,12 @@ class AuthManager(ManagerStatusProtocol):
 
         try:
             ldap_connection = self._get_ldap_connection()
-        except ldap3.core.exceptions.LDAPException as e:
-            logger.error("Could not get LDAP connection: %s", e)
+        except (ldap3.core.exceptions.LDAPException, ops.ModelError) as e:
+            # ldap3 merges the original SSL error type into its own exception class
+            if isinstance(e, ssl.SSLCertVerificationError):
+                logger.error("LDAP server certificate failed verification: %s", e)
+            else:
+                logger.error("Could not get LDAP connection: %s", e)
             self.state.unit_server.update({"ldap-sync-failed": True})
             return ldap_users
 

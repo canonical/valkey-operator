@@ -61,6 +61,18 @@ def test_static_overrides_land_in_rendered_dict():
     assert props["repl-backlog-size"] == "256mb"
 
 
+def test_repl_backlog_ttl_is_never_released():
+    """repl-backlog-ttl is pinned to '0' so a disconnected replica keeps its backlog.
+
+    A full-cluster restart relies on the backlog surviving indefinitely, so the
+    primary must never free it after a replica disconnects.
+    """
+    cm = _make_config_manager()
+    props = cm.get_config_properties(primary_endpoint="10.0.0.5")
+
+    assert props["repl-backlog-ttl"] == "0"
+
+
 @pytest.mark.parametrize("planned_units", [0, 1, 2, 3, 5])
 def test_min_replicas_to_write_is_static_one_in_file(planned_units):
     """min-replicas-to-write always ships as '1' in valkey.conf.

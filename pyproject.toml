@@ -28,6 +28,8 @@ azure-storage-blob = ">=12.19,<12.31"
 google-cloud-storage = "^3.13"
 # Imported directly by the GCS backend for requests.RequestException.
 requests = ">=2.22"
+# Imported directly by the GCS backend to build a proxied session.
+google-auth = "^2.26.1"
 cosl = ">=0.0.53"
 charm-refresh = "^3.1.1.8"
 charmlibs-rollingops = "^1.1.5"
