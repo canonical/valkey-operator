@@ -90,8 +90,7 @@ class SentinelManager(ManagerStatusProtocol):
         active_sentinels = [
             unit.get_endpoint(self.state.substrate)
             for unit in self.state.servers
-            if unit.is_active
-            and unit.get_endpoint(self.state.substrate) != self.state.advertised_address
+            if unit.is_active and unit.get_endpoint(self.state.substrate) != self.state.endpoint
         ]
 
         client = self._get_sentinel_client()

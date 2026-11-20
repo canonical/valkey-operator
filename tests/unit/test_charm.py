@@ -874,7 +874,11 @@ def test_relation_changed_event_do_not_update_quorum():
 
 def test_advertise_public_ip_address(vm_environment):
     ctx = testing.Context(ValkeyCharm)
-    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"public-ip-mode": "true"},
+    )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
     state_in = testing.State(
         model=testing.Model(name="my-vm-model"),

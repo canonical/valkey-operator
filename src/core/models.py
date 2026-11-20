@@ -599,10 +599,10 @@ class ValkeyServer(RelationState):
         On VM-based substrates, this should be the private IP address.
         On Kubernetes, this should be the hostname of the unit.
         """
-        if not self.model.advertised_address:
-            # backwards compatibility for upgrades: if not present, fall back to the previous logic
-            return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
+        return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
+    def get_advertised_address(self, substrate: Substrate) -> str:
+        """Return the advertised endpoint for client connections of this unit."""
         return self.model.advertised_address
 
     @property

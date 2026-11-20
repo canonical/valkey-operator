@@ -44,7 +44,6 @@ from literals import (
     STATUS_PEERS_RELATION,
     RestoreFailure,
     Substrate,
-    TLSState,
 )
 
 if TYPE_CHECKING:
@@ -252,16 +251,30 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def advertised_address(self) -> str:
         """The endpoint to be advertised/used for client connections.
 
-        On VM, this is the public IP addresses if available, otherwise the private IP.
+        On VM, this is the public IP addresses if public-ip-mode enabled, otherwise the private IP.
         On K8s, this is the FQDN of the unit.
         """
         if self.substrate == Substrate.K8S:
             return self.hostname
 
-        if public_ip := self.public_address:
+        if self.unit_server.model.public_ip_mode and (public_ip := self.public_address):
             return public_ip
 
         return self.bind_address
+
+    @property
+    def is_public_ip_state_valid(self) -> bool:
+        """Validate the config and relations required for public IP mode."""
+        if self.substrate == Substrate.K8S:
+            return False
+
+        if not self.client_tls_relation:
+            return False
+
+        if self.public_address == self.bind_address:
+            return False
+
+        return True
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

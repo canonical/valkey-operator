@@ -156,6 +156,19 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        if self.charm.config.get("use-public-ips"):
+            if not self.charm.state.is_public_ip_state_valid:
+                logger.warning("Public IP mode configured, but invalid state")
+                event.defer()
+                return
+
+            self.charm.state.unit_server.update(
+                {
+                    "public-ip-mode": True,
+                    "advertised-address": self.charm.state.advertised_address,
+                }
+            )
+
         if self._get_primary_endpoint_for_start() is None:
             logger.debug("Primary not available, deferring start event")
             self.charm.state.unit_server.update(
@@ -219,7 +232,7 @@ class BaseEvents(ops.Object):
 
         if self.charm.app.planned_units() == 1:
             logger.debug("Single unit deployment, continue starting with this unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
 
         persistence_config = self.charm.config_manager.get_current_persistence_config()
         if persistence_config.mode == PersistenceMode.NONE:
