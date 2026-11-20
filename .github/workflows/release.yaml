@@ -27,6 +27,8 @@ jobs:
     secrets: inherit
     permissions:
       contents: write  # Needed for Allure Report
+      pull-requests: write  # Needed by flake0 classify and summarize in ci.yaml
+      actions: read  # Needed by flake0 classify in ci.yaml
 
   release:
     name: Release charm
