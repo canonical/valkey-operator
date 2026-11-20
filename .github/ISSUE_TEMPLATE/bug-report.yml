@@ -1,0 +1,58 @@
+name: Bug Report
+description: Report a bug that needs to be fixed
+labels:
+  - bug
+body:
+  - type: textarea
+    id: Description
+    attributes:
+      label: Description
+      description: "Please describe the unexpected behaviour: "
+      placeholder: ex. "`valkey` fails to start with TLS enabled"
+    validations:
+      required: true
+
+  - type: input
+    id: Version
+    attributes:
+      label: Charm version
+      description: "What revision of the charm are you using?"
+      placeholder: ex. 147
+    validations:
+      required: true
+
+  - type: dropdown
+    id: Substrate
+    attributes:
+      label: Substrate
+      description: Which substrate are you using?
+      multiple: true
+      options:
+        - Kubernetes
+        - VM
+
+  - type: textarea
+    id: Expected-Behaviour
+    attributes:
+      label: Expected behaviour
+      description: "Describe of what you expected to happen: "
+      placeholder: ex. "All units start correctly and Valkey uses TLS"
+    validations:
+      required: true
+
+  - type: textarea
+    id: Reproduction-Steps
+    attributes:
+      label: "Reproduce / Test"
+      description: "Steps to reproduce the unexpected behaviour: "
+      placeholder: ex. "juju deploy valkey && juju integrate valkey <TLS provider>"
+    validations:
+      required: true
+
+  - type: textarea
+    id: Info-Notes
+    attributes:
+      label: "Notes & References"
+      description: "Please add anything to help diagnose the issue e.g. Juju version, debug logs, Valkey/Sentinel server logs, etc."
+    validations:
+      required: false

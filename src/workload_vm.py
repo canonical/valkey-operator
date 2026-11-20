@@ -45,6 +45,7 @@ from literals import (
     METRICS_SERVICE,
     SNAP_ACL_FILE,
     SNAP_CHECK_AOF_CLI,
+    SNAP_CHECK_RDB_CLI,
     SNAP_COMMON_PATH,
     SNAP_CONFIG_FILE,
     SNAP_CURRENT_PATH,
@@ -286,6 +287,28 @@ class ValkeyVmWorkload(WorkloadBase):
         except (subprocess.TimeoutExpired, OSError) as e:
             raise ValkeyWorkloadCommandError(e)
         return True
+
+    @override
+    @retry(
+        retry=retry_if_exception_type(subprocess.TimeoutExpired),
+        wait=wait_fixed(1),
+        stop=stop_after_attempt(2),
+    )
+    def check_rdb(self, rdb_file: pathops.PathProtocol) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
+        try:
+            return subprocess.run(
+                [SNAP_CHECK_RDB_CLI, rdb_file.as_posix()],
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=DATASET_IO_TIMEOUT_S,
+            ).stdout
+        except (subprocess.CalledProcessError, OSError) as e:
+            logger.warning("Error running %s: %s", SNAP_CHECK_RDB_CLI, e)
+            raise ValkeyWorkloadCommandError(e)
+        except subprocess.TimeoutExpired as e:
+            logger.warning("Timeout running %s: %s, will retry", SNAP_CHECK_RDB_CLI, e)
+            raise
 
     @override
     def exec(

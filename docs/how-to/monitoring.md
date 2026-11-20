@@ -8,7 +8,7 @@ After you integrate the two, COS receives:
 
 - metrics from a [Redis exporter](https://github.com/oliver006/redis_exporter) that runs next to
   each Valkey unit
-- the Valkey and Sentinel logs
+- Valkey logs, Sentinel logs, and the log of the topology observer (the process on the leader unit that watches for primary changes)
 - a Grafana dashboard and the [alert rules](reference-alert-rules) that ship with the
   charm
 
@@ -258,7 +258,7 @@ Open the URL and log in as `admin` with that password. Go to **Dashboards** and 
 
 ## View logs
 
-Loki receives the Valkey and Sentinel logs. To read them, open **Explore** in
+Loki receives the Valkey, Sentinel and topology observer logs. To read them, open **Explore** in
 Grafana, pick the Loki data source and filter on `juju_application="valkey"`.
 
 ![Valkey logs in Grafana Explore](images/monitoring-logs.png)
@@ -272,7 +272,8 @@ Each unit also keeps the log files on disk:
 :sync: vm
 
 `valkey.log` and `sentinel.log` are in `/var/snap/valkey-charmed/common/var/log/valkey/`. The
-directory belongs to `snap_daemon`, so list it with `sudo`:
+leader unit also writes `topology_observer.log` there. The directory belongs to `snap_daemon`, so
+list it with `sudo`:
 
 ```shell
 juju ssh valkey/0 sudo ls -l /var/snap/valkey-charmed/common/var/log/valkey/
@@ -283,6 +284,7 @@ The output looks like this:
 ```text
 total 32
 -rw-r--r-- 1 snap_daemon snap_daemon  1683 Oct  7 03:46 sentinel.log
+-rw-r--r-- 1 root        root          412 Oct  7 03:47 topology_observer.log
 -rw-r--r-- 1 snap_daemon snap_daemon 23722 Oct  7 04:13 valkey.log
 ```
 
@@ -291,7 +293,8 @@ total 32
 ````{tab-item} K8s
 :sync: k8s
 
-`valkey.log` and `sentinel.log` are in `/var/log/valkey/` in the `valkey` container:
+`valkey.log` and `sentinel.log` are in `/var/log/valkey/` in the `valkey` container. The leader
+unit also writes `topology_observer.log` there:
 
 ```shell
 juju ssh --container valkey valkey/0 ls -l /var/log/valkey/
@@ -303,6 +306,7 @@ The output looks like this:
 total 616
 drwxrws--- 2 root     170  16384 Oct  7 03:55 lost+found
 -rw-r--r-- 1 _daemon_ 170    743 Oct  7 03:57 sentinel.log
+-rw-r--r-- 1 170      170    412 Oct  7 03:58 topology_observer.log
 -rw-r--r-- 1 _daemon_ 170 602834 Oct  7 04:14 valkey.log
 ```
 
@@ -310,9 +314,13 @@ drwxrws--- 2 root     170  16384 Oct  7 03:55 lost+found
 
 `````
 
-Both files rotate daily, or earlier once one passes 200 MB. Rotated files are kept for up to 10
+`valkey.log` and `sentinel.log` rotate daily, or earlier once one passes 200 MB. Rotated files are kept for up to 10
 days, 14 files at most. All but the newest are compressed, so the names are `valkey.log.1`,
 `valkey.log.2.gz`, and so on.
+
+`topology_observer.log` rotates once it passes 10 MB and keeps three old files,
+`topology_observer.log.1` to `topology_observer.log.3`. Only the leader writes it, so after a
+leader change the older lines stay on the unit that was the leader before.
 
 ```{important}
 For production environments, use a logs volume of at least 8 GB.

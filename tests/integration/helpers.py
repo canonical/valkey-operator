@@ -33,6 +33,7 @@ from literals import (
     SENTINEL_PORT,
     SENTINEL_TLS_PORT,
     TLS_PORT,
+    TOPOLOGY_OBSERVER_LOG_FILENAME,
     CharmUsers,
     Substrate,
 )
@@ -59,6 +60,8 @@ TLS_CERT_FILE = "client.pem"
 TLS_KEY_FILE = "client.key"
 TLS_CA_FILE = "client_ca.pem"
 DATA_INTEGRATOR_NAME = "data-integrator"
+# the charm process sees the logs storage at its VM path on both substrates
+OBSERVER_LOG = f"/var/snap/valkey-charmed/common/var/log/valkey/{TOPOLOGY_OBSERVER_LOG_FILENAME}"
 
 
 def does_status_match(

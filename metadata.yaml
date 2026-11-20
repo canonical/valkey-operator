@@ -38,7 +38,7 @@ resources:
   valkey-image:
     type: oci-image
     description: OCI Image for Valkey
-    upstream-source: ghcr.io/canonical/valkey-charmed@sha256:a2af31a3af20c3fbb59e10ca24bef3a2771824fb060b85615e102724f9437fa3
+    upstream-source: ghcr.io/canonical/valkey-charmed@sha256:9545d77d8bd18f99844378f2ce9065449a2b30d5d074231a74d00492293fd51f
 
 peers:
   valkey-peers:

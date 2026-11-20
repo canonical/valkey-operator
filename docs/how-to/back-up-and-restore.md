@@ -17,6 +17,21 @@ integrators places Charmed Valkey in a blocked state until you remove the extra
 relations.
 ```
 
+````{note}
+If the object store is only reachable through a proxy, Charmed Valkey sends backup
+and restore traffic through the proxy set with the `juju-http-proxy` and
+`juju-https-proxy` model configuration keys. Endpoints that match `juju-no-proxy`
+are reached directly. Entries can be host names, domain suffixes such as
+`.example.com`, IP addresses, or {spellexception}`CIDR` ranges such as `10.0.0.0/8`:
+
+```shell
+juju model-config juju-https-proxy=http://squid.internal:3128 \
+  juju-no-proxy=127.0.0.1,localhost,::1,10.0.0.0/8
+```
+
+The legacy `http-proxy` and `https-proxy` keys work as well.
+````
+
 ## S3-compatible object storage
 
 To use S3-compatible storage for your backups, deploy

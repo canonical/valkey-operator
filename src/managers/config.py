@@ -116,11 +116,7 @@ class ConfigManager(ManagerStatusProtocol):
         # DA261 backup-safety overrides
         config_properties["repl-diskless-load"] = "on-empty-db"
         # only the persistence reconcile renders new settings, other renders keep what is live
-        persistence = (
-            persistence
-            or self.state.unit_server.applied_persistence_config
-            or self._initial_persistence()
-        )
+        persistence = persistence or self.get_current_persistence_config()
         for key, value in self.persistence_settings(persistence).items():
             # a missing `save` line falls back to Valkey's own save points, so write `save ""`
             config_properties[key] = value or '""'
@@ -138,6 +134,7 @@ class ConfigManager(ManagerStatusProtocol):
         config_properties["min-replicas-to-write"] = "1"
         if self.workload.total_memory_bytes() > _REPL_BACKLOG_MIN_RAM_BYTES:
             config_properties["repl-backlog-size"] = _REPL_BACKLOG_SIZE
+        config_properties["repl-backlog-ttl"] = "0"
 
         # replica related config
         replica_config = self._generate_replica_config(primary_endpoint=primary_endpoint)
@@ -172,6 +169,10 @@ class ConfigManager(ManagerStatusProtocol):
             logger.info("Loading the AOF on this storage")
             return stored
         return PersistenceConfig()
+
+    def get_current_persistence_config(self) -> PersistenceConfig:
+        """Return the persistence configuration that currently gets applied."""
+        return self.state.unit_server.applied_persistence_config or self._initial_persistence()
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""

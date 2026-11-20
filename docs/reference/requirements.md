@@ -19,6 +19,7 @@ The charm is based on the [valkey-charmed snap](https://snapcraft.io/valkey-char
 [valkey-charmed rock](https://github.com/canonical/valkey-artifacts/pkgs/container/valkey-charmed).
 
 It currently supports the following architectures:
+
 * `amd64`
 * `arm64`
 

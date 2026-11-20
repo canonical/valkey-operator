@@ -38,6 +38,7 @@ SENTINEL_ACL_FILE = "var/lib/valkey/sentinel-users.acl"
 LOGROTATE_STATE_FILE = "var/lib/valkey/logrotate.status"
 
 TOPOLOGY_OBSERVER_LOG_FILENAME = "topology_observer.log"
+TOPOLOGY_OBSERVER_LOGS_SERVICE = "topology-observer-logs"
 TOPOLOGY_OBSERVER_LOG_MAX_BYTES = 10 * 1024**2
 TOPOLOGY_OBSERVER_LOG_BACKUPS = 3
 TOPOLOGY_OBSERVER_TLS_CA_FILENAME = "valkey_ca.pem"
@@ -89,6 +90,10 @@ BACKUP_ID_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BACKUP_EXISTS_CODE = "BackupAlreadyExists"
 # Action error code for a GCS service-account key the SDK cannot parse.
 GCS_INVALID_KEY_CODE = "InvalidServiceAccountKey"
+# GCS API host, matched against juju-no-proxy (gcs-integrator has no endpoint option).
+GCS_API_URL = "https://storage.googleapis.com"
+# Token refresh cap in seconds, the value storage.Client sets on its default session.
+GCS_TOKEN_REFRESH_TIMEOUT = 300
 BACKUP_CA_FILENAME = "s3_ca_chain.pem"
 PRE_RESTORE_SUFFIX = ".pre-restore"
 # Normal down-after (rendered by ConfigManager, reasserted by resume_failover);
@@ -125,7 +130,9 @@ RDB_FILE_NAME = "dump.rdb"
 # One archive slot for the last corrupted AOF a self-heal moved aside
 AOF_CORRUPT_ARCHIVE_NAME = "appendonlydir.corrupt"
 SNAP_CHECK_AOF_CLI = f"{SNAP_NAME}.check-aof"
+SNAP_CHECK_RDB_CLI = f"{SNAP_NAME}.check-rdb"
 CHECK_AOF_CLI = "valkey-check-aof"
+CHECK_RDB_CLI = "valkey-check-rdb"
 # Valkey log lines around a start attempt, and the ones it logs before exiting on a corrupted AOF
 # (aof.c, rdb.c). Open, permission and I/O errors are left out, since moving the AOF can't fix them.
 VALKEY_START_LOG_LINE = "Valkey is starting"

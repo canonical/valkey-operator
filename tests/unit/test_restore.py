@@ -191,6 +191,7 @@ def test_k8s_stop_verifies_down_only_when_check_alive(mocker):
 
     wl = ValkeyK8sWorkload.__new__(ValkeyK8sWorkload)
     wl.container = mocker.Mock()
+    wl.container.get_services.return_value = {"valkey": mocker.Mock()}
     wl.valkey_service = "valkey"
     mocker.patch.object(ValkeyK8sWorkload, "alive", return_value=True)  # still up after stop
 

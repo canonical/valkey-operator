@@ -17,6 +17,7 @@ from literals import (
     LOGGING_RELATION,
     METRICS_ENDPOINT_RELATION,
     METRICS_PORT,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
     Substrate,
 )
 from tests.integration.helpers import (
@@ -27,6 +28,7 @@ from tests.integration.helpers import (
     TLS_NAME,
     are_agents_idle,
     are_apps_active_and_agents_idle,
+    leader_unit_name,
 )
 from tests.integration.observability.helpers import (
     COS_LITE_CHANNELS,
@@ -57,6 +59,20 @@ def test_deploy(ensure_valkey, juju: jubilant.Juju) -> None:
     status = juju.status()
     assert APP_NAME in status.apps
     assert len(status.apps[APP_NAME].units) == NUM_UNITS
+
+
+def test_topology_observer_log_forwarded_from_leader(ensure_valkey, juju: jubilant.Juju) -> None:
+    """Only the leader, which runs the observer, forwards the observer log."""
+    leader = leader_unit_name(juju)
+    for unit in juju.status().apps[APP_NAME].units:
+        # the charm container reaches the workload Pebble through its socket
+        services = juju.ssh(
+            unit,
+            "PEBBLE_SOCKET=/charm/containers/valkey/pebble.socket "
+            f"/charm/bin/pebble services {TOPOLOGY_OBSERVER_LOGS_SERVICE}",
+        )
+        expected = "active" if unit == leader else "inactive"
+        assert f" {expected} " in services, f"{unit}: {services}"
 
 
 def test_metrics_exporter_without_tls(ensure_valkey, juju: jubilant.Juju) -> None:

@@ -242,6 +242,7 @@ class ValkeyCharm(ops.CharmBase):
             )
             self.cluster_manager.disable_old_persistence(settings)
         except (
+            ops.ModelError,
             ValkeyCannotGetPrimaryIPError,
             ValkeyClusterNotReadyError,
             ValkeyWorkloadCommandError,

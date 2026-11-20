@@ -4,23 +4,31 @@
 import logging
 
 import jubilant
+import pytest
 from tenacity import Retrying, stop_after_delay, wait_fixed
 
-from literals import PRIMARY_NAME, TOPOLOGY_OBSERVER_LOG_FILENAME, CharmUsers, Substrate
+from literals import (
+    PRIMARY_NAME,
+    TOPOLOGY_OBSERVER_LOGS_SERVICE,
+    CharmUsers,
+    Substrate,
+)
+from tests.integration.ha.helpers.helpers import reboot_unit
 from tests.integration.helpers import (
     APP_NAME,
     IMAGE_RESOURCE,
+    OBSERVER_LOG,
     are_apps_active_and_agents_idle,
     exec_valkey_cli,
     fast_forward,
     get_cluster_addresses,
     get_password,
+    leader_unit_name,
 )
 
 logger = logging.getLogger(__name__)
 
 UNIT = f"{APP_NAME}/0"
-CHARM_DIR = f"/var/lib/juju/agents/unit-{APP_NAME}-0/charm"
 
 
 def grow(path: str, size: str) -> str:
@@ -87,7 +95,7 @@ def test_valkey_and_sentinel_logs_rotate(juju: jubilant.Juju, substrate: Substra
 
 def test_topology_observer_log_rotates(juju: jubilant.Juju, substrate: Substrate) -> None:
     """The observer log rotates past 10M on the observer's next write."""
-    log_file = f"{CHARM_DIR}/{TOPOLOGY_OBSERVER_LOG_FILENAME}"
+    log_file = OBSERVER_LOG
     # K8s lands in the charm container as the charm user, the VM charm runs as root
     sudo = "" if substrate == Substrate.K8S else "sudo "
 
@@ -107,3 +115,76 @@ def test_topology_observer_log_rotates(juju: jubilant.Juju, substrate: Substrate
                 juju.cli(
                     "ssh", UNIT, f"{sudo}sh -c 'test -f {log_file}.1 && {is_fresh(log_file)}'"
                 )
+
+
+def test_topology_observer_log_survives_pod_restart(
+    juju: jubilant.Juju, substrate: Substrate
+) -> None:
+    """The observer log lives on the logs storage, so a new pod keeps the old lines."""
+    if substrate != Substrate.K8S:
+        pytest.skip("Pod restarts are K8s-only")
+
+    first_line = juju.ssh(UNIT, f"head -1 {OBSERVER_LOG}").strip()
+    assert first_line, "the observer log is empty"
+
+    logger.info("Deleting the pod of %s", UNIT)
+    reboot_unit(juju, UNIT, substrate)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(status, APP_NAME, idle_period=30),
+        timeout=600,
+    )
+
+    assert first_line in juju.ssh(UNIT, f"cat {OBSERVER_LOG}").splitlines()
+
+
+def test_topology_observer_follows_leadership(juju: jubilant.Juju, substrate: Substrate) -> None:
+    """After a leader change, only the new leader runs the observer and forwards its log."""
+    juju.add_unit(APP_NAME, num_units=2)
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=3
+        ),
+        timeout=1200,
+    )
+
+    old_leader = leader_unit_name(juju)
+    # SIGSTOP hangs the agent but keeps the observer running
+    pkill = "sudo pkill -x jujud" if substrate == Substrate.VM else "pkill -x containeragent"
+    # retry once, e.g. on K8s a liveness restart can beat the lease expiry
+    for attempt in range(2):
+        logger.info("Freezing the agent of %s, attempt %d", old_leader, attempt + 1)
+        juju.ssh(old_leader, pkill.replace("pkill", "pkill -STOP"))
+        try:
+            for retry in Retrying(stop=stop_after_delay(300), wait=wait_fixed(10), reraise=True):
+                with retry:
+                    assert leader_unit_name(juju) != old_leader
+            break
+        except (AssertionError, ValueError):
+            logger.info("Leadership stayed on %s", old_leader)
+        finally:
+            # a restarted charm container leaves nothing to thaw
+            juju.ssh(old_leader, f"{pkill.replace('pkill', 'pkill -CONT')} || true")
+
+    new_leader = leader_unit_name(juju)
+    assert new_leader != old_leader, f"leadership never left {old_leader}"
+    juju.wait(
+        lambda status: are_apps_active_and_agents_idle(
+            status, APP_NAME, idle_period=30, unit_count=3
+        ),
+        timeout=1200,
+    )
+
+    for unit, count in ((new_leader, "1"), (old_leader, "0")):
+        # the brackets keep pgrep from matching this shell
+        assert juju.ssh(unit, "pgrep -fc '[t]opology_observer.py' || true").strip() == count, unit
+    sudo = "" if substrate == Substrate.K8S else "sudo "
+    assert "Starting new observer" in juju.ssh(new_leader, f"{sudo}cat {OBSERVER_LOG}")
+
+    if substrate == Substrate.K8S:
+        for unit, expected in ((new_leader, "active"), (old_leader, "inactive")):
+            services = juju.ssh(
+                unit,
+                "PEBBLE_SOCKET=/charm/containers/valkey/pebble.socket "
+                f"/charm/bin/pebble services {TOPOLOGY_OBSERVER_LOGS_SERVICE}",
+            )
+            assert f" {expected} " in services, f"{unit}: {services}"

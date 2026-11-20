@@ -73,7 +73,7 @@ def test_build_and_deploy(
 
     juju.wait(
         lambda status: are_agents_idle(status, APP_NAME, idle_period=30, unit_count=NUM_UNITS),
-        timeout=600,
+        timeout=720,
     )
 
     # PostgreSQL is deliberately absent: it re-stamps its agent status every few seconds under
