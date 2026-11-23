@@ -156,6 +156,7 @@ class TLSManager(ManagerStatusProtocol):
 
         sans_ip.add(self.state.bind_address)
 
+        # always add public IP if present, even if not enabled, to avoid cert update when enabling
         if (public_address := self.state.public_address) and self._is_ip_address(public_address):
             sans_ip.add(public_address)
 

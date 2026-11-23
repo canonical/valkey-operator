@@ -50,6 +50,11 @@ class ClusterStatuses(Enum):
         message="Health check failed after refresh",
     )
 
+    PUBLIC_IP_NOT_UPDATED = StatusObject(
+        status="maintenance",
+        message="Public IP address updated but not yet configured",
+    )
+
 
 class PersistenceStatuses(Enum):
     """Collection of possible statuses related to persistence."""

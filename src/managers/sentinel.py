@@ -516,6 +516,38 @@ class SentinelManager(ManagerStatusProtocol):
             logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
         client.reset(hostname=endpoint)
 
+    def remove_stale_public_address(self) -> bool:
+        """Check if the advertised address of this unit is stale and reset Sentinel state if so."""
+        if not self.state.unit_server.model.public_ip_mode:
+            return True
+
+        previous_advertised_address = self.state.unit_server.model.advertised_address
+        if self.state.advertised_address == previous_advertised_address:
+            return True
+
+        client = self._get_sentinel_client()
+        try:
+            primary_ip = self.get_primary_ip()
+            active_sentinels = self.get_active_sentinel_ips(primary_ip)
+            all_sentinels = [sentinel["ip"] for sentinel in client.sentinels_primary(primary_ip)]
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.warning("Failed to query primary/sentinels: %s", e)
+            return False
+
+        if previous_advertised_address not in all_sentinels:
+            logger.debug("Stale address %s not in Sentinel list", previous_advertised_address)
+            return True
+
+        logger.info("Removing stale address %s from Sentinels", previous_advertised_address)
+        try:
+            self.reset_sentinel_states(active_sentinels)
+        except (CannotSeeAllActiveSentinelsError, ValkeyWorkloadCommandError) as e:
+            logger.warning("Failed to reset Sentinel state: %s", e)
+            return False
+
+        self.state.unit_server.update({"advertised_address": self.state.advertised_address})
+        return True
+
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(

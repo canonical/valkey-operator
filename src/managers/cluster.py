@@ -787,6 +787,12 @@ class ClusterManager(ManagerStatusProtocol):
             if not self.state.unit_server.model.is_sentinel_healthy:
                 status_list.append(ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value)
 
+            if (
+                self.state.unit_server.model.public_ip_mode
+                and self.state.advertised_address != self.state.unit_server.model.advertised_address
+            ):
+                status_list.append(ClusterStatuses.PUBLIC_IP_NOT_UPDATED.value)
+
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
     def _get_start_status(self) -> StatusObject | None:

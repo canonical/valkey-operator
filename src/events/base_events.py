@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
+    SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
@@ -164,8 +165,8 @@ class BaseEvents(ops.Object):
 
             self.charm.state.unit_server.update(
                 {
-                    "public-ip-mode": True,
-                    "advertised-address": self.charm.state.advertised_address,
+                    "public_ip_mode": True,
+                    "advertised_address": self.charm.state.advertised_address,
                 }
             )
 
@@ -654,6 +655,7 @@ class BaseEvents(ops.Object):
             return True
 
         recorded_ip = self.charm.state.unit_server.model.private_ip
+        recorded_advertised_ip = self.charm.state.unit_server.model.advertised_address
         if not recorded_ip:
             # the address is first recorded on start; there is nothing to reconcile before that
             return True
@@ -661,13 +663,16 @@ class BaseEvents(ops.Object):
         try:
             # an ingress address, such as a public IP, can change while the bind address stays
             sans_changed = self.charm.tls_manager.certificate_sans_require_update()
-            if self.charm.state.bind_address == recorded_ip and not sans_changed:
+            if (
+                self.charm.state.bind_address == recorded_ip
+                and self.charm.state.advertised_address == recorded_advertised_ip
+                and not sans_changed
+            ):
                 return True
 
             self.charm.auth_manager.configure_auth()
-            self.charm.config_manager.configure_services(
-                self.charm.sentinel_manager.get_primary_ip()
-            )
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.config_manager.configure_services(primary_ip)
 
             if sans_changed:
                 if self.charm.state.client_tls_relation:
@@ -690,10 +695,18 @@ class BaseEvents(ops.Object):
                 "private_ip": self.charm.state.bind_address,
             }
         )
+
+        if self.charm.workload.alive and primary_ip == recorded_advertised_ip:
+            logger.info("Attempting failover after IP change on primary")
+        try:
+            self.charm.sentinel_manager.failover()
+        except SentinelFailoverError as e:
+            logger.warning("Could not failover before restart: %s", e)
+
         self.charm.request_restart()
         return True
 
-    def restart_workload(
+    def restart_workload(  # noqa: C901
         self,
         restart_valkey: bool = True,
         restart_sentinel: bool = True,
@@ -763,9 +776,14 @@ class BaseEvents(ops.Object):
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
         self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
-        if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
-            return OperationResult.RETRY_HOLD
+        if restart_sentinel:
+            if not self.charm.sentinel_manager.is_healthy():
+                self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+                return OperationResult.RETRY_HOLD
+
+            if not self.charm.sentinel_manager.remove_stale_public_address():
+                logger.warning("Failed to reset Sentinel state after IP change")
+                return OperationResult.RETRY_HOLD
 
         self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
         return OperationResult.RELEASE
