@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.models import PersistenceConfig
-from literals import PersistenceMode
+from literals import PersistenceMode, Substrate
 from managers.config import ConfigManager
 from statuses import CharmStatuses, PersistenceStatuses
 
@@ -132,6 +132,27 @@ def test_sentinel_logfile_points_to_logs_volume(mocker):
     mocker.patch.object(cm, "generate_sentinel_tls_config", return_value={})
     props = cm.get_sentinel_config_properties(primary_endpoint="10.0.0.5")
     assert props["logfile"] == "/var/log/valkey/sentinel.log"
+
+
+def test_sentinel_binds_and_announces_the_data_address_on_vm(mocker):
+    """On VM, Sentinel binds to and announces the data address."""
+    cm = _make_config_manager()
+    cm.state.substrate = Substrate.VM
+    mocker.patch.object(cm, "generate_sentinel_tls_config", return_value={})
+    props = cm.get_sentinel_config_properties(primary_endpoint="10.0.0.6")
+    assert props["bind"] == "10.0.0.5"
+    assert props["sentinel"]["announce-ip"] == "10.0.0.5"  # pyright: ignore[reportIndexIssue]
+
+
+def test_sentinel_keeps_listening_on_every_interface_on_k8s(mocker):
+    """On K8s, Sentinel has no bind and announces the pod hostname."""
+    cm = _make_config_manager()
+    cm.state.substrate = Substrate.K8S
+    cm.state.unit_server.model.hostname = "valkey-0.valkey-endpoints"
+    mocker.patch.object(cm, "generate_sentinel_tls_config", return_value={})
+    props = cm.get_sentinel_config_properties(primary_endpoint="10.0.0.6")
+    assert "bind" not in props
+    assert props["sentinel"]["announce-ip"] == "valkey-0.valkey-endpoints"  # pyright: ignore[reportIndexIssue]
 
 
 @pytest.mark.parametrize(
