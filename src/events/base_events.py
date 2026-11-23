@@ -146,10 +146,13 @@ class BaseEvents(ops.Object):
             return
 
         if self.charm.state.substrate == Substrate.VM:
-            # The unit has not started yet. It can start with the new address directly
-            self.charm.state.unit_server.update(
-                {"private_ip": self.charm.state.bind_address, "pending_ip": ""}
-            )
+            try:
+                # The unit has not started yet. It can start with the new address directly
+                self.charm.state.unit_server.update(
+                    {"private_ip": self.charm.state.bind_address, "pending_ip": ""}
+                )
+            except ValueError:
+                logger.warning("No address in the bound space, starting on the recorded one")
 
         if not self._start_conditions_met():
             event.defer()
@@ -646,13 +649,19 @@ class BaseEvents(ops.Object):
             # K8s uses hostnames, and the start flow records the address itself
             return
 
-        if self.charm.state.bind_address == self.charm.state.unit_server.model.private_ip:
+        try:
+            bind_address = self.charm.state.bind_address
+        except ValueError:
+            # no address in the bound space, the unit stays on the recorded one
+            bind_address = ""
+
+        if not bind_address or bind_address == self.charm.state.unit_server.model.private_ip:
             if (
                 self.charm.state.unit_server.model.pending_ip
                 and self.charm.state.unit_server.model.pending_ip
                 != self.charm.state.unit_server.model.private_ip
             ):
-                logger.info("The binding is back on the recorded address, dropping the move")
+                logger.info("The binding has no new address anymore, dropping the move")
                 self.charm.state.unit_server.update({"pending_ip": ""})
             return
 
@@ -660,9 +669,9 @@ class BaseEvents(ops.Object):
             logger.info("Waiting for the refresh to finish before moving address")
             return
 
-        if self.charm.state.unit_server.model.pending_ip != self.charm.state.bind_address:
-            logger.info("Moving to %s", self.charm.state.bind_address)
-            self.charm.state.unit_server.update({"pending_ip": self.charm.state.bind_address})
+        if self.charm.state.unit_server.model.pending_ip != bind_address:
+            logger.info("Moving to %s", bind_address)
+            self.charm.state.unit_server.update({"pending_ip": bind_address})
             self.charm.request_restart()
 
     def restart_workload(

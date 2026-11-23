@@ -212,6 +212,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         return str(address)
 
     @property
+    def client_bind_address(self) -> str:
+        """The network binding address of the client endpoint."""
+        if not (binding := self.model.get_binding(EXTERNAL_CLIENTS_RELATION)):
+            raise ValueError("Client binding address not yet available")
+
+        if not (address := binding.network.bind_address):
+            raise ValueError("Client binding address not yet available")
+
+        return str(address)
+
+    @property
     def ingress_addresses(self) -> list[str]:
         """The network ingress IP addresses from the peer relation.
 

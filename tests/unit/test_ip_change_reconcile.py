@@ -9,6 +9,7 @@ from itertools import chain, repeat
 from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
+import pytest
 from charmlibs.rollingops import OperationResult
 from ops import testing
 
@@ -18,6 +19,7 @@ from common.exceptions import (
     SentinelFailoverError,
     ValkeyWorkloadCommandError,
 )
+from core.cluster_state import ClusterState
 from src.charm import ValkeyCharm
 from src.literals import (
     CLIENT_TLS_RELATION_NAME,
@@ -30,6 +32,9 @@ from src.statuses import CharmStatuses, ClusterStatuses
 from .helpers import status_is
 
 CONTAINER = "valkey"
+
+# taken at import, before the autouse fixture replaces it
+REAL_BIND_ADDRESS = ClusterState.__dict__["bind_address"]
 
 OLD_IP = "127.0.1.1"
 # must match the autouse `mock_bind_address` fixture in conftest.py
@@ -529,3 +534,137 @@ def test_move_retry_does_not_fail_over_again(vm_environment):
 
         mocks.failover.assert_not_called()
         mocks.run_id.assert_not_called()
+
+
+def test_bind_address_raises_without_an_address(vm_environment):
+    """`juju bind --force` or a removed NIC leaves the binding without an address."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = testing.State(
+        relations={_peer_relation()},
+        networks={testing.Network(PEER_RELATION, bind_addresses=[])},
+        containers={testing.Container(name=CONTAINER, can_connect=True)},
+        model=testing.Model(name="my-vm-model", type="lxd"),
+    )
+    with (
+        _reconcile_env(),
+        patch.object(ClusterState, "bind_address", REAL_BIND_ADDRESS),
+        ctx(ctx.on.update_status(), state_in) as manager,
+        pytest.raises(ValueError),
+    ):
+        manager.charm.state.bind_address
+
+
+def test_client_binding_in_another_space_blocks(vm_environment):
+    """Clients would get addresses they may not reach, so the unit blocks and keeps serving."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation(private_ip=NEW_IP)})
+
+    with (
+        _reconcile_env(cert_ip=NEW_IP),
+        patch(
+            "core.cluster_state.ClusterState.client_bind_address",
+            new_callable=PropertyMock,
+            return_value="10.9.9.9",
+        ),
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    assert status_is(state_out, ClusterStatuses.CLIENT_SPACE_MISMATCH.value)
+
+
+def test_binding_checks_are_vm_only():
+    """K8s has no spaces, every binding resolves to alpha."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation()})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "core.cluster_state.ClusterState.client_bind_address",
+            new_callable=PropertyMock,
+            return_value="10.9.9.9",
+        ),
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    assert not status_is(state_out, ClusterStatuses.CLIENT_SPACE_MISMATCH.value)
+
+
+def test_no_address_in_the_bound_space_blocks_and_keeps_the_address(
+    vm_environment, mock_request_async_lock
+):
+    """The unit keeps serving on its recorded address until the space has one again."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation()})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock,
+            side_effect=ValueError("no address"),
+        ),
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    unit_data = state_out.get_relation(1).local_unit_data
+    assert unit_data["private-ip"] == OLD_IP
+    assert "pending-ip" not in unit_data
+    mock_request_async_lock.assert_not_called()
+    assert status_is(state_out, ClusterStatuses.NO_ADDRESS_IN_SPACE.value)
+
+
+def test_losing_the_address_drops_a_pending_move(vm_environment):
+    """A move to an address that is gone again must not start."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation(pending_ip=NEW_IP)})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock,
+            side_effect=ValueError("no address"),
+        ),
+    ):
+        state_out = ctx.run(ctx.on.update_status(), state_in)
+
+    assert "pending-ip" not in state_out.get_relation(1).local_unit_data
+
+
+def test_first_start_defers_without_an_address(vm_environment):
+    """A unit can't start before its space gives it an address."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation(private_ip="", start_state="not_started")})
+
+    with (
+        _reconcile_env(),
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock,
+            side_effect=ValueError("no address"),
+        ),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_in)
+
+    assert not state_out.get_relation(1).local_unit_data.get("private-ip")
+    assert [d.name for d in state_out.deferred] == ["start"]
+
+
+def test_start_from_scratch_keeps_the_recorded_address_without_a_binding(vm_environment):
+    """Without an address in the space, the unit starts on the one it had."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    state_in = _state(relations={_peer_relation()})
+
+    with (
+        _reconcile_env(),
+        patch("workload_vm.ValkeyVmWorkload.alive", return_value=False),
+        patch(
+            "core.cluster_state.ClusterState.bind_address",
+            new_callable=PropertyMock,
+            side_effect=ValueError("no address"),
+        ),
+    ):
+        state_out = ctx.run(ctx.on.start(), state_in)
+
+    assert state_out.get_relation(1).local_unit_data["private-ip"] == OLD_IP

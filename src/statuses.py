@@ -50,6 +50,16 @@ class ClusterStatuses(Enum):
         message="Health check failed after refresh",
     )
 
+    NO_ADDRESS_IN_SPACE = StatusObject(
+        status="blocked",
+        message="No address in the space bound to valkey-peers",
+    )
+
+    CLIENT_SPACE_MISMATCH = StatusObject(
+        status="blocked",
+        message="valkey-client must be bound to the same space as valkey-peers",
+    )
+
     MOVING_ADDRESS = StatusObject(
         status="maintenance",
         message="Moving to the address in the bound space",
