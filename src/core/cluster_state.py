@@ -206,7 +206,13 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         ):
             raise ValueError("Network binding address not yet available")
 
-        if not (address := binding.network.bind_address):
+        try:
+            address = binding.network.bind_address
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            address = None
+
+        if not address:
             raise ValueError("Network binding address not yet available")
 
         return str(address)
@@ -217,7 +223,13 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         if not (binding := self.model.get_binding(EXTERNAL_CLIENTS_RELATION)):
             raise ValueError("Client binding address not yet available")
 
-        if not (address := binding.network.bind_address):
+        try:
+            address = binding.network.bind_address
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            address = None
+
+        if not address:
             raise ValueError("Client binding address not yet available")
 
         return str(address)
@@ -233,11 +245,13 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         ):
             raise ValueError
 
-        return [
-            str(address)
-            for address in binding.network.ingress_addresses
-            if not isinstance(address, str)
-        ]
+        try:
+            addresses = binding.network.ingress_addresses
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            return []
+
+        return [str(address) for address in addresses if not isinstance(address, str)]
 
     @property
     def hostname(self) -> str:
