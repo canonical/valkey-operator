@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
+    SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
@@ -43,6 +44,7 @@ from literals import (
     START_OPERATION_ID,
     STARTING_STATES,
     TLS_PORT,
+    VALKEY_DOWN_RUN_ID,
     CharmUsers,
     PersistenceMode,
     ScaleDownState,
@@ -142,6 +144,12 @@ class BaseEvents(ops.Object):
         if self.charm.state.unit_server.is_started and self.charm.workload.alive():
             logger.info("Unit restarted by the refresh, not starting it again")
             return
+
+        if self.charm.state.substrate == Substrate.VM:
+            # The unit has not started yet. It can start with the new address directly
+            self.charm.state.unit_server.update(
+                {"private_ip": self.charm.state.bind_address, "pending_ip": ""}
+            )
 
         if not self._start_conditions_met():
             event.defer()
@@ -517,10 +525,7 @@ class BaseEvents(ops.Object):
         if not self.charm.state.cluster.is_restore_in_progress:
             self.charm.reconcile_persistence()
 
-        # runs before the leader check (any unit's address can change) and is not
-        # deferred: update-status repeats on its own
-        if not self._reconcile_unit_address():
-            return
+        self._request_address_move()
 
         if not self.charm.unit.is_leader():
             # fallback if peer-relation-changed missed the leader change
@@ -617,68 +622,48 @@ class BaseEvents(ops.Object):
         if not self.charm.workload.can_connect:
             raise RuntimeError("Workload container not ready yet")
 
-        # this raises a ValueError if it fails
-        self.charm.state.unit_server.update(
-            {
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
+        data = {"hostname": self.charm.state.hostname}
+        # start and leader-elected also fire mid-move, so only the move may change a recorded address
+        if (
+            self.charm.state.substrate != Substrate.VM
+            or not self.charm.state.unit_server.model.private_ip
+        ):
+            # this raises a ValueError if it fails
+            data["private_ip"] = self.charm.state.bind_address
+        self.charm.state.unit_server.update(data)
 
-    def _reconcile_unit_address(self) -> bool:
-        """Reconfigure the unit and reissue its certificate after its address changed.
+    def _request_address_move(self) -> None:
+        """Record a new binding as pending and request the restart that moves the unit.
 
-        When a machine changes address, Juju's binding may still report the old one while
-        `config-changed` runs, with no later `config-changed` to correct it — so
-        `update-status` must also converge the unit. The caller owns the retry strategy.
-
-        Returns:
-            bool: True if the address is reconciled (or there was nothing to do), False if
-                the reconcile could not complete and must be retried.
+        `juju bind` fires config-changed. Juju may still report the old address then, so
+        update-status converges the unit too.
         """
-        # on k8s we use hostnames, so the address is irrelevant and the binding unread
-        if self.charm.state.substrate != Substrate.VM:
-            return True
+        if (
+            self.charm.state.substrate != Substrate.VM
+            or not self.charm.state.unit_server.is_started
+            or not self.charm.state.unit_server.model.private_ip
+        ):
+            # K8s uses hostnames, and the start flow records the address itself
+            return
 
-        recorded_ip = self.charm.state.unit_server.model.private_ip
-        if not recorded_ip:
-            # the address is first recorded on start; there is nothing to reconcile before that
-            return True
+        if self.charm.state.bind_address == self.charm.state.unit_server.model.private_ip:
+            if (
+                self.charm.state.unit_server.model.pending_ip
+                and self.charm.state.unit_server.model.pending_ip
+                != self.charm.state.unit_server.model.private_ip
+            ):
+                logger.info("The binding is back on the recorded address, dropping the move")
+                self.charm.state.unit_server.update({"pending_ip": ""})
+            return
 
-        try:
-            # an ingress address, such as a public IP, can change while the bind address stays
-            sans_changed = self.charm.tls_manager.certificate_sans_require_update()
-            if self.charm.state.bind_address == recorded_ip and not sans_changed:
-                return True
+        if self.charm.refresh_manager.refresh_in_progress:
+            logger.info("Waiting for the refresh to finish before moving address")
+            return
 
-            self.charm.auth_manager.configure_auth()
-            self.charm.config_manager.configure_services(
-                self.charm.sentinel_manager.get_primary_ip()
-            )
-
-            if sans_changed:
-                if self.charm.state.client_tls_relation:
-                    # the provider owns the certificate; converge once it signs the new one
-                    self.charm.tls_events.refresh_tls_certificates_event.emit()
-                    return False
-
-                self.charm.tls_manager.create_and_store_self_signed_certificate()
-        except (
-            ValkeyCannotGetPrimaryIPError,
-            ValkeyConfigurationError,
-            ValkeyWorkloadCommandError,
-        ) as e:
-            logger.error("Failed to reconcile the unit address: %s", e)
-            return False
-
-        self.charm.state.unit_server.update(
-            {
-                "hostname": self.charm.state.hostname,
-                "private_ip": self.charm.state.bind_address,
-            }
-        )
-        self.charm.request_restart()
-        return True
+        if self.charm.state.unit_server.model.pending_ip != self.charm.state.bind_address:
+            logger.info("Moving to %s", self.charm.state.bind_address)
+            self.charm.state.unit_server.update({"pending_ip": self.charm.state.bind_address})
+            self.charm.request_restart()
 
     def restart_workload(
         self,
@@ -699,7 +684,8 @@ class BaseEvents(ops.Object):
         Returns:
             RELEASE once the restarted services are healthy or if the start flow has not started
             the unit yet, RETRY_RELEASE during a backup or restore, RETRY_HOLD otherwise, so no
-            other unit restarts or starts while this one is unhealthy.
+            other unit restarts or starts while this one is unhealthy. A pending address move
+            replaces the plain restart, see `_move_address`.
         """
         logger.info(
             "Restarting workload. Restart Valkey: %s, Restart Sentinel: %s",
@@ -719,6 +705,20 @@ class BaseEvents(ops.Object):
             logger.info("Backup/restore in progress on this unit; retrying the restart later")
             return OperationResult.RETRY_RELEASE
 
+        if self.charm.state.unit_server.model.pending_ip:
+            result = self._move_address()
+        else:
+            result = self._restart_services(restart_valkey, restart_sentinel, primary_endpoint)
+
+        if result == OperationResult.RELEASE:
+            # cleared only once healthy, so a retry doesn't restart Valkey again
+            self.charm.state.unit_server.update({"restart_run_id": ""})
+        return result
+
+    def _restart_services(
+        self, restart_valkey: bool, restart_sentinel: bool, primary_endpoint: str
+    ) -> OperationResult:
+        """Restart the services and check their health, see `restart_workload`."""
         try:
             # a RETRY_HOLD retry must not kill the load or sync the previous attempt started
             if restart_valkey and self.charm.cluster_manager.runs_requested_process():
@@ -754,22 +754,134 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update({"is_sentinel_healthy": False})
             return OperationResult.RETRY_HOLD
 
-        self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
+        self.charm.state.unit_server.update({"is_sentinel_healthy": True})
         return OperationResult.RELEASE
+
+    def _move_address(self) -> OperationResult:
+        """Move this unit to its `pending_ip` with at most one failover, see DA296.
+
+        Returns:
+            RETRY_RELEASE while the move waits for its turn, RETRY_HOLD until the moved unit
+            is healthy and every Sentinel forgot the old address, RELEASE after.
+        """
+        if (
+            self.charm.state.unit_server.model.private_ip
+            != self.charm.state.unit_server.model.pending_ip
+        ):
+            if not self._ready_to_move():
+                return OperationResult.RETRY_RELEASE
+
+            try:
+                run_id = self.charm.cluster_manager.run_id()
+            except ValkeyWorkloadCommandError:
+                # the old address is gone, as after a DHCP change
+                run_id = VALKEY_DOWN_RUN_ID
+            # the restart must replace the running process, whatever restarted it since
+            self.charm.state.unit_server.update(
+                {
+                    "private_ip": self.charm.state.unit_server.model.pending_ip,
+                    "restart_run_id": run_id,
+                }
+            )
+
+        try:
+            if (
+                not self.charm.state.client_tls_relation
+                and self.charm.tls_manager.certificate_sans_require_update()
+            ):
+                # Valkey serves the loaded certificate until the restart
+                self.charm.tls_manager.create_and_store_self_signed_certificate()
+
+            if self.charm.app.planned_units() == 1:
+                # the unit stays primary, and its Sentinel no longer answers on the old address
+                primary_endpoint = self.charm.state.endpoint
+            else:
+                primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
+            # rendered after any failover, whose CONFIG REWRITE replaces older renders
+            self.charm.config_manager.set_config_properties(primary_endpoint=primary_endpoint)
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Failed to render the config for the move: %s", e)
+            return OperationResult.RETRY_HOLD
+
+        if (
+            result := self._restart_services(True, True, primary_endpoint)
+        ) != OperationResult.RELEASE:
+            return result
+
+        try:
+            # Sentinel only forgets the old address on a reset. Reset before the next unit gets
+            # the lock, because stale entries count toward the majority a failover needs.
+            self.charm.sentinel_manager.reset_sentinel_states(
+                self.charm.sentinel_manager.all_sentinel_endpoints()
+            )
+            self.charm.sentinel_manager.verify_expected_replica_count(
+                self.charm.sentinel_manager.all_sentinel_endpoints()
+            )
+        except (
+            CannotSeeAllActiveSentinelsError,
+            SentinelIncorrectReplicaCountError,
+            ValkeyCannotGetPrimaryIPError,
+            ValkeyWorkloadCommandError,
+        ) as e:
+            logger.error("Sentinel reset after the move failed: %s", e)
+            return OperationResult.RETRY_HOLD
+
+        self.charm.state.unit_server.update({"pending_ip": ""})
+        logger.info("Moved to %s", self.charm.state.endpoint)
+        return OperationResult.RELEASE
+
+    def _ready_to_move(self) -> bool:
+        """Check the move can start, and hand over the primary once every other unit moved.
+
+        Sentinel decides who is primary, as before a refresh, so an unreachable primary
+        waits for its failover.
+
+        Returns:
+            bool: False if the move must wait.
+        """
+        if self.charm.refresh_manager.refresh_in_progress:
+            logger.info("Waiting for the refresh to finish before moving address")
+            return False
+
+        try:
+            if self.charm.state.client_tls_relation and (
+                self.charm.state.unit_server.model.pending_ip
+                not in self.charm.tls_manager.get_current_sans()["sans_ip"]
+            ):
+                logger.info("Waiting for a certificate valid for the new address")
+                return False
+
+            if (
+                self.charm.app.planned_units() == 1
+                or self.charm.sentinel_manager.get_primary_ip()
+                != self.charm.state.unit_server.model.private_ip
+            ):
+                return True
+        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
+            logger.error("Cannot start the move yet: %s", e)
+            return False
+
+        if self.charm.state.other_units_moving:
+            logger.info(
+                "The primary moves last, waiting for %s", self.charm.state.other_units_moving
+            )
+            return False
+
+        try:
+            self.charm.sentinel_manager.failover()
+        except SentinelFailoverError as e:
+            logger.error("Failover before the move failed: %s", e)
+            return False
+        return True
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        if self.charm.unit.is_leader():
-            # needs no unit address, so a deferred address reconcile must not delay it
-            self._store_persistence_config()
-
-        if not self._reconcile_unit_address():
-            # config-changed does not repeat on its own, so the reconcile must be retried
-            event.defer()
-            return
+        self._request_address_move()
 
         if not self.charm.unit.is_leader():
             return
+
+        self._store_persistence_config()
 
         # the leader gets no relation-changed for its own app databag write
         state = self.charm.state

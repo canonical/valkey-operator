@@ -401,6 +401,7 @@ class PeerUnitModel(PeerModel):
     start_hold_count: int = Field(default=0)
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
+    pending_ip: str = Field(default="")
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)

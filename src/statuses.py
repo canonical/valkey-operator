@@ -50,6 +50,11 @@ class ClusterStatuses(Enum):
         message="Health check failed after refresh",
     )
 
+    MOVING_ADDRESS = StatusObject(
+        status="maintenance",
+        message="Moving to the address in the bound space",
+    )
+
 
 class PersistenceStatuses(Enum):
     """Collection of possible statuses related to persistence."""

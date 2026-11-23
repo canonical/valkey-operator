@@ -27,6 +27,7 @@ from literals import (
     PEER_RELATION,
     SENTINEL_PORT,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -334,6 +335,9 @@ class TLSEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle TLS related parts of update_status event."""
+        # not deferred: update-status repeats on its own
+        self._reconcile_certificate_sans()
+
         if not self.charm.tls_manager.will_certificate_expire():
             return
 
@@ -368,6 +372,10 @@ class TLSEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle TLS related config changes."""
+        if not self._reconcile_certificate_sans():
+            # config-changed does not repeat on its own, so the reconcile must be retried
+            event.defer()
+
         if not self.charm.tls_manager.extra_sans_config_is_valid():
             logger.warning("Invalid configuration for 'certificate-extra-sans'")
             return
@@ -385,6 +393,37 @@ class TLSEvents(ops.Object):
         if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
             self.refresh_tls_certificates_event.emit()
+
+    def _reconcile_certificate_sans(self) -> bool:
+        """Reissue a VM unit's certificate when its IP SANs are out of date.
+
+        A pending address move or a new ingress address, such as a public IP, changes them.
+
+        Returns:
+            bool: False if the reissue failed or waits for the provider.
+        """
+        if (
+            self.charm.state.substrate != Substrate.VM
+            or not self.charm.state.unit_server.is_started
+        ):
+            return True
+
+        try:
+            if not self.charm.tls_manager.certificate_sans_require_update():
+                return True
+
+            if self.charm.state.client_tls_relation:
+                # the provider owns the certificate; converge once it signs the new one
+                self.refresh_tls_certificates_event.emit()
+                return False
+
+            self.charm.tls_manager.create_and_store_self_signed_certificate()
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Failed to reissue the unit certificate: %s", e)
+            return False
+
+        self.charm.request_restart()
+        return True
 
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""

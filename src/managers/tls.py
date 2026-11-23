@@ -154,7 +154,7 @@ class TLSManager(ManagerStatusProtocol):
         if self.state.substrate == Substrate.K8S:
             return frozenset(sans_ip)
 
-        sans_ip.add(self.state.bind_address)
+        sans_ip.add(self.state.endpoint)
 
         sans_ip.update(self.state.ingress_addresses)
 
