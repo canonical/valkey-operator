@@ -36,6 +36,7 @@ from literals import (
     LOG_STORAGE,
     METRICS_PORT,
     PEER_RELATION,
+    REFRESH_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
     SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
@@ -83,6 +84,10 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
+        self.framework.observe(
+            self.charm.on[REFRESH_PEER_RELATION].relation_changed,
+            self._on_refresh_peer_relation_changed,
+        )
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
             self.framework.observe(
@@ -882,6 +887,13 @@ class BaseEvents(ops.Object):
             logger.error("Failover before the move failed: %s", e)
             return False
         return True
+
+    def _on_refresh_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
+        """Start a move that waited for the refresh.
+
+        charm_refresh writes to every unit's databag once the refresh completes.
+        """
+        self._request_address_move()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
