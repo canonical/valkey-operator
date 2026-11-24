@@ -187,7 +187,7 @@ class ValkeyCharm(ops.CharmBase):
             logger.info("Restarting workload")
             if self.app.planned_units() == 1:
                 # there is no other sentinel to query
-                primary_ip = self.state.unit_server.get_endpoint(self.state.substrate)
+                primary_ip = self.state.advertised_address
             else:
                 primary_ip = self.sentinel_manager.get_primary_ip()
             self.auth_manager.configure_auth()

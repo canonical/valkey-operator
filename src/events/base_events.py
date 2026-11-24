@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from common.exceptions import (
     CannotSeeAllActiveSentinelsError,
     NotAllDepartingSentinelsStoppedError,
+    SentinelFailoverError,
     SentinelIncorrectReplicaCountError,
     ValkeyACLLoadError,
     ValkeyBackupInProgressError,
@@ -143,12 +144,14 @@ class BaseEvents(ops.Object):
             logger.info("Unit restarted by the refresh, not starting it again")
             return
 
+        # ensure relation state is valid before starting
         if not self._start_conditions_met():
             event.defer()
             return
 
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
+        # ensure credentials for internal users are set
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
                 "Internal users' credentials not set yet. Deferring start event until credentials are set."
@@ -156,6 +159,21 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        # ensure public IP mode on VM is valid before starting
+        if self.charm.config.get("use-public-ips"):
+            if not self.charm.state.is_public_ip_state_valid:
+                logger.warning("Public IP mode configured, but invalid state - deferring start")
+                event.defer()
+                return
+
+            self.charm.state.unit_server.update(
+                {
+                    "public_ip_mode": True,
+                    "advertised_address": self.charm.state.advertised_address,
+                }
+            )
+
+        # ensure primary to avoid cluster split
         if self._get_primary_endpoint_for_start() is None:
             logger.debug("Primary not available, deferring start event")
             self.charm.state.unit_server.update(
@@ -219,13 +237,13 @@ class BaseEvents(ops.Object):
 
         if self.charm.app.planned_units() == 1:
             logger.debug("Single unit deployment, continue starting with this unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
 
         persistence_config = self.charm.config_manager.get_current_persistence_config()
         if persistence_config.mode == PersistenceMode.NONE:
             if self.charm.unit.is_leader():
                 logger.debug("No persistence enabled, continue starting with this unit as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Check if local data exists")
@@ -242,13 +260,13 @@ class BaseEvents(ops.Object):
             logger.debug("Latest data is: %s", latest_data_offset)
             if latest_data_offset == self.charm.state.unit_server.get_local_data_offset():
                 logger.debug("Unit has latest data and will start as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Cannot determine primary from data on disk")
         if self.charm.unit.is_leader():
             logger.debug("Starting the leader unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
         return None
 
     def start_unit(self) -> OperationResult:
@@ -642,6 +660,7 @@ class BaseEvents(ops.Object):
             return True
 
         recorded_ip = self.charm.state.unit_server.model.private_ip
+        recorded_advertised_ip = self.charm.state.unit_server.model.advertised_address
         if not recorded_ip:
             # the address is first recorded on start; there is nothing to reconcile before that
             return True
@@ -649,13 +668,19 @@ class BaseEvents(ops.Object):
         try:
             # an ingress address, such as a public IP, can change while the bind address stays
             sans_changed = self.charm.tls_manager.certificate_sans_require_update()
-            if self.charm.state.bind_address == recorded_ip and not sans_changed:
+            if (
+                self.charm.state.bind_address == recorded_ip
+                and not sans_changed
+                and (
+                    not recorded_advertised_ip
+                    or self.charm.state.advertised_address == recorded_advertised_ip
+                )
+            ):
                 return True
 
             self.charm.auth_manager.configure_auth()
-            self.charm.config_manager.configure_services(
-                self.charm.sentinel_manager.get_primary_ip()
-            )
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
+            self.charm.config_manager.configure_services(primary_ip)
 
             if sans_changed:
                 if self.charm.state.client_tls_relation:
@@ -678,10 +703,18 @@ class BaseEvents(ops.Object):
                 "private_ip": self.charm.state.bind_address,
             }
         )
+
+        if self.charm.workload.alive and primary_ip == recorded_advertised_ip:
+            logger.info("Attempting failover after IP change on primary")
+            try:
+                self.charm.sentinel_manager.failover()
+            except SentinelFailoverError as e:
+                logger.warning("Could not failover before restart: %s", e)
+
         self.charm.request_restart()
         return True
 
-    def restart_workload(
+    def restart_workload(  # noqa: C901
         self,
         restart_valkey: bool = True,
         restart_sentinel: bool = True,
@@ -751,9 +784,14 @@ class BaseEvents(ops.Object):
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
         self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
-        if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
-            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
-            return OperationResult.RETRY_HOLD
+        if restart_sentinel:
+            if not self.charm.sentinel_manager.is_healthy():
+                self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+                return OperationResult.RETRY_HOLD
+
+            if not self.charm.sentinel_manager.remove_stale_public_address():
+                logger.warning("Failed to reset Sentinel state after IP change")
+                return OperationResult.RETRY_HOLD
 
         self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
         return OperationResult.RELEASE
@@ -764,6 +802,14 @@ class BaseEvents(ops.Object):
             # needs no unit address, so a deferred address reconcile must not delay it
             self._store_persistence_config()
 
+        # switch public IP mode before reconciling unit address
+        try:
+            self.charm.cluster_manager.switch_public_ip_mode()
+        except RuntimeError as e:
+            logger.info("Failed to switch public IP mode: %s", e)
+            event.defer()
+            return
+
         if not self._reconcile_unit_address():
             # config-changed does not repeat on its own, so the reconcile must be retried
             event.defer()
@@ -773,8 +819,10 @@ class BaseEvents(ops.Object):
             return
 
         # the leader gets no relation-changed for its own app databag write
-        state = self.charm.state
-        if state.unit_server.is_started and not state.cluster.is_restore_in_progress:
+        if (
+            self.charm.state.unit_server.is_started
+            and not self.charm.state.cluster.is_restore_in_progress
+        ):
             self.charm.reconcile_persistence()
 
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):

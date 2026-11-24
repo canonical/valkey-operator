@@ -52,6 +52,7 @@ from literals import (
     PersistenceMode,
     ScaleDownState,
     StartState,
+    Substrate,
 )
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
@@ -762,7 +763,34 @@ class ClusterManager(ManagerStatusProtocol):
             replication_id, replication_offset, timestamp
         )
 
-    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
+    def switch_public_ip_mode(self) -> None:
+        """Enable or disable public IP mode, depending on config and state."""
+        if not self.state.unit_server.is_active:
+            # public IP mode will be configured at start
+            return
+
+        if (
+            self.state.config.get("use-public-ips")
+            and not self.state.unit_server.is_public_ip_enabled
+        ):
+            if not self.state.is_public_ip_state_valid:
+                raise RuntimeError("Cannot enable public IP mode")
+
+            logger.info("Enabling public IP mode")
+            self.state.unit_server.update(
+                {
+                    "public_ip_mode": True,
+                    "advertised_address": self.state.advertised_address,
+                }
+            )
+
+        if self.state.unit_server.is_public_ip_enabled and not self.state.config.get(
+            "use-public-ips"
+        ):
+            logger.info("Disabling public IP mode")
+            self.state.unit_server.update({"public_ip_mode": False})
+
+    def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:  # noqa: C901
         """Compute the cluster manager's statuses."""
         status_list: list[StatusObject] = self.state.statuses.get(
             scope=scope,
@@ -786,6 +814,23 @@ class ClusterManager(ManagerStatusProtocol):
 
             if not self.state.unit_server.model.is_sentinel_healthy:
                 status_list.append(ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value)
+
+            if (
+                self.state.unit_server.is_public_ip_enabled
+                and self.state.advertised_address
+                != self.state.unit_server.model.advertised_address
+            ):
+                status_list.append(ClusterStatuses.PUBLIC_IP_NOT_ENABLED.value)
+
+            if self.state.config.get("use-public-ips"):
+                if self.state.substrate == Substrate.K8S:
+                    status_list.append(ClusterStatuses.PUBLIC_IP_MODE_K8S.value)
+
+                if not self.state.client_tls_relation:
+                    status_list.append(ClusterStatuses.PUBLIC_IP_MODE_TLS_MISSING.value)
+
+                if self.state.public_address == self.state.bind_address:
+                    status_list.append(ClusterStatuses.PUBLIC_IP_MODE_NO_PUBLIC_IP.value)
 
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 

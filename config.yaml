@@ -104,3 +104,13 @@ options:
       When to fsync the append-only file to disk. "no": the operating system decides.
       "everysec": once per second. "always": after every write. Only used when
       persistence-mode is "AOF" or "RDB+AOF".
+
+  use-public-ips:
+    type: boolean
+    default: false
+    description: | 
+      Configure Valkey and Sentinel with the public IP address instead of the private one. 
+      Enable this option to allow direct external access to Valkey servers (VM only). It is highly
+      recommended to add appropriate network security measures when exposing Valkey externally. 
+      Requires TLS encryption through a `client-certificates` relation, otherwise will be ignored. 
+      Also consider "juju expose/unexpose".
