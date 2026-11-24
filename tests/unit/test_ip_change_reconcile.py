@@ -225,10 +225,12 @@ def test_update_status_regenerates_self_signed_certificate_when_sans_changed(
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch("managers.cluster.ClusterManager.reload_tls_settings") as mock_reload_tls,
     ):
         ctx.run(ctx.on.update_status(), state_in)
 
     mock_create_certificate.assert_called_once()
+    mock_reload_tls.assert_called_once()
     mock_request_async_lock.assert_called_once()
 
 

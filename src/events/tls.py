@@ -419,7 +419,17 @@ class TLSEvents(ops.Object):
             logger.error("Failed to reissue the unit certificate: %s", e)
             return False
 
-        self.charm.request_restart()
+        try:
+            self.charm.cluster_manager.reload_tls_settings(
+                self.charm.config_manager.generate_tls_config()
+            )
+        except ValkeyTLSLoadError:
+            # a retry would see the new cert on disk and skip, so the restart must load it
+            self.charm.request_restart()
+            return True
+
+        # Valkey hot-loaded the certificate, Sentinel only reads it on start
+        self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
         return True
 
     def _enable_client_tls(self) -> None:
