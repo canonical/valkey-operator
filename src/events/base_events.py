@@ -705,10 +705,10 @@ class BaseEvents(ops.Object):
 
         if self.charm.workload.alive and primary_ip == recorded_advertised_ip:
             logger.info("Attempting failover after IP change on primary")
-        try:
-            self.charm.sentinel_manager.failover()
-        except SentinelFailoverError as e:
-            logger.warning("Could not failover before restart: %s", e)
+            try:
+                self.charm.sentinel_manager.failover()
+            except SentinelFailoverError as e:
+                logger.warning("Could not failover before restart: %s", e)
 
         self.charm.request_restart()
         return True
