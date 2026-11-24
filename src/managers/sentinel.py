@@ -123,12 +123,7 @@ class SentinelManager(ManagerStatusProtocol):
         Raises:
             ValkeyCannotGetPrimaryIPError: If the CLI command to get primary information fails on all sentinels.
         """
-        started_servers = [
-            unit.get_endpoint(self.state.substrate)
-            for unit in self.state.servers
-            if unit.is_active
-        ]
-
+        started_servers = [unit.get_endpoint(self.state.substrate) for unit in self.state.servers]
         client = self._get_sentinel_client()
 
         for unit_ip in started_servers:
