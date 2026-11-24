@@ -845,6 +845,8 @@ class BaseEvents(ops.Object):
         if self.charm.state.client_tls_relation:
             # the provider's certificate still lists the old address
             self.charm.on.refresh_tls_certificates.emit()
+        # the leader gets no relation-changed for its own move
+        self.charm.on.topology_changed.emit()
         return OperationResult.RELEASE
 
     def _ready_to_move(self) -> bool:
