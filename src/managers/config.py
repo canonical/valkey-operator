@@ -357,7 +357,7 @@ class ConfigManager(ManagerStatusProtocol):
         if self.state.substrate == Substrate.K8S:
             sentinel_configs["resolve-hostnames"] = "yes"
             sentinel_configs["announce-hostnames"] = "yes"
-        if self.state.unit_server.model.public_ip_mode:
+        if self.state.unit_server.is_public_ip_enabled:
             sentinel_configs["announce-ip"] = self.state.advertised_address
         return sentinel_configs
 

@@ -257,7 +257,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         if self.substrate == Substrate.K8S:
             return self.hostname
 
-        if self.unit_server.model.public_ip_mode and (public_ip := self.public_address):
+        if self.unit_server.is_public_ip_enabled and (public_ip := self.public_address):
             return public_ip
 
         return self.bind_address

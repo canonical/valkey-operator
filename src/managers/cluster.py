@@ -771,7 +771,7 @@ class ClusterManager(ManagerStatusProtocol):
 
         if (
             self.state.config.get("use-public-ips")
-            and not self.state.unit_server.model.public_ip_mode
+            and not self.state.unit_server.is_public_ip_enabled
         ):
             if not self.state.is_public_ip_state_valid:
                 raise RuntimeError("Cannot enable public IP mode")
@@ -784,7 +784,7 @@ class ClusterManager(ManagerStatusProtocol):
                 }
             )
 
-        if self.state.unit_server.model.public_ip_mode and not self.state.config.get(
+        if self.state.unit_server.is_public_ip_enabled and not self.state.config.get(
             "use-public-ips"
         ):
             logger.info("Disabling public IP mode")
@@ -816,7 +816,7 @@ class ClusterManager(ManagerStatusProtocol):
                 status_list.append(ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value)
 
             if (
-                self.state.unit_server.model.public_ip_mode
+                self.state.unit_server.is_public_ip_enabled
                 and self.state.advertised_address
                 != self.state.unit_server.model.advertised_address
             ):

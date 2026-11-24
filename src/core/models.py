@@ -601,6 +601,14 @@ class ValkeyServer(RelationState):
         """
         return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
+    @property
+    def is_public_ip_enabled(self) -> bool:
+        """Check if public IP mode is enabled."""
+        if not self.model:
+            return False
+
+        return self.model.public_ip_mode
+
     def get_advertised_address(self) -> str:
         """Return the advertised endpoint for client connections of this unit."""
         return self.model.advertised_address

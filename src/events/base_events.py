@@ -669,8 +669,11 @@ class BaseEvents(ops.Object):
             sans_changed = self.charm.tls_manager.certificate_sans_require_update()
             if (
                 self.charm.state.bind_address == recorded_ip
-                and self.charm.state.advertised_address == recorded_advertised_ip
                 and not sans_changed
+                and (
+                    not recorded_advertised_ip
+                    or self.charm.state.advertised_address == recorded_advertised_ip
+                )
             ):
                 return True
 

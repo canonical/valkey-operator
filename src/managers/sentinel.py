@@ -176,7 +176,9 @@ class SentinelManager(ManagerStatusProtocol):
     def get_sentinel_endpoints(self) -> str:
         """Get the endpoints of all sentinel nodes, consisting of address and port."""
         started_servers = [
-            unit.get_endpoint(self.state.substrate)
+            unit.get_advertised_address()
+            if unit.is_public_ip_enabled
+            else unit.get_endpoint(self.state.substrate)
             for unit in self.state.servers
             if unit.is_active
         ]
@@ -518,7 +520,7 @@ class SentinelManager(ManagerStatusProtocol):
 
     def remove_stale_public_address(self) -> bool:
         """Check if the advertised address of this unit is stale and reset Sentinel state if so."""
-        if not self.state.unit_server.model.public_ip_mode:
+        if not self.state.unit_server.is_public_ip_enabled:
             return True
 
         previous_advertised_address = self.state.unit_server.model.advertised_address
