@@ -30,7 +30,6 @@ from dpcharmlibs.interfaces import (
     DataContractV1,
     RequirerCommonModel,
     ResourceCreatedEvent,
-    ResourceEndpointsChangedEvent,
     ResourceProviderModel,
     ResourceRequirerEventHandler,
     ValkeyResponseModel,
@@ -201,6 +200,15 @@ class RequirerCharm(ops.CharmBase):
             credentials.update({response.username: response.password})
 
         return credentials
+
+    @property
+    def cw_credentials(self) -> tuple[str, str | None]:
+        """Return the user that can write `cw_key`, the `*` keyspace one on a v1 relation."""
+        if not self._use_config and self.data_interfaces_version == 1:
+            for response in self.remote_responses or []:
+                if response.resource == "*":
+                    return response.username, response.password
+        return next(iter(self.credentials.items()))
 
     @property
     def primary_endpoint(self) -> str | None:
@@ -470,8 +478,7 @@ class RequirerCharm(ops.CharmBase):
         # Clear previous state so the new run starts fresh
         CWPath.STATE.value.unlink(missing_ok=True)
 
-        # Resolve the first available credential from the relation
-        username, password = next(iter(self.credentials.items()))
+        username, password = self.cw_credentials
 
         tls_config = None
         if self.tls_enabled:
@@ -561,6 +568,7 @@ class RequirerCharm(ops.CharmBase):
                 "ok": True,
                 "last-written-value": state["last_written"],
                 "count": state["count"],
+                "max-outage-s": state["max_outage_s"],
             }
         )
 
@@ -645,21 +653,18 @@ class RequirerCharm(ops.CharmBase):
         """Handle resource created event."""
         logger.info("Resource created")
 
-    def _on_endpoints_changed(
-        self, event: ResourceEndpointsChangedEvent[ResourceProviderModel]
-    ) -> None:
-        """Handle endpoints changed event."""
-        logger.info("Valkey endpoints have been changed")
-
     def _on_database_created(self, event: DatabaseCreatedEvent) -> None:
         """Handle the event triggered by data-interfaces v0."""
         logger.info("Database created")
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        """Hot-reload the continuous-writes daemon when glide-config changes."""
+        """Refresh the TLS certificates and reload the continuous-writes daemon."""
         self.refresh_tls_certificates_event.emit()
+        self._on_endpoints_changed(event)
 
-        if not self._use_config or not CWPath.PID.value.exists():
+    def _on_endpoints_changed(self, event: ops.EventBase) -> None:
+        """Hot-reload the continuous-writes daemon when glide-config or the relation moves it."""
+        if not CWPath.PID.value.exists():
             return
 
         try:
@@ -668,7 +673,7 @@ class RequirerCharm(ops.CharmBase):
             logger.warning("Failed to read current daemon config: %s", exc)
             return
 
-        if current_config.endpoints == self.primary_endpoint:
+        if not self.primary_endpoint or current_config.endpoints == self.primary_endpoint:
             return
 
         logger.info(
@@ -677,7 +682,7 @@ class RequirerCharm(ops.CharmBase):
             self.primary_endpoint,
         )
 
-        username, password = next(iter(self.credentials.items()))
+        username, password = self.cw_credentials
         tls_config = current_config.tls
         if self.tls_enabled and self.certificate and self.private_key and self.tls_ca_cert:
             CWPath.CERT.value.write_bytes(self.certificate.encode())

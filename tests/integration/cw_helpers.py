@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 class ContinuousWritesStats(NamedTuple):
     last_written_value: int
     total_count: int
+    max_outage_s: float = 0.0
 
 
 KEY = "cw_key"
@@ -146,6 +147,7 @@ def stop_continuous_writes(
     stats = ContinuousWritesStats(
         last_written_value=int(result.results["last-written-value"]),
         total_count=int(result.results["count"]),
+        max_outage_s=float(result.results["max-outage-s"]),
     )
     logger.info(
         "Continuous-writes stopped on %s — last_written=%d, count=%d",
