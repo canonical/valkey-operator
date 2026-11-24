@@ -674,6 +674,8 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
         patch("managers.config.ConfigManager.configure_services"),
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.2"),
+        patch("common.client.SentinelClient.failover_primary_coordinated"),
+        patch("common.client.SentinelClient.is_failover_in_progress", return_value=False),
         patch(
             "workload_vm.ValkeyVmWorkload.exec",
             return_value=("DNS:www.example.com, IP Address:127.1.1.1",),

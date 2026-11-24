@@ -601,7 +601,7 @@ class ValkeyServer(RelationState):
         """
         return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
 
-    def get_advertised_address(self, substrate: Substrate) -> str:
+    def get_advertised_address(self) -> str:
         """Return the advertised endpoint for client connections of this unit."""
         return self.model.advertised_address
 

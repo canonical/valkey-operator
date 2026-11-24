@@ -144,12 +144,14 @@ class BaseEvents(ops.Object):
             logger.info("Unit restarted by the refresh, not starting it again")
             return
 
+        # ensure relation state is valid before starting
         if not self._start_conditions_met():
             event.defer()
             return
 
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
+        # ensure credentials for internal users are set
         if not self.charm.state.cluster.internal_users_credentials:
             logger.info(
                 "Internal users' credentials not set yet. Deferring start event until credentials are set."
@@ -157,9 +159,10 @@ class BaseEvents(ops.Object):
             event.defer()
             return
 
+        # ensure public IP mode on VM is valid before starting
         if self.charm.config.get("use-public-ips"):
             if not self.charm.state.is_public_ip_state_valid:
-                logger.warning("Public IP mode configured, but invalid state")
+                logger.warning("Public IP mode configured, but invalid state - deferring start")
                 event.defer()
                 return
 
@@ -170,6 +173,7 @@ class BaseEvents(ops.Object):
                 }
             )
 
+        # ensure primary to avoid cluster split
         if self._get_primary_endpoint_for_start() is None:
             logger.debug("Primary not available, deferring start event")
             self.charm.state.unit_server.update(
@@ -239,7 +243,7 @@ class BaseEvents(ops.Object):
         if persistence_config.mode == PersistenceMode.NONE:
             if self.charm.unit.is_leader():
                 logger.debug("No persistence enabled, continue starting with this unit as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Check if local data exists")
@@ -256,13 +260,13 @@ class BaseEvents(ops.Object):
             logger.debug("Latest data is: %s", latest_data_offset)
             if latest_data_offset == self.charm.state.unit_server.get_local_data_offset():
                 logger.debug("Unit has latest data and will start as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Cannot determine primary from data on disk")
         if self.charm.unit.is_leader():
             logger.debug("Starting the leader unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
         return None
 
     def start_unit(self) -> OperationResult:
@@ -794,6 +798,14 @@ class BaseEvents(ops.Object):
             # needs no unit address, so a deferred address reconcile must not delay it
             self._store_persistence_config()
 
+        # switch public IP mode before reconciling unit address
+        try:
+            self.charm.cluster_manager.switch_public_ip_mode()
+        except RuntimeError as e:
+            logger.info("Failed to switch public IP mode: %s", e)
+            event.defer()
+            return
+
         if not self._reconcile_unit_address():
             # config-changed does not repeat on its own, so the reconcile must be retried
             event.defer()
@@ -803,8 +815,10 @@ class BaseEvents(ops.Object):
             return
 
         # the leader gets no relation-changed for its own app databag write
-        state = self.charm.state
-        if state.unit_server.is_started and not state.cluster.is_restore_in_progress:
+        if (
+            self.charm.state.unit_server.is_started
+            and not self.charm.state.cluster.is_restore_in_progress
+        ):
             self.charm.reconcile_persistence()
 
         if admin_secret_id := self.charm.config.get(INTERNAL_USERS_PASSWORD_CONFIG):
