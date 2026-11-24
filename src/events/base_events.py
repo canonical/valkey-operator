@@ -313,6 +313,7 @@ class BaseEvents(ops.Object):
                 )
                 return OperationResult.RETRY_RELEASE
 
+            logger.info("Starting with Primary %s", primary_endpoint)
             if not self._start_workload(primary_endpoint):
                 return OperationResult.RETRY_RELEASE
 
