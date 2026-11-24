@@ -14,7 +14,6 @@ from charmlibs.interfaces.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 
-from common.custom_events import RefreshTLSCertificatesEvent
 from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyCertificatesNotReadyError,
@@ -41,8 +40,6 @@ logger = logging.getLogger(__name__)
 class TLSEvents(ops.Object):
     """Handle all TLS related events."""
 
-    refresh_tls_certificates_event = ops.EventSource(RefreshTLSCertificatesEvent)
-
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="tls_events")
         self.charm = charm
@@ -52,7 +49,7 @@ class TLSEvents(ops.Object):
             CLIENT_TLS_RELATION_NAME,
             certificate_requests=self.charm.tls_manager.build_certificate_requests,
             private_key=self.charm.tls_manager.get_client_tls_private_key(),
-            refresh_events=[self.refresh_tls_certificates_event],
+            refresh_events=[self.charm.on.refresh_tls_certificates],
         )
 
         # --- EVENTS TO OBSERVE ---
@@ -368,7 +365,7 @@ class TLSEvents(ops.Object):
             self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
 
         if self.charm.state.client_tls_relation:
-            self.refresh_tls_certificates_event.emit()
+            self.charm.on.refresh_tls_certificates.emit()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle TLS related config changes."""
@@ -385,14 +382,14 @@ class TLSEvents(ops.Object):
                 if self.charm.unit.is_leader():
                     self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
                 # refresh event will be ignored by the tls lib if the csr is unchanged
-                self.refresh_tls_certificates_event.emit()
+                self.charm.on.refresh_tls_certificates.emit()
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
         # the cert on disk may be the self-signed one, so let the lib compare against its CSRs
         if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
-            self.refresh_tls_certificates_event.emit()
+            self.charm.on.refresh_tls_certificates.emit()
 
     def _reconcile_certificate_sans(self) -> bool:
         """Reissue a VM unit's certificate when its IP SANs are out of date.
@@ -414,7 +411,7 @@ class TLSEvents(ops.Object):
 
             if self.charm.state.client_tls_relation:
                 # the provider owns the certificate; converge once it signs the new one
-                self.refresh_tls_certificates_event.emit()
+                self.charm.on.refresh_tls_certificates.emit()
                 return False
 
             self.charm.tls_manager.create_and_store_self_signed_certificate()

@@ -842,6 +842,9 @@ class BaseEvents(ops.Object):
 
         self.charm.state.unit_server.update({"pending_ip": ""})
         logger.info("Moved to %s", self.charm.state.endpoint)
+        if self.charm.state.client_tls_relation:
+            # the provider's certificate still lists the old address
+            self.charm.on.refresh_tls_certificates.emit()
         return OperationResult.RELEASE
 
     def _ready_to_move(self) -> bool:

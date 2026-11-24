@@ -15,7 +15,7 @@ from charmlibs import pathops
 from charmlibs.rollingops import RollingOpsManager, RollingOpsNoRelationError
 from data_platform_helpers.advanced_statuses.handler import StatusHandler
 
-from common.custom_events import TopologyChangedCharmEvents
+from common.custom_events import ValkeyCharmEvents
 from common.exceptions import (
     SentinelFailoverError,
     ValkeyAOFArchiveNoSpaceError,
@@ -70,7 +70,7 @@ class ValkeyCharm(ops.CharmBase):
 
     # Overriding `on` with a custom CharmEvents subclass is the intended ops API;
     # pyright flags it only because `CharmBase.on` is declared as a property.
-    on = TopologyChangedCharmEvents()  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
+    on = ValkeyCharmEvents()  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
 
     def __init__(self, *args) -> None:
         super().__init__(*args)

@@ -1314,7 +1314,7 @@ def test_private_key_refreshes_certificate():
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
         assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
-        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates"
 
 
 def test_private_key_secret_changed():
@@ -1349,7 +1349,7 @@ def test_private_key_secret_changed():
     state_out = ctx.run(ctx.on.secret_changed(secret=user_secret), state_in)
     secret_out = state_out.get_secret(label=f"{PEER_RELATION}.{APP_NAME}.app")
     assert secret_out.latest_content.get("tls-client-private-key") == private_key.raw
-    assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+    assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates"
 
 
 def test_set_extra_sans_config_option():
@@ -1383,7 +1383,7 @@ def test_set_extra_sans_config_option():
         patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
-        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates"
 
 
 def test_set_extra_sans_config_option_unit_placeholder():
@@ -1418,7 +1418,7 @@ def test_set_extra_sans_config_option_unit_placeholder():
         patch("workload_k8s.ValkeyK8sWorkload.exec", return_value=[current_sans_value]),
     ):
         ctx.run(ctx.on.config_changed(), state_in)
-        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates_event"
+        assert ctx.emitted_events[1].handle.kind == "refresh_tls_certificates"
 
 
 def test_set_extra_sans_config_option_invalid_ip():
