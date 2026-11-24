@@ -1,0 +1,10 @@
+summary: test_spaces_tls.py
+# the spec runs the spaces suite on amd64 only
+systems:
+  - -ubuntu-26.04-arm
+environment:
+  TEST_MODULE: spaces/test_spaces_tls.py
+execute: |
+  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results
