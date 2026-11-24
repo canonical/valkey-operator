@@ -889,6 +889,11 @@ class BaseEvents(ops.Object):
         except SentinelFailoverError as e:
             logger.error("Failover before the move failed: %s", e)
             return False
+        if self.charm.unit.is_leader():
+            # relation data reaches clients only when this hook ends
+            # returning false ends the hook, saves the relation data, and updates the endpoints
+            self.charm.on.topology_changed.emit()
+            return False
         return True
 
     def _on_refresh_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
