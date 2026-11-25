@@ -52,6 +52,29 @@ module "valkey" {
 }
 ```
 
+### Deploying on Juju spaces
+
+`valkey.endpoint_bindings` binds Valkey's endpoints to spaces. `valkey-peers` and `valkey-client` must resolve to the same space, or the plan fails. Juju gives new machines a NIC in each bound space, so `valkey.constraints` needs no `spaces=`. A change to `endpoint_bindings` on a deployed application runs `juju bind` in place. Don't repeat the default space in an endpoint entry or bind the default entry to the model default space. The provider drops those entries on read and plans an update on every run ([juju/terraform-provider-juju#505](https://github.com/juju/terraform-provider-juju/issues/505)).
+
+Clients need a NIC in the `valkey-peers` space or a route to it. Valkey publishes its `valkey-peers` addresses to every client, whatever space the client is bound to.
+
+```hcl
+module "valkey" {
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
+
+  model = {
+    name = "valkey-vm"
+  }
+
+  valkey = {
+    endpoint_bindings = [
+      { space = "data" },
+      { endpoint = "s3-credentials", space = "backup" },
+    ]
+  }
+}
+```
+
 ### Retrieving client credentials
 
 The relation between Valkey and data-integrator generates the client credentials, and Terraform never writes them to state. Retrieve them after apply with the Juju CLI:

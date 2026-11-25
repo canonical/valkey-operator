@@ -25,6 +25,13 @@ resource "juju_application" "valkey" {
       spaces    = expose.value.spaces
     }
   }
+
+  lifecycle {
+    precondition {
+      condition     = lookup(local.bindings, "valkey-peers", local.default_space) == lookup(local.bindings, "valkey-client", local.default_space)
+      error_message = "valkey-peers and valkey-client must use the same space. Bind valkey-client to the valkey-peers space."
+    }
+  }
 }
 
 resource "juju_offer" "valkey" {

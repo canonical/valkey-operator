@@ -29,7 +29,7 @@ variable "constraints" {
 }
 
 variable "endpoint_bindings" {
-  description = "Set of endpoint-to-space bindings. An entry without endpoint sets the default space."
+  description = "Endpoint-to-space bindings. An entry without endpoint sets the default space. valkey-peers and valkey-client must resolve to the same space, and an endpoint without an entry follows the default entry, or the model default space if there is none."
   type = set(object({
     endpoint = optional(string)
     space    = string
