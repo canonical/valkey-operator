@@ -256,10 +256,14 @@ class SentinelManager(ManagerStatusProtocol):
         if not self.state.cluster.model.sentinel_reset_required:
             return
 
+        if self.state.is_public_ip_transitioning:
+            logger.debug("Wait for public IP transition to complete before Sentinel reset")
+            return
+
         logger.info("Resetting Sentinels after unit removal")
         primary_ip = self.get_primary_ip()
         active_sentinels = self.get_active_sentinel_ips(primary_ip)
-        expected_sentinels = self.all_sentinel_endpoints()
+        expected_sentinels = self.all_sentinel_advertised_addresses()
 
         # ensure that no departing sentinels is still alive before the reset
         if (
@@ -432,6 +436,10 @@ class SentinelManager(ManagerStatusProtocol):
             if unit.is_active
         ]
 
+    def all_sentinel_advertised_addresses(self) -> list[str]:
+        """Advertised addresses of every active unit's sentinel."""
+        return [unit.get_advertised_address() for unit in self.state.servers if unit.is_active]
+
     def is_failover_in_progress(self) -> bool:
         """Snapshot whether Sentinel reports a failover in flight for the primary.
 
@@ -512,38 +520,6 @@ class SentinelManager(ManagerStatusProtocol):
         ):
             logger.warning("Failed to reset down-after-milliseconds on sentinel %s", endpoint)
         client.reset(hostname=endpoint)
-
-    def remove_stale_public_address(self) -> bool:
-        """Check if the advertised address of this unit is stale and reset Sentinel state if so."""
-        if not self.state.unit_server.is_public_ip_enabled:
-            return True
-
-        previous_advertised_address = self.state.unit_server.model.advertised_address
-        if self.state.advertised_address == previous_advertised_address:
-            return True
-
-        client = self._get_sentinel_client()
-        try:
-            primary_ip = self.get_primary_ip()
-            active_sentinels = self.get_active_sentinel_ips(primary_ip)
-            all_sentinels = [sentinel["ip"] for sentinel in client.sentinels_primary(primary_ip)]
-        except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
-            logger.warning("Failed to query primary/sentinels: %s", e)
-            return False
-
-        if previous_advertised_address not in all_sentinels:
-            logger.debug("Stale address %s not in Sentinel list", previous_advertised_address)
-            return True
-
-        logger.info("Removing stale address %s from Sentinels", previous_advertised_address)
-        try:
-            self.reset_sentinel_states(active_sentinels)
-        except (CannotSeeAllActiveSentinelsError, ValkeyWorkloadCommandError) as e:
-            logger.warning("Failed to reset Sentinel state: %s", e)
-            return False
-
-        self.state.unit_server.update({"advertised_address": self.state.advertised_address})
-        return True
 
     def get_statuses(self, scope: Scope, recompute: bool = False) -> list[StatusObject]:
         """Compute the sentinel manager's statuses."""

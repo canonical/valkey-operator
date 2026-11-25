@@ -166,12 +166,7 @@ class BaseEvents(ops.Object):
                 event.defer()
                 return
 
-            self.charm.state.unit_server.update(
-                {
-                    "public_ip_mode": True,
-                    "advertised_address": self.charm.state.advertised_address,
-                }
-            )
+            self.charm.state.unit_server.update({"public_ip_mode": True})
 
         # ensure primary to avoid cluster split
         if self._get_primary_endpoint_for_start() is None:
@@ -350,7 +345,10 @@ class BaseEvents(ops.Object):
             return False
 
         self.charm.state.unit_server.update(
-            {"start_state": StartState.STARTING_WAITING_VALKEY.value}
+            {
+                "start_state": StartState.STARTING_WAITING_VALKEY.value,
+                "advertised_address": self.charm.state.advertised_address,
+            }
         )
         if self.charm.state.external_client_relations and not self.charm.unit.is_leader():
             self.charm.state.unit_server.update({"client_user_epoch": acl_epoch})
@@ -641,6 +639,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "advertised_address": self.charm.state.advertised_address,
             }
         )
 
@@ -671,10 +670,7 @@ class BaseEvents(ops.Object):
             if (
                 self.charm.state.bind_address == recorded_ip
                 and not sans_changed
-                and (
-                    not recorded_advertised_ip
-                    or self.charm.state.advertised_address == recorded_advertised_ip
-                )
+                and self.charm.state.advertised_address == recorded_advertised_ip
             ):
                 return True
 
@@ -701,6 +697,7 @@ class BaseEvents(ops.Object):
             {
                 "hostname": self.charm.state.hostname,
                 "private_ip": self.charm.state.bind_address,
+                "advertised_address": self.charm.state.advertised_address,
             }
         )
 
@@ -784,14 +781,9 @@ class BaseEvents(ops.Object):
             self.charm.cluster_manager.reconcile_min_replicas_to_write()
         self.charm.state.unit_server.update({"is_valkey_healthy": True})
 
-        if restart_sentinel:
-            if not self.charm.sentinel_manager.is_healthy():
-                self.charm.state.unit_server.update({"is_sentinel_healthy": False})
-                return OperationResult.RETRY_HOLD
-
-            if not self.charm.sentinel_manager.remove_stale_public_address():
-                logger.warning("Failed to reset Sentinel state after IP change")
-                return OperationResult.RETRY_HOLD
+        if restart_sentinel and not self.charm.sentinel_manager.is_healthy():
+            self.charm.state.unit_server.update({"is_sentinel_healthy": False})
+            return OperationResult.RETRY_HOLD
 
         self.charm.state.unit_server.update({"is_sentinel_healthy": True, "restart_run_id": ""})
         return OperationResult.RELEASE
@@ -804,7 +796,7 @@ class BaseEvents(ops.Object):
 
         # switch public IP mode before reconciling unit address
         try:
-            self.charm.cluster_manager.switch_public_ip_mode()
+            self._switch_public_ip_mode()
         except RuntimeError as e:
             logger.info("Failed to switch public IP mode: %s", e)
             event.defer()
@@ -1152,3 +1144,36 @@ class BaseEvents(ops.Object):
             self.charm.config_manager.set_sentinel_config_properties(
                 self.charm.sentinel_manager.get_primary_ip()
             )
+
+    def _switch_public_ip_mode(self) -> None:
+        """Enable or disable public IP mode, depending on config and state."""
+        if not self.charm.state.unit_server.is_active:
+            # public IP mode will be configured at start
+            return
+
+        if not self.charm.sentinel_manager.is_healthy:
+            raise RuntimeError("Local Sentinel not healthy")
+
+        reset_sentinels = False
+        if (
+            self.charm.state.config.get("use-public-ips")
+            and not self.charm.state.unit_server.is_public_ip_enabled
+        ):
+            if not self.charm.state.is_public_ip_state_valid:
+                raise RuntimeError("Cannot enable public IP mode")
+
+            self.charm.state.unit_server.update({"public_ip_mode": True})
+            logger.info(
+                "Enabling public IP mode with address %s", self.charm.state.advertised_address
+            )
+            reset_sentinels = True
+
+        if self.charm.state.unit_server.is_public_ip_enabled and not self.charm.state.config.get(
+            "use-public-ips"
+        ):
+            logger.info("Disabling public IP mode")
+            self.charm.state.unit_server.update({"public_ip_mode": False})
+            reset_sentinels = True
+
+        if self.charm.unit.is_leader() and reset_sentinels:
+            self.charm.state.cluster.update({"sentinel_reset_required": True})

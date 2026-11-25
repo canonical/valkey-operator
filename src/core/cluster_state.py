@@ -268,6 +268,10 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         if self.substrate == Substrate.K8S:
             return False
 
+        if self.unit_server.is_started and not self.unit_server.is_tls_enabled:
+            return False
+
+        # non-started units will enable TLS and public IP mode both on startup
         if not self.client_tls_relation:
             return False
 
@@ -275,6 +279,21 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             return False
 
         return True
+
+    @property
+    def is_public_ip_transitioning(self) -> bool:
+        """True while any unit is mid-enabling/disabling public IP mode."""
+        if self.config.get("use-public-ips") and any(
+            server for server in self.servers if not server.is_public_ip_enabled
+        ):
+            return True
+
+        if not self.config.get("use-public-ips") and any(
+            server for server in self.servers if server.is_public_ip_enabled
+        ):
+            return True
+
+        return False
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.

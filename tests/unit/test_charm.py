@@ -936,8 +936,8 @@ def test_enable_public_ip_mode(vm_environment):
         endpoint=PEER_RELATION,
         local_unit_data={
             "start-state": "started",
-            "advertised-address": "127.1.1.1",
             "private-ip": "127.1.1.1",
+            "tls-client-state": "tls",
         },
     )
     status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
@@ -957,7 +957,18 @@ def test_enable_public_ip_mode(vm_environment):
         patch("managers.config.ConfigManager.configure_services") as configure_services,
         patch("managers.auth.AuthManager.configure_auth"),
         patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.1"),
-        patch("managers.tls.TLSManager.certificate_sans_require_update", return_value=False),
+        patch(
+            "workload_vm.ValkeyVmWorkload.exec",
+            return_value=("DNS:www.example.com, IP Address:127.1.1.1, IP Address:10.0.0.1",),
+        ),
+        patch(
+            "managers.tls.TLSManager.build_sans_ip",
+            return_value=frozenset({"127.1.1.1", "10.0.0.1"}),
+        ),
+        patch(
+            "managers.tls.TLSManager.build_sans_dns",
+            return_value=frozenset({"www.example.com"}),
+        ),
         patch("workload_vm.ValkeyVmWorkload.alive", return_value=True),
         patch("managers.sentinel.SentinelManager.failover") as failover,
         patch("common.client.SentinelClient.is_failover_in_progress", return_value=False),
@@ -966,7 +977,7 @@ def test_enable_public_ip_mode(vm_environment):
     ):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
         configure_services.assert_called_once()
-        failover.assert_called_once()
+        failover.assert_not_called()
         restart.assert_called_once()
         assert state_out.get_relation(1).local_unit_data["public-ip-mode"] == "true"
 
