@@ -106,7 +106,7 @@ def _reconcile_env(cert_ip: str = OLD_IP) -> ExitStack:
     return stack
 
 
-def test_update_status_queues_a_move_when_the_binding_changed(
+def test_config_changed_queues_a_move_when_the_binding_changed(
     vm_environment, mock_request_async_lock
 ):
     """The move is only recorded, and the unit signs a cert valid for both addresses."""
@@ -120,7 +120,7 @@ def test_update_status_queues_a_move_when_the_binding_changed(
         ) as mock_create_certificate,
         patch("managers.config.ConfigManager.configure_services") as mock_configure,
     ):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     unit_data = state_out.get_relation(1).local_unit_data
     assert unit_data["pending-ip"] == NEW_IP
@@ -132,7 +132,7 @@ def test_update_status_queues_a_move_when_the_binding_changed(
     assert status_is(state_out, ClusterStatuses.MOVING_ADDRESS.value)
 
 
-def test_update_status_requests_a_certificate_for_the_new_address(vm_environment):
+def test_config_changed_requests_a_certificate_for_the_new_address(vm_environment):
     """With a provider, the unit asks for a cert with both addresses before it moves."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation(), _client_tls_relation()})
@@ -143,15 +143,16 @@ def test_update_status_requests_a_certificate_for_the_new_address(vm_environment
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
     ):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
     mock_create_certificate.assert_not_called()
     assert state_out.get_relation(1).local_unit_data["pending-ip"] == NEW_IP
-    assert not state_out.deferred
+    # retried until the provider signs the new certificate
+    assert [d.observer for d in state_out.deferred] == ["_on_config_changed"]
 
 
-def test_update_status_waits_for_the_refresh_before_moving(
+def test_config_changed_waits_for_the_refresh_before_moving(
     vm_environment, mock_request_async_lock
 ):
     """The move starts only after the refresh, so no unit restarts twice."""
@@ -166,36 +167,36 @@ def test_update_status_waits_for_the_refresh_before_moving(
             return_value=True,
         ),
     ):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert "pending-ip" not in state_out.get_relation(1).local_unit_data
     mock_request_async_lock.assert_not_called()
     assert status_is(state_out, ClusterStatuses.MOVING_ADDRESS.value)
 
 
-def test_update_status_drops_the_move_when_the_binding_moved_back(vm_environment):
+def test_config_changed_drops_the_move_when_the_binding_moved_back(vm_environment):
     """A binding that moves back before the restart leaves the unit where it is."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation(private_ip=NEW_IP, pending_ip="127.9.9.9")})
 
     with _reconcile_env(cert_ip=NEW_IP):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert "pending-ip" not in state_out.get_relation(1).local_unit_data
 
 
-def test_update_status_keeps_a_move_the_restart_callback_started(vm_environment):
+def test_config_changed_keeps_a_move_the_restart_callback_started(vm_environment):
     """Once the callback recorded the new address, the move finishes in the callback."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation(private_ip=NEW_IP, pending_ip=NEW_IP)})
 
     with _reconcile_env(cert_ip=NEW_IP):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert state_out.get_relation(1).local_unit_data["pending-ip"] == NEW_IP
 
 
-def test_update_status_does_not_reconcile_when_ip_unchanged(vm_environment):
+def test_config_changed_does_not_reconcile_when_ip_unchanged(vm_environment):
     """A unit whose address and SANs are unchanged must not reissue certificates."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation(private_ip=NEW_IP)})
@@ -206,7 +207,7 @@ def test_update_status_does_not_reconcile_when_ip_unchanged(vm_environment):
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
     ):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     mock_create_certificate.assert_not_called()
     assert not any(isinstance(e, RefreshTLSCertificatesEvent) for e in ctx.emitted_events)
@@ -251,7 +252,7 @@ def test_update_status_refreshes_client_certificate_when_sans_changed(vm_environ
     mock_create_certificate.assert_not_called()
 
 
-def test_update_status_does_not_reconcile_before_an_address_is_recorded(
+def test_config_changed_does_not_reconcile_before_an_address_is_recorded(
     vm_environment, mock_request_async_lock
 ):
     """`private-ip` is first written on start, so an empty one is not an address change."""
@@ -259,7 +260,7 @@ def test_update_status_does_not_reconcile_before_an_address_is_recorded(
     state_in = _state(relations={_peer_relation(private_ip="")})
 
     with _reconcile_env():
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert "pending-ip" not in state_out.get_relation(1).local_unit_data
     mock_request_async_lock.assert_not_called()
@@ -300,7 +301,7 @@ def test_update_status_survives_certificate_read_failure(vm_environment):
     assert not state_out.deferred
 
 
-def test_update_status_is_noop_on_k8s():
+def test_config_changed_is_noop_on_k8s():
     """K8s uses hostnames, so the address reconcile must not even read the binding."""
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     state_in = _state(relations={_peer_relation()})
@@ -316,7 +317,7 @@ def test_update_status_is_noop_on_k8s():
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
     ):
-        ctx.run(ctx.on.update_status(), state_in)
+        ctx.run(ctx.on.config_changed(), state_in)
 
     mock_create_certificate.assert_not_called()
 
@@ -629,7 +630,7 @@ def test_losing_the_address_drops_a_pending_move(vm_environment):
             side_effect=ValueError("no address"),
         ),
     ):
-        state_out = ctx.run(ctx.on.update_status(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     assert "pending-ip" not in state_out.get_relation(1).local_unit_data
 

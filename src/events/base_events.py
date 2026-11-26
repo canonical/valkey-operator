@@ -529,8 +529,6 @@ class BaseEvents(ops.Object):
         if not self.charm.state.cluster.is_restore_in_progress:
             self.charm.reconcile_persistence()
 
-        self._request_address_move()
-
         if not self.charm.unit.is_leader():
             # fallback if peer-relation-changed missed the leader change
             self.charm.topology_manager.stop_observer()
@@ -639,8 +637,7 @@ class BaseEvents(ops.Object):
     def _request_address_move(self) -> bool:
         """Record a new binding as pending and request the restart that moves the unit.
 
-        `juju bind` fires config-changed. Juju may still report the old address then, so
-        update-status converges the unit too.
+        `juju bind` fires config-changed.
 
         Returns:
             bool: False if the move waits for the refresh to finish.
