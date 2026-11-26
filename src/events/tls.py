@@ -238,7 +238,6 @@ class TLSEvents(ops.Object):
             event.defer()
             return
 
-        self.charm.tls_manager.set_tls_state(TLSState.TLS)
         self.charm.unit.close_port("tcp", CLIENT_PORT)
         self.charm.unit.close_port("tcp", SENTINEL_PORT)
 
@@ -393,13 +392,17 @@ class TLSEvents(ops.Object):
 
         if not self.charm.workload.alive():
             logger.debug("Services not running yet, enabling client TLS will happen on start")
+            self.charm.tls_manager.set_tls_state(TLSState.TLS)
             return
 
         logger.info("Enabling client TLS in Valkey")
+        # clients still use the plain ports, the TLS ports serve the old certificate until this reload
         primary_ip = self.charm.sentinel_manager.get_primary_ip()
-        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
-        tls_config = self.charm.config_manager.generate_tls_config()
+        tls_config = self.charm.config_manager.generate_tls_config() | {"port": "0"}
         self.charm.cluster_manager.reload_tls_settings(tls_config)
+        self.charm.tls_manager.set_tls_state(TLSState.TLS)
+        # a failed write leaves port 6379 in valkey.conf, the next config write fixes it
+        self.charm.config_manager.set_config_properties(primary_endpoint=primary_ip)
 
     def _orchestrate_ca_rotation(self) -> None:
         """Orchestrate the workflow when a TLS CA rotation has been initiated."""
