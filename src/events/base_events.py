@@ -36,7 +36,6 @@ from literals import (
     LOG_STORAGE,
     METRICS_PORT,
     PEER_RELATION,
-    REFRESH_PEER_RELATION,
     SCALE_DOWN_LOCK_ID,
     SCALE_DOWN_LOCK_TIMEOUT_S,
     SENTINEL_PORT,
@@ -84,10 +83,6 @@ class BaseEvents(ops.Object):
         self.framework.observe(self.charm.on.upgrade_charm, self._on_upgrade_charm)
         self.framework.observe(self.charm.on.leader_elected, self._on_leader_elected)
         self.framework.observe(self.charm.on.config_changed, self._on_config_changed)
-        self.framework.observe(
-            self.charm.on[REFRESH_PEER_RELATION].relation_changed,
-            self._on_refresh_peer_relation_changed,
-        )
         self.framework.observe(self.charm.on.secret_changed, self._on_secret_changed)
         for storage_name in (DATA_STORAGE, LOG_STORAGE, ARCHIVE_STORAGE):
             self.framework.observe(
@@ -641,11 +636,14 @@ class BaseEvents(ops.Object):
             data["private_ip"] = self.charm.state.bind_address
         self.charm.state.unit_server.update(data)
 
-    def _request_address_move(self) -> None:
+    def _request_address_move(self) -> bool:
         """Record a new binding as pending and request the restart that moves the unit.
 
         `juju bind` fires config-changed. Juju may still report the old address then, so
         update-status converges the unit too.
+
+        Returns:
+            bool: False if the move waits for the refresh to finish.
         """
         if (
             self.charm.state.substrate != Substrate.VM
@@ -653,7 +651,7 @@ class BaseEvents(ops.Object):
             or not self.charm.state.unit_server.model.private_ip
         ):
             # K8s uses hostnames, and the start flow records the address itself
-            return
+            return True
 
         try:
             bind_address = self.charm.state.bind_address
@@ -669,16 +667,17 @@ class BaseEvents(ops.Object):
             ):
                 logger.info("The binding has no new address anymore, dropping the move")
                 self.charm.state.unit_server.update({"pending_ip": ""})
-            return
+            return True
 
         if self.charm.refresh_manager.refresh_in_progress:
             logger.info("Waiting for the refresh to finish before moving address")
-            return
+            return False
 
         if self.charm.state.unit_server.model.pending_ip != bind_address:
             logger.info("Moving to %s", bind_address)
             self.charm.state.unit_server.update({"pending_ip": bind_address})
             self.charm.request_restart()
+        return True
 
     def restart_workload(
         self,
@@ -818,10 +817,8 @@ class BaseEvents(ops.Object):
             logger.error("Failed to render the config for the move: %s", e)
             return OperationResult.RETRY_HOLD
 
-        if (
-            result := self._restart_services(True, True, primary_endpoint)
-        ) != OperationResult.RELEASE:
-            return result
+        if self._restart_services(True, True, primary_endpoint) != OperationResult.RELEASE:
+            return OperationResult.RETRY_HOLD
 
         try:
             # Sentinel only forgets the old address on a reset. Reset before the next unit gets
@@ -881,6 +878,7 @@ class BaseEvents(ops.Object):
             logger.error("Cannot start the move yet: %s", e)
             return False
 
+        # only the primary gets here, every other unit returned True above
         if self.charm.state.other_units_moving:
             logger.info(
                 "The primary moves last, waiting for %s", self.charm.state.other_units_moving
@@ -893,22 +891,21 @@ class BaseEvents(ops.Object):
             logger.error("Failover before the move failed: %s", e)
             return False
         if self.charm.unit.is_leader():
-            # relation data reaches clients only when this hook ends
-            # returning false ends the hook, saves the relation data, and updates the endpoints
+            # The leader publishes the primary to clients through relation data, which Juju
+            # sends only when the hook ends. The observer's topology_changed hook would run
+            # after this whole move, so clients would wait that long for the new primary.
+            # Publish it here and return False. The lock is released, the hook ends and clients
+            # get the new primary. On the next grant this unit is a replica and moves as one.
             self.charm.on.topology_changed.emit()
             return False
+        # the leader's observer publishes the new primary, this hook doesn't delay it
         return True
-
-    def _on_refresh_peer_relation_changed(self, event: ops.RelationChangedEvent) -> None:
-        """Start a move that waited for the refresh.
-
-        charm_refresh writes to every unit's databag once the refresh completes.
-        """
-        self._request_address_move()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        self._request_address_move()
+        if not self._request_address_move():
+            # rerun after the refresh, the rest of this handler doesn't wait for it
+            event.defer()
 
         if not self.charm.unit.is_leader():
             return
