@@ -145,28 +145,29 @@ class BaseEvents(ops.Object):
             logger.info("Unit restarted by the refresh, not starting it again")
             return
 
+        # persist unit IP addresses for support of spaces and public IP
         if self.charm.state.substrate == Substrate.VM:
             try:
-                # The unit has not started yet. It can start with the new address directly
-                self.charm.state.unit_server.update(
-                    {"private_ip": self.charm.state.bind_address, "pending_ip": ""}
-                )
-            except ValueError:
-                logger.warning("No address in the bound space, starting on the recorded one")
+                self._set_initial_unit_addresses()
+            except RuntimeError as e:
+                logger.warning(e)
+                event.defer()
+                return
 
+        # ensure relation state is valid before starting
         if not self._start_conditions_met():
             event.defer()
             return
 
         self.charm.state.unit_server.update({"start_state": StartState.NOT_STARTED.value})
 
+        # ensure credentials for internal users are set
         if not self.charm.state.cluster.internal_users_credentials:
-            logger.info(
-                "Internal users' credentials not set yet. Deferring start event until credentials are set."
-            )
+            logger.info("Internal users' credentials not set, deferring start event.")
             event.defer()
             return
 
+        # ensure primary to avoid cluster split
         if self._get_primary_endpoint_for_start() is None:
             logger.debug("Primary not available, deferring start event")
             self.charm.state.unit_server.update(
@@ -230,13 +231,13 @@ class BaseEvents(ops.Object):
 
         if self.charm.app.planned_units() == 1:
             logger.debug("Single unit deployment, continue starting with this unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
 
         persistence_config = self.charm.config_manager.get_current_persistence_config()
         if persistence_config.mode == PersistenceMode.NONE:
             if self.charm.unit.is_leader():
                 logger.debug("No persistence enabled, continue starting with this unit as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Check if local data exists")
@@ -253,13 +254,13 @@ class BaseEvents(ops.Object):
             logger.debug("Latest data is: %s", latest_data_offset)
             if latest_data_offset == self.charm.state.unit_server.get_local_data_offset():
                 logger.debug("Unit has latest data and will start as primary")
-                return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+                return self.charm.state.advertised_address
             return None
 
         logger.debug("Cannot determine primary from data on disk")
         if self.charm.unit.is_leader():
             logger.debug("Starting the leader unit as primary")
-            return self.charm.state.unit_server.get_endpoint(self.charm.state.substrate)
+            return self.charm.state.advertised_address
         return None
 
     def start_unit(self) -> OperationResult:
@@ -634,10 +635,10 @@ class BaseEvents(ops.Object):
             data["private_ip"] = self.charm.state.bind_address
         self.charm.state.unit_server.update(data)
 
-    def _request_address_move(self) -> bool:
+    def _request_bind_address_move(self) -> bool:
         """Record a new binding as pending and request the restart that moves the unit.
 
-        `juju bind` fires config-changed.
+        `juju bind` or an updated IP address fires config-changed.
 
         Returns:
             bool: False if the move waits for the refresh to finish.
@@ -673,6 +674,64 @@ class BaseEvents(ops.Object):
         if self.charm.state.unit_server.model.pending_ip != bind_address:
             logger.info("Moving to %s", bind_address)
             self.charm.state.unit_server.update({"pending_ip": bind_address})
+            self.charm.request_restart()
+        return True
+
+    def _request_public_address_move(self) -> bool:
+        """Detect a new public IP address or switch the public IP mode and request a restart.
+
+        Returns:
+            bool: False if the switch or move can't happen because of invalid state,
+                or if a refresh or TLS transition is ongoing.
+        """
+        if (
+            self.charm.state.substrate != Substrate.VM
+            or not self.charm.state.unit_server.is_started
+            or not self.charm.state.unit_server.model.advertised_address
+        ):
+            # K8s uses hostnames, and the start flow records the address itself
+            return True
+
+        new_address = self.charm.state.public_address
+        if (
+            self.charm.state.config.get("use-public-ips")
+            and not self.charm.state.unit_server.is_public_ip_enabled
+        ):
+            if not self.charm.state.is_public_ip_state_valid:
+                logger.warning("Cannot enable public IP mode, invalid state")
+                return False
+
+            self.charm.state.unit_server.update({"public_ip_mode": True})
+            logger.info("Enabling public IP %s", new_address)
+
+        if self.charm.state.unit_server.is_public_ip_enabled and not self.charm.state.config.get(
+            "use-public-ips"
+        ):
+            logger.info("Disabling public IP mode")
+            self.charm.state.unit_server.update({"public_ip_mode": False})
+            new_address = self.charm.state.unit_server.model.private_ip
+
+        if not new_address or new_address == self.charm.state.unit_server.model.advertised_address:
+            if (
+                self.charm.state.unit_server.model.pending_advertised_address
+                and self.charm.state.unit_server.model.pending_advertised_address
+                != self.charm.state.unit_server.model.advertised_address
+            ):
+                logger.info("No new public address anymore, dropping the move")
+                self.charm.state.unit_server.update({"pending_advertised_address": ""})
+            return True
+
+        if self.charm.refresh_manager.refresh_in_progress:
+            logger.info("Waiting for the refresh to finish before moving address")
+            return False
+
+        if self.charm.state.is_tls_transitioning:
+            logger.info("Waiting for TLS transition to finish before moving address")
+            return False
+
+        if self.charm.state.unit_server.model.pending_advertised_address != new_address:
+            logger.info("Moving to %s", new_address)
+            self.charm.state.unit_server.update({"pending_advertised_address": new_address})
             self.charm.request_restart()
         return True
 
@@ -716,7 +775,10 @@ class BaseEvents(ops.Object):
             logger.info("Backup/restore in progress on this unit; retrying the restart later")
             return OperationResult.RETRY_RELEASE
 
-        if self.charm.state.unit_server.model.pending_ip:
+        if (
+            self.charm.state.unit_server.model.pending_ip
+            or self.charm.state.unit_server.model.pending_advertised_address
+        ):
             result = self._move_address()
         else:
             result = self._restart_services(restart_valkey, restart_sentinel, primary_endpoint)
@@ -778,6 +840,8 @@ class BaseEvents(ops.Object):
         if (
             self.charm.state.unit_server.model.private_ip
             != self.charm.state.unit_server.model.pending_ip
+            or self.charm.state.unit_server.model.advertised_address
+            != self.charm.state.unit_server.model.pending_advertised_address
         ):
             if not self._ready_to_move():
                 return OperationResult.RETRY_RELEASE
@@ -791,6 +855,7 @@ class BaseEvents(ops.Object):
             self.charm.state.unit_server.update(
                 {
                     "private_ip": self.charm.state.unit_server.model.pending_ip,
+                    "advertised_address": self.charm.state.unit_server.model.pending_advertised_address,
                     "restart_run_id": run_id,
                 }
             )
@@ -805,7 +870,7 @@ class BaseEvents(ops.Object):
 
             if self.charm.app.planned_units() == 1:
                 # the unit stays primary, and its Sentinel no longer answers on the old address
-                primary_endpoint = self.charm.state.endpoint
+                primary_endpoint = self.charm.state.advertised_address
             else:
                 primary_endpoint = self.charm.sentinel_manager.get_primary_ip()
             # rendered after any failover, whose CONFIG REWRITE replaces older renders
@@ -821,7 +886,7 @@ class BaseEvents(ops.Object):
             # Sentinel only forgets the old address on a reset. Reset before the next unit gets
             # the lock, because stale entries count toward the majority a failover needs.
             self.charm.sentinel_manager.reset_sentinel_states(
-                self.charm.sentinel_manager.all_sentinel_endpoints()
+                self.charm.sentinel_manager.all_sentinel_advertised_addresses()
             )
             self.charm.sentinel_manager.verify_expected_replica_count(
                 self.charm.sentinel_manager.all_sentinel_endpoints()
@@ -835,8 +900,13 @@ class BaseEvents(ops.Object):
             logger.error("Sentinel reset after the move failed: %s", e)
             return OperationResult.RETRY_HOLD
 
-        self.charm.state.unit_server.update({"pending_ip": ""})
-        logger.info("Moved to %s", self.charm.state.endpoint)
+        self.charm.state.unit_server.update(
+            {
+                "pending_ip": "",
+                "pending_advertised_address": "",
+            }
+        )
+        logger.info("Moved to %s", self.charm.state.advertised_address)
         if self.charm.state.client_tls_relation:
             # the provider's certificate still lists the old address
             self.charm.on.refresh_tls_certificates.emit()
@@ -858,17 +928,23 @@ class BaseEvents(ops.Object):
             return False
 
         try:
-            if self.charm.state.client_tls_relation and (
-                self.charm.state.unit_server.model.pending_ip
-                not in self.charm.tls_manager.get_current_sans()["sans_ip"]
-            ):
-                logger.info("Waiting for a certificate valid for the new address")
-                return False
+            if self.charm.state.client_tls_relation:
+                sans_ip = self.charm.tls_manager.get_current_sans()["sans_ip"]
+                if (
+                    self.charm.state.unit_server.model.pending_ip != ""
+                    and self.charm.state.unit_server.model.pending_ip not in sans_ip
+                    or self.charm.state.unit_server.model.pending_advertised_address != ""
+                    and self.charm.state.unit_server.model.pending_advertised_address
+                    not in sans_ip
+                ):
+                    logger.info("Waiting for a certificate valid for the new address")
+                    return False
 
+            primary_ip = self.charm.sentinel_manager.get_primary_ip()
             if (
                 self.charm.app.planned_units() == 1
-                or self.charm.sentinel_manager.get_primary_ip()
-                != self.charm.state.unit_server.model.private_ip
+                or self.charm.state.unit_server.model.private_ip != primary_ip
+                and self.charm.state.unit_server.model.advertised_address != primary_ip
             ):
                 return True
         except (ValkeyCannotGetPrimaryIPError, ValkeyWorkloadCommandError) as e:
@@ -900,8 +976,11 @@ class BaseEvents(ops.Object):
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle the config_changed event."""
-        if not self._request_address_move():
+        if not self._request_bind_address_move():
             # rerun after the refresh, the rest of this handler doesn't wait for it
+            event.defer()
+
+        if not self._request_public_address_move():
             event.defer()
 
         if not self.charm.unit.is_leader():
@@ -1241,3 +1320,27 @@ class BaseEvents(ops.Object):
             self.charm.config_manager.set_sentinel_config_properties(
                 self.charm.sentinel_manager.get_primary_ip()
             )
+
+    def _set_initial_unit_addresses(self) -> None:
+        """Set the unit's IP addresses to peer relation data for later service configuration."""
+        try:
+            # The unit has not started yet. It can start with the new address directly
+            self.charm.state.unit_server.update(
+                {
+                    "private_ip": self.charm.state.bind_address,
+                    "pending_ip": "",
+                    "advertised_address": self.charm.state.public_address,
+                    "pending_advertised_address": "",
+                }
+            )
+        except ValueError:
+            # raised from state.bind_address
+            logger.warning("No address in the bound space, starting on the recorded one")
+
+        if self.charm.config.get("use-public-ips"):
+            if not self.charm.state.is_public_ip_state_valid:
+                raise RuntimeError(
+                    "Public IP mode configured, but invalid state - deferring start"
+                )
+
+            self.charm.state.unit_server.update({"public_ip_mode": True})

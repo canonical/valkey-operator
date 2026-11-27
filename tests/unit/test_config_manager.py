@@ -25,6 +25,7 @@ def _make_config_manager(planned_units: int = 3) -> ConfigManager:
     # The early-return guard checks truthiness of both .model attributes;
     # MagicMock attributes are truthy by default, so this passes the guard.
     state.endpoint = "10.0.0.5"
+    state.advertised_address = "10.0.0.5"
     state.cluster.internal_users_credentials = {"valkey-replica": "pw"}
     # No TLS for these tests — tls_client_state must not be in the TLS-enabled set.
     state.unit_server.tls_client_state = None

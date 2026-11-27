@@ -69,6 +69,26 @@ class ClusterStatuses(Enum):
         message="Moving to the address in the bound space",
     )
 
+    PUBLIC_IP_NOT_UPDATED = StatusObject(
+        status="maintenance",
+        message="Public IP address added but not yet updated",
+    )
+
+    PUBLIC_IP_MODE_TLS_MISSING = StatusObject(
+        status="blocked",
+        message="Public IP mode enabled, but required TLS relation is missing",
+    )
+
+    PUBLIC_IP_MODE_K8S = StatusObject(
+        status="blocked",
+        message="Public IP mode only supported on VM",
+    )
+
+    PUBLIC_IP_MODE_NO_PUBLIC_IP = StatusObject(
+        status="blocked",
+        message="Public IP mode enabled, but no public IP available",
+    )
+
 
 class PersistenceStatuses(Enum):
     """Collection of possible statuses related to persistence."""

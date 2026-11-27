@@ -6,6 +6,7 @@
 
 import logging
 import socket
+import subprocess
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -253,6 +254,22 @@ class ClusterState(ops.Object, StatusesStateProtocol):
 
         return [str(address) for address in addresses if not isinstance(address, str)]
 
+    @cached_property
+    def public_address(self) -> str:
+        """Get the unit's public address from Juju directly, which ops does not expose."""
+        try:
+            result = subprocess.run(
+                ["unit-get", "public-address"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return ""
+
+        return result.stdout.strip() or ""
+
     @property
     def hostname(self) -> str:
         """The hostname of the unit.
@@ -273,6 +290,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         if self.substrate == Substrate.VM:
             return self.unit_server.model.private_ip or self.bind_address
         return self.hostname
+
+    @property
+    def advertised_address(self) -> str:
+        """The endpoint to be advertised/used for connections from Valkey's clients.
+
+        This is the public IP addresses if public-ip-mode enabled, otherwise the regular endpoint.
+        """
+        if self.unit_server.is_public_ip_enabled:
+            return self.unit_server.model.advertised_address
+
+        return self.endpoint
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
@@ -315,7 +343,7 @@ class ClusterState(ops.Object, StatusesStateProtocol):
             for unit in self.servers
             if unit.is_active
             and unit.unit_name != self.unit_server.unit_name
-            and unit.model.pending_ip
+            and (unit.model.pending_ip or unit.model.pending_advertised_address)
         ]
 
     @property
@@ -399,6 +427,39 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         A restore restarts the primary, which would collide with the cert swap.
         """
         return any(server.is_tls_transitioning for server in self.servers)
+
+    @property
+    def is_public_ip_state_valid(self) -> bool:
+        """Validate the config and relations required for public IP mode."""
+        if self.substrate == Substrate.K8S:
+            return False
+
+        if self.unit_server.is_started and not self.unit_server.is_tls_enabled:
+            return False
+
+        # non-started units will enable TLS and public IP mode both on startup
+        if not self.client_tls_relation:
+            return False
+
+        if self.public_address == self.unit_server.model.private_ip:
+            return False
+
+        return True
+
+    @property
+    def is_public_ip_transitioning(self) -> bool:
+        """True while any unit is mid-enabling/disabling public IP mode."""
+        if self.config.get("use-public-ips") and any(
+            server for server in self.servers if not server.is_public_ip_enabled
+        ):
+            return True
+
+        if not self.config.get("use-public-ips") and any(
+            server for server in self.servers if server.is_public_ip_enabled
+        ):
+            return True
+
+        return False
 
     @property
     def failed_restore_kind(self) -> str:

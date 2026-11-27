@@ -176,7 +176,7 @@ class ConfigManager(ManagerStatusProtocol):
 
     def _generate_replica_config(self, primary_endpoint: str) -> dict[str, str]:
         """Generate the config properties related to replica configuration based on the current cluster state."""
-        local_unit_endpoint = self.state.endpoint
+        local_unit_endpoint = self.state.advertised_address
         replica_config = {
             "primaryuser": CharmUsers.VALKEY_REPLICA.value,
             "primaryauth": self.state.cluster.internal_users_credentials.get(
@@ -363,7 +363,7 @@ class ConfigManager(ManagerStatusProtocol):
             sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
         if self.state.substrate == Substrate.VM:
             # Sentinel reports this address to its peers, so it must match state.endpoint
-            sentinel_configs["announce-ip"] = self.state.endpoint
+            sentinel_configs["announce-ip"] = self.state.advertised_address
         return sentinel_configs
 
     def set_sentinel_config_properties(self, primary_endpoint: str) -> None:

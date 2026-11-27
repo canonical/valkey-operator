@@ -100,11 +100,11 @@ class SentinelManager(ManagerStatusProtocol):
                 discovered_sentinels = {
                     sentinel["ip"] for sentinel in client.sentinels_primary(hostname=sentinel_host)
                 }
-                if self.state.endpoint not in discovered_sentinels:
+                if self.state.advertised_address not in discovered_sentinels:
                     logger.warning(
                         "Sentinel at %s does not see local sentinel at %s.",
                         sentinel_host,
-                        self.state.endpoint,
+                        self.state.advertised_address,
                     )
                     return False
 
@@ -171,7 +171,7 @@ class SentinelManager(ManagerStatusProtocol):
     def get_sentinel_endpoints(self) -> str:
         """Get the endpoints of all sentinel nodes, consisting of address and port."""
         started_servers = [
-            unit.get_endpoint(self.state.substrate)
+            unit.get_advertised_address(self.state.substrate)
             for unit in self.state.servers
             if unit.is_active
         ]
@@ -254,10 +254,14 @@ class SentinelManager(ManagerStatusProtocol):
         if not self.state.cluster.model.sentinel_reset_required:
             return
 
+        if self.state.is_public_ip_transitioning:
+            logger.debug("Wait for public IP transition to complete before Sentinel reset")
+            return
+
         logger.info("Resetting Sentinels after unit removal")
         primary_ip = self.get_primary_ip()
         active_sentinels = self.get_active_sentinel_ips(primary_ip)
-        expected_sentinels = self.all_sentinel_endpoints()
+        expected_sentinels = self.all_sentinel_advertised_addresses()
 
         # ensure that no departing sentinels is still alive before the reset
         if (
@@ -426,6 +430,14 @@ class SentinelManager(ManagerStatusProtocol):
         """Endpoints of every active unit's sentinel (the suppression fan-out set)."""
         return [
             unit.get_endpoint(self.state.substrate)
+            for unit in self.state.servers
+            if unit.is_active
+        ]
+
+    def all_sentinel_advertised_addresses(self) -> list[str]:
+        """Advertised addresses of every active unit's sentinel."""
+        return [
+            unit.get_advertised_address(self.state.substrate)
             for unit in self.state.servers
             if unit.is_active
         ]

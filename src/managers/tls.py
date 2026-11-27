@@ -155,8 +155,9 @@ class TLSManager(ManagerStatusProtocol):
             return frozenset(sans_ip)
 
         sans_ip.add(self.state.endpoint)
-
         sans_ip.update(self.state.ingress_addresses)
+        # always add public IP if present, even if not enabled, to avoid cert update when enabling
+        sans_ip.add(self.state.advertised_address)
 
         return frozenset(sans_ip)
 

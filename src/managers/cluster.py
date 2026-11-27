@@ -791,6 +791,9 @@ class ClusterManager(ManagerStatusProtocol):
             if address_status := self._get_address_status():
                 status_list.append(address_status)
 
+            for status in self._get_public_ip_statuses():
+                status_list.append(status)
+
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
 
     def _get_address_status(self) -> StatusObject | None:
@@ -819,6 +822,28 @@ class ClusterManager(ManagerStatusProtocol):
             return ClusterStatuses.MOVING_ADDRESS.value
 
         return None
+
+    def _get_public_ip_statuses(self) -> list[StatusObject]:
+        """Get the statuses for public IP mode."""
+        status_list: list[StatusObject] = []
+
+        if (
+            self.state.unit_server.is_public_ip_enabled
+            and self.state.advertised_address != self.state.public_address
+        ):
+            status_list.append(ClusterStatuses.PUBLIC_IP_NOT_UPDATED.value)
+
+        if self.state.config.get("use-public-ips"):
+            if self.state.substrate == Substrate.K8S:
+                status_list.append(ClusterStatuses.PUBLIC_IP_MODE_K8S.value)
+
+            if not self.state.client_tls_relation:
+                status_list.append(ClusterStatuses.PUBLIC_IP_MODE_TLS_MISSING.value)
+
+            if self.state.public_address == self.state.unit_server.model.private_ip:
+                status_list.append(ClusterStatuses.PUBLIC_IP_MODE_NO_PUBLIC_IP.value)
+
+        return status_list
 
     def _get_start_status(self) -> StatusObject | None:
         """Get the current start status of the unit."""

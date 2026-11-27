@@ -191,6 +191,7 @@ def _events(
     charm.state.latest_data_offset = latest_offset
     charm.state.unit_server.get_local_data_offset.return_value = own_offset
     charm.state.unit_server.get_endpoint.return_value = OWN_ENDPOINT
+    charm.state.advertised_address = OWN_ENDPOINT
     return events, charm
 
 

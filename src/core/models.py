@@ -402,6 +402,9 @@ class PeerUnitModel(PeerModel):
     hostname: str = Field(default="")
     private_ip: str = Field(default="")
     pending_ip: str = Field(default="")
+    advertised_address: str = Field(default="")
+    pending_advertised_address: str = Field(default="")
+    public_ip_mode: bool = Field(default=False)
     scale_down_state: str = Field(default="")
     tls_client_state: str = Field(default="")
     client_cert_ready: bool = Field(default=False)
@@ -599,6 +602,22 @@ class ValkeyServer(RelationState):
         On Kubernetes, this should be the hostname of the unit.
         """
         return self.model.private_ip if substrate == Substrate.VM else self.model.hostname
+
+    def get_advertised_address(self, substrate: Substrate) -> str:
+        """Return the advertised endpoint for client connections of this unit."""
+        return (
+            self.model.advertised_address
+            if self.is_public_ip_enabled
+            else self.get_endpoint(substrate)
+        )
+
+    @property
+    def is_public_ip_enabled(self) -> bool:
+        """Check if public IP mode is enabled."""
+        if not self.model:
+            return False
+
+        return self.model.public_ip_mode
 
     @property
     def tls_ca_rotation_state(self) -> TLSCARotationState:

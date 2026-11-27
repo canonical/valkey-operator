@@ -2,6 +2,7 @@
 # Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
+from subprocess import CompletedProcess
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from ops import ActiveStatus, pebble, testing
 from common.exceptions import ValkeyServiceNotAliveError, ValkeyWorkloadCommandError
 from src.charm import ValkeyCharm
 from src.literals import (
+    CLIENT_TLS_RELATION_NAME,
     INTERNAL_USERS_PASSWORD_CONFIG,
     INTERNAL_USERS_SECRET_LABEL_SUFFIX,
     METRICS_PORT,
@@ -868,3 +870,223 @@ def test_relation_changed_event_do_not_update_quorum():
     ):
         ctx.run(ctx.on.relation_changed(relation), state_in)
         mock_set.assert_not_called()
+
+
+def test_advertise_public_ip_address(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "public-ip-mode": "true",
+            "private-ip": "127.1.1.1",
+            "advertised-address": "18.198.201.63",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        assert mgr.charm.state.advertised_address == "18.198.201.63"
+
+
+def test_advertise_private_ip_address(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(
+        id=2,
+        endpoint=STATUS_PEERS_RELATION,
+        local_unit_data={"private-ip": "127.1.1.1"},
+    )
+
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        assert mgr.charm.state.advertised_address == "127.1.1.1"
+
+
+def test_advertise_address_k8s():
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    relation = testing.PeerRelation(id=1, endpoint=PEER_RELATION)
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        containers={container},
+        relations={relation, status_peer_relation},
+    )
+
+    with ctx(ctx.on.update_status(), state_in) as mgr:
+        assert mgr.charm.state.advertised_address == "valkey-0.valkey-endpoints"
+
+
+def test_enable_public_ip_mode(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "private-ip": "127.1.1.1",
+            "advertised-address": "127.1.1.1",
+            "tls-client-state": "tls",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation, client_tls_relation},
+        config={"use-public-ips": True},
+    )
+
+    with (
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="18.198.201.63"),
+        ),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="127.1.1.1"),
+        patch(
+            "workload_vm.ValkeyVmWorkload.exec",
+            return_value=("DNS:www.example.com, IP Address:127.1.1.1, IP Address:18.198.201.63",),
+        ),
+        patch(
+            "managers.tls.TLSManager.build_sans_ip",
+            return_value=frozenset({"127.1.1.1", "18.198.201.63"}),
+        ),
+        patch(
+            "managers.tls.TLSManager.build_sans_dns",
+            return_value=frozenset({"www.example.com"}),
+        ),
+        patch("src.charm.ValkeyCharm.request_restart") as restart,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        restart.assert_called_once()
+        assert state_out.get_relation(1).local_unit_data["public-ip-mode"] == "true"
+        assert (
+            state_out.get_relation(1).local_unit_data["pending-advertised-address"]
+            == "18.198.201.63"
+        )
+
+
+def test_enable_public_ip_mode_no_tls(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "advertised-address": "127.1.1.1",
+            "private-ip": "127.1.1.1",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation},
+        config={"use-public-ips": True},
+    )
+
+    with (
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="18.198.201.63"),
+        ),
+        patch(
+            "workload_vm.ValkeyVmWorkload.exec",
+            return_value=("DNS:www.example.com, IP Address:127.1.1.1, IP Address:18.198.201.63",),
+        ),
+        patch("src.charm.ValkeyCharm.request_restart") as restart,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        restart.assert_not_called()
+        assert not state_out.get_relation(1).local_unit_data.get("public-ip-mode")
+
+
+def test_enable_public_ip_mode_no_ip(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "advertised-address": "127.1.1.1",
+            "private-ip": "127.1.1.1",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation, client_tls_relation},
+        config={"use-public-ips": True},
+    )
+
+    with (
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="127.1.1.1"),
+        ),
+        patch(
+            "workload_vm.ValkeyVmWorkload.exec",
+            return_value=("DNS:www.example.com, IP Address:127.1.1.1",),
+        ),
+        patch("src.charm.ValkeyCharm.request_restart") as restart,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        restart.assert_not_called()
+        assert not state_out.get_relation(1).local_unit_data.get("public-ip-mode")
+
+
+def test_disable_public_ip_mode(vm_environment):
+    ctx = testing.Context(ValkeyCharm)
+    relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={
+            "start-state": "started",
+            "advertised-address": "18.198.201.63",
+            "private-ip": "127.1.1.1",
+            "public-ip-mode": "true",
+        },
+    )
+    status_peer_relation = testing.PeerRelation(id=2, endpoint=STATUS_PEERS_RELATION)
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    state_in = testing.State(
+        model=testing.Model(name="my-vm-model"),
+        leader=True,
+        relations={relation, status_peer_relation, client_tls_relation},
+    )
+
+    with (
+        patch(
+            "subprocess.run",
+            return_value=CompletedProcess(returncode=0, args=[], stdout="18.198.201.63"),
+        ),
+        patch("managers.sentinel.SentinelManager.get_primary_ip", return_value="18.198.201.63"),
+        patch("managers.tls.TLSManager.certificate_sans_require_update", return_value=False),
+        patch("src.charm.ValkeyCharm.request_restart") as restart,
+        patch("src.charm.ValkeyCharm.reconcile_persistence"),
+    ):
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        restart.assert_called_once()
+        assert state_out.get_relation(1).local_unit_data["public-ip-mode"] == "false"
+        assert (
+            state_out.get_relation(1).local_unit_data["pending-advertised-address"] == "127.1.1.1"
+        )
