@@ -28,6 +28,7 @@ from src.literals import (
     STATUS_PEERS_RELATION,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
     TLSCARotationState,
+    TLSState,
 )
 from src.statuses import TLSStatuses
 
@@ -406,6 +407,39 @@ def test_relation_changed_drops_csr_when_ip_sans_unsupported(
     assert status_is(state_out, TLSStatuses.IP_SANS_NOT_SUPPORTED.value) is blocked
 
 
+@pytest.mark.parametrize(
+    "tls_state,valkey_port,sentinel_port",
+    [
+        (TLSState.NO_TLS, "6379", "26379"),
+        (TLSState.TO_TLS, "6379", "26379"),
+        (TLSState.TLS, "0", "0"),
+        (TLSState.TO_NO_TLS, "6379", "26379"),
+    ],
+)
+def test_rendered_plain_port_open_while_clients_use_it(tls_state, valkey_port, sentinel_port):
+    """A start or restart must not close the plain ports the charm's own clients still use."""
+    ctx = testing.Context(ValkeyCharm, app_trusted=True)
+    peer_relation = testing.PeerRelation(
+        id=1,
+        endpoint=PEER_RELATION,
+        local_unit_data={"tls-client-state": tls_state.value, "client-cert-ready": "true"},
+        peers_data={1: {"client-cert-ready": "false"}},
+    )
+    client_tls_relation = testing.Relation(id=3, endpoint=CLIENT_TLS_RELATION_NAME)
+    container = testing.Container(name=CONTAINER, can_connect=True)
+    state_in = testing.State(
+        relations={peer_relation, client_tls_relation},
+        containers={container},
+        planned_units=2,
+    )
+    with ctx(ctx.on.update_status(), state_in) as manager:
+        charm: ValkeyCharm = manager.charm
+        assert charm.config_manager.generate_tls_config()["port"] == valkey_port
+        assert charm.config_manager.generate_sentinel_tls_config()["port"] == sentinel_port
+        # the TLS ports are always open, so only plain-port clients need the plain port
+        assert valkey_port != "0" or charm.state.unit_server.is_tls_enabled
+
+
 def test_client_certificate_available():
     ca = MagicMock("my_ca")
     ca.raw = "my_ca"
@@ -459,6 +493,7 @@ def test_client_certificate_available():
             state_out = manager.run()
 
             reload_tls.assert_called_once()
+            assert reload_tls.call_args.args[0]["port"] == "0"
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
             assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "tls"
 
@@ -515,9 +550,10 @@ def test_client_certificate_available_enabling_fails():
             charm.tls_events._on_certificate_available(event)
             state_out = manager.run()
 
-            reload_tls.assert_not_called()
+            reload_tls.assert_called_once()
             assert state_out.get_relation(1).local_unit_data.get("client-cert-ready") == "true"
-            assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "to-tls"
+            assert state_out.get_relation(1).local_unit_data.get("tls-client-state") == "tls"
+            event.defer.assert_called_once()
 
 
 def test_client_certificate_available_not_all_units_ready():
