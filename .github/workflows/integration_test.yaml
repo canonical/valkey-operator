@@ -307,6 +307,7 @@ jobs:
         uses: canonical/flake0/.github/actions/ingest@main
         with:
           bundle-path: ${{ steps.collect.outputs.bundle-path }}
+          verdict-path: ${{ steps.classify.outputs.verdict-path }}
           url: ${{ secrets.FLAKE0_INGEST_URL }}
           username: ${{ secrets.FLAKE0_INGEST_USER }}
           password: ${{ secrets.FLAKE0_INGEST_PASSWORD }}
