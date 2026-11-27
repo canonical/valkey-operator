@@ -216,6 +216,20 @@ variable "juju_controller" {
   ephemeral = true
 }
 
+variable "juju_offering_controllers" {
+  description = "Other Juju controllers that host offers, keyed by controller name. Set controller on an offer target to one of these names. Ephemeral: supply at plan and at apply, for example through TF_VAR_juju_offering_controllers."
+  type = map(object({
+    ca       = optional(string)
+    endpoint = string
+    password = string
+    username = string
+  }))
+  default   = {}
+  nullable  = false
+  sensitive = true
+  ephemeral = true
+}
+
 variable "ldap" {
   description = "LDAP authentication and certificate integrations."
   type = object({

@@ -20,7 +20,7 @@ The module follows the CC008 Charm Terraform Standards.
 | Name      | Version  |
 | --------- | -------- |
 | terraform | >= 1.11  |
-| juju      | >= 2.2.1 |
+| juju      | >= 2.4.1 |
 
 ## Usage
 
@@ -48,6 +48,29 @@ module "valkey" {
     name       = "valkey-vm"
     cloud      = { name = "my-maas" }
     credential = "my-maas-credential"
+  }
+}
+```
+
+### Deploying on Juju spaces
+
+`valkey.endpoint_bindings` binds Valkey's endpoints to spaces. `valkey-peers` and `valkey-client` must resolve to the same space, or the plan fails. Juju gives new machines a NIC in each bound space, so `valkey.constraints` needs no `spaces=`. A change to `endpoint_bindings` on a deployed application runs `juju bind` in place. Don't repeat the default space in an endpoint entry or bind the default entry to the model default space. The provider drops those entries on read and plans an update on every run ([juju/terraform-provider-juju#505](https://github.com/juju/terraform-provider-juju/issues/505)).
+
+Clients need a NIC in the `valkey-peers` space or a route to it. Valkey publishes its `valkey-peers` addresses to every client, whatever space the client is bound to.
+
+```hcl
+module "valkey" {
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
+
+  model = {
+    name = "valkey-vm"
+  }
+
+  valkey = {
+    endpoint_bindings = [
+      { space = "data" },
+      { endpoint = "s3-credentials", space = "backup" },
+    ]
   }
 }
 ```
@@ -137,6 +160,30 @@ For mutual TLS, also set `tls.certificate_transfer` to a provider of the CAs tha
   }
 ```
 
+### Consuming offers from another controller
+
+To relate Valkey to an offer on another controller, set `controller` on the target to that controller's name, and pass its connection details in `juju_offering_controllers` under the same name. Use the controller's own name, the one in its offer URLs, so the provider recognises the integration when it reads it back. The variable is ephemeral, so declare it with `ephemeral = true` in the root module, as in [Sensitive configurations and secrets](#sensitive-configurations-and-secrets).
+
+```hcl
+module "valkey" {
+  source = "git::https://github.com/canonical/valkey-operator//terraform/product/vm?ref=tf-1.0.0"
+
+  model = {
+    name = "valkey-vm"
+  }
+
+  juju_offering_controllers = var.juju_offering_controllers
+
+  tls = {
+    client_certificates = {
+      kind       = "offer"
+      url        = "admin/pki.vault"
+      controller = "pki-controller"
+    }
+  }
+}
+```
+
 ### Sensitive configurations and secrets
 
 The module takes passwords, private keys and object-store credentials as ephemeral variables and stores them in Juju secrets through the provider's write-only `value_wo` attribute. Terraform sends them to the Juju controller during apply and writes `null` to `terraform.tfstate`.
@@ -186,7 +233,6 @@ The charm merges `system_users` over its current passwords. Removing a user from
 
 ### Provider and lifecycle notes
 
-- **Risk.** Valkey is published on `9/edge` and `9/beta` only for now. `risk = "candidate"` or `"stable"` fails until Valkey reaches those channels.
 - **arm64.** Juju deploys an application as amd64 unless the application or the model sets an arch. Set `model = { name = "...", constraints = "arch=arm64" }`, or run `juju set-model-constraints arch=arm64` on an existing model. Valkey and every bundled charm then follow the model. The collector is a subordinate and runs on the Valkey machines.
 - **Provider configuration.** Per CC008, the module defines `provider "juju" {}` in `providers.tf`. Because the module owns its provider configuration, Terraform does not permit `count`, `for_each`, or `depends_on` on the `module "valkey"` block. When destroying or removing the module, run `terraform destroy` (or `terraform destroy -target=module.valkey`) before removing the block from your configuration.
 - **Grant timing.** Juju can only grant a secret after the application exists, so a hook can run before the grant. If Valkey reads the secret in that window, the hook errors and Juju retries it. This needs `automatically-retry-hooks` left at its default, `true`. Tests with provider 2.3.1 never hit the window.
@@ -206,6 +252,7 @@ The charm merges `system_users` over its current passwords. Removing a user from
 | gcs_secret_key                 | GCP service-account JSON key for gcs-integrator. Supply through TF_VAR_gcs_secret_key or -var.                                                                                                                                                                                                                 | `string`       | `null`                |    no    |
 | gcs_secret_version             | 0 creates no secret. 1 creates it. Increment to rotate.                                                                                                                                                                                                                                                        | `number`       | `0`                   |    no    |
 | juju_controller                | Juju controller connection details. Ephemeral: supply at plan and at apply.                                                                                                                                                                                                                                    | `object`       | `null`                |    no    |
+| juju_offering_controllers      | Other controllers that host offers, keyed by controller name, as `{ endpoint, username, password, ca }`. Ephemeral: supply at plan and at apply.                                                                                                                                                               | `map(object)`  | `{}`                  |    no    |
 | ldap                           | LDAP authentication and certificate integrations.                                                                                                                                                                                                                                                              | `object`       | `{}`                  |    no    |
 | logging_config                 | Logging configuration to apply to the model. Needs `model.create = true`.                                                                                                                                                                                                                                      | `string`       | `null`                |    no    |
 | model                          | Juju model configuration (cloud, constraints, create, credential, name, owner). `cloud`, `constraints`, `credential`, `logging_config` and `proxy` need `create = true`.                                                                                                                                       | `object`       | `{ name = "valkey" }` |    no    |
