@@ -97,6 +97,9 @@ backends:
       # Service-account key for the real-GCS backup module. Must be base64 JSON:
       # spread exports host values in unescaped double quotes.
       GCS_SERVICE_ACCOUNT: "$(HOST: echo $GCS_SERVICE_ACCOUNT)"
+      FLAKE0_MARKERS: "$(HOST: echo $FLAKE0_MARKERS)"
+      PYTEST_PLUGINS: "$(HOST: echo $PYTEST_PLUGINS)"
+      PYTHONPATH: "$(HOST: echo $PYTHONPATH)"
     systems:
       - ubuntu-26.04:
           username: runner

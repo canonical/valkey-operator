@@ -153,6 +153,7 @@ jobs:
         uses: canonical/flake0/.github/actions/collect@main
         with:
           phase: start
+          markers: true
       - name: Set up environment
         # leaves room for the retry budget below on top of the ~3 min this step takes
         timeout-minutes: 8
