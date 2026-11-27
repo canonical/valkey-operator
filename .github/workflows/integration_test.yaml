@@ -271,6 +271,7 @@ jobs:
         if: ${{ success() || (failure() && steps.spread.outcome == 'failure') }}
         run: df --human-readable
       - name: Stop telemetry for error classification
+        id: collect
         if: always()
         timeout-minutes: 5
         continue-on-error: true
@@ -285,18 +286,27 @@ jobs:
           bundle-path: ${{ steps.collect.outputs.bundle-path }}
           artifact-name: flake0-plot-${{ matrix.job.name_in_artifact }}-${{ github.run_attempt }}
       - name: Classify failure
-        if: ${{ github.event_name == 'pull_request' && failure() && steps.spread.outcome == 'failure' }}
+        id: classify
+        if: ${{ github.event_name == 'pull_request' && failure() && steps.spread.outcome == 'failure' && !github.event.pull_request.head.repo.fork }}
         timeout-minutes: 25
         uses: canonical/flake0/.github/actions/classify@main
         with:
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
           bundle-path: ${{ steps.collect.outputs.bundle-path }}
-          job-name: ${{ matrix.name }}
+          job-name: ${{ matrix.job.name }}
       - name: Add PR comment for failure classification
         if: ${{ github.event_name == 'pull_request' && failure() && steps.classify.outcome != 'skipped' && !github.event.pull_request.head.repo.fork }}
         uses: canonical/flake0/.github/actions/summarize@main
         with:
           leg-id: ${{ matrix.job.name_in_artifact }}
-          job-name: ${{ matrix.name }}
+          job-name: ${{ matrix.job.name }}
           verdict-path: ${{ steps.classify.outputs.verdict-path }}
           job-id: ${{ job.check_run_id }}
+      - name: Ingest telemetry and classification into OpenSearch
+        if: ${{ github.event_name == 'pull_request' && failure() && steps.classify.outcome != 'skipped' && !github.event.pull_request.head.repo.fork }}
+        uses: canonical/flake0/.github/actions/ingest@main
+        with:
+          bundle-path: ${{ steps.collect.outputs.bundle-path }}
+          url: ${{ secrets.FLAKE0_INGEST_URL }}
+          username: ${{ secrets.FLAKE0_INGEST_USER }}
+          password: ${{ secrets.FLAKE0_INGEST_PASSWORD }}
