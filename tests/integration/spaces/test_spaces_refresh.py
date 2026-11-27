@@ -78,13 +78,19 @@ def test_rebind_during_refresh(juju: jubilant.Juju, charm: str) -> None:
         juju.status().get_units(APP_NAME), key=lambda unit: int(unit.split("/")[1]), reverse=True
     )
     juju.refresh(APP_NAME, path=charm)
-    # a local charm is always incompatible with the store revision
-    juju.wait(lambda status: "incompatible" in status.apps[APP_NAME].app_status.message)
-    juju.run(
-        refresh_order[0],
-        "force-refresh-start",
-        {"check-compatibility": False, "check-workload-container": False},
+    # a dev build is incompatible with the store revision, a tagged 9/edge build is not
+    status = juju.wait(
+        lambda status: any(
+            msg in status.apps[APP_NAME].app_status.message
+            for msg in ("incompatible", "resume-refresh")
+        )
     )
+    if "incompatible" in status.apps[APP_NAME].app_status.message:
+        juju.run(
+            refresh_order[0],
+            "force-refresh-start",
+            {"check-compatibility": False, "check-workload-container": False},
+        )
     juju.wait(
         lambda status: (
             "resume-refresh" in status.apps[APP_NAME].app_status.message
