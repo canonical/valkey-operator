@@ -409,11 +409,13 @@ class TLSEvents(ops.Object):
             if not self.charm.tls_manager.certificate_sans_require_update():
                 return True
 
+            # one certificate per unit serves both client and peer TLS
             if self.charm.state.client_tls_relation:
-                # the provider owns the certificate; converge once it signs the new one
+                # ask the provider for a new one, certificate_available loads it once signed
                 self.charm.on.refresh_tls_certificates.emit()
                 return False
 
+            # no provider, so the charm reissues its self-signed certificate
             self.charm.tls_manager.create_and_store_self_signed_certificate()
         except ValkeyWorkloadCommandError as e:
             logger.error("Failed to reissue the unit certificate: %s", e)
