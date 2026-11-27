@@ -216,10 +216,10 @@ class ConfigManager(ManagerStatusProtocol):
         }
 
         if (
-            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            self.state.unit_server.tls_client_state == TLSState.TLS
             and self.state.unit_server.model.client_cert_ready
         ):
-            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            # the charm's clients use the plain port until TLS, so only close it then
             tls_config["port"] = "0"
 
         return tls_config
@@ -238,10 +238,10 @@ class ConfigManager(ManagerStatusProtocol):
         }
 
         if (
-            self.state.unit_server.tls_client_state in [TLSState.TLS, TLSState.TO_TLS]
+            self.state.unit_server.tls_client_state == TLSState.TLS
             and self.state.unit_server.model.client_cert_ready
         ):
-            # if client TLS is enabled, we shut down the default port to discard non-TLS traffic
+            # the charm's clients use the plain port until TLS, so only close it then
             tls_config["port"] = "0"
 
         return tls_config
