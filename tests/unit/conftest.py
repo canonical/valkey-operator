@@ -24,6 +24,12 @@ def mock_bind_address(mocker):
         new_callable=PropertyMock,
         return_value="127.1.1.1",
     )
+    # in the same space as valkey-peers
+    mocker.patch(
+        "core.cluster_state.ClusterState.client_bind_address",
+        new_callable=PropertyMock,
+        return_value="127.1.1.1",
+    )
 
 
 @pytest.fixture(autouse=True)

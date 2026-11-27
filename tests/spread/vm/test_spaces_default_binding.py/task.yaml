@@ -1,0 +1,7 @@
+summary: test_spaces_default_binding.py
+environment:
+  TEST_MODULE: spaces/test_spaces_default_binding.py
+execute: |
+  tox run -e integration -- "tests/integration/$TEST_MODULE" --substrate vm --alluredir="$SPREAD_TASK/allure-results"
+artifacts:
+  - allure-results

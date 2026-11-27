@@ -206,8 +206,31 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         ):
             raise ValueError("Network binding address not yet available")
 
-        if not (address := binding.network.bind_address):
+        try:
+            address = binding.network.bind_address
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            address = None
+
+        if not address:
             raise ValueError("Network binding address not yet available")
+
+        return str(address)
+
+    @property
+    def client_bind_address(self) -> str:
+        """The network binding address of the client endpoint."""
+        if not (binding := self.model.get_binding(EXTERNAL_CLIENTS_RELATION)):
+            raise ValueError("Client binding address not yet available")
+
+        try:
+            address = binding.network.bind_address
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            address = None
+
+        if not address:
+            raise ValueError("Client binding address not yet available")
 
         return str(address)
 
@@ -222,11 +245,13 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         ):
             raise ValueError
 
-        return [
-            str(address)
-            for address in binding.network.ingress_addresses
-            if not isinstance(address, str)
-        ]
+        try:
+            addresses = binding.network.ingress_addresses
+        except ops.ModelError:
+            # network-get fails when the bound space has no address on this machine
+            return []
+
+        return [str(address) for address in addresses if not isinstance(address, str)]
 
     @property
     def hostname(self) -> str:
@@ -242,10 +267,12 @@ class ClusterState(ops.Object, StatusesStateProtocol):
     def endpoint(self) -> str:
         """The endpoint to be used by other units to connect to this unit.
 
-        On VM-based substrates, this should be the bind address.
-        On Kubernetes, this should be the fully qualified domain name of the unit.
+        On VM, this is the recorded address, which only the address move changes.
+        On Kubernetes, this is the fully qualified domain name of the unit.
         """
-        return self.bind_address if self.substrate == Substrate.VM else self.hostname
+        if self.substrate == Substrate.VM:
+            return self.unit_server.model.private_ip or self.bind_address
+        return self.hostname
 
     def get_secret_from_id(self, secret_id: str) -> dict[str, str]:
         """Resolve the given id of a Juju secret and return the content as a dict.
@@ -279,6 +306,17 @@ class ClusterState(ops.Object, StatusesStateProtocol):
         unit_name = unit_name or self.charm.unit.name
         service_name = f"{unit_name.replace('/', '-')}.{self.charm.app.name}-endpoints"
         return resolve_k8s_fqdn(service_name)
+
+    @property
+    def other_units_moving(self) -> list[str]:
+        """The names of the other active units with an address move pending."""
+        return [
+            unit.unit_name
+            for unit in self.servers
+            if unit.is_active
+            and unit.unit_name != self.unit_server.unit_name
+            and unit.model.pending_ip
+        ]
 
     @property
     def number_units_started(self) -> int:

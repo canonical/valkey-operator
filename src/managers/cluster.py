@@ -52,6 +52,7 @@ from literals import (
     PersistenceMode,
     ScaleDownState,
     StartState,
+    Substrate,
 )
 from statuses import CharmStatuses, ClusterStatuses, ScaleDownStatuses, StartStatuses
 
@@ -787,7 +788,37 @@ class ClusterManager(ManagerStatusProtocol):
             if not self.state.unit_server.model.is_sentinel_healthy:
                 status_list.append(ClusterStatuses.SENTINEL_UNHEALTHY_RESTART.value)
 
+            if address_status := self._get_address_status():
+                status_list.append(address_status)
+
         return status_list or [CharmStatuses.ACTIVE_IDLE.value]
+
+    def _get_address_status(self) -> StatusObject | None:
+        """Get the status of a VM unit's bindings and of its address move."""
+        if self.state.substrate != Substrate.VM:
+            return None
+
+        try:
+            bind_address = self.state.bind_address
+        except ValueError:
+            return ClusterStatuses.NO_ADDRESS_IN_SPACE.value
+
+        try:
+            client_bind_address = self.state.client_bind_address
+        except ValueError:
+            client_bind_address = ""
+
+        # one subnet belongs to one space, so equal addresses mean the same space
+        if client_bind_address != bind_address:
+            return ClusterStatuses.CLIENT_SPACE_MISMATCH.value
+
+        if self.state.unit_server.model.private_ip and (
+            self.state.unit_server.model.pending_ip
+            or bind_address != self.state.unit_server.model.private_ip
+        ):
+            return ClusterStatuses.MOVING_ADDRESS.value
+
+        return None
 
     def _get_start_status(self) -> StatusObject | None:
         """Get the current start status of the unit."""

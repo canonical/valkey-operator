@@ -324,6 +324,9 @@ class ConfigManager(ManagerStatusProtocol):
 
         config_properties["aclfile"] = self.workload.sentinel_acl_file.as_posix()
         config_properties["logfile"] = (self.workload.log_dir / SENTINEL_LOG_FILE).as_posix()
+        if self.state.substrate == Substrate.VM:
+            # a pod has one interface, so a bind on K8s would only drop loopback
+            config_properties["bind"] = self.state.endpoint
 
         # sentinel configs
         config_properties["sentinel"] = sentinel_properties | self._generate_sentinel_configs(
@@ -358,6 +361,9 @@ class ConfigManager(ManagerStatusProtocol):
             sentinel_configs["resolve-hostnames"] = "yes"
             sentinel_configs["announce-hostnames"] = "yes"
             sentinel_configs["announce-ip"] = self.state.unit_server.model.hostname
+        if self.state.substrate == Substrate.VM:
+            # Sentinel reports this address to its peers, so it must match state.endpoint
+            sentinel_configs["announce-ip"] = self.state.endpoint
         return sentinel_configs
 
     def set_sentinel_config_properties(self, primary_endpoint: str) -> None:

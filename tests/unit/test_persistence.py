@@ -127,7 +127,7 @@ def test_leader_stores_config_when_config_changed_defers():
     ctx = testing.Context(ValkeyCharm, app_trusted=True)
     relation, state_in = _leader_state({"persistence-mode": "AOF"})
 
-    with patch("events.base_events.BaseEvents._reconcile_unit_address", return_value=False):
+    with patch("events.tls.TLSEvents._reconcile_certificate_sans", return_value=False):
         state_out = ctx.run(ctx.on.config_changed(), state_in)
 
     stored = state_out.get_relation(relation.id).local_app_data["persistence-config"]

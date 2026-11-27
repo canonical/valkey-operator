@@ -153,7 +153,8 @@ def test_restart_callback_releases_on_success():
         charm.workload.restart.assert_called_once()
         restart_sentinel.assert_called_once()
         update.assert_any_call({"is_valkey_healthy": True})
-        update.assert_any_call({"is_sentinel_healthy": True, "restart_run_id": ""})
+        update.assert_any_call({"is_sentinel_healthy": True})
+        update.assert_any_call({"restart_run_id": ""})
 
 
 def test_restart_callback_rewrites_sentinel_config_for_primary_endpoint():

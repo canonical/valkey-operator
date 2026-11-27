@@ -682,11 +682,18 @@ def test_config_changed_ip_change_no_tls_relation(mock_request_async_lock, vm_en
         patch(
             "managers.tls.TLSManager.create_and_store_self_signed_certificate"
         ) as mock_create_certificate,
+        patch("managers.cluster.ClusterManager.reload_tls_settings"),
         patch("src.charm.ValkeyCharm.reconcile_persistence"),
     ):
-        ctx.run(ctx.on.config_changed(), state_in)
+        state_out = ctx.run(ctx.on.config_changed(), state_in)
+        # the unit signs a cert valid for both addresses, the restart callback moves it
         mock_create_certificate.assert_called_once()
-        mock_request_async_lock.assert_called_once_with(RESTART_OPERATION_ID, kwargs={})
+        mock_request_async_lock.assert_any_call(RESTART_OPERATION_ID, kwargs={})
+        # Valkey hot-loads the reissued cert, Sentinel needs a restart
+        mock_request_async_lock.assert_any_call(
+            RESTART_OPERATION_ID, kwargs={"restart_valkey": False, "restart_sentinel": True}
+        )
+        assert state_out.get_relation(1).local_unit_data["pending-ip"] == "127.1.1.1"
 
 
 def test_change_password_secret_changed_non_leader_unit(mock_request_async_lock):

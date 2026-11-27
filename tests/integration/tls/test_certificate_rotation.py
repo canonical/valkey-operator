@@ -114,7 +114,7 @@ def _prepare_units_for_ca_expiration_test(juju: jubilant.Juju, substrate: Substr
     """Prepare the units for the CA expiration test."""
     for unit_name in juju.status().get_units(APP_NAME):
         logger.info("Updating renewal relative time to 0.6 for unit %s", unit_name)
-        search_expression = "\\(refresh_events=\\[self.refresh_tls_certificates_event\\],\\)"
+        search_expression = "\\(refresh_events=\\[self.charm.on.refresh_tls_certificates\\],\\)"
         replace_expression = "\\1renewal_relative_time=0.6,"
         file = f"/var/lib/juju/agents/unit-{unit_name.replace('/', '-')}/charm/src/events/tls.py"
         sudo = "sudo " if substrate == Substrate.VM else ""

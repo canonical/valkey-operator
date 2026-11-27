@@ -14,7 +14,6 @@ from charmlibs.interfaces.tls_certificates import (
     TLSCertificatesRequiresV4,
 )
 
-from common.custom_events import RefreshTLSCertificatesEvent
 from common.exceptions import (
     ValkeyCannotGetPrimaryIPError,
     ValkeyCertificatesNotReadyError,
@@ -27,6 +26,7 @@ from literals import (
     PEER_RELATION,
     SENTINEL_PORT,
     TLS_CLIENT_PRIVATE_KEY_CONFIG,
+    Substrate,
     TLSCARotationState,
     TLSState,
 )
@@ -40,8 +40,6 @@ logger = logging.getLogger(__name__)
 class TLSEvents(ops.Object):
     """Handle all TLS related events."""
 
-    refresh_tls_certificates_event = ops.EventSource(RefreshTLSCertificatesEvent)
-
     def __init__(self, charm: "ValkeyCharm"):
         super().__init__(charm, key="tls_events")
         self.charm = charm
@@ -51,7 +49,7 @@ class TLSEvents(ops.Object):
             CLIENT_TLS_RELATION_NAME,
             certificate_requests=self.charm.tls_manager.build_certificate_requests,
             private_key=self.charm.tls_manager.get_client_tls_private_key(),
-            refresh_events=[self.refresh_tls_certificates_event],
+            refresh_events=[self.charm.on.refresh_tls_certificates],
         )
 
         # --- EVENTS TO OBSERVE ---
@@ -334,6 +332,9 @@ class TLSEvents(ops.Object):
 
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Handle TLS related parts of update_status event."""
+        # not deferred: update-status repeats on its own
+        self._reconcile_certificate_sans()
+
         if not self.charm.tls_manager.will_certificate_expire():
             return
 
@@ -364,10 +365,14 @@ class TLSEvents(ops.Object):
             self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
 
         if self.charm.state.client_tls_relation:
-            self.refresh_tls_certificates_event.emit()
+            self.charm.on.refresh_tls_certificates.emit()
 
     def _on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
         """Handle TLS related config changes."""
+        if not self._reconcile_certificate_sans():
+            # config-changed does not repeat on its own, so the reconcile must be retried
+            event.defer()
+
         if not self.charm.tls_manager.extra_sans_config_is_valid():
             logger.warning("Invalid configuration for 'certificate-extra-sans'")
             return
@@ -377,14 +382,57 @@ class TLSEvents(ops.Object):
                 if self.charm.unit.is_leader():
                     self.charm.state.cluster.update({"tls_client_private_key": private_key.raw})
                 # refresh event will be ignored by the tls lib if the csr is unchanged
-                self.refresh_tls_certificates_event.emit()
+                self.charm.on.refresh_tls_certificates.emit()
             else:
                 logger.error("Invalid private key provided, cannot update TLS certificates.")
 
         # the cert on disk may be the self-signed one, so let the lib compare against its CSRs
         if self.charm.state.client_tls_relation:
             logger.info("Configuration change for TLS, refresh TLS certificates")
-            self.refresh_tls_certificates_event.emit()
+            self.charm.on.refresh_tls_certificates.emit()
+
+    def _reconcile_certificate_sans(self) -> bool:
+        """Reissue a VM unit's certificate when its IP SANs are out of date.
+
+        A pending address move or a new ingress address, such as a public IP, changes them.
+
+        Returns:
+            bool: False if the reissue failed or waits for the provider.
+        """
+        if (
+            self.charm.state.substrate != Substrate.VM
+            or not self.charm.state.unit_server.is_started
+        ):
+            return True
+
+        try:
+            if not self.charm.tls_manager.certificate_sans_require_update():
+                return True
+
+            # one certificate per unit serves both client and peer TLS
+            if self.charm.state.client_tls_relation:
+                # ask the provider for a new one, certificate_available loads it once signed
+                self.charm.on.refresh_tls_certificates.emit()
+                return False
+
+            # no provider, so the charm reissues its self-signed certificate
+            self.charm.tls_manager.create_and_store_self_signed_certificate()
+        except ValkeyWorkloadCommandError as e:
+            logger.error("Failed to reissue the unit certificate: %s", e)
+            return False
+
+        try:
+            self.charm.cluster_manager.reload_tls_settings(
+                self.charm.config_manager.generate_tls_config()
+            )
+        except ValkeyTLSLoadError:
+            # a retry would see the new cert on disk and skip, so the restart must load it
+            self.charm.request_restart()
+            return True
+
+        # Valkey hot-loaded the certificate, Sentinel only reads it on start
+        self.charm.request_restart(restart_valkey=False, restart_sentinel=True)
+        return True
 
     def _enable_client_tls(self) -> None:
         """Check preconditions and enable TLS if possible."""

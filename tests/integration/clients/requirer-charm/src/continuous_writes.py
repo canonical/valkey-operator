@@ -36,6 +36,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from glide import (
@@ -90,9 +91,11 @@ class DaemonConfig(BaseModel):
         path.write_text(self.model_dump_json())
 
 
-def _write_state_atomic(last_written: int, count: int) -> None:
+def _write_state_atomic(last_written: int, count: int, max_outage_s: float) -> None:
     """Write state file atomically using a temp-file + rename."""
-    data = json.dumps({"last_written": last_written, "count": count})
+    data = json.dumps(
+        {"last_written": last_written, "count": count, "max_outage_s": round(max_outage_s, 1)}
+    )
     tmp = STATE_PATH.with_suffix(".tmp")
     tmp.write_text(data)
     tmp.rename(STATE_PATH)
@@ -227,6 +230,9 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
     client: GlideClient = await _make_client(config)
     counter, count = await _initial_count(config, client)
     last_written = counter - 1
+    # the longest time from a failed write to the next success
+    max_outage_s = 0.0
+    failing_since: float | None = None
     logger.info(
         "Starting continuous writes from counter=%d (existing list len=%d)", counter, count
     )
@@ -242,11 +248,16 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
                 if client is None:
                     client = await _make_client(config)
                 last_written, count = await _write_one(client, counter)
-                _write_state_atomic(last_written, count)
+                if failing_since is not None:
+                    max_outage_s = max(max_outage_s, time.monotonic() - failing_since)
+                    failing_since = None
+                _write_state_atomic(last_written, count, max_outage_s)
                 logger.info("Wrote %d (list len=%d)", counter, count)
                 counter += 1
             except Exception as exc:
                 logger.warning("Write failed for counter=%d, will retry: %s", counter, exc)
+                if failing_since is None:
+                    failing_since = time.monotonic()
                 # In standalone mode, Glide locks onto the primary node during initialization and does not auto-refresh.
                 # If the primary fails, the client will time out indefinitely until manually recreated, making long-term client reuse highly unreliable.
                 try:
@@ -263,7 +274,7 @@ async def run(config: DaemonConfig, sleep_interval: float) -> None:
         await _close_client(client)
 
     # Flush final state before exiting
-    _write_state_atomic(last_written, count)
+    _write_state_atomic(last_written, count, max_outage_s)
     logger.info("Daemon exiting — last_written=%d, count=%d", last_written, count)
 
 
